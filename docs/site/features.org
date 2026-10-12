@@ -1,5 +1,5 @@
 #+TITLE: Celorga features
-#+SUBTITLE: Turn the Org folder you already have into a workspace for you and your agents: a real Org editor, an agenda that just works, and agents that read, cite, and update the same plain-text files.
+#+SUBTITLE: Everything Celorga does today: agents and automations, review, writing, planning, data, meetings, publishing, and the apps and editors that open the same plain-text files.
 
 #+BEGIN_EXPORT html
 <svg class="celorga-logo-sprite" width="0" height="0" aria-hidden="true" focusable="false"><defs><linearGradient gradientUnits="userSpaceOnUse" id="celorga-logo-codex" x1="12" x2="12" y1="3" y2="21"><stop stop-color="#B1A7FF"></stop><stop offset=".5" stop-color="#7A9DFF"></stop><stop offset="1" stop-color="#3941FF"></stop></linearGradient><linearGradient gradientUnits="userSpaceOnUse" id="celorga-logo-open-claw-0" x1="-.659" x2="27.023" y1=".458" y2="22.855"><stop stop-color="#FF4D4D"></stop><stop offset="1" stop-color="#991B1B"></stop></linearGradient><linearGradient gradientUnits="userSpaceOnUse" id="celorga-logo-open-claw-1" x1="0" x2="4.311" y1="9.672" y2="14.949"><stop stop-color="#FF4D4D"></stop><stop offset="1" stop-color="#991B1B"></stop></linearGradient><linearGradient gradientUnits="userSpaceOnUse" id="celorga-logo-open-claw-2" x1="19.385" x2="24.399" y1="9.953" y2="14.462"><stop stop-color="#FF4D4D"></stop><stop offset="1" stop-color="#991B1B"></stop></linearGradient></defs>
@@ -39,70 +39,14 @@
 <symbol id="glyph-slides" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M12 16v4M8 20h8"/></symbol>
 </svg>
 <div class="celorga-features-page">
-  <section class="celorga-feature-story" id="org-mode" aria-labelledby="org-mode-title">
-    <div class="celorga-feature-copy">
-      <h2 id="org-mode-title">Your Org folder, agent-ready</h2>
-      <p>Open the <code>~/org</code> directory you already keep. There is nothing to import or convert. Headings, TODOs, schedules, properties, <code>:ID:</code> links, and org-roam notes work as they are, and the files still open in Emacs.</p>
-      <p class="celorga-feature-links"><a href="celorga-vs-org-mode.html">Celorga and Org mode</a><a href="migration.html">Bring an existing folder</a></p>
-    </div>
-    <div class="celorga-feature-media">
-      <div class="celorga-org-flow" role="img" aria-label="Diagram: an existing folder of Org files becomes a Celorga workspace with an editor, agenda, agents, publishing, an MCP server, and an iPhone app.">
-        <div class="celorga-org-flow-folder">
-          <p><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-folder"></use></svg>~/org</p>
-          <ul>
-            <li>inbox.org</li>
-            <li>projects.org</li>
-            <li>journal/2026-10-12.org</li>
-            <li>roam/beacon-launch.org</li>
-            <li>roam/maya-chen.org</li>
-          </ul>
-          <span>Unchanged. Still yours.</span>
-        </div>
-        <div class="celorga-org-flow-arrow" aria-hidden="true">→</div>
-        <ul class="celorga-org-flow-gets">
-          <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-file"></use></svg>Native editor</li>
-          <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-laptop"></use></svg>Agenda</li>
-          <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-claude-code"></use></svg>Agents that cite</li>
-          <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-globe"></use></svg>Publishing</li>
-          <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-plug"></use></svg>MCP server</li>
-          <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-phone"></use></svg>iPhone app</li>
-        </ul>
-      </div>
-    </div>
-  </section>
+  <nav class="celorga-feature-jumps" aria-label="Feature areas">
+    <a href="#agent-work">Agents</a><a href="#review">Review</a><a href="#writing">Writing</a><a href="#planning-knowledge">Planning</a><a href="#data-notebooks">Data</a><a href="#meetings-context">Meetings</a><a href="#publishing">Publishing</a><a href="#external-sources">Sources and sync</a><a href="#platforms">Apps</a><a href="#org-mode">For Org users</a>
+  </nav>
 
-  <section class="celorga-feature-story celorga-feature-story-reverse" id="org-editor" aria-labelledby="org-editor-title">
+  <section class="celorga-feature-story" id="agent-work" aria-labelledby="agent-work-title">
     <div class="celorga-feature-copy">
-      <h2 id="org-editor-title">A really good Org editor</h2>
-      <p>A fast native Mac editor built for Org: folding, tables, links, and properties, rendered for reading and plain text when you want it.</p>
-      <ul class="celorga-feature-chips" aria-label="Editor features">
-        <li>Reading view</li><li>Source</li><li>Split</li><li>Prose mode</li><li>Table formulas</li><li>Link previews</li><li>Live embeds</li><li>Per-section encryption</li>
-      </ul>
-      <p class="celorga-feature-links"><a href="editors-macos.html">Celorga for macOS</a><a href="language-reference.html">Syntax reference</a></p>
-    </div>
-    <div class="celorga-feature-media">
-      <figure><img src="assets/screenshots/macos-workspace-files.png?v=20261009" alt="A Celorga project note with rendered TODO headings, properties, a schedule, and open action items" loading="lazy" /><figcaption>An ordinary Org file, rendered.</figcaption></figure>
-    </div>
-  </section>
-
-  <section class="celorga-feature-story" id="planning-knowledge" aria-labelledby="planning-knowledge-title">
-    <div class="celorga-feature-copy">
-      <h2 id="planning-knowledge-title">An agenda that just works</h2>
-      <p>Every TODO, schedule, and deadline from every file in one fast view. Select a task to read the note behind it.</p>
-      <ul class="celorga-feature-chips" aria-label="Planning features">
-        <li>Focus · Today · Range · All Time</li><li>Custom TODO keywords</li><li>Priorities and tags</li><li>Daily notes</li><li>Backlinks and graph</li><li>Saved views</li>
-      </ul>
-      <p class="celorga-feature-links"><a href="workflows.html">Everyday workflows</a><a href="getting-started.html">Plan your first day</a></p>
-    </div>
-    <div class="celorga-feature-media">
-      <figure><img src="assets/screenshots/macos-workspace-agenda.png?v=20261009" alt="Celorga agenda with overdue, today, and upcoming tasks beside the selected task's note" loading="lazy" /><figcaption>Agenda across the whole folder, with the selected task's note beside it.</figcaption></figure>
-    </div>
-  </section>
-
-  <section class="celorga-feature-story celorga-feature-story-reverse" id="agent-work" aria-labelledby="agent-work-title">
-    <div class="celorga-feature-copy">
-      <h2 id="agent-work-title">Hand any TODO to an agent</h2>
-      <p>Use the models and agent harnesses you already use, from any local, remote, hosted, or self-hosted destination. <em>Start work</em> on a task and the run cites it, shows live status on your agenda, and waits for your approval before anything consequential.</p>
+      <h2 id="agent-work-title">Agents</h2>
+      <p>Use the models and agent harnesses you already use, from any local, remote, hosted, or self-hosted destination.</p>
       <ul class="celorga-feature-logos" aria-label="Supported agents and model providers">
         <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-claude-code"></use></svg>Claude Code</li>
         <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-codex"></use></svg>Codex</li>
@@ -114,70 +58,177 @@
         <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-openrouter"></use></svg>OpenRouter</li>
         <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-openai"></use></svg>OpenAI-compatible</li>
       </ul>
+      <ul class="celorga-feature-list" id="multi-agent-chat" data-heading-anchors="off">
+        <li><strong>Multi-agent rooms</strong>Mention several agents in one thread</li>
+        <li><strong>Handoffs</strong>Agents start each other's turns, with a loop limit</li>
+        <li><strong>Start work</strong>Turn any TODO into a durable agent run</li>
+        <li><strong>Live status</strong>Working, Your turn, Needs you, Done</li>
+        <li><strong>Automations</strong>Scheduled prompts that catch up after sleep</li>
+        <li><strong>Workflows</strong>Reusable steps, models, and history in files</li>
+        <li><strong>Activity</strong>What's running, where, and why it's waiting</li>
+        <li><strong>Per-thread models</strong>Pick model and reasoning effort each time</li>
+        <li><strong>Skills</strong>Workspace <code>SKILL.md</code> files for every agent</li>
+        <li><strong>Projects</strong>Group chats around one shared brief</li>
+        <li><strong>Interactive answers</strong>Charts, tables, and live HTML in chat</li>
+        <li><strong>MCP server</strong>Any MCP client can search your notes</li>
+      </ul>
       <p class="celorga-feature-links"><a href="agent-quickstart.html">Connect an agent</a><a href="mcp-and-skills.html">MCP and skills</a></p>
     </div>
     <div class="celorga-feature-media">
-      <figure><img src="assets/screenshots/macos-workspace-runs-review.png?v=20261012b" alt="Celorga Agent Work showing an approval-ready launch brief with outputs and review state" loading="lazy" /><figcaption>Outputs, validation, and approval state stay with the run.</figcaption></figure>
+      <figure><img src="assets/screenshots/macos-workspace-runs-review.png?v=20261012b" alt="Celorga Agent Work showing a run's outputs, validation, and a pending approval" loading="lazy" /><figcaption>A delegated run with its outputs and a pending approval.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="celorga-feature-story celorga-feature-story-reverse" id="review" aria-labelledby="review-title">
+    <div class="celorga-feature-copy">
+      <h2 id="review-title">Review and safety</h2>
+      <p>Agents do the routine work. Anything consequential waits for you.</p>
+      <ul class="celorga-feature-list" data-heading-anchors="off">
+        <li><strong>One approval queue</strong>From files, agent runs, and mobile</li>
+        <li><strong>Approve from iPhone</strong>Deciding on one device updates the other</li>
+        <li><strong>Drafts stay drafts</strong>AI-written content is marked until accepted</li>
+        <li><strong>Previewed edits</strong>Every agent change is a readable diff</li>
+        <li><strong>Per-agent encryption</strong>Seal a section to one person, device, or agent</li>
+        <li><strong>Sourced answers</strong>Agent replies link to the file and line they used</li>
+        <li><strong>Local by default</strong>Nothing leaves your Mac unless you send it</li>
+        <li><strong>Pinned plugins</strong>Locked to exact commits and checksums</li>
+      </ul>
+    </div>
+    <div class="celorga-feature-media celorga-feature-media-phone">
+      <figure><img src="assets/screenshots/ios-mobile-approvals.png" alt="Celorga approvals list on iPhone" loading="lazy" /><figcaption>Approvals on iPhone.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="celorga-feature-story" id="writing" aria-labelledby="writing-title">
+    <div class="celorga-feature-copy">
+      <h2 id="writing-title">Writing and editing</h2>
+      <p>A fast native editor for plain-text notes, rendered for reading and editable as source.</p>
+      <ul class="celorga-feature-list" data-heading-anchors="off">
+        <li><strong>Reading, Source, Split</strong>Switch views without changing the file</li>
+        <li><strong>Prose mode</strong>Keep alternatives, ghosted text, and cuts recoverable</li>
+        <li><strong>Tables</strong>Spreadsheet formulas in ordinary text tables</li>
+        <li><strong>Live embeds</strong>Show another note or section inline</li>
+        <li><strong>Link previews</strong>Hover a link to read the target</li>
+        <li><strong>Web pages beside notes</strong>Open links and local dev servers in place</li>
+        <li><strong>Web Clipper</strong>Save articles and selections from the browser</li>
+        <li><strong>Paste as Org</strong>Convert rich text on paste (experimental)</li>
+      </ul>
+      <p class="celorga-feature-links"><a href="editors-macos.html">Celorga for macOS</a><a href="language-reference.html">Syntax reference</a></p>
+    </div>
+    <div class="celorga-feature-media">
+      <figure><img src="assets/screenshots/macos-workspace-files.png?v=20261009" alt="A Celorga project note with rendered TODO headings, properties, and open action items" loading="lazy" /><figcaption>A project note in the reading view.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="celorga-feature-story celorga-feature-story-reverse" id="planning-knowledge" aria-labelledby="planning-knowledge-title">
+    <div class="celorga-feature-copy">
+      <h2 id="planning-knowledge-title">Planning and linked notes</h2>
+      <p>Tasks, dates, and links live in your notes. Celorga turns them into views.</p>
+      <ul class="celorga-feature-list" data-heading-anchors="off">
+        <li><strong>Agenda</strong>Focus, Today, Range, and All Time views</li>
+        <li><strong>Your own TODO states</strong>Per file or across the workspace</li>
+        <li><strong>Daily notes</strong>Today, yesterday, or any date</li>
+        <li><strong>Backlinks</strong>Every note shows what links to it</li>
+        <li><strong>Graph</strong>An interactive map around the current note</li>
+        <li><strong>Unlinked mentions</strong>Find and link related notes</li>
+        <li><strong>Saved views</strong>Filtered, grouped tables and cards</li>
+        <li><strong>Canvas boards</strong>Arrange notes and images in JSON Canvas</li>
+        <li><strong>AI briefs</strong>A sourced summary beside the note</li>
+        <li><strong>Search</strong>Fuzzy search on Mac and iPhone</li>
+      </ul>
+      <p class="celorga-feature-links"><a href="workflows.html">Everyday workflows</a></p>
+    </div>
+    <div class="celorga-feature-media">
+      <figure><img src="assets/screenshots/macos-workspace-context.png?v=20261009" alt="A Celorga project note with open work and an AI brief in the Context pane" loading="lazy" /><figcaption>The Context pane: backlinks, related notes, graph, and a brief.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="celorga-feature-story" id="data-notebooks" aria-labelledby="data-notebooks-title">
+    <div class="celorga-feature-copy">
+      <h2 id="data-notebooks-title">Data notebooks</h2>
+      <p>Query data from a note and keep the results and charts with it.</p>
+      <ul class="celorga-feature-list" data-heading-anchors="off">
+        <li><strong>Sources</strong>CSV, Parquet, JSON, ClickHouse, Metabase</li>
+        <li><strong>SQL views</strong>DuckDB queries you can reuse</li>
+        <li><strong>Charts</strong>Line, bar, and more, from saved results</li>
+        <li><strong>Freshness</strong>Refresh only when you ask</li>
+        <li><strong>Saved credentials</strong>Named profiles, never inline secrets</li>
+        <li><strong>Agents see your numbers</strong>They read the same saved results</li>
+      </ul>
+      <p class="celorga-feature-links"><a href="language-reference.html#local-datasets-and-sql-views">Notebook syntax</a></p>
+    </div>
+    <div class="celorga-feature-media">
+      <figure><img src="assets/screenshots/macos-workspace-data.png?v=20261012" alt="Celorga rendering a launch readiness data notebook with charts" loading="lazy" /><figcaption>Charts from saved query results.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="celorga-feature-story celorga-feature-story-reverse" id="meetings-context" aria-labelledby="meetings-context-title">
+    <div class="celorga-feature-copy">
+      <h2 id="meetings-context-title">Meetings</h2>
+      <p>Record a call and keep the audio, transcript, and follow-ups on your machine.</p>
+      <ul class="celorga-feature-list" data-heading-anchors="off">
+        <li><strong>Record or import</strong>Audio stays local</li>
+        <li><strong>Transcription</strong>On your Mac, or a provider you choose</li>
+        <li><strong>Summaries and decisions</strong>Written into the meeting note</li>
+        <li><strong>Action items</strong>Real tasks on your agenda</li>
+        <li><strong>Hand to an agent</strong>Send a transcript for follow-ups</li>
+        <li><strong>Linked context</strong>People, projects, and decisions</li>
+      </ul>
+    </div>
+    <div class="celorga-feature-media">
+      <figure><img src="assets/screenshots/macos-workspace-meetings.png?v=20261009" alt="Celorga meeting view with transcript details, summary, and decisions" loading="lazy" /><figcaption>A meeting record with its transcript and summary.</figcaption></figure>
     </div>
   </section>
 
   <section class="celorga-feature-section" id="publishing" aria-labelledby="publishing-title">
     <div class="celorga-feature-heading">
-      <h2 id="publishing-title">Publish to your own URL or Google Drive</h2>
-      <p>Share a note as a private link served from your own Mac, a chat thread from your Mac or server, or a note as an editable Google Doc, Slides deck, or Sheet. Private details are stripped first, and publishing again updates the same link.</p>
+      <h2 id="publishing-title">Publishing</h2>
+      <p>Share a note or one section. Private details are stripped first, and publishing again updates the same link or file.</p>
     </div>
-    <div class="celorga-publish-row">
-      <ul class="celorga-feature-logos celorga-feature-logos-stacked" aria-label="Publishing destinations">
-        <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-server"></use></svg>Self-hosted link</li>
-        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-drive"></use></svg>Google Drive</li>
-        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-docs"></use></svg>Google Docs</li>
-        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-slides"></use></svg>Google Slides</li>
-        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-sheets"></use></svg>Google Sheets</li>
-        <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-file"></use></svg>PDF</li>
-        <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-slides"></use></svg>Beamer slides</li>
-        <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-globe"></use></svg>Static site</li>
-      </ul>
-      <figure class="celorga-home-browser">
-        <div class="celorga-home-browserbar" aria-hidden="true"><i></i><i></i><i></i><span>Shared from Celorga</span></div>
-        <img src="assets/screenshots/home-published-page.png?v=20261012" alt="A published Celorga note as a clean web page, with its chart included and private details removed" loading="lazy" />
-      </figure>
-    </div>
+    <ul class="celorga-feature-logos celorga-feature-logos-wide" aria-label="Publishing destinations">
+      <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-server"></use></svg>Self-hosted link</li>
+      <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-drive"></use></svg>Google Drive</li>
+      <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-docs"></use></svg>Google Docs</li>
+      <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-slides"></use></svg>Google Slides</li>
+      <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-sheets"></use></svg>Google Sheets</li>
+      <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-file"></use></svg>PDF</li>
+      <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-slides"></use></svg>Beamer slides</li>
+      <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-globe"></use></svg>Static site</li>
+      <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-link"></use></svg>Shared chat threads</li>
+    </ul>
     <p class="celorga-feature-links celorga-feature-links-centered"><a href="editors-macos.html#publish-a-document">How publishing works</a></p>
   </section>
 
   <section class="celorga-feature-section" id="external-sources" aria-labelledby="external-sources-title">
     <div class="celorga-feature-heading">
-      <h2 id="external-sources-title">Plugs into what you already use</h2>
+      <h2 id="external-sources-title">Sources and sync</h2>
+    </div>
+    <div class="celorga-connect-grid celorga-connect-grid-two">
+      <article><h3>Pull in context</h3><p>Synced to local files on your schedule, reviewed before it becomes part of your notes.</p><div class="celorga-connect-logos"><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-slack"></use></svg>Slack</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-notion"></use></svg>Notion</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-mail"></use></svg>Email</span></div></article>
+      <article><h3>Sync your workspace</h3><p>Any folder sync works, across your machines or with teammates. No account.</p><div class="celorga-connect-logos"><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-icloud"></use></svg>iCloud</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-git"></use></svg>Git</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-syncthing"></use></svg>Syncthing</span></div></article>
+    </div>
+  </section>
+
+  <section class="celorga-feature-section" id="platforms" aria-labelledby="platforms-title">
+    <div class="celorga-feature-heading">
+      <h2 id="platforms-title">Apps and editors</h2>
     </div>
     <div class="celorga-connect-grid">
-      <article><h3>Pull in context</h3><p>Synced to local files on your schedule.</p><div class="celorga-connect-logos"><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-slack"></use></svg>Slack</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-notion"></use></svg>Notion</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-mail"></use></svg>Email</span></div></article>
-      <article><h3>Sync your folder</h3><p>Any folder sync works. No account.</p><div class="celorga-connect-logos"><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-icloud"></use></svg>iCloud</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-git"></use></svg>Git</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-syncthing"></use></svg>Syncthing</span></div></article>
-      <article><h3>Edit anywhere</h3><p>Language server and plugins.</p><div class="celorga-connect-logos"><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-emacs"></use></svg>Emacs</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-vim"></use></svg>Vim</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-neovim"></use></svg>Neovim</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-terminal"></use></svg>CLI</span></div></article>
-      <article><h3>Reach it from anywhere</h3><p>Phone and server over your tailnet.</p><div class="celorga-connect-logos"><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-apple"></use></svg>iPhone</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-server"></use></svg>Server</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-tailscale"></use></svg>Tailscale</span></div></article>
+      <article><h3>Mac app</h3><p>The full workspace. Apple Silicon and Intel.</p><div class="celorga-connect-logos"><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-apple"></use></svg>macOS</span></div></article>
+      <article><h3>iPhone (beta)</h3><p>Capture, agenda, approvals, and agent chats.</p><div class="celorga-connect-logos"><span><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-phone"></use></svg>iOS</span></div></article>
+      <article><h3>Headless server</h3><p>Agents and automations keep running while your laptop sleeps.</p><div class="celorga-connect-logos"><span><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-server"></use></svg>Server</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-tailscale"></use></svg>Tailscale</span></div></article>
+      <article><h3>Editors and CLI</h3><p>A language server, plugins, and a CLI on macOS and Linux.</p><div class="celorga-connect-logos"><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-emacs"></use></svg>Emacs</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-vim"></use></svg>Vim</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-neovim"></use></svg>Neovim</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-terminal"></use></svg>CLI</span></div></article>
     </div>
   </section>
 
-  <section class="celorga-feature-section" id="more" aria-labelledby="more-title">
-    <div class="celorga-feature-heading">
-      <h2 id="more-title">Also in the box</h2>
-    </div>
-    <div class="celorga-shot-cards" data-heading-anchors="off">
-      <figure id="multi-agent-chat"><img src="assets/screenshots/home-agents-room.png" alt="A shared AI room where one agent hands a redacted summary to a second agent" loading="lazy" /><figcaption><strong>Multi-agent rooms</strong>Mention several agents in one thread and let them hand off.</figcaption></figure>
-      <figure id="data-notebooks"><img src="assets/screenshots/home-data-notebook.png?v=20261012" alt="A note with charts built from saved SQL query results" loading="lazy" /><figcaption><strong>Data notebooks</strong>SQL over CSV, Parquet, DuckDB, or ClickHouse, charted in the note.</figcaption></figure>
-      <figure id="meetings-context"><img src="assets/screenshots/home-meeting-notes.png" alt="Meeting notes with decisions and TODO action items beside backlinks" loading="lazy" /><figcaption><strong>Meetings</strong>Record, transcribe locally, and turn decisions into tasks.</figcaption></figure>
-    </div>
-    <div class="celorga-feature-card-grid celorga-feature-card-grid-compact" data-heading-anchors="off">
-      <article><h3>Automations</h3><p>Scheduled agent prompts that catch up after sleep.</p></article>
-      <article><h3>Approvals on iPhone</h3><p>One decision queue on desktop and phone.</p></article>
-      <article><h3>Headless server</h3><p>Agents keep working while your laptop sleeps.</p></article>
-      <article><h3>Prose mode</h3><p>Alternatives, ghosted text, and cut passages stay recoverable.</p></article>
-      <article><h3>Projects and skills</h3><p>Shared briefs and <code>SKILL.md</code> files for every agent.</p></article>
-      <article><h3>Previewed writes</h3><p>Every agent edit is a readable diff you approve.</p></article>
-    </div>
-  </section>
+  <aside class="celorga-lineage-note" id="org-mode" aria-labelledby="org-mode-title">
+    <p class="celorga-lineage-label" id="org-mode-title">Already use Org mode?</p>
+    <p><strong>Open your existing <code>~/org</code> folder.</strong> Celorga reads ordinary <code>.org</code> files, so there's nothing to import or convert. Headings, TODOs, schedules, properties, <code>:ID:</code> links, and org-roam notes work as they are, and the same files still open in Emacs.</p>
+    <a href="celorga-vs-org-mode.html">Celorga and Org mode <span aria-hidden="true">→</span></a>
+  </aside>
 
   <section class="celorga-feature-cta" aria-labelledby="feature-cta-title">
-    <h2 id="feature-cta-title">Try it on your own folder</h2>
+    <h2 id="feature-cta-title">Get started</h2>
     <p>Free, open source, and no account. Download the Mac app, or install the CLI and MCP server on macOS or Linux.</p>
     <p class="celorga-feature-links"><a href="downloads.html">Download for Mac</a><a href="getting-started.html">Getting started</a><a href="https://github.com/aviaviavi/celorga">GitHub</a></p>
   </section>
