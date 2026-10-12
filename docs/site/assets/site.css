@@ -3166,6 +3166,10 @@ body > .celorga-footer .celorga-footer-tagline {
   scroll-margin-top: 5rem;
 }
 
+#content .celorga-home-story-reverse {
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.9fr);
+}
+
 #content .celorga-home-story-reverse .celorga-home-story-copy {
   order: 2;
 }

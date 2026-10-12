@@ -80,10 +80,10 @@ const scenarios = [
   {
     mode: "approvals",
     target: "publish the beacon launch brief",
-    width: 1400,
+    width: 1250,
     height: 700,
     scale: 2,
-    crop: { x: 350, y: 36, width: 1050, height: 384 },
+    crop: { x: 314, y: 36, width: 936, height: 630 },
     fileName: "home-agent-work.png",
   },
   {
