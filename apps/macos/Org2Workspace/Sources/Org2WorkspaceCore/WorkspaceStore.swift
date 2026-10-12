@@ -2796,6 +2796,9 @@ public final class WorkspaceStore {
   public var aiChatVoiceTranscriptionElapsedText = ""
   public var aiChatVoiceStatusText = "Dictate with local transcription."
   public var isOrgCryptConfigurationPresented = false
+  /// Plaintext shown in the temporary "View Decrypted" sheet. It lives only
+  /// in memory and is dropped when the sheet closes; the file is untouched.
+  public var orgCryptPeek: OrgCryptPeek?
   public var isDataSourceConfigurationPresented = false
   public private(set) var scarfMetabaseHasStoredAPIKey = false
   public var orgCryptEncryptOnSave = true {
@@ -2879,6 +2882,10 @@ public final class WorkspaceStore {
       scheduleSelectedEntityMetadata(for: selectedEntrySource)
       if let source = selectedEntrySource {
         updateSelectedFileDataNotebookState(for: source.file, sourceText: source.text)
+      }
+      if oldValue?.file != selectedEntrySource?.file, orgCryptPeek != nil {
+        // Peeked plaintext belongs to one document; never carry it across.
+        orgCryptPeek = nil
       }
       if oldValue?.id != selectedEntrySource?.id {
         cancelSlidePreviewRender(clearStatus: true)
@@ -11546,6 +11553,8 @@ extension WorkspaceStore {
       Task { await runOrgCrypt(.encrypt, line: block.startLine) }
     case .decrypt:
       Task { await runOrgCrypt(.decrypt, line: block.startLine) }
+    case .viewDecrypted:
+      Task { await peekOrgCrypt(line: block.startLine) }
     case .copy:
       copyRenderedEntry(block)
     case .cut:
@@ -36033,6 +36042,66 @@ extension WorkspaceStore {
 
   public func presentOrgCryptConfiguration() {
     isOrgCryptConfigurationPresented = true
+  }
+
+  /// Decrypts the armored block at `line` into a temporary sheet without
+  /// modifying the document, so nothing ever needs to be re-encrypted.
+  public func peekOrgCrypt(line explicitLine: Int? = nil) async {
+    guard let file = selectedEntrySource?.file ?? selectedLocation?.file else {
+      statusText = "Open a file before viewing encrypted text"
+      return
+    }
+    let line = explicitLine ?? selectedBlock?.startLine ?? selectedLocation?.lineForEditor ?? 1
+
+    let text: String
+    let baseLine: Int
+    if let source = selectedEntrySource,
+       source.file == file,
+       line >= source.startLine,
+       !source.isSubtree || line < source.endLineExclusive {
+      text = source.text
+      baseLine = source.startLine
+    } else if let diskText = try? String(contentsOfFile: NSString(string: file).expandingTildeInPath, encoding: .utf8) {
+      text = diskText
+      baseLine = 1
+    } else {
+      statusText = "Could not read \(relativePath(file))"
+      return
+    }
+
+    guard let target = OrgCrypt.peekTarget(in: text, line: line, baseLine: baseLine) else {
+      statusText = "No encrypted text found at \(relativePath(file)):\(line)"
+      return
+    }
+
+    let peek = OrgCryptPeek(file: file, headingLine: target.headingLine, title: target.title, state: .decrypting)
+    orgCryptPeek = peek
+    let settings = await currentOrgCryptSettingsForOperation()
+    let armor = target.armor
+    let result: Result<String, Error> = await Task.detached(priority: .userInitiated) {
+      Result { try OrgCrypt.decryptArmor(armor, settings: settings) }
+    }.value
+    // The sheet may have been closed (or replaced) while gpg was running;
+    // in that case discard the plaintext instead of resurrecting it.
+    guard orgCryptPeek?.id == peek.id else { return }
+    switch result {
+    case .success(let plaintext):
+      orgCryptPeek?.state = .decrypted(plaintext)
+    case .failure(let error):
+      orgCryptPeek?.state = .failed(error.localizedDescription)
+    }
+  }
+
+  public func dismissOrgCryptPeek() {
+    orgCryptPeek = nil
+  }
+
+  /// Escape hatch from the peek sheet for when the user really does want to
+  /// edit: the old in-file decrypt, which re-encrypts on save.
+  public func decryptPeekedSubtreeInFile() async {
+    guard let peek = orgCryptPeek else { return }
+    orgCryptPeek = nil
+    _ = await runOrgCrypt(.decrypt, line: peek.headingLine)
   }
 
   @discardableResult

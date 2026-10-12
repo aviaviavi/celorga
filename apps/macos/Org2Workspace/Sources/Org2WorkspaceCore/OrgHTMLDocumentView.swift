@@ -484,6 +484,7 @@ enum OrgHTMLRenderedEntryAction: Sendable {
   case priority(String?)
   case encrypt
   case decrypt
+  case viewDecrypted
   case copy
   case cut
   case copyReference
@@ -519,6 +520,7 @@ private enum EntryContextMenuTag: Int {
   case copyReference
   case delete
   case startWork
+  case viewDecrypted
 
   var action: OrgHTMLRenderedEntryAction? {
     switch self {
@@ -550,12 +552,13 @@ private enum EntryContextMenuTag: Int {
     case .copyReference: .copyReference
     case .delete: .delete
     case .startWork: .startWork
+    case .viewDecrypted: .viewDecrypted
     }
   }
 
   var requiresEditableSource: Bool {
     switch self {
-    case .entryView, .askAI, .copy, .copyReference:
+    case .entryView, .askAI, .copy, .copyReference, .viewDecrypted:
       false
     case .edit, .refile, .startWork,
          .scheduleToday, .scheduleTomorrow, .scheduleNextMonday, .scheduleNextMonth,
@@ -588,6 +591,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
   var activateWorkspacePane: @MainActor () -> Void = {}
   let askAIAboutHeading: @MainActor (Int) -> Void
   let performEntryAction: @MainActor (OrgHTMLRenderedEntryAction, Int) -> Void
+  var peekEncryptedText: (@MainActor (Int) -> Void)? = nil
   var allowsEntryContextMenu = true
   let reportStatus: @MainActor (String) -> Void
   var allowsCheckboxMutations = false
@@ -635,6 +639,10 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     )
     configuration.userContentController.add(
       context.coordinator,
+      name: Coordinator.encryptedPeekMessageHandlerName
+    )
+    configuration.userContentController.add(
+      context.coordinator,
       name: OrgLinkHoverPreview.messageHandlerName
     )
     configuration.userContentController.addUserScript(WKUserScript(
@@ -679,6 +687,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     coordinator.headingWorkBadges = headingWorkBadges
     coordinator.startWorkEnabled = startWorkAtHeading != nil
     coordinator.performEntryAction = performEntryAction
+    coordinator.peekEncryptedText = peekEncryptedText
     coordinator.allowsEntryContextMenu = allowsEntryContextMenu
     coordinator.reportStatus = reportStatus
     let checkboxMutationsChanged = coordinator.allowsCheckboxMutations != allowsCheckboxMutations
@@ -765,6 +774,9 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       forName: Coordinator.checkboxMessageHandlerName
     )
     webView.configuration.userContentController.removeScriptMessageHandler(
+      forName: Coordinator.encryptedPeekMessageHandlerName
+    )
+    webView.configuration.userContentController.removeScriptMessageHandler(
       forName: OrgLinkHoverPreview.messageHandlerName
     )
   }
@@ -795,6 +807,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     nonisolated static let entryContextMenuMessageHandlerName = "org2EntryContextMenu"
     nonisolated static let paneActivationMessageHandlerName = "org2PaneActivation"
     nonisolated static let checkboxMessageHandlerName = "org2CheckboxMutation"
+    nonisolated static let encryptedPeekMessageHandlerName = "org2EncryptedPeek"
     weak var webView: WKWebView?
     var renderID: String?
     var searchQuery: String?
@@ -819,6 +832,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     var headingWorkBadges: [HeadingWorkBadge] = []
     var startWorkEnabled = false
     var performEntryAction: @MainActor (OrgHTMLRenderedEntryAction, Int) -> Void = { _, _ in }
+    var peekEncryptedText: (@MainActor (Int) -> Void)?
     var allowsEntryContextMenu = true
     var entryContextMenuLine: Int?
     var reportStatus: @MainActor (String) -> Void = { _ in }
@@ -952,6 +966,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
         installEntryContextMenuHandler(in: webView)
       }
       installViewportSourceLineReporter(in: webView)
+      webView.evaluateJavaScript(Self.encryptedPeekInstallationScript)
       webView.evaluateJavaScript(OrgLinkHoverPreview.installationScript)
       applyHeadingWork(to: webView)
       applySearch(to: webView, backwards: false)
@@ -1006,6 +1021,9 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
               let y = (payload["y"] as? NSNumber)?.doubleValue
         else { return }
         presentEntryContextMenu(line: line, x: x, y: y)
+      case Self.encryptedPeekMessageHandlerName:
+        guard let line = (message.body as? NSNumber)?.intValue, line > 0 else { return }
+        peekEncryptedText?(line)
       case Self.checkboxMessageHandlerName:
         guard allowsCheckboxMutations,
               let payload = message.body as? [String: Any],
@@ -1147,8 +1165,10 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
         "Encrypt / Decrypt",
         symbol: "lock",
         items: [
+          contextMenuItem("View Decrypted", tag: .viewDecrypted),
+          .separator(),
           contextMenuItem("Encrypt", tag: .encrypt),
-          contextMenuItem("Decrypt", tag: .decrypt),
+          contextMenuItem("Decrypt in File", tag: .decrypt),
         ]
       ))
 
@@ -1317,6 +1337,31 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       webView?.evaluateJavaScript(
         "window.__org2FinishCheckboxMutation?.(\(line), \(checked), \(saved));"
       )
+    }
+
+    /// Clicking (or pressing Return/Space on) an encrypted card asks the app
+    /// to show the plaintext in a temporary sheet. The page never sees it.
+    nonisolated static var encryptedPeekInstallationScript: String {
+      """
+      (() => {
+        if (window.__org2EncryptedPeekInstalled) return;
+        window.__org2EncryptedPeekInstalled = true;
+        const peek = (event) => {
+          const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+          const card = target?.closest('.org2-encrypted[data-org2-start-line]');
+          if (!card) return;
+          const line = Number(card.dataset.org2StartLine || 0);
+          if (!line) return;
+          event.preventDefault();
+          event.stopPropagation();
+          window.webkit.messageHandlers.\(Self.encryptedPeekMessageHandlerName).postMessage(line);
+        };
+        document.addEventListener('click', peek, true);
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') peek(event);
+        }, true);
+      })();
+      """
     }
 
     nonisolated static var checkboxMutationInstallationScript: String {

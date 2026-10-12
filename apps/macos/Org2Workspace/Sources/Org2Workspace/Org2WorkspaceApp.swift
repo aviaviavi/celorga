@@ -455,7 +455,14 @@ struct Org2WorkspaceApp: App {
       }
 
       CommandMenu("Encryption") {
-        Button("Decrypt Subtree") {
+        Button("View Decrypted Subtree") {
+          Task { await store.peekOrgCrypt() }
+        }
+        .disabled(store.selectedLocation == nil && store.selectedEntrySource == nil)
+
+        Divider()
+
+        Button("Decrypt Subtree in File") {
           Task { await store.runOrgCrypt(.decrypt) }
         }
         .disabled(store.selectedLocation == nil)

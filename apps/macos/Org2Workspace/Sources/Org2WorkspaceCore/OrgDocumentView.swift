@@ -296,6 +296,13 @@ struct OrgRenderedEntryView: View, Equatable {
         await store.runOrgCrypt(.decrypt, line: line)
       }
     }()
+    let peekSubtree: (@MainActor @Sendable () -> Void)? = {
+      guard OrgCrypt.armorSummary(block.rawText) != nil else { return nil }
+      let line = block.startLine
+      return { @MainActor @Sendable in
+        let _: Task<Void, Never> = Task { await store.peekOrgCrypt(line: line) }
+      }
+    }()
 
     guard block.isEditable else {
       return RenderedBlockInlineActions(
@@ -310,7 +317,8 @@ struct OrgRenderedEntryView: View, Equatable {
         sourceBlockRunRenderSignature: "",
         sourceBlockRunState: nil,
         runSourceBlock: nil,
-        copySourceBlock: nil
+        copySourceBlock: nil,
+        peekSubtree: peekSubtree
       )
     }
     let runnableSourceLanguage: String? = {
@@ -353,7 +361,8 @@ struct OrgRenderedEntryView: View, Equatable {
       sourceBlockRunRenderSignature: WorkspaceStore.sourceBlockRunRenderSignature(for: sourceBlockRunState),
       sourceBlockRunState: sourceBlockRunState,
       runSourceBlock: runSourceBlock,
-      copySourceBlock: nil
+      copySourceBlock: nil,
+      peekSubtree: peekSubtree
     )
   }
 

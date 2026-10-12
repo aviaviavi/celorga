@@ -513,6 +513,29 @@ li > .org2-image-figure { margin-top: 0.65rem; }
 .org2-todo.todo-canceled, .org2-todo.todo-cancelled { color: var(--org2-danger); background: color-mix(in srgb, var(--org2-danger) 10%, transparent); }
 .org2-tags { display: inline-flex; flex-wrap: wrap; gap: 0.28rem; margin-left: 0.35rem; vertical-align: 0.1em; }
 .org2-tag { color: var(--org2-muted); background: var(--org2-faint); border-radius: 4px; padding: 0.08rem 0.34rem; font-size: 0.65em; font-weight: 550; }
+.org2-encrypted {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: fit-content;
+  min-width: min(22rem, 100%);
+  margin: 0.55rem 0 0.85rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--org2-rule);
+  border-radius: 10px;
+  background: var(--org2-elevated-surface);
+  box-shadow: 0 1px 2px var(--org2-shadow);
+  color: var(--org2-muted);
+  font-size: 0.86rem;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.org2-encrypted:hover, .org2-encrypted:focus-visible { border-color: color-mix(in srgb, var(--org2-accent) 45%, var(--org2-rule)); outline: none; }
+.org2-encrypted-icon { font-size: 0.95em; filter: grayscale(1); }
+.org2-encrypted-label { flex: 1; color: var(--org2-text); font-weight: 600; }
+.org2-encrypted-action { color: var(--org2-accent); font-weight: 600; }
+.org2-encrypted[aria-busy="true"] .org2-encrypted-action { opacity: 0.55; }
 .org2-planning { color: var(--org2-muted); font-family: var(--org2-font-mono); font-size: 0.82rem; font-variant-numeric: tabular-nums; }
 .org2-planning-kind { color: var(--org2-warning); font-size: 0.78em; font-weight: 700; }
 .org2-timestamp, .org2-timestamp-range { font-variant-numeric: tabular-nums; }
@@ -2710,7 +2733,7 @@ export function renderOrgDocumentToAppHtml(
   const customStyle = customCss
     ? `<style id="org2-app-user-style">\n${customCss.replace(/<\/style/gi, "<\\/style")}\n</style>`
     : "";
-  return renderOrgDocumentToHtml(doc, {
+  const rendered = renderOrgDocumentToHtml(doc, {
     title: opts.title,
     sourcePath: opts.sourcePath,
     includeDefaultStyle: false,
@@ -2735,6 +2758,71 @@ export function renderOrgDocumentToAppHtml(
     embedResolver: opts.embedResolver,
     codeFile: opts.codeFile,
   });
+  return { ...rendered, html: collapseAppPgpArmorParagraphs(rendered.html) };
+}
+
+const APP_PGP_PARAGRAPH_RE = /<p\b([^>]*)>([\s\S]*?)<\/p>/g;
+
+function appParagraphText(innerHtml: string): string {
+  return innerHtml
+    .replace(/<[^>]*>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .trim();
+}
+
+function appParagraphLine(attributes: string, name: "start" | "end"): number | null {
+  const match = new RegExp(`data-org2-${name}-line="(\\d+)"`).exec(attributes);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * The app preview shows an org-crypt armored block as one compact "Encrypted"
+ * card instead of paragraphs of base64. Clicking the card asks the host app to
+ * decrypt it into a temporary view; the card carries only source lines.
+ */
+export function collapseAppPgpArmorParagraphs(html: string): string {
+  if (!html.includes("-----BEGIN PGP MESSAGE-----")) return html;
+  const paragraphs = [...html.matchAll(APP_PGP_PARAGRAPH_RE)].map((match) => ({
+    start: match.index ?? 0,
+    end: (match.index ?? 0) + match[0].length,
+    attributes: match[1] ?? "",
+    text: appParagraphText(match[2] ?? ""),
+  }));
+
+  let out = "";
+  let cursor = 0;
+  for (let i = 0; i < paragraphs.length; i += 1) {
+    const first = paragraphs[i]!;
+    if (!/^-----BEGIN PGP MESSAGE-----(\s|$)/.test(first.text)) continue;
+    let lastIndex = -1;
+    for (let j = i; j < paragraphs.length; j += 1) {
+      const candidate = paragraphs[j]!;
+      if (j > i && html.slice(paragraphs[j - 1]!.end, candidate.start).trim() !== "") break;
+      if (/(^|\s)-----END PGP MESSAGE-----$/.test(candidate.text)) {
+        lastIndex = j;
+        break;
+      }
+    }
+    if (lastIndex < 0) continue;
+    const last = paragraphs[lastIndex]!;
+    const startLine = appParagraphLine(first.attributes, "start");
+    const endLine = appParagraphLine(last.attributes, "end") ?? startLine;
+    const lineAttributes = startLine
+      ? ` data-org2-start-line="${startLine}" data-org2-end-line="${endLine ?? startLine}"`
+      : "";
+    out += html.slice(cursor, first.start);
+    out +=
+      `<div class="org2-encrypted" role="button" tabindex="0" data-org2-encrypted="true"${lineAttributes} title="View decrypted text without changing the file">` +
+      `<span class="org2-encrypted-icon" aria-hidden="true">&#128274;</span>` +
+      `<span class="org2-encrypted-label">Encrypted</span>` +
+      `<span class="org2-encrypted-action">View</span>` +
+      `</div>`;
+    cursor = last.end;
+    i = lastIndex;
+  }
+  return out + html.slice(cursor);
 }
 
 export type OrgExportIndexItem = {

@@ -16,6 +16,29 @@ public enum OrgCryptAction: String, CaseIterable, Sendable {
   }
 }
 
+/// A temporary, in-memory view of one decrypted subtree. Never persisted.
+public struct OrgCryptPeek: Identifiable, Equatable, Sendable {
+  public enum State: Equatable, Sendable {
+    case decrypting
+    case decrypted(String)
+    case failed(String)
+  }
+
+  public let id: UUID
+  public let file: String
+  public let headingLine: Int
+  public let title: String
+  public var state: State
+
+  public init(id: UUID = UUID(), file: String, headingLine: Int, title: String, state: State) {
+    self.id = id
+    self.file = file
+    self.headingLine = headingLine
+    self.title = title
+    self.state = state
+  }
+}
+
 public struct OrgCryptRunResult: Equatable, Sendable {
   public let succeeded: Bool
   public let changed: Bool
@@ -94,6 +117,192 @@ public enum OrgCrypt {
   public struct EncryptionResult: Equatable, Sendable {
     public let text: String
     public let encryptedCount: Int
+  }
+
+  /// An armored block located for read-only viewing ("peek").
+  public struct PeekTarget: Equatable, Sendable {
+    /// 1-based line of the owning heading, or of the armor itself when the
+    /// block sits above the first heading.
+    public let headingLine: Int
+    public let title: String
+    public let armor: String
+  }
+
+  /// Locates the armored PGP block that a click or command at `line` refers
+  /// to. A line inside an armored block selects that block; otherwise the
+  /// first block in the subtree of the nearest heading at or above `line` is
+  /// used, matching `celorga crypt decrypt --line`.
+  public static func peekTarget(in text: String, line: Int, baseLine: Int = 1) -> PeekTarget? {
+    let lines = normalizedLines(text)
+    guard !lines.isEmpty else { return nil }
+    let index = min(max(line - baseLine, 0), lines.count - 1)
+
+    let headingIndex = (0...index).reversed().first { lineIsHeading(lines[$0]) }
+    let title = headingIndex.map { headingTitle(lines[$0]) } ?? "Encrypted text"
+
+    if let block = enclosingPGPBlock(lines: lines, index: index) {
+      return PeekTarget(
+        headingLine: (headingIndex ?? block.lowerBound) + baseLine,
+        title: title,
+        armor: lines[block].joined(separator: "\n") + "\n"
+      )
+    }
+
+    guard let headingIndex else { return nil }
+    let endLine = subtreeEndLine(lines: lines, headingLine: headingIndex)
+    var start: Int?
+    for candidate in (headingIndex + 1)..<max(headingIndex + 1, endLine) {
+      if start == nil, isPGPBegin(lines[candidate]) {
+        start = candidate
+      } else if let begin = start, isPGPEnd(lines[candidate]) {
+        return PeekTarget(
+          headingLine: headingIndex + baseLine,
+          title: title,
+          armor: lines[begin...candidate].joined(separator: "\n") + "\n"
+        )
+      }
+    }
+    return nil
+  }
+
+  /// Decrypts armored text entirely in memory. The plaintext is never written
+  /// to disk or to the document; callers own its lifetime.
+  public static func decryptArmor(_ armor: String, settings: OrgCryptSettings) throws -> String {
+    var arguments = [settings.gpgProgram, "--yes", "--trust-model", "always"]
+    if let passphrase = settings.passphrase {
+      arguments = [settings.gpgProgram, "--batch", "--yes", "--trust-model", "always", "--pinentry-mode", "loopback", "--passphrase", passphrase]
+    }
+    arguments.append("--decrypt")
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = arguments
+    process.environment = Org2CLI.processEnvironment()
+    let stdin = Pipe()
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardInput = stdin
+    process.standardOutput = stdout
+    process.standardError = stderr
+
+    let finished = DispatchSemaphore(value: 0)
+    process.terminationHandler = { _ in finished.signal() }
+
+    let outputCapture = PipeCapture()
+    let errorCapture = PipeCapture()
+    let readers = DispatchGroup()
+    for (handle, capture) in [(stdout.fileHandleForReading, outputCapture), (stderr.fileHandleForReading, errorCapture)] {
+      readers.enter()
+      DispatchQueue.global(qos: .userInitiated).async {
+        capture.set(handle.readDataToEndOfFile())
+        readers.leave()
+      }
+    }
+
+    do {
+      try process.run()
+    } catch {
+      throw OrgCryptError.decryptFailed(error.localizedDescription)
+    }
+    let input = Data(normalizedArmorForDecrypt(armor).utf8)
+    DispatchQueue.global(qos: .userInitiated).async {
+      try? stdin.fileHandleForWriting.write(contentsOf: input)
+      try? stdin.fileHandleForWriting.close()
+    }
+
+    // Without a stored passphrase gpg-agent may show pinentry; give the user
+    // time to type it.
+    let timeout = settings.passphrase == nil ? max(settings.gpgTimeout, 120) : settings.gpgTimeout
+    if finished.wait(timeout: .now() + .milliseconds(Int(timeout * 1000))) == .timedOut {
+      if process.isRunning { process.terminate() }
+      _ = finished.wait(timeout: .now() + .seconds(2))
+      _ = readers.wait(timeout: .now() + .seconds(2))
+      throw OrgCryptError.decryptTimedOut(timeout)
+    }
+    _ = readers.wait(timeout: .now() + .seconds(5))
+
+    let output = outputCapture.data
+    let errorOutput = errorCapture.data
+    guard process.terminationStatus == 0 else {
+      let message = String(decoding: errorOutput, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+      throw OrgCryptError.decryptFailed(message.isEmpty ? "gpg exited with status \(process.terminationStatus)" : message)
+    }
+    return String(decoding: output, as: UTF8.self)
+  }
+
+  /// Mirrors `normalizePgpArmorForDecrypt` in src/pgp.ts: Org formatting can
+  /// drop the blank line gpg requires after the BEGIN line and armor headers.
+  static func normalizedArmorForDecrypt(_ raw: String) -> String {
+    let lines = normalizedLines(raw)
+    var output: [String] = []
+    var index = 0
+    while index < lines.count {
+      let line = lines[index]
+      output.append(line)
+      index += 1
+      guard isPGPBegin(line) else { continue }
+      let next = index < lines.count ? lines[index] : ""
+      if next.trimmingCharacters(in: .whitespaces).isEmpty || isPGPEnd(next) { continue }
+      if isArmorHeader(next) {
+        var cursor = index
+        while cursor < lines.count, isArmorHeader(lines[cursor]) {
+          output.append(lines[cursor])
+          cursor += 1
+        }
+        index = cursor
+        if cursor < lines.count, !lines[cursor].trimmingCharacters(in: .whitespaces).isEmpty {
+          output.append("")
+        }
+        continue
+      }
+      output.append("")
+    }
+    return output.joined(separator: "\n")
+  }
+
+  private final class PipeCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = Data()
+
+    var data: Data {
+      lock.lock()
+      defer { lock.unlock() }
+      return stored
+    }
+
+    func set(_ data: Data) {
+      lock.lock()
+      stored = data
+      lock.unlock()
+    }
+  }
+
+  private static func isArmorHeader(_ line: String) -> Bool {
+    line.range(of: #"^[A-Za-z0-9-]+:\s*"#, options: .regularExpression) != nil
+  }
+
+  private static func enclosingPGPBlock(lines: [String], index: Int) -> ClosedRange<Int>? {
+    var begin: Int?
+    for candidate in stride(from: index, through: 0, by: -1) {
+      if isPGPBegin(lines[candidate]) { begin = candidate; break }
+      if candidate != index, isPGPEnd(lines[candidate]) || lineIsHeading(lines[candidate]) { return nil }
+      if candidate == index, lineIsHeading(lines[candidate]) { return nil }
+    }
+    guard let begin else { return nil }
+    for candidate in max(begin + 1, index)..<lines.count {
+      if isPGPEnd(lines[candidate]) { return begin...candidate }
+      if lineIsHeading(lines[candidate]) { return nil }
+    }
+    return nil
+  }
+
+  private static func headingTitle(_ line: String) -> String {
+    var title = line.replacingOccurrences(of: #"^\*+\s+"#, with: "", options: .regularExpression)
+    title = title.replacingOccurrences(of: #"\s+:[\w@#%:]+:\s*$"#, with: "", options: .regularExpression)
+    title = title.replacingOccurrences(of: #"\[\[[^\]]*\]\[([^\]]*)\]\]"#, with: "$1", options: .regularExpression)
+    title = title.replacingOccurrences(of: #"\[\[([^\]]*)\]\]"#, with: "$1", options: .regularExpression)
+    let trimmed = title.trimmingCharacters(in: .whitespaces)
+    return trimmed.isEmpty ? "Encrypted subtree" : trimmed
   }
 
   public static func findPlaintextCryptSubtrees(in text: String, file: String? = nil) -> [PlaintextTarget] {
@@ -487,9 +696,15 @@ public enum OrgCryptError: LocalizedError, Equatable {
   case missingEncryptionConfiguration
   case gpgFailed(String)
   case gpgTimedOut(TimeInterval, String?)
+  case decryptFailed(String)
+  case decryptTimedOut(TimeInterval)
 
   public var errorDescription: String? {
     switch self {
+    case .decryptFailed(let message):
+      "Decryption failed: \(message)"
+    case .decryptTimedOut(let timeout):
+      "Decryption timed out after \(Int(timeout)) seconds."
     case .missingEncryptionConfiguration:
       "Encryption needs a passphrase, the default GPG key option, configured recipients, recipient files, or CRYPT_RECIPIENT properties."
     case .gpgFailed(let message):

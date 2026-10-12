@@ -119,7 +119,7 @@ struct RenderedBlockView: View, Equatable {
     case .paragraph(let text):
       let paragraphText = rawText ?? text
       if let summary = OrgCrypt.armorSummary(paragraphText) {
-        RenderedEncryptedBlockView(summary: summary, decrypt: inlineActions.decryptSubtree)
+        RenderedEncryptedBlockView(summary: summary, peek: inlineActions.peekSubtree, decrypt: inlineActions.decryptSubtree)
       } else if let attachment = RenderedInlineMediaPresentation.standalone(
         raw: paragraphText,
         sourceFile: sourceFile,
@@ -545,6 +545,8 @@ struct RenderedBlockInlineActions: Sendable {
   let sourceBlockRunState: SourceBlockRunState?
   let runSourceBlock: (@MainActor @Sendable () -> Void)?
   let copySourceBlock: (@MainActor @Sendable ([String]) -> Bool)?
+  /// Shows the plaintext in a temporary sheet without modifying the file.
+  var peekSubtree: (@MainActor @Sendable () -> Void)? = nil
 
   var canCopySourceBlock: Bool { copySourceBlock != nil }
 
@@ -644,32 +646,42 @@ private struct OrgMediaAttachmentView: View {
 
 private struct RenderedEncryptedBlockView: View {
   let summary: OrgCrypt.PGPArmorSummary
+  let peek: (@MainActor @Sendable () -> Void)?
   let decrypt: (@MainActor @Sendable () async -> OrgCryptRunResult)?
   @State private var isDecrypting = false
   @State private var failureText: String?
 
   var body: some View {
-    if let decrypt {
+    if let peek {
       Button {
-        guard !isDecrypting else { return }
-        isDecrypting = true
-        failureText = nil
-        Task {
-          let result = await decrypt()
-          await MainActor.run {
-            isDecrypting = false
-            failureText = result.succeeded ? nil : result.message
-          }
-        }
+        peek()
       } label: {
         cardContent
       }
       .buttonStyle(.plain)
       .disabled(isDecrypting)
-      .help("Decrypt this subtree to edit the plaintext.")
+      .help("View the decrypted text. The file stays encrypted.")
+      .contextMenu {
+        Button("View Decrypted") { peek() }
+        if decrypt != nil {
+          Button("Decrypt in File to Edit") { decryptInFile() }
+        }
+      }
     } else {
       cardContent
-        .help("Decrypt this subtree to edit the plaintext.")
+    }
+  }
+
+  private func decryptInFile() {
+    guard let decrypt, !isDecrypting else { return }
+    isDecrypting = true
+    failureText = nil
+    Task {
+      let result = await decrypt()
+      await MainActor.run {
+        isDecrypting = false
+        failureText = result.succeeded ? nil : result.message
+      }
     }
   }
 
@@ -688,7 +700,7 @@ private struct RenderedEncryptedBlockView: View {
 
         Spacer(minLength: 0)
 
-        Label(isDecrypting ? "Decrypting..." : "Decrypt", systemImage: isDecrypting ? "hourglass" : "lock.open")
+        Label(isDecrypting ? "Decrypting..." : "View", systemImage: isDecrypting ? "hourglass" : "eye")
           .font(.caption.weight(.medium))
           .padding(.vertical, 3)
           .padding(.horizontal, 8)
@@ -697,7 +709,7 @@ private struct RenderedEncryptedBlockView: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
               .stroke(WorkspaceDesign.hairline)
           )
-          .opacity(decrypt == nil ? 0 : 1)
+          .opacity(peek == nil ? 0 : 1)
       }
 
       if let failureText, !failureText.isEmpty {

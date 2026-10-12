@@ -473,4 +473,30 @@ assert.match(chartPublished.html, /<figure class="org2-chart org2-chart-compact 
 assert.match(chartPublished.html, /<path class="org2-chart-line" /);
 assert.doesNotMatch(chartPublished.html, /language-chart/);
 
+// Org-crypt armor renders as one clickable "Encrypted" card carrying the
+// armor's source lines, never as paragraphs of base64.
+{
+  const source = `* Secret :crypt:
+
+-----BEGIN PGP MESSAGE-----
+
+jA0EBwMCoymOa9ieLSDp0sAt+/abc=
+def/ghi+jkl
+=IEJp
+-----END PGP MESSAGE-----
+
+* Public
+-----BEGIN PGP MESSAGE-----
+never closed
+`;
+  const html = renderOrgDocumentToAppHtml(parseOrgToCanonicalAst(source, { sourceRanges: true, sourceLineOffset: 4 })).html;
+  assert.match(html, /<div class="org2-encrypted" role="button" tabindex="0" data-org2-encrypted="true" data-org2-start-line="7" data-org2-end-line="12"/);
+  assert.equal((html.match(/class="org2-encrypted"/g) || []).length, 1);
+  assert.doesNotMatch(html, /jA0EBwMCoymOa9ieLSDp0sAt/);
+  assert.match(html, /never closed/, "an unterminated armor block stays visible");
+  assert.match(html, /\.org2-encrypted \{/);
+  const plain = renderOrgDocumentToAppHtml(parseOrgToCanonicalAst("Plain text.\n", { sourceRanges: true })).html;
+  assert.doesNotMatch(plain, /<div class="org2-encrypted"/);
+}
+
 console.log("app HTML renderer tests: ok");

@@ -169,6 +169,10 @@ public struct ContentView: View {
         OrgCryptConfigurationSheet()
           .environment(store)
       }
+      .sheet(item: $store.orgCryptPeek) { peek in
+        OrgCryptPeekSheet(peek: peek)
+          .environment(store)
+      }
       .sheet(isPresented: $store.isLaunchGuidePresented) {
         OpenOrgLaunchGuideView()
           .environment(store)
@@ -13568,6 +13572,7 @@ private struct OrgRenderedDocumentPreview: View {
             activateWorkspacePane: { store.activateWorkspacePane(.detail) },
             askAIAboutHeading: { store.askAIChatAboutSourceHeading(at: $0) },
             performEntryAction: { store.performRenderedEntryAction($0, at: $1) },
+            peekEncryptedText: { line in Task { await store.peekOrgCrypt(line: line) } },
             reportStatus: { store.statusText = $0 },
             allowsCheckboxMutations: source.isEditable,
             setCheckboxState: { line, checked in
@@ -14557,6 +14562,7 @@ private struct OrgSourceEditorWithLinkTools: View {
             activateWorkspacePane: { store.activateWorkspacePane(.detail) },
             askAIAboutHeading: { store.askAIChatAboutSourceHeading(at: $0) },
             performEntryAction: { _, _ in },
+            peekEncryptedText: { line in Task { await store.peekOrgCrypt(line: line) } },
             allowsEntryContextMenu: false,
             reportStatus: { store.statusText = $0 },
             reportViewportSourceLine: { store.recordDocumentViewportSourceLine($0, for: source) }
