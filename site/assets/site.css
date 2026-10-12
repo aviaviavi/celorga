@@ -4238,3 +4238,312 @@ html {
     min-height: 5.4rem;
   }
 }
+
+/* Features page: visual-first blocks (Org folder diagram, chips, logo grids,
+   screenshot cards). Reuses the homepage logo sprite and tokens. */
+@media (min-width: 921px) {
+  #content .celorga-features-page .celorga-feature-story {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
+    gap: clamp(1.75rem, 4vw, 3.5rem);
+    align-items: center;
+    max-width: 70rem;
+  }
+
+  #content .celorga-features-page .celorga-feature-story-reverse {
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.9fr);
+  }
+
+  #content .celorga-features-page .celorga-feature-story-reverse .celorga-feature-copy {
+    order: 2;
+  }
+}
+
+#content .celorga-org-flow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 1rem;
+  align-items: center;
+  padding: clamp(1rem, 2.5vw, 1.6rem);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-small);
+}
+
+#content .celorga-org-flow-folder {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+}
+
+#content .celorga-org-flow-folder p {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.55rem;
+  color: var(--fg);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+#content .celorga-org-flow-folder ul {
+  margin: 0;
+  padding: 0 0 0 0.6rem;
+  border-left: 1px solid var(--border-strong);
+  list-style: none;
+}
+
+#content .celorga-org-flow-folder li {
+  margin: 0.2rem 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#content .celorga-org-flow-folder > span {
+  display: block;
+  margin-top: 0.65rem;
+  color: var(--signal);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+#content .celorga-org-flow-arrow {
+  color: var(--link);
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+#content .celorga-org-flow-gets {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#content .celorga-org-flow-gets li,
+#content .celorga-feature-logos li {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+#content .celorga-org-flow-gets svg.celorga-logo,
+#content .celorga-feature-logos svg.celorga-logo {
+  width: 1.3rem;
+  height: 1.3rem;
+  color: var(--fg);
+}
+
+#content .celorga-feature-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+#content .celorga-feature-copy .celorga-feature-chips li {
+  margin: 0;
+  padding: 0.28rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--fg);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+#content .celorga-feature-logos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.45rem;
+  margin: 1.1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+#content .celorga-feature-copy .celorga-feature-logos li {
+  color: var(--fg);
+  font-size: 0.8rem;
+}
+
+#content .celorga-feature-logos use[href="#logo-google-docs"] { color: #4285f4; }
+#content .celorga-feature-logos use[href="#logo-google-slides"] { color: #f4b400; }
+#content .celorga-feature-logos use[href="#logo-google-sheets"] { color: #0f9d58; }
+#content .celorga-feature-logos use[href="#logo-google-drive"] { color: #1fa463; }
+
+#content .celorga-publish-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.4fr);
+  gap: clamp(1rem, 3vw, 2rem);
+  align-items: center;
+}
+
+#content .celorga-feature-logos-stacked {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+#content .celorga-feature-logos-stacked li {
+  padding: 0.75rem 0.8rem;
+  font-size: 0.88rem;
+}
+
+#content .celorga-feature-logos-stacked svg.celorga-logo {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+
+#content .celorga-publish-row .celorga-home-browser {
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
+}
+
+#content .celorga-publish-row .celorga-home-browser img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+#content .celorga-connect-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+#content .celorga-connect-grid article,
+#content .celorga-shot-cards figure {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: var(--shadow-small);
+}
+
+#content .celorga-connect-grid article {
+  padding: 1.1rem;
+}
+
+#content .celorga-connect-grid h3 {
+  margin: 0 0 0.3rem;
+  font-size: 1rem;
+}
+
+#content .celorga-connect-grid p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+#content .celorga-connect-logos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+
+#content .celorga-connect-logos span {
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+#content .celorga-connect-logos svg.celorga-logo {
+  width: 1.9rem;
+  height: 1.9rem;
+  color: var(--fg);
+}
+
+#content .celorga-shot-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.9rem;
+  margin-bottom: 0.9rem;
+}
+
+#content .celorga-shot-cards figure {
+  overflow: hidden;
+}
+
+#content .celorga-shot-cards img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  object-position: top left;
+  border-bottom: 1px solid var(--border);
+}
+
+#content .celorga-shot-cards figcaption {
+  padding: 0.85rem 1rem 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+#content .celorga-shot-cards figcaption strong {
+  display: block;
+  margin-bottom: 0.2rem;
+  color: var(--fg);
+  font-size: 1rem;
+}
+
+#content .celorga-feature-card-grid-compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#content .celorga-feature-card-grid-compact article p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+@media (max-width: 900px) {
+  #content .celorga-connect-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #content .celorga-publish-row,
+  #content .celorga-shot-cards,
+  #content .celorga-feature-card-grid-compact {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 559px) {
+  #content .celorga-org-flow,
+  #content .celorga-connect-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #content .celorga-org-flow-arrow {
+    justify-self: center;
+    transform: rotate(90deg);
+  }
+
+  #content .celorga-feature-logos {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

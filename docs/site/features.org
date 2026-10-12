@@ -1,190 +1,185 @@
 #+TITLE: Celorga features
+#+SUBTITLE: Turn the Org folder you already have into a workspace for you and your agents: a real Org editor, an agenda that just works, and agents that read, cite, and update the same plain-text files.
 
 #+BEGIN_EXPORT html
+<svg class="celorga-logo-sprite" width="0" height="0" aria-hidden="true" focusable="false"><defs><linearGradient gradientUnits="userSpaceOnUse" id="celorga-logo-codex" x1="12" x2="12" y1="3" y2="21"><stop stop-color="#B1A7FF"></stop><stop offset=".5" stop-color="#7A9DFF"></stop><stop offset="1" stop-color="#3941FF"></stop></linearGradient><linearGradient gradientUnits="userSpaceOnUse" id="celorga-logo-open-claw-0" x1="-.659" x2="27.023" y1=".458" y2="22.855"><stop stop-color="#FF4D4D"></stop><stop offset="1" stop-color="#991B1B"></stop></linearGradient><linearGradient gradientUnits="userSpaceOnUse" id="celorga-logo-open-claw-1" x1="0" x2="4.311" y1="9.672" y2="14.949"><stop stop-color="#FF4D4D"></stop><stop offset="1" stop-color="#991B1B"></stop></linearGradient><linearGradient gradientUnits="userSpaceOnUse" id="celorga-logo-open-claw-2" x1="19.385" x2="24.399" y1="9.953" y2="14.462"><stop stop-color="#FF4D4D"></stop><stop offset="1" stop-color="#991B1B"></stop></linearGradient></defs>
+<symbol id="logo-claude-code" viewBox="0 0 24 24"><path clip-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z" fill="#D97757" fill-rule="evenodd"></path></symbol>
+<symbol id="logo-codex" viewBox="0 0 24 24"><path d="M19.503 0H4.496A4.496 4.496 0 000 4.496v15.007A4.496 4.496 0 004.496 24h15.007A4.496 4.496 0 0024 19.503V4.496A4.496 4.496 0 0019.503 0z" fill="#fff"></path><path d="M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z" fill="url(#celorga-logo-codex)"></path></symbol>
+<symbol id="logo-opencode" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><path d="M16 6H8v12h8V6zm4 16H4V2h16v20z"></path></symbol>
+<symbol id="logo-pi" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><path clip-rule="evenodd" d="M1 1h16.5v11H12v5.5H6.5V23H1V1zm5.5 5.5V12H12V6.5H6.5z"></path><path d="M17.5 12H23v11h-5.5V12z"></path></symbol>
+<symbol id="logo-openclaw" viewBox="0 0 24 24"><path d="M12 2.568c-6.33 0-9.495 5.275-9.495 9.495 0 4.22 3.165 8.44 6.33 9.494v2.11h2.11v-2.11s1.055.422 2.11 0v2.11h2.11v-2.11c3.165-1.055 6.33-5.274 6.33-9.494S18.33 2.568 12 2.568z" fill="url(#celorga-logo-open-claw-0)"></path><path d="M3.56 9.953C.396 8.898-.66 11.008.396 13.118c1.055 2.11 3.164 1.055 4.22-1.055.632-1.477 0-2.11-1.056-2.11z" fill="url(#celorga-logo-open-claw-1)"></path><path d="M20.44 9.953c3.164-1.055 4.22 1.055 3.164 3.165-1.055 2.11-3.164 1.055-4.22-1.055-.632-1.477 0-2.11 1.056-2.11z" fill="url(#celorga-logo-open-claw-2)"></path><path d="M5.507 1.875c.476-.285 1.036-.233 1.615.037.577.27 1.223.774 1.937 1.488a.316.316 0 01-.447.447c-.693-.693-1.279-1.138-1.757-1.361-.475-.222-.795-.205-1.022-.069a.317.317 0 01-.326-.542zM16.877 1.913c.58-.27 1.14-.323 1.616-.038a.317.317 0 01-.326.542c-.227-.136-.547-.153-1.022.069-.478.223-1.064.668-1.756 1.361a.316.316 0 11-.448-.447c.714-.714 1.36-1.218 1.936-1.487z" fill="#FF4D4D"></path><path d="M8.835 9.109a1.266 1.266 0 100-2.532 1.266 1.266 0 000 2.532zM15.165 9.109a1.266 1.266 0 100-2.532 1.266 1.266 0 000 2.532z" fill="#050810"></path><path d="M9.046 8.16a.527.527 0 100-1.056.527.527 0 000 1.055zM15.376 8.16a.527.527 0 100-1.055.527.527 0 000 1.054z" fill="#00E5CC"></path></symbol>
+<symbol id="logo-ollama" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><path d="M7.905 1.09c.216.085.411.225.588.41.295.306.544.744.734 1.263.191.522.315 1.1.362 1.68a5.054 5.054 0 012.049-.636l.051-.004c.87-.07 1.73.087 2.48.474.101.053.2.11.297.17.05-.569.172-1.134.36-1.644.19-.52.439-.957.733-1.264a1.67 1.67 0 01.589-.41c.257-.1.53-.118.796-.042.401.114.745.368 1.016.737.248.337.434.769.561 1.287.23.934.27 2.163.115 3.645l.053.04.026.019c.757.576 1.284 1.397 1.563 2.35.435 1.487.216 3.155-.534 4.088l-.018.021.002.003c.417.762.67 1.567.724 2.4l.002.03c.064 1.065-.2 2.137-.814 3.19l-.007.01.01.024c.472 1.157.62 2.322.438 3.486l-.006.039a.651.651 0 01-.747.536.648.648 0 01-.54-.742c.167-1.033.01-2.069-.48-3.123a.643.643 0 01.04-.617l.004-.006c.604-.924.854-1.83.8-2.72-.046-.779-.325-1.544-.8-2.273a.644.644 0 01.18-.886l.009-.006c.243-.159.467-.565.58-1.12a4.229 4.229 0 00-.095-1.974c-.205-.7-.58-1.284-1.105-1.683-.595-.454-1.383-.673-2.38-.61a.653.653 0 01-.632-.371c-.314-.665-.772-1.141-1.343-1.436a3.288 3.288 0 00-1.772-.332c-1.245.099-2.343.801-2.67 1.686a.652.652 0 01-.61.425c-1.067.002-1.893.252-2.497.703-.522.39-.878.935-1.066 1.588a4.07 4.07 0 00-.068 1.886c.112.558.331 1.02.582 1.269l.008.007c.212.207.257.53.109.785-.36.622-.629 1.549-.673 2.44-.05 1.018.186 1.902.719 2.536l.016.019a.643.643 0 01.095.69c-.576 1.236-.753 2.252-.562 3.052a.652.652 0 01-1.269.298c-.243-1.018-.078-2.184.473-3.498l.014-.035-.008-.012a4.339 4.339 0 01-.598-1.309l-.005-.019a5.764 5.764 0 01-.177-1.785c.044-.91.278-1.842.622-2.59l.012-.026-.002-.002c-.293-.418-.51-.953-.63-1.545l-.005-.024a5.352 5.352 0 01.093-2.49c.262-.915.777-1.701 1.536-2.269.06-.045.123-.09.186-.132-.159-1.493-.119-2.73.112-3.67.127-.518.314-.95.562-1.287.27-.368.614-.622 1.015-.737.266-.076.54-.059.797.042zm4.116 9.09c.936 0 1.8.313 2.446.855.63.527 1.005 1.235 1.005 1.94 0 .888-.406 1.58-1.133 2.022-.62.375-1.451.557-2.403.557-1.009 0-1.871-.259-2.493-.734-.617-.47-.963-1.13-.963-1.845 0-.707.398-1.417 1.056-1.946.668-.537 1.55-.849 2.485-.849zm0 .896a3.07 3.07 0 00-1.916.65c-.461.37-.722.835-.722 1.25 0 .428.21.829.61 1.134.455.347 1.124.548 1.943.548.799 0 1.473-.147 1.932-.426.463-.28.7-.686.7-1.257 0-.423-.246-.89-.683-1.256-.484-.405-1.14-.643-1.864-.643zm.662 1.21l.004.004c.12.151.095.37-.056.49l-.292.23v.446a.375.375 0 01-.376.373.375.375 0 01-.376-.373v-.46l-.271-.218a.347.347 0 01-.052-.49.353.353 0 01.494-.051l.215.172.22-.174a.353.353 0 01.49.051zm-5.04-1.919c.478 0 .867.39.867.871a.87.87 0 01-.868.871.87.87 0 01-.867-.87.87.87 0 01.867-.872zm8.706 0c.48 0 .868.39.868.871a.87.87 0 01-.868.871.87.87 0 01-.867-.87.87.87 0 01.867-.872zM7.44 2.3l-.003.002a.659.659 0 00-.285.238l-.005.006c-.138.189-.258.467-.348.832-.17.692-.216 1.631-.124 2.782.43-.128.899-.208 1.404-.237l.01-.001.019-.034c.046-.082.095-.161.148-.239.123-.771.022-1.692-.253-2.444-.134-.364-.297-.65-.453-.813a.628.628 0 00-.107-.09L7.44 2.3zm9.174.04l-.002.001a.628.628 0 00-.107.09c-.156.163-.32.45-.453.814-.29.794-.387 1.776-.23 2.572l.058.097.008.014h.03a5.184 5.184 0 011.466.212c.086-1.124.038-2.043-.128-2.722-.09-.365-.21-.643-.349-.832l-.004-.006a.659.659 0 00-.285-.239h-.004z"></path></symbol>
+<symbol id="logo-anthropic" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><path d="M13.827 3.52h3.603L24 20h-3.603l-6.57-16.48zm-7.258 0h3.767L16.906 20h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm4.132 9.959L8.453 7.687 6.205 13.48H10.7z"></path></symbol>
+<symbol id="logo-openrouter" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><path d="M18.654 3.87a5.087 5.087 0 110 10.174L23.7 19.09c.64.641.187 1.737-.72 1.737H8.48a8.479 8.479 0 010-16.958h10.175zM8.479 7.26a5.087 5.087 0 100 10.176 5.087 5.087 0 000-10.175z"></path></symbol>
+<symbol id="logo-openai" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><path d="M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z"></path></symbol>
+<symbol id="logo-icloud" viewBox="0 0 24 24" fill="currentColor"><path d="M13.762 4.29a6.51 6.51 0 0 0-5.669 3.332 3.571 3.571 0 0 0-1.558-.36 3.571 3.571 0 0 0-3.516 3A4.918 4.918 0 0 0 0 14.796a4.918 4.918 0 0 0 4.92 4.914 4.93 4.93 0 0 0 .617-.045h14.42c2.305-.272 4.041-2.258 4.043-4.589v-.009a4.594 4.594 0 0 0-3.727-4.508 6.51 6.51 0 0 0-6.511-6.27z"/></symbol>
+<symbol id="logo-git" viewBox="0 0 24 24" fill="currentColor"><path d="M13.09 23.549a1.54 1.54 0 0 1-2.18 0L.451 13.089a1.54 1.54 0 0 1 0-2.179l7.191-7.19 2.733 2.733a1.85 1.85 0 0 0 .964 2.326v6.66a1.849 1.849 0 1 0 1.54 0V8.957l2.508 2.508a1.85 1.85 0 1 0 1.09-1.09l-2.634-2.634a1.85 1.85 0 0 0-2.378-2.377L8.73 2.63 10.91.451a1.54 1.54 0 0 1 2.179 0l10.459 10.46a1.54 1.54 0 0 1 0 2.179z"/></symbol>
+<symbol id="logo-syncthing" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm0 2.412c3.115 0 5.885 1.5 7.629 3.815a1.834 1.834 0 0 1 1.564 3.162c.23.818.354 1.68.354 2.57a9.504 9.504 0 0 1-2.166 6.05c.128.281.189.595.162.92a1.854 1.854 0 0 1-2.004 1.678 1.86 1.86 0 0 1-.877-.322A9.486 9.486 0 0 1 12 21.505c-3.84 0-7.154-2.277-8.668-5.552-.3-.01-.601-.092-.879-.254-.858-.51-1.144-1.634-.633-2.513.164-.276.39-.493.653-.643a9.62 9.62 0 0 1-.02-.584c0-5.265 4.282-9.547 9.547-9.547zm0 1.227a8.311 8.311 0 0 0-8.31 8.683c.22.036.439.111.644.23.323.2.564.484.713.805l6.984-.644a1.78 1.78 0 0 1 .787-1.08c.288-.19.612-.286.936-.295.34-.01.68.08.978.254l3.51-2.914a1.82 1.82 0 0 1 .317-1.84A8.3 8.3 0 0 0 12 3.638zm7.027 5.98-3.502 2.91a1.829 1.829 0 0 1-.23 1.719l1.904 2.744c.212-.06.436-.085.668-.066.238.024.46.092.66.193a8.285 8.285 0 0 0 1.793-5.16 8.38 8.38 0 0 0-.265-2.092 1.835 1.835 0 0 1-1.028-.248zm-6.886 4.315-6.975.644a1.8 1.8 0 0 1-.66 1.004A8.312 8.312 0 0 0 12 20.279a8.294 8.294 0 0 0 3.938-.986 1.845 1.845 0 0 1-.075-.69c.028-.341.148-.65.332-.908L14.29 14.95a1.839 1.839 0 0 1-2.148-1.015z"/></symbol>
+<symbol id="logo-vim" viewBox="0 0 24 24" fill="currentColor"><path d="M24 11.986h-.027l-4.318-4.318 4.303-4.414V1.461l-.649-.648h-8.198l-.66.605v1.045L12.015.027V0L12 .014 11.986 0v.027l-1.29 1.291-.538-.539H2.035l-.638.692v1.885l.616.616h.72v5.31L.027 11.987H0L.014 12 0 12.014h.027l2.706 2.706v6.467l.907.523h2.322l1.857-1.904 4.166 4.166V24l.015-.014.014.014v-.028l2.51-2.509h.485c.111 0 .211-.07.25-.179l.146-.426c.028-.084.012-.172-.037-.239l1.462-1.462-.612 1.962c-.043.141.036.289.177.332.025.008.052.012.078.012h1.824c.106-.001.201-.064.243-.163l.165-.394c.025-.065.024-.138-.004-.203-.027-.065-.08-.116-.146-.142-.029-.012-.062-.019-.097-.02h-.075l.84-2.644h1.232l-1.016 3.221c-.043.141.036.289.176.332.025.008.052.012.079.012h2.002c.11 0 .207-.066.248-.17l.164-.428c.051-.138-.021-.29-.158-.341-.029-.011-.06-.017-.091-.017h-.145l1.131-3.673c.027-.082.012-.173-.039-.24l-.375-.504-.003-.005c-.051-.064-.127-.102-.209-.102h-1.436c-.071 0-.141.03-.19.081l-.4.439h-.624l-.042-.046 4.445-4.445H24L23.986 12l.014-.014zM9.838 21.139l1.579-4.509h-.501l.297-.304h1.659l-1.563 4.555h.623l-.079.258H9.838zm3.695-7.516l.15.151-.269.922-.225.226h-.969l-.181-.181.311-.871.288-.247h.895zM5.59 20.829H3.877l-.262-.15V3.091H2.379l-.1-.1V1.815l.143-.154h7.371l.213.214v1.108l-.142.173H8.785v8.688l8.807-8.688h-2.086l-.175-.188V1.805l.121-.111h7.49l.132.133v1.07L12.979 13.25h-.373c-.015-.001-.028 0-.042.001l-.02.003c-.045.01-.086.03-.119.06l-.343.295-.004.003c-.033.031-.059.069-.073.111l-.296.83-6.119 6.276zm14.768-3.952l.474-.519h1.334l.309.415-1.265 4.107h.493l-.08.209H19.84l1.124-3.564h-2.015l-1.077 3.391h.424l-.073.174h-1.605l1.107-3.548h-2.096l-1.062 3.339h.436l-.072.209H13.27l1.514-4.46H14.198l.091-.271h1.65l.519.537h.906l.491-.554h1.061l.489.535h.953z"/></symbol>
+<symbol id="logo-neovim" viewBox="0 0 24 24" fill="currentColor"><path d="M2.214 4.954v13.615L7.655 24V10.314L3.312 3.845 2.214 4.954zm4.999 17.98l-4.557-4.548V5.136l.59-.596 3.967 5.908v12.485zm14.573-4.457l-.862.937-4.24-6.376V0l5.068 5.092.034 13.385zM7.431.001l12.998 19.835-3.637 3.637L3.787 3.683 7.43 0z"/></symbol>
+<symbol id="logo-emacs" viewBox="0 0 24 24" fill="currentColor"><path d="M12,24C5.448,24,0.118,18.617,0.118,12S5.448,0,12,0c6.552,0,11.882,5.383,11.882,12S18.552,24,12,24z M12,0.661 C5.813,0.661,0.779,5.748,0.779,12S5.813,23.339,12,23.339c6.187,0,11.221-5.086,11.221-11.339S18.187,0.661,12,0.661z M8.03,20.197 c0,0,0.978,0.069,2.236-0.042c0.51-0.045,2.444-0.235,3.891-0.552c0,0,1.764-0.377,2.707-0.725c0.987-0.364,1.524-0.673,1.766-1.11 c-0.011-0.09,0.074-0.408-0.381-0.599c-1.164-0.488-2.514-0.4-5.185-0.457c-2.962-0.102-3.948-0.598-4.472-0.997 c-0.503-0.405-0.25-1.526,1.907-2.513c1.086-0.526,5.345-1.496,5.345-1.496c-1.434-0.709-4.109-1.955-4.659-2.224 c-0.482-0.236-1.254-0.591-1.421-1.021c-0.19-0.413,0.448-0.768,0.804-0.87c1.147-0.331,2.766-0.536,4.24-0.56 c0.741-0.012,0.861-0.059,0.861-0.059c1.022-0.17,1.695-0.869,1.414-1.976c-0.252-1.13-1.579-1.795-2.84-1.565 c-1.188,0.217-4.05,1.048-4.05,1.048c3.539-0.031,4.131,0.028,4.395,0.398c0.156,0.218-0.071,0.518-1.015,0.672 c-1.027,0.168-3.163,0.37-3.163,0.37c-2.049,0.122-3.492,0.13-3.925,1.046C6.202,7.564,6.787,8.094,7.043,8.425 c1.082,1.204,2.646,1.853,3.652,2.331c0.379,0.18,1.49,0.52,1.49,0.52c-3.265-0.18-5.619,0.823-7.001,1.977 c-1.562,1.445-0.871,3.168,2.33,4.228c1.891,0.626,2.828,0.921,5.648,0.667c1.661-0.09,1.923-0.036,1.939,0.1 c0.023,0.192-1.845,0.669-2.355,0.816C11.448,19.438,8.047,20.193,8.03,20.197z"/></symbol>
+<symbol id="logo-google-docs" viewBox="0 0 24 24" fill="currentColor"><path d="M14.727 6.727H14V0H4.91c-.905 0-1.637.732-1.637 1.636v20.728c0 .904.732 1.636 1.636 1.636h14.182c.904 0 1.636-.732 1.636-1.636V6.727h-6zm-.545 10.455H7.09v-1.364h7.09v1.364zm2.727-3.273H7.091v-1.364h9.818v1.364zm0-3.273H7.091V9.273h9.818v1.363zM14.727 6h6l-6-6v6z"/></symbol>
+<symbol id="logo-google-slides" viewBox="0 0 24 24" fill="currentColor"><path d="M16.09 15.273H7.91v-4.637h8.18v4.637zm1.728-8.523h2.91v15.614c0 .904-.733 1.636-1.637 1.636H4.909a1.636 1.636 0 0 1-1.636-1.636V1.636C3.273.732 4.005 0 4.909 0h9.068v6.75h3.841zm-.363 2.523H6.545v7.363h10.91V9.273zm-2.728-5.979V6h6.001l-6-6v3.294z"/></symbol>
+<symbol id="logo-google-sheets" viewBox="0 0 24 24" fill="currentColor"><path d="M11.318 12.545H7.91v-1.909h3.41v1.91zM14.728 0v6h6l-6-6zm1.363 10.636h-3.41v1.91h3.41v-1.91zm0 3.273h-3.41v1.91h3.41v-1.91zM20.727 6.5v15.864c0 .904-.732 1.636-1.636 1.636H4.909a1.636 1.636 0 0 1-1.636-1.636V1.636C3.273.732 4.005 0 4.909 0h9.318v6.5h6.5zm-3.273 2.773H6.545v7.909h10.91v-7.91zm-6.136 4.636H7.91v1.91h3.41v-1.91z"/></symbol>
+<symbol id="logo-google-drive" viewBox="0 0 24 24" fill="currentColor"><path d="M12.01 1.485c-2.082 0-3.754.02-3.743.047.01.02 1.708 3.001 3.774 6.62l3.76 6.574h3.76c2.081 0 3.753-.02 3.742-.047-.005-.02-1.708-3.001-3.775-6.62l-3.76-6.574zm-4.76 1.73a789.828 789.861 0 0 0-3.63 6.319L0 15.868l1.89 3.298 1.885 3.297 3.62-6.335 3.618-6.33-1.88-3.287C8.1 4.704 7.255 3.22 7.25 3.214zm2.259 12.653-.203.348c-.114.198-.96 1.672-1.88 3.287a423.93 423.948 0 0 1-1.698 2.97c-.01.026 3.24.042 7.222.042h7.244l1.796-3.157c.992-1.734 1.85-3.23 1.906-3.323l.104-.167h-7.249z"/></symbol>
+<symbol id="logo-apple" viewBox="0 0 24 24" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></symbol>
+<symbol id="logo-tailscale" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm-9 9a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm0-9a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm6-6a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm0-.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM3 24a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm0-.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zm18 .5a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm0-.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM6 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm9-9a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm-3 2.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM6 3a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM3 5.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/></symbol>
+<symbol id="glyph-laptop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></symbol>
+<symbol id="glyph-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></symbol>
+<symbol id="glyph-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></symbol>
+<symbol id="glyph-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+<symbol id="glyph-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></symbol>
+<symbol id="glyph-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></symbol>
+<symbol id="glyph-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+<symbol id="glyph-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+<symbol id="glyph-plug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/></symbol>
+<symbol id="logo-slack" viewBox="0 0 24 24" fill="currentColor"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"/></symbol>
+<symbol id="logo-notion" viewBox="0 0 24 24" fill="currentColor"><path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z"/></symbol>
+<symbol id="glyph-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/></symbol>
+<symbol id="glyph-slides" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M12 16v4M8 20h8"/></symbol>
+</svg>
 <div class="celorga-features-page">
-  <section class="celorga-page-intro">
-    <p>Celorga is an open-source control plane for AI agents, built for knowledge work instead of code. It brings the agents you already use into one workspace, gives them a shared memory made of plain-text files you own, and keeps you in charge of anything consequential. This page tours what it does today.</p>
-  </section>
-
-  <section class="celorga-feature-story" id="multi-agent-chat" aria-labelledby="multi-agent-chat-title">
+  <section class="celorga-feature-story" id="org-mode" aria-labelledby="org-mode-title">
     <div class="celorga-feature-copy">
-      <h2 id="multi-agent-chat-title">One conversation, many agents</h2>
-      <p>Celorga works with the models and agent harnesses you already use: Claude Code, Codex, OpenCode, and Pi locally or over SSH, an OpenClaw gateway, or Anthropic, OpenRouter, Ollama, and other OpenAI-compatible APIs. It drives the harnesses you're already signed into rather than reselling tokens. A shared AI room lets you bring any named local, remote, hosted, or self-hosted destination into one corpus-grounded conversation. Every participant sees the same bounded transcript, keeps its own identity and model, and answers inside one visible agent round.</p>
-      <ul>
-        <li>Mention <code>@research</code>, <code>@writer</code>, <code>@local-model</code>, or any destination you configure; <code>@all</code> asks every participant.</li>
-        <li>Enable Experimental features in Settings → General to reveal workspace tools, which let a compatible direct model search, read, and propose edits through the built-in agent. Review each patch in Celorga before applying it.</li>
-        <li>Responses stay grouped beneath the question that invoked them, with separate progress, model selection, and failure state for each agent.</li>
-        <li>Synced chat history has deterministic repair without a model call, with a configurable background interval and an off option.</li>
-        <li>Mentioning another agent from a single-agent thread automatically forks it into a shared room, leaving the original conversation untouched. The original agent stays the room's default, so later messages without an <code>@mention</code> keep going to it; change the default from the composer at any time.</li>
-        <li>Agents can hand work to each other: when one agent's reply <code>@mentions</code> another agent in the room, that agent takes the next turn. A per-room limit (four in a row by default) keeps agents from looping until you reply, and background jobs can ask a room agent to respond with <code>celorga thread post --request-turn</code>.</li>
-        <li>Agents can disagree, compare approaches, or propose explicit handoffs without Celorga hiding an autonomous loop behind the interface.</li>
-      </ul>
-      <p class="celorga-feature-links"><a href="editors-macos.html#ai-chat-and-agents">Shared AI rooms</a><a href="agent-quickstart.html">Connect an agent</a></p>
+      <h2 id="org-mode-title">Your Org folder, agent-ready</h2>
+      <p>Open the <code>~/org</code> directory you already keep. There is nothing to import or convert. Headings, TODOs, schedules, properties, <code>:ID:</code> links, and org-roam notes work as they are, and the files still open in Emacs.</p>
+      <p class="celorga-feature-links"><a href="celorga-vs-org-mode.html">Celorga and Org mode</a><a href="migration.html">Bring an existing folder</a></p>
     </div>
     <div class="celorga-feature-media">
-      <figure><img src="assets/screenshots/macos-workspace-ai-room.png?v=20261009" alt="Celorga shared AI room showing one question answered side by side by two configured agents" loading="lazy" /><figcaption>One agent round, two independently attributed answers, and a shared corpus-backed conversation.</figcaption></figure>
+      <div class="celorga-org-flow" role="img" aria-label="Diagram: an existing folder of Org files becomes a Celorga workspace with an editor, agenda, agents, publishing, an MCP server, and an iPhone app.">
+        <div class="celorga-org-flow-folder">
+          <p><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-folder"></use></svg>~/org</p>
+          <ul>
+            <li>inbox.org</li>
+            <li>projects.org</li>
+            <li>journal/2026-10-12.org</li>
+            <li>roam/beacon-launch.org</li>
+            <li>roam/maya-chen.org</li>
+          </ul>
+          <span>Unchanged. Still yours.</span>
+        </div>
+        <div class="celorga-org-flow-arrow" aria-hidden="true">→</div>
+        <ul class="celorga-org-flow-gets">
+          <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-file"></use></svg>Native editor</li>
+          <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-laptop"></use></svg>Agenda</li>
+          <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-claude-code"></use></svg>Agents that cite</li>
+          <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-globe"></use></svg>Publishing</li>
+          <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-plug"></use></svg>MCP server</li>
+          <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-phone"></use></svg>iPhone app</li>
+        </ul>
+      </div>
     </div>
   </section>
 
-  <section class="celorga-feature-story celorga-feature-story-reverse" id="agent-work" aria-labelledby="agent-work-title">
+  <section class="celorga-feature-story celorga-feature-story-reverse" id="org-editor" aria-labelledby="org-editor-title">
     <div class="celorga-feature-copy">
-      <h2 id="agent-work-title">Hand off tasks, not prompts</h2>
-      <p>Any TODO can become agent work. <em>Start work</em> picks an agent, model, and reasoning effort, opens a durable run that cites the task, and shows a live <em>Working</em>, <em>Your turn</em>, <em>Needs you</em>, or <em>Done</em> badge on the heading and in Agenda. Context, citations, outputs, validation, and approvals stay together while the work moves.</p>
-      <ul>
-        <li>Automations give a prompt a schedule and an agent; missed runs catch up after sleep and attempts never overlap.</li>
-        <li>Activity shows what is running, on which host, what is waiting on you, and an <em>Explain Status</em> inspector for why.</li>
-        <li>A headless server can own agent turns and schedules so your laptop and iPhone become clients that can sleep, quit, or update.</li>
-        <li>Bounded context packs carry explicit file-and-line citations.</li>
-        <li>Generated work remains separate from canonical notes until someone reviews it.</li>
-        <li>One decision queue brings together approvals from files, agent runs, and mobile.</li>
-        <li>Reusable workflows keep their instructions, schedules, exact model and reasoning choices, history, and results in inspectable files.</li>
+      <h2 id="org-editor-title">A really good Org editor</h2>
+      <p>A fast native Mac editor built for Org: folding, tables, links, and properties, rendered for reading and plain text when you want it.</p>
+      <ul class="celorga-feature-chips" aria-label="Editor features">
+        <li>Reading view</li><li>Source</li><li>Split</li><li>Prose mode</li><li>Table formulas</li><li>Link previews</li><li>Live embeds</li><li>Per-section encryption</li>
       </ul>
-      <p class="celorga-feature-links"><a href="agent-quickstart.html">Agent quickstart</a><a href="mcp-and-skills.html">MCP and skills</a><a href="ai-adapters.html">Provider-neutral adapters</a></p>
+      <p class="celorga-feature-links"><a href="editors-macos.html">Celorga for macOS</a><a href="language-reference.html">Syntax reference</a></p>
     </div>
     <div class="celorga-feature-media">
-      <figure><img src="assets/screenshots/macos-workspace-runs-review.png?v=20261012b" alt="Celorga Agent Work showing an approval-ready launch brief with outputs and review state" loading="lazy" /><figcaption>Agent Work keeps outcomes, artifacts, validation, and approval state together.</figcaption></figure>
+      <figure><img src="assets/screenshots/macos-workspace-files.png?v=20261009" alt="A Celorga project note with rendered TODO headings, properties, a schedule, and open action items" loading="lazy" /><figcaption>An ordinary Org file, rendered.</figcaption></figure>
     </div>
   </section>
 
   <section class="celorga-feature-story" id="planning-knowledge" aria-labelledby="planning-knowledge-title">
     <div class="celorga-feature-copy">
-      <h2 id="planning-knowledge-title">Planning and linked notes</h2>
-      <p>TODO state, schedules, deadlines, priorities, effort, tags, IDs, aliases, and links are readable in the note. Celorga turns them into focused agenda views and useful context around whatever you are working on.</p>
-      <ul>
-        <li>Agenda across many files, with date windows, filters, grouping, and corpus-wide TODO defaults in Settings, with file-specific vocabularies with active and terminal states.</li>
-        <li>A context pane brings together backlinks, interactive local graphs, unlinked mentions with explicit linking, related notes, and source-cited AI briefs; linked action items stay beside the note.</li>
-        <li>Full workspace refresh overlaps independent work, batches agent-state reads, and reuses unchanged native TODO scan results.</li>
-        <li>Stable IDs, dailies, node creation, link previews, and graph-health checks keep the underlying connections portable. JSON Canvas boards arrange notes, images, text, and connections in open files.</li>
-        <li>Preview-first mutations from the CLI and editors; writes require an explicit apply step.</li>
+      <h2 id="planning-knowledge-title">An agenda that just works</h2>
+      <p>Every TODO, schedule, and deadline from every file in one fast view. Select a task to read the note behind it.</p>
+      <ul class="celorga-feature-chips" aria-label="Planning features">
+        <li>Focus · Today · Range · All Time</li><li>Custom TODO keywords</li><li>Priorities and tags</li><li>Daily notes</li><li>Backlinks and graph</li><li>Saved views</li>
       </ul>
-      <p class="celorga-feature-links"><a href="workflows.html">Everyday workflows</a><a href="tooling-reference.html">CLI reference</a></p>
+      <p class="celorga-feature-links"><a href="workflows.html">Everyday workflows</a><a href="getting-started.html">Plan your first day</a></p>
     </div>
-    <div class="celorga-feature-media celorga-feature-media-pair">
-      <figure><img src="assets/screenshots/macos-workspace-agenda.png?v=20261009" alt="Celorga agenda with scheduled tasks, assignees, and linked note context" loading="lazy" /><figcaption>A native agenda over ordinary corpus files.</figcaption></figure>
-      <figure><img src="assets/screenshots/macos-workspace-context.png?v=20261009" alt="Celorga project note with open work and a source-cited AI brief in the Context pane" loading="lazy" /><figcaption>Linked work and a source-cited brief stay beside the note.</figcaption></figure>
+    <div class="celorga-feature-media">
+      <figure><img src="assets/screenshots/macos-workspace-agenda.png?v=20261009" alt="Celorga agenda with overdue, today, and upcoming tasks beside the selected task's note" loading="lazy" /><figcaption>Agenda across the whole folder, with the selected task's note beside it.</figcaption></figure>
     </div>
   </section>
 
-  <section class="celorga-feature-story celorga-feature-story-reverse" id="data-notebooks" aria-labelledby="data-notebooks-title">
+  <section class="celorga-feature-story celorga-feature-story-reverse" id="agent-work" aria-labelledby="agent-work-title">
     <div class="celorga-feature-copy">
-      <h2 id="data-notebooks-title">Data notebooks keep evidence close</h2>
-      <p>Celorga renders Org notes that declare local or configured remote datasets, reusable SQL views, materialized results, freshness policy, and deterministic charts. Refresh is explicit; merely opening or publishing a document never runs a warehouse query.</p>
-      <ul>
-        <li>DuckDB-backed CSV, Parquet, JSON, table, ClickHouse, and Metabase inputs.</li>
-        <li>Provenance-stamped result tables and source-aware chart definitions.</li>
-        <li>Named external credential profiles; inline secrets are rejected.</li>
+      <h2 id="agent-work-title">Hand any TODO to an agent</h2>
+      <p>Use the models and agent harnesses you already use, from any local, remote, hosted, or self-hosted destination. <em>Start work</em> on a task and the run cites it, shows live status on your agenda, and waits for your approval before anything consequential.</p>
+      <ul class="celorga-feature-logos" aria-label="Supported agents and model providers">
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-claude-code"></use></svg>Claude Code</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-codex"></use></svg>Codex</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-opencode"></use></svg>OpenCode</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-pi"></use></svg>Pi</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-openclaw"></use></svg>OpenClaw</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-ollama"></use></svg>Ollama</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-anthropic"></use></svg>Anthropic</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-openrouter"></use></svg>OpenRouter</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-openai"></use></svg>OpenAI-compatible</li>
       </ul>
-      <p class="celorga-feature-links"><a href="language-reference.html#local-datasets-and-sql-views">Notebook syntax</a><a href="tooling-reference.html">Query-data options</a></p>
+      <p class="celorga-feature-links"><a href="agent-quickstart.html">Connect an agent</a><a href="mcp-and-skills.html">MCP and skills</a></p>
     </div>
     <div class="celorga-feature-media">
-      <figure><img src="assets/screenshots/macos-workspace-data.png?v=20261012" alt="Celorga rendering a launch readiness data notebook with activation and revenue charts" loading="lazy" /><figcaption>Materialized rows, freshness metadata, and visualization stay connected to the source note.</figcaption></figure>
+      <figure><img src="assets/screenshots/macos-workspace-runs-review.png?v=20261012b" alt="Celorga Agent Work showing an approval-ready launch brief with outputs and review state" loading="lazy" /><figcaption>Outputs, validation, and approval state stay with the run.</figcaption></figure>
     </div>
   </section>
 
-  <section class="celorga-feature-story" id="meetings-context" aria-labelledby="meetings-context-title">
-    <div class="celorga-feature-copy">
-      <h2 id="meetings-context-title">Meetings become source-backed context</h2>
-      <p>Celorga can record or import a meeting, keep audio and transcripts local, and render summaries, decisions, and follow-ups from ordinary files. Those records can then feed agenda items, cited agent runs, entity pages, and reports.</p>
-      <ul>
-        <li>Choose local transcription or another provider you configure.</li>
-        <li>Send a finished transcript to a named agent for a summary or follow-up.</li>
-        <li>Connect meetings to people, projects, decisions, and action items.</li>
+  <section class="celorga-feature-section" id="publishing" aria-labelledby="publishing-title">
+    <div class="celorga-feature-heading">
+      <h2 id="publishing-title">Publish to your own URL or Google Drive</h2>
+      <p>Share a note as a private link served from your own Mac, a chat thread from your Mac or server, or a note as an editable Google Doc, Slides deck, or Sheet. Private details are stripped first, and publishing again updates the same link.</p>
+    </div>
+    <div class="celorga-publish-row">
+      <ul class="celorga-feature-logos celorga-feature-logos-stacked" aria-label="Publishing destinations">
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-server"></use></svg>Self-hosted link</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-drive"></use></svg>Google Drive</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-docs"></use></svg>Google Docs</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-slides"></use></svg>Google Slides</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-sheets"></use></svg>Google Sheets</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-file"></use></svg>PDF</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-slides"></use></svg>Beamer slides</li>
+        <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-globe"></use></svg>Static site</li>
       </ul>
-      <p class="celorga-feature-links"><a href="editors-macos.html">Celorga for macOS</a><a href="corpus-flow.html">Artifact flow</a></p>
+      <figure class="celorga-home-browser">
+        <div class="celorga-home-browserbar" aria-hidden="true"><i></i><i></i><i></i><span>Shared from Celorga</span></div>
+        <img src="assets/screenshots/home-published-page.png?v=20261012" alt="A published Celorga note as a clean web page, with its chart included and private details removed" loading="lazy" />
+      </figure>
     </div>
-    <div class="celorga-feature-media">
-      <figure><img src="assets/screenshots/macos-workspace-meetings.png?v=20261009" alt="Celorga meeting view with transcript metadata, summary, decisions, and action items" loading="lazy" /><figcaption>A meeting record keeps its transcript, decisions, and follow-ups together.</figcaption></figure>
-    </div>
+    <p class="celorga-feature-links celorga-feature-links-centered"><a href="editors-macos.html#publish-a-document">How publishing works</a></p>
   </section>
 
   <section class="celorga-feature-section" id="external-sources" aria-labelledby="external-sources-title">
     <div class="celorga-feature-heading">
-      <h2 id="external-sources-title">Bring in context without surrendering control</h2>
-      <p>Connect systems such as Slack, Notion, and email, keep a local copy of the selected material, and decide what becomes part of your lasting notes.</p>
+      <h2 id="external-sources-title">Plugs into what you already use</h2>
     </div>
-    <div class="celorga-feature-grid">
-      <article><h3>Sync on your schedule</h3><p>Run a connector now, pause it, or choose a repeating interval or daily time.</p></article>
-      <article><h3>Local files you own</h3><p>Imported material remains inspectable while credentials stay in protected local storage.</p></article>
-      <article><h3>Review before promotion</h3><p>Verify, redact, and select useful knowledge before treating it as canonical.</p></article>
+    <div class="celorga-connect-grid">
+      <article><h3>Pull in context</h3><p>Synced to local files on your schedule.</p><div class="celorga-connect-logos"><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-slack"></use></svg>Slack</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-notion"></use></svg>Notion</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-mail"></use></svg>Email</span></div></article>
+      <article><h3>Sync your folder</h3><p>Any folder sync works. No account.</p><div class="celorga-connect-logos"><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-icloud"></use></svg>iCloud</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-git"></use></svg>Git</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-syncthing"></use></svg>Syncthing</span></div></article>
+      <article><h3>Edit anywhere</h3><p>Language server and plugins.</p><div class="celorga-connect-logos"><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-emacs"></use></svg>Emacs</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-vim"></use></svg>Vim</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-neovim"></use></svg>Neovim</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-terminal"></use></svg>CLI</span></div></article>
+      <article><h3>Reach it from anywhere</h3><p>Phone and server over your tailnet.</p><div class="celorga-connect-logos"><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-apple"></use></svg>iPhone</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-server"></use></svg>Server</span><span><svg class="celorga-logo" aria-hidden="true"><use href="#logo-tailscale"></use></svg>Tailscale</span></div></article>
     </div>
   </section>
 
-  <section class="celorga-feature-section" id="editors-publishing" aria-labelledby="editors-publishing-title">
+  <section class="celorga-feature-section" id="more" aria-labelledby="more-title">
     <div class="celorga-feature-heading">
-      <h2 id="editors-publishing-title">Useful outputs with their context</h2>
-      <p>Agent work can finish as a talk, an evidence-backed analysis, a customer quote, marketing collateral, a shareable document, or a published site. The artifact stays connected to the source material and approvals that produced it without granting recipients access to the source corpus.</p>
+      <h2 id="more-title">Also in the box</h2>
     </div>
-    <div class="celorga-editor-strip">
-      <figure><img src="assets/screenshots/macos-workspace-data.png?v=20261012" alt="Celorga rendering an evidence-backed data notebook with an interactive chart" loading="lazy" /><figcaption><strong>Analytics.</strong> Materialized results and visualizations stay connected to their query, freshness, and source context.</figcaption></figure>
-      <div class="celorga-editor-cards">
-        <article><strong>Talks and slides</strong><p>Develop the narrative beside its research, preview the deck in the Mac app, and export Beamer-compatible TeX or a presentation-ready PDF.</p></article>
-        <article><strong>Customer-ready documents</strong><p>Turn approved source material into quotes, reports, and marketing collateral, then export a clean reading-layout PDF.</p></article>
-        <article><strong>Publishing</strong><p>Share a disclosure-safe document as HTML, PDF, Beamer slides, Google Docs, Slides, or Sheets, share an AI chat thread as a live link from your Mac or a headless server, or publish a complete site.</p></article>
-      </div>
+    <div class="celorga-shot-cards" data-heading-anchors="off">
+      <figure id="multi-agent-chat"><img src="assets/screenshots/home-agents-room.png" alt="A shared AI room where one agent hands a redacted summary to a second agent" loading="lazy" /><figcaption><strong>Multi-agent rooms</strong>Mention several agents in one thread and let them hand off.</figcaption></figure>
+      <figure id="data-notebooks"><img src="assets/screenshots/home-data-notebook.png?v=20261012" alt="A note with charts built from saved SQL query results" loading="lazy" /><figcaption><strong>Data notebooks</strong>SQL over CSV, Parquet, DuckDB, or ClickHouse, charted in the note.</figcaption></figure>
+      <figure id="meetings-context"><img src="assets/screenshots/home-meeting-notes.png" alt="Meeting notes with decisions and TODO action items beside backlinks" loading="lazy" /><figcaption><strong>Meetings</strong>Record, transcribe locally, and turn decisions into tasks.</figcaption></figure>
     </div>
-    <p class="celorga-feature-links celorga-feature-links-centered"><a href="editors.html">Editor integrations</a><a href="getting-started.html">Getting started</a></p>
-  </section>
-
-  <section class="celorga-feature-section" id="feature-inventory" aria-labelledby="feature-inventory-title">
-    <div class="celorga-feature-heading">
-      <h2 id="feature-inventory-title">Current feature coverage</h2>
-      <p>A scan-friendly inventory of the broader surface available today.</p>
-    </div>
-    <div class="celorga-feature-card-grid" data-heading-anchors="off">
-      <article><h3>Plain-text documents</h3><p>Notes, tasks, links, tables, properties, and dates remain readable in ordinary files.</p></article>
-      <article><h3>Knowledge + planning</h3><p>Agenda, daily notes, search, IDs, backlinks, people, projects, and graph views keep related work connected.</p></article>
-      <article><h3>Agents + review</h3><p>Local or remote agents can use cited context, create durable outputs, and pause for approval.</p></article>
-      <article><h3>Data + publishing</h3><p>Build saved table and card views with property filters, sorting, grouping, and source-backed edits. Evaluate table formulas, build data notebooks and charts, export PDFs and slides, and publish sites.</p></article>
-      <article><h3>Apps + editors</h3><p>Use the Mac app and the iPhone beta, run the CLI and MCP server on macOS or Linux, work with the same files in VS Code, Vim, or Emacs, and extend commands, templates, or document rendering with plugins.</p></article>
-      <article><h3>Writing</h3><p>Prose mode is a calm, proportional writing view where alternative phrasings, ghosted text, and cut passages stay recoverable in the same file.</p></article>
-      <article><h3>Projects + skills</h3><p>Group chats and agents around one shared project brief, and give every agent workspace-authored skills as ordinary <code>SKILL.md</code> files.</p></article>
-      <article><h3>Safety + portability</h3><p>Local files stay canonical, writes are previewable, approvals are explicit, and plugin locks pin exact Git commits and SHA-256 contents.</p></article>
+    <div class="celorga-feature-card-grid celorga-feature-card-grid-compact" data-heading-anchors="off">
+      <article><h3>Automations</h3><p>Scheduled agent prompts that catch up after sleep.</p></article>
+      <article><h3>Approvals on iPhone</h3><p>One decision queue on desktop and phone.</p></article>
+      <article><h3>Headless server</h3><p>Agents keep working while your laptop sleeps.</p></article>
+      <article><h3>Prose mode</h3><p>Alternatives, ghosted text, and cut passages stay recoverable.</p></article>
+      <article><h3>Projects and skills</h3><p>Shared briefs and <code>SKILL.md</code> files for every agent.</p></article>
+      <article><h3>Previewed writes</h3><p>Every agent edit is a readable diff you approve.</p></article>
     </div>
   </section>
 
   <section class="celorga-feature-cta" aria-labelledby="feature-cta-title">
-    <h2 id="feature-cta-title">Where to start</h2>
-    <p>The desktop app is the fastest way in, and the iPhone beta keeps you connected to your agents. The Celorga CLI, MCP server, language server, editor plugins, and file format are open, cross-machine surfaces for the same local files, and they already run on Linux.</p>
-    <p class="celorga-feature-links"><a href="getting-started.html">Getting started</a><a href="reference.html">Reference</a><a href="https://github.com/aviaviavi/celorga">GitHub</a></p>
+    <h2 id="feature-cta-title">Try it on your own folder</h2>
+    <p>Free, open source, and no account. Download the Mac app, or install the CLI and MCP server on macOS or Linux.</p>
+    <p class="celorga-feature-links"><a href="downloads.html">Download for Mac</a><a href="getting-started.html">Getting started</a><a href="https://github.com/aviaviavi/celorga">GitHub</a></p>
   </section>
 </div>
 #+END_EXPORT
-
-* Headless host
-
-A dedicated macOS host can run the Celorga chat relay and automation scheduler from =celorga server= without a desktop window. It can expose a separately enabled read-only Streamable HTTP MCP endpoint for bounded, cited corpus search and retrieval, using one revocable hash-only bearer credential per client. iOS can save and select a Mac or server and sees the same conversations, live progress, and message provenance from either; a conversation keeps running on the host that owns its runtime session; each corpus has an explicit scheduler owner, and each execution host has an explicit local-agent filesystem policy. See [[file:headless-server.org][Headless server setup]] for pairing, MCP access, permissions, login-service installation, and the current host boundaries.
-
-Celorga also offers a default-off experimental *Paste as Org* command in the document Source editor, with local conversion, an editable preview, optional tiny-model structure suggestions, and explicit insertion. See [[file:editors-macos.org][macOS workspace]].
-
-The iOS Files tab supports local fuzzy search across pages, headings, and entry text, with parent-note previews and rendered entry/full-note navigation. See [[file:editors.org][Editor integrations]].
-
-* Explainable agent activity
-
-Every chat thread, durable run, and automation can explain itself: why it is working or waiting on you, which host and runtime reported that, the last heartbeat or transition, whether the state is live, cached, or uncertain, and the exact approval or question that blocks it. Explanations come from structured presence, transcript, and run records rather than terminal output. Celorga shows them in Activity's *Explain Status* inspector and a *Hosts* section covering the Mac, headless servers, and remote harnesses; agents and scripts use =celorga activity explain=, =celorga activity events --follow=, and race-free =celorga thread wait= / =celorga run wait=. See [[file:tooling-reference.org::*Explainable activity, events, and waits][the tooling reference]].
-
-* Web pages beside your notes
-
-Celorga renders corpus HTML files as live web pages beside their source, and web links clicked in notes or chat open as pages in the same detail pane, with back and forward history like documents. Local development servers such as =localhost:5173= and static web apps served read-only from a folder over loopback http open there too. See [[file:editors-macos.org][macOS workspace]].
-
-* Projects as ordinary notes
-
-A project is one ordinary Org file containing its purpose, TODO actions,
-decisions, and source links. Celorga for macOS adds a colored sidebar group,
-linked chat filtering, and a shortcut to the note. Folders and tags remain
-independent ways to organize the corpus. Several chats and agents can share
-one project; a project describes the work, while an agent describes a worker.
-
-The project note is the inspectable shared brief. Linking a chat includes a
-bounded snapshot of that note, not the history of other chats. Project grouping
-does not enforce access isolation or separate provider memory. The first
-project UI is available on macOS; the portable file and CLI are shared.
-
-* Live note and heading embeds
-
-Celorga renders portable =#+EMBED:= references to whole notes and stable-ID heading subtrees inline, with source navigation, automatic refresh, and bounded cycle/missing-target handling. Use *File → Live Embed…* or the source editor's *Insert* menu. Content stays in the canonical source; rendering is read-only and shared with the runtime. HTML and reading-layout PDF exports retain references without fetching source content; Beamer export omits embed directives, while disclosure-safe publishing emits target-free omission markers. See [[file:editors-macos.org][Celorga for macOS]] and [[file:reference.org][the command reference]].
-
-* Browser article and selection clipping
-
-The Celorga Web Clipper saves articles or selected passages as portable clip files. Choose a Reading note or Read later task template, preview the text, then import through the Mac Capture window. URL, available author and capture time are preserved alongside an immutable raw capture. See [[file:editors-macos.org][Mac installation and use]] and [[file:tooling-reference.org][the CLI import contract]].
-
-Completed HTML source blocks render as live, sandboxed previews in AI chat and the document reader, with JavaScript, HTTPS resources, automatic sizing, and expandable source, so an agent can answer with an interactive board, simulation, or tool. Reviewed chat edits can save HTML files for opening as pages. See [[file:editors-macos.org][macOS workspace]].
