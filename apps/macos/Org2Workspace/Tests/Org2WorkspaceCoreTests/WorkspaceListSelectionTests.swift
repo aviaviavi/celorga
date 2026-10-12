@@ -307,23 +307,15 @@ final class WorkspaceListSelectionTests: XCTestCase {
       .appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift")
     let source = try String(contentsOf: contentViewSource, encoding: .utf8)
 
+    // Compare with whitespace collapsed so layout-only reindentation of the
+    // run detail's decision card does not hide a real selection regression.
+    let normalized = source.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     XCTAssertTrue(
-      source.contains(
-        """
-        Text(approval.title)
-                            .font(.body.weight(.semibold))
-                            .textSelection(.enabled)
-        """
-      )
+      normalized.contains("Text(approval.title) .font(.title3.weight(.semibold)) .textSelection(.enabled)")
     )
     XCTAssertTrue(
-      source.contains(
-        """
-        Text(approval.action)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-        """
+      normalized.contains(
+        "Text(approval.action) .font(.callout) .foregroundStyle(.secondary) .textSelection(.enabled)"
       ),
       "The full rendered approval body must support drag selection and standard Copy"
     )

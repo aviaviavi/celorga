@@ -7080,6 +7080,11 @@ private struct RunCenterRow: View {
         }
       }
       Text(run.displayTitle).font(.body.weight(.semibold)).lineLimit(2)
+      if run.plan.count > 1 {
+        RunSegmentedProgress(plan: run.plan, hasPendingApproval: run.pendingApprovalCount > 0, height: 3)
+          .frame(maxWidth: 180)
+          .accessibilityHidden(true)
+      }
       HStack(spacing: 8) {
         Text(run.progressText)
         if let workflow = run.workflowDisplayName {
@@ -7243,6 +7248,8 @@ private struct RunCenterDetail: View {
           }
         }
 
+        glanceStrip
+
         runActions
 
         if !relatedRuns.isEmpty {
@@ -7324,65 +7331,13 @@ private struct RunCenterDetail: View {
           }
         }
 
+        if !run.plan.isEmpty {
+          progressCard
+        }
+
         let pending = run.actionablePendingApprovals
         if !pending.isEmpty {
-          runSection("Waiting for approval") {
-            Text("\(pending.count) of \(run.approvals.count) approval\(run.approvals.count == 1 ? "" : "s") still need a decision. These are the same approvals shown in Review; deciding in either place updates this run record.")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-            ForEach(visiblePendingApprovals(pending)) { approval in
-              let approvalIsMutating = store.isAgentRunApprovalActionInProgress(
-                runID: run.id,
-                approvalID: approval.id
-              )
-              VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                  Text(approval.title)
-                    .font(.body.weight(.semibold))
-                    .textSelection(.enabled)
-                  Text(approval.action)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                }
-
-                approvalReviewMaterial(approval)
-
-                HStack {
-                  Button {
-                    Task { await store.decideAgentRunApproval(run, approval: approval, decision: "approved") }
-                  } label: {
-                    if approvalIsMutating {
-                      HStack(spacing: 6) {
-                        WorkspaceActivityIndicator(size: .mini)
-                        Text("Working")
-                      }
-                    } else {
-                      Text("Approve")
-                    }
-                  }
-                    .disabled(approvalIsMutating || !canApprove(approval))
-                    .help(canApprove(approval) ? "Approve the displayed action" : "Reviewable action details are required before approval")
-                  Button("Request Changes…") {
-                    revisionFeedback = ""
-                    revisionApproval = approval
-                  }
-                  .disabled(approvalIsMutating)
-                  .help("Describe the changes required and return the work to the agent")
-                  Button("Reject") { Task { await store.decideAgentRunApproval(run, approval: approval, decision: "rejected") } }
-                    .disabled(approvalIsMutating)
-                  Spacer()
-                  Button("Show in Review") {
-                    store.showApprovalInQueue(run: run, approval: approval)
-                  }
-                  .buttonStyle(.link)
-                }.buttonStyle(WorkspaceActionButtonStyle()).controlSize(.small)
-              }
-              .id(approval.id)
-              .transition(.opacity)
-            }
-            showMoreButton(for: .pendingApprovals, total: pending.count, noun: "approvals")
-          }
+          decisionCard(pending)
         }
 
         let retainedPending = run.retainedPendingApprovals
@@ -7408,39 +7363,27 @@ private struct RunCenterDetail: View {
           }
         }
 
-        if !run.artifacts.isEmpty {
-          runSection("Outputs") {
-            ForEach(run.artifacts.prefix(visibleCount(
-              for: .artifacts,
-              total: run.artifacts.count
-            ))) { artifact in
-              Button { store.openAgentRunArtifact(artifact) } label: {
-                HStack(alignment: .top, spacing: 9) {
-                  Image(systemName: artifact.role == "export" ? "square.and.arrow.up" : "doc.text")
-                  VStack(alignment: .leading, spacing: 2) {
-                    Text(artifact.displayTitle).font(.body.weight(.medium))
-                    Text("\(artifact.roleDisplayText) · \(artifact.path)")
-                      .font(.caption)
-                      .foregroundStyle(.secondary)
-                      .lineLimit(1)
-                  }
-                }
-              }
-              .buttonStyle(.plain)
-              .help("Open \(artifact.path) in Celorga")
-            }
-            showMoreButton(for: .artifacts, total: run.artifacts.count, noun: "outputs")
-          }
+        // While a decision is pending, the decision card already lists the
+        // outputs to review; show them once.
+        if !run.artifacts.isEmpty, !(hasPendingDecision && run.openClawExecApprovalID == nil) {
+          outputsCard
+        }
+
+        // Checks sit in the Progress card when there is a plan.
+        if run.plan.isEmpty, !run.latestValidations.isEmpty {
+          checksCard
+        }
+
+        if !run.comments.isEmpty || !run.context.isEmpty {
+          handoffCard
         }
 
         let reviewRequiredArtifacts = run.artifacts.filter { $0.reviewStatus == "review-required" }
-        if !run.attentionValidations.isEmpty || !reviewRequiredArtifacts.isEmpty {
-          runSection(run.isFinished ? "Retained workflow history" : "Needs attention") {
-            if run.isFinished {
-              Text("These signals were unresolved when the run finished. They are retained for audit history and do not put the run back in the review queue.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
+        if run.isFinished, !run.attentionValidations.isEmpty || !reviewRequiredArtifacts.isEmpty {
+          runSection("Retained workflow history") {
+            Text("These signals were unresolved when the run finished. They are retained for audit history and do not put the run back in the review queue.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
             ForEach(run.attentionValidations.prefix(visibleCount(
               for: .attentionValidations,
               total: run.attentionValidations.count
@@ -7461,12 +7404,7 @@ private struct RunCenterDetail: View {
               total: reviewRequiredArtifacts.count
             ))) { artifact in
               Button { store.openAgentRunArtifact(artifact) } label: {
-                Label(
-                  run.isFinished
-                    ? "Review was still pending for \(artifact.displayTitle)"
-                    : "Review \(artifact.displayTitle)",
-                  systemImage: "doc.badge.ellipsis"
-                )
+                Label("Review was still pending for \(artifact.displayTitle)", systemImage: "doc.badge.ellipsis")
               }
               .buttonStyle(.link)
             }
@@ -7539,6 +7477,350 @@ private struct RunCenterDetail: View {
     }
   }
 
+  // MARK: Visual summary
+
+  private var hasPendingDecision: Bool { !run.actionablePendingApprovals.isEmpty }
+
+  private var glanceStrip: some View {
+    let risk = RunDetailPresentation.risk(run.riskClass)
+    let agentTitle = RunDetailPresentation.agentName(
+      assignee: run.assignee,
+      provider: run.provider,
+      destinationTitle: run.destinationRef.flatMap { store.aiChatDestination(id: $0)?.title }
+    )
+    let elapsed = RunDetailPresentation.elapsedText(start: run.startedAt, end: run.completedAt ?? run.updatedAt)
+    let needs = needsYouSummary
+    return HStack(alignment: .top, spacing: 8) {
+      RunGlanceTile(
+        label: "Agent",
+        symbol: "sparkles",
+        value: agentTitle,
+        detail: RunDetailPresentation.agentDetail(model: run.model, provider: run.provider)
+      )
+      RunGlanceTile(
+        label: run.isFinished ? "Took" : "Active",
+        symbol: "timer",
+        value: elapsed ?? "Not started",
+        detail: run.startedAt.flatMap { RunDetailPresentation.startedText($0) }
+      )
+      RunGlanceTile(
+        label: "Risk",
+        symbol: risk.symbol,
+        value: risk.label,
+        detail: risk.detail,
+        valueTint: risk.tone == .positive || risk.tone == .neutral ? WorkspaceDesign.primaryText : risk.tone.color
+      )
+      RunGlanceTile(
+        label: "Needs you",
+        symbol: needs.count > 0 ? "hand.raised" : "checkmark.circle",
+        value: needs.value,
+        detail: needs.detail,
+        valueTint: needs.count > 0 ? .orange : WorkspaceDesign.themed(.done)
+      )
+    }
+  }
+
+  private var needsYouSummary: (count: Int, value: String, detail: String?) {
+    guard !run.isFinished else { return (0, "Nothing", "Run is finished") }
+    let decisions = run.actionablePendingApprovals
+    // Outputs are reviewed as part of a pending decision, so count them
+    // separately only when no decision is waiting.
+    let reviews = decisions.isEmpty ? run.artifacts.filter { $0.reviewStatus == "review-required" } : []
+    let failing = run.attentionValidations
+    let blocked = run.status == "blocked" ? 1 : 0
+    let count = decisions.count + reviews.count + failing.count + blocked
+    guard count > 0 else { return (0, "All clear", "Nothing waiting on you") }
+    let value: String
+    if count == decisions.count {
+      value = "\(count) decision\(count == 1 ? "" : "s")"
+    } else if count == blocked {
+      value = "A question"
+    } else {
+      value = "\(count) item\(count == 1 ? "" : "s")"
+    }
+    let detail: String? = if blocked > 0 {
+      "Answer the agent to resume"
+    } else if let decision = decisions.first {
+      decision.title
+    } else if let review = reviews.first {
+      "Review \(review.displayTitle)"
+    } else {
+      failing.first?.displayName
+    }
+    return (count, value, detail)
+  }
+
+  private var progressCard: some View {
+    let focus = RunDetailPresentation.focusStep(run.plan, hasPendingApproval: hasPendingDecision)
+    let trailing = [RunDetailPresentation.progressValue(run.plan), focus?.state.label]
+      .compactMap { $0 }
+      .joined(separator: " · ")
+    return VStack(alignment: .leading, spacing: 14) {
+      RunCardHeader(title: "Progress", symbol: "point.3.connected.trianglepath.dotted", trailing: trailing)
+      if RunDetailPresentation.usesStepTrack(stepCount: run.plan.count) {
+        RunStepTrack(plan: run.plan, hasPendingApproval: hasPendingDecision)
+      } else {
+        RunSegmentedProgress(plan: run.plan, hasPendingApproval: hasPendingDecision, height: 6)
+        VStack(alignment: .leading, spacing: 8) {
+          ForEach(run.plan.prefix(visibleCount(for: .plan, total: run.plan.count))) { step in
+            let state = RunDetailPresentation.stepState(step, hasPendingApproval: hasPendingDecision)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+              Image(systemName: state == .upcoming ? "circle" : stepIcon(step.status))
+                .foregroundStyle(state.color)
+              VStack(alignment: .leading, spacing: 1) {
+                Text(step.title).font(.callout)
+                Text("\(AgentRunItem.humanizedLabel(step.kind)) · \(state.label)")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+          showMoreButton(for: .plan, total: run.plan.count, noun: "plan steps")
+        }
+      }
+      if !run.latestValidations.isEmpty {
+        Divider()
+        checksContent(compactHeader: true)
+      }
+    }
+    .padding(14)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .workspaceCardSurface()
+  }
+
+  private func decisionCard(_ pending: [AgentRunApprovalItem]) -> some View {
+    VStack(alignment: .leading, spacing: 14) {
+      HStack(alignment: .center, spacing: 10) {
+        Image(systemName: "hand.raised.fill")
+          .font(.system(size: 13, weight: .semibold))
+          .foregroundStyle(.white)
+          .frame(width: 28, height: 28)
+          .background(Color.orange, in: Circle())
+        VStack(alignment: .leading, spacing: 1) {
+          Text("Your decision").font(.headline)
+          Text("The agent is paused until you decide")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        Spacer(minLength: 8)
+        if let count = RunDetailPresentation.approvalCountText(pending: pending.count, total: run.approvals.count) {
+          Text(count)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.orange)
+        }
+      }
+      .help("These are the same approvals shown in Review; deciding in either place updates this run record.")
+
+      ForEach(Array(visiblePendingApprovals(pending).enumerated()), id: \.element.id) { index, approval in
+        let approvalIsMutating = store.isAgentRunApprovalActionInProgress(
+          runID: run.id,
+          approvalID: approval.id
+        )
+        VStack(alignment: .leading, spacing: 12) {
+          if index > 0 { Divider() }
+          VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+              Text(approval.title)
+                .font(.title3.weight(.semibold))
+                .textSelection(.enabled)
+              Spacer(minLength: 8)
+              let risk = RunDetailPresentation.risk(approval.riskClass)
+              RunToneBadge(badge: RunBadgePresentation(text: risk.label, symbol: risk.symbol, tone: risk.tone))
+            }
+            Text(approval.action)
+              .font(.callout)
+              .foregroundStyle(.secondary)
+              .textSelection(.enabled)
+            Text([
+              approval.requestedFrom.map { "Requested from \($0)" },
+              AgentRunTimestampPresentation.displayText(for: approval.requestedAt),
+            ].compactMap { $0 }.joined(separator: " · "))
+              .font(.caption)
+              .foregroundStyle(.tertiary)
+          }
+
+          approvalReviewMaterial(approval)
+
+          HStack(spacing: 8) {
+            Button {
+              Task { await store.decideAgentRunApproval(run, approval: approval, decision: "approved") }
+            } label: {
+              if approvalIsMutating {
+                HStack(spacing: 6) {
+                  WorkspaceActivityIndicator(size: .mini)
+                  Text("Working")
+                }
+              } else {
+                Label("Approve", systemImage: "checkmark")
+              }
+            }
+            .buttonStyle(RunPrimaryButtonStyle(tint: WorkspaceDesign.themed(.done)))
+            .disabled(approvalIsMutating || !canApprove(approval))
+            .help(canApprove(approval) ? "Approve the displayed action" : "Reviewable action details are required before approval")
+            Button("Request Changes…") {
+              revisionFeedback = ""
+              revisionApproval = approval
+            }
+            .buttonStyle(RunSecondaryButtonStyle())
+            .disabled(approvalIsMutating)
+            .help("Describe the changes required and return the work to the agent")
+            Button("Reject") { Task { await store.decideAgentRunApproval(run, approval: approval, decision: "rejected") } }
+              .buttonStyle(RunSecondaryButtonStyle(tint: .red))
+              .disabled(approvalIsMutating)
+            Spacer(minLength: 8)
+            Button("Show in Review") {
+              store.showApprovalInQueue(run: run, approval: approval)
+            }
+            .buttonStyle(.link)
+            .font(.callout)
+          }
+          .controlSize(.small)
+        }
+        .id(approval.id)
+        .transition(.opacity)
+      }
+      showMoreButton(for: .pendingApprovals, total: pending.count, noun: "approvals")
+    }
+    .padding(14)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background {
+      RoundedRectangle(cornerRadius: WorkspaceDesign.cornerRadius, style: .continuous)
+        .fill(WorkspaceDesign.surfaceBackground)
+        .overlay(
+          RoundedRectangle(cornerRadius: WorkspaceDesign.cornerRadius, style: .continuous)
+            .fill(Color.orange.opacity(0.055))
+        )
+        .shadow(color: Color.orange.opacity(0.12), radius: 6, x: 0, y: 2)
+    }
+    .overlay {
+      RoundedRectangle(cornerRadius: WorkspaceDesign.cornerRadius, style: .continuous)
+        .stroke(Color.orange.opacity(0.45), lineWidth: 1)
+    }
+  }
+
+  private var outputsCard: some View {
+    let reviewCount = run.artifacts.reduce(0) { $0 + ($1.reviewStatus == "review-required" ? 1 : 0) }
+    return VStack(alignment: .leading, spacing: 12) {
+      RunCardHeader(
+        title: "Outputs",
+        symbol: "tray.full",
+        trailing: reviewCount > 0 && !run.isFinished
+          ? "\(run.artifacts.count) · \(reviewCount) need\(reviewCount == 1 ? "s" : "") review"
+          : "\(run.artifacts.count)"
+      )
+      LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 10, alignment: .top)], alignment: .leading, spacing: 10) {
+        ForEach(run.artifacts.prefix(visibleCount(
+          for: .artifacts,
+          total: run.artifacts.count
+        ))) { artifact in
+          RunOutputTile(artifact: artifact, runFinished: run.isFinished) {
+            store.openAgentRunArtifact(artifact)
+          }
+        }
+      }
+      showMoreButton(for: .artifacts, total: run.artifacts.count, noun: "outputs")
+    }
+    .padding(14)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .workspaceCardSurface()
+  }
+
+  private var checksCard: some View {
+    checksContent(compactHeader: false)
+      .padding(14)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .workspaceCardSurface()
+  }
+
+  private func checksContent(compactHeader: Bool) -> some View {
+    let validations = run.latestValidations
+    let passed = validations.reduce(0) { $0 + ($1.status == "passed" ? 1 : 0) }
+    let failing = run.isFinished ? [] : run.attentionValidations
+    let summary = failing.isEmpty
+      ? "\(passed) of \(validations.count) passed"
+      : "\(failing.count) need\(failing.count == 1 ? "s" : "") attention"
+    return VStack(alignment: .leading, spacing: 10) {
+      if compactHeader {
+        HStack(alignment: .center, spacing: 10) {
+          Text("Checks")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+          RunChipFlowLayout(spacing: 6) {
+            ForEach(validations.prefix(visibleCount(
+              for: .latestValidations,
+              total: validations.count
+            ))) { validation in
+              RunCheckChip(validation: validation)
+            }
+          }
+          Spacer(minLength: 8)
+          Text(summary)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(failing.isEmpty ? WorkspaceDesign.themed(.done) : .orange)
+        }
+      } else {
+        RunCardHeader(
+          title: "Checks",
+          symbol: "checkmark.seal",
+          tint: failing.isEmpty ? WorkspaceDesign.themed(.done) : .orange,
+          trailing: summary
+        )
+        RunChipFlowLayout(spacing: 6) {
+          ForEach(validations.prefix(visibleCount(
+            for: .latestValidations,
+            total: validations.count
+          ))) { validation in
+            RunCheckChip(validation: validation)
+          }
+        }
+      }
+      showMoreButton(for: .latestValidations, total: validations.count, noun: "validation results")
+      ForEach(failing.prefix(visibleCount(
+        for: .attentionValidations,
+        total: failing.count
+      ))) { validation in
+        Label(
+          validation.detail ?? "\(validation.displayName): \(AgentRunItem.humanizedLabel(validation.status))",
+          systemImage: validation.status == "failed" ? "xmark.octagon.fill" : "exclamationmark.triangle.fill"
+        )
+        .font(.callout)
+        .foregroundStyle(validation.status == "failed" ? .red : .orange)
+        .textSelection(.enabled)
+      }
+    }
+  }
+
+  private var handoffCard: some View {
+    let sourceLimit = 8
+    return VStack(alignment: .leading, spacing: 12) {
+      RunCardHeader(title: "Handoff", symbol: "bubble.left.and.text.bubble.right")
+      if let comment = run.comments.last {
+        RunHandoffBubble(comment: comment)
+      }
+      if !run.context.isEmpty {
+        VStack(alignment: .leading, spacing: 6) {
+          Text("Sources it cited")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+          RunChipFlowLayout(spacing: 6) {
+            ForEach(Array(run.context.prefix(sourceLimit).enumerated()), id: \.offset) { _, item in
+              RunSourceChip(context: item) { store.openAgentRunContext(item) }
+            }
+            if run.context.count > sourceLimit {
+              Text("+\(run.context.count - sourceLimit) more in Technical details")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 4)
+            }
+          }
+        }
+      }
+    }
+    .padding(14)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .workspaceCardSurface()
+  }
+
   @ViewBuilder
   private func approvalReviewMaterial(_ approval: AgentRunApprovalItem) -> some View {
     if let note = approval.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
@@ -7606,17 +7888,16 @@ private struct RunCenterDetail: View {
       }
     } else if !run.artifacts.isEmpty {
       VStack(alignment: .leading, spacing: 6) {
-        Text("Review outputs before approving")
+        Text(run.artifacts.count == 1 ? "Output to review" : "Outputs to review")
           .font(.caption.weight(.semibold))
           .foregroundStyle(.secondary)
         ForEach(run.artifacts.prefix(visibleCount(
           for: .approvalReviewArtifacts,
           total: run.artifacts.count
         ))) { artifact in
-          Button { store.openAgentRunArtifact(artifact) } label: {
-            Label(artifact.displayTitle, systemImage: "doc.text")
+          RunOutputTile(artifact: artifact, runFinished: run.isFinished, compact: true) {
+            store.openAgentRunArtifact(artifact)
           }
-          .buttonStyle(.link)
         }
         showMoreButton(
           for: .approvalReviewArtifacts,
@@ -7911,24 +8192,6 @@ private struct RunCenterDetail: View {
   private var technicalDetails: some View {
     DisclosureGroup {
       VStack(alignment: .leading, spacing: 16) {
-        if !run.plan.isEmpty {
-          technicalGroup("Plan") {
-            ForEach(run.plan.prefix(visibleCount(for: .plan, total: run.plan.count))) { step in
-              HStack(alignment: .top) {
-                Image(systemName: stepIcon(step.status))
-                  .foregroundStyle(stepColor(step.status))
-                VStack(alignment: .leading) {
-                  Text(step.title)
-                  Text("\(AgentRunItem.humanizedLabel(step.kind)) · \(AgentRunItem.humanizedLabel(step.status))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-              }
-            }
-            showMoreButton(for: .plan, total: run.plan.count, noun: "plan steps")
-          }
-        }
-
         if !run.acceptanceCriteria.isEmpty {
           technicalGroup("Acceptance criteria") {
             ForEach(Array(run.acceptanceCriteria
@@ -7943,26 +8206,6 @@ private struct RunCenterDetail: View {
               for: .acceptanceCriteria,
               total: run.acceptanceCriteria.count,
               noun: "criteria"
-            )
-          }
-        }
-
-        if !run.latestValidations.isEmpty {
-          technicalGroup("Latest validation results") {
-            ForEach(run.latestValidations.prefix(visibleCount(
-              for: .latestValidations,
-              total: run.latestValidations.count
-            ))) { validation in
-              Label(
-                "\(validation.displayName): \(AgentRunItem.humanizedLabel(validation.status))",
-                systemImage: validation.status == "passed" ? "checkmark.seal.fill" : validation.status == "skipped" ? "minus.circle" : "exclamationmark.triangle"
-              )
-              .foregroundStyle(validation.status == "passed" ? .green : validation.status == "skipped" ? .secondary : .orange)
-            }
-            showMoreButton(
-              for: .latestValidations,
-              total: run.latestValidations.count,
-              noun: "validation results"
             )
           }
         }
@@ -8022,15 +8265,6 @@ private struct RunCenterDetail: View {
     case "skipped": return "minus.circle"
     case "blocked": return "exclamationmark.circle.fill"
     default: return "circle"
-    }
-  }
-
-  private func stepColor(_ status: String) -> Color {
-    switch status {
-    case "completed": return .green
-    case "failed": return .red
-    case "blocked": return .orange
-    default: return .secondary
     }
   }
 

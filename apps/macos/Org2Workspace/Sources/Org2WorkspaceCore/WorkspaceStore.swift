@@ -4169,6 +4169,14 @@ extension WorkspaceStore {
       }) ?? visibleApprovalItems.first {
         selectApprovalItem(item)
       }
+    case "runs":
+      selectedSurface = .approvals
+      if let run = agentRuns.first(where: { run in
+        guard let target, !target.isEmpty else { return true }
+        return run.displayTitle.lowercased().contains(target) || run.id.lowercased().contains(target)
+      }) ?? agentRuns.first {
+        selectAgentRun(run)
+      }
     case "review":
       selectedSurface = .approvals
       runsAndReviewPage = .review
