@@ -83,7 +83,7 @@ const scenarios = [
     width: 1250,
     height: 800,
     scale: 2,
-    crop: { x: 706, y: 40, width: 544, height: 722 },
+    crop: { x: 706, y: 40, width: 544, height: 560 },
     fileName: "home-agent-work.png",
   },
   {
@@ -92,7 +92,7 @@ const scenarios = [
     width: 1250,
     height: 900,
     scale: 2,
-    crop: { x: 714, y: 502, width: 526, height: 256 },
+    crop: { x: 712, y: 160, width: 530, height: 206 },
     fileName: "home-approval-desktop.png",
   },
   {

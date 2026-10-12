@@ -174,28 +174,6 @@ enum RunDetailPresentation {
     return "\(days) day\(days == 1 ? "" : "s")"
   }
 
-  /// Short start label that fits a glance tile: a time today, else a date.
-  static func startedText(
-    _ rawValue: String,
-    now: Date = Date(),
-    calendar: Calendar = .current,
-    locale: Locale = .current
-  ) -> String? {
-    guard let date = AgentRunTimestampPresentation.date(from: rawValue) else { return nil }
-    let formatter = DateFormatter()
-    formatter.locale = locale
-    formatter.timeZone = calendar.timeZone
-    if calendar.isDate(date, inSameDayAs: now) {
-      formatter.dateStyle = .none
-      formatter.timeStyle = .short
-    } else {
-      formatter.setLocalizedDateFormatFromTemplate(
-        calendar.isDate(date, equalTo: now, toGranularity: .year) ? "MMMd" : "yMMMd"
-      )
-    }
-    return "Since \(formatter.string(from: date))"
-  }
-
   /// A count line for the decision card. One lone approval needs no count.
   static func approvalCountText(pending: Int, total: Int) -> String? {
     guard pending > 0, total > 1 else { return nil }

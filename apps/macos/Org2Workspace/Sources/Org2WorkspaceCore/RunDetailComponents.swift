@@ -44,32 +44,6 @@ struct RunToneBadge: View {
   }
 }
 
-/// Card header: a tinted symbol, a title, and an optional trailing summary.
-struct RunCardHeader: View {
-  let title: String
-  let symbol: String
-  var tint: Color = WorkspaceDesign.structuralAccent
-  var trailing: String?
-
-  var body: some View {
-    HStack(spacing: 8) {
-      Image(systemName: symbol)
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(tint)
-        .frame(width: 22, height: 22)
-        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-      Text(title).font(.headline)
-      Spacer(minLength: 8)
-      if let trailing {
-        Text(trailing)
-          .font(.caption.weight(.medium))
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-      }
-    }
-  }
-}
-
 /// A run's progress as one segment per step, or a continuous bar for long plans.
 struct RunSegmentedProgress: View {
   let plan: [AgentRunStepItem]
@@ -107,52 +81,6 @@ struct RunSegmentedProgress: View {
   }
 }
 
-/// One fact in the run's at-a-glance strip.
-struct RunGlanceTile<Accessory: View>: View {
-  let label: String
-  let symbol: String
-  let value: String
-  let detail: String?
-  var valueTint: Color = WorkspaceDesign.primaryText
-  @ViewBuilder var accessory: Accessory
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Label(label, systemImage: symbol)
-        .font(.caption2.weight(.semibold))
-        .textCase(.uppercase)
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-      Text(value)
-        .font(.callout.weight(.semibold))
-        .foregroundStyle(valueTint)
-        .lineLimit(1)
-      accessory
-      if let detail {
-        Text(detail)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-      }
-    }
-    .padding(.horizontal, 11)
-    .padding(.vertical, 9)
-    .frame(maxWidth: .infinity, alignment: .topLeading)
-    .background(WorkspaceDesign.panelFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-    .overlay {
-      RoundedRectangle(cornerRadius: 9, style: .continuous)
-        .stroke(WorkspaceDesign.hairline, lineWidth: 0.75)
-    }
-    .accessibilityElement(children: .combine)
-  }
-}
-
-extension RunGlanceTile where Accessory == EmptyView {
-  init(label: String, symbol: String, value: String, detail: String?, valueTint: Color = WorkspaceDesign.primaryText) {
-    self.init(label: label, symbol: symbol, value: value, detail: detail, valueTint: valueTint) { EmptyView() }
-  }
-}
-
 /// Horizontal pipeline of plan steps with connectors. Used for short plans.
 struct RunStepTrack: View {
   let plan: [AgentRunStepItem]
@@ -178,9 +106,11 @@ struct RunStepTrack: View {
             .lineLimit(2)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 4)
-          Text(state.label)
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(state == .upcoming ? WorkspaceDesign.tertiaryText : state.color)
+          if isFocus(state) {
+            Text(state.label)
+              .font(.caption2.weight(.semibold))
+              .foregroundStyle(state.color)
+          }
         }
         .frame(maxWidth: .infinity)
         .help("\(step.title) · \(AgentRunItem.humanizedLabel(step.kind)) · \(state.label)")
@@ -199,7 +129,7 @@ struct RunStepTrack: View {
 
   @ViewBuilder
   private func node(_ state: RunStepVisualState) -> some View {
-    let size: CGFloat = 26
+    let size: CGFloat = 22
     switch state {
     case .upcoming:
       Circle()
@@ -235,6 +165,7 @@ struct RunOutputTile: View {
   let artifact: AgentRunArtifactItem
   let runFinished: Bool
   var compact = false
+  var showsReviewBadge = true
   let open: () -> Void
   @State private var isHovering = false
 
@@ -264,12 +195,12 @@ struct RunOutputTile: View {
               .foregroundStyle(.secondary)
               .lineLimit(1)
           }
-          if !compact, let badge = RunDetailPresentation.reviewBadge(artifact.reviewStatus, runFinished: runFinished) {
+          if !compact, showsReviewBadge, let badge = RunDetailPresentation.reviewBadge(artifact.reviewStatus, runFinished: runFinished) {
             RunToneBadge(badge: badge).padding(.top, 2)
           }
         }
         Spacer(minLength: 4)
-        if compact, let badge = RunDetailPresentation.reviewBadge(artifact.reviewStatus, runFinished: runFinished) {
+        if compact, showsReviewBadge, let badge = RunDetailPresentation.reviewBadge(artifact.reviewStatus, runFinished: runFinished) {
           RunToneBadge(badge: badge)
         }
         Image(systemName: "arrow.up.right")
@@ -294,30 +225,6 @@ struct RunOutputTile: View {
   }
 }
 
-/// A validation result as a compact chip; failing checks show their detail.
-struct RunCheckChip: View {
-  let validation: AgentRunValidationItem
-
-  var body: some View {
-    let badge = RunDetailPresentation.checkBadge(validation.status)
-    HStack(spacing: 6) {
-      Image(systemName: badge.symbol)
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(badge.tone.color)
-      Text(validation.displayName)
-        .font(.caption.weight(.medium))
-        .foregroundStyle(WorkspaceDesign.primaryText)
-        .lineLimit(1)
-    }
-    .padding(.horizontal, 9)
-    .padding(.vertical, 5)
-    .background(badge.tone.color.opacity(0.09), in: Capsule())
-    .overlay(Capsule().stroke(badge.tone.color.opacity(0.22), lineWidth: 0.75))
-    .help(validation.detail.map { "\(badge.text): \($0)" } ?? badge.text)
-    .accessibilityElement(children: .combine)
-  }
-}
-
 /// The agent's latest handoff note, styled as a message.
 struct RunHandoffBubble: View {
   let comment: AgentRunCommentItem
@@ -330,12 +237,9 @@ struct RunHandoffBubble: View {
         .frame(width: 26, height: 26)
         .background(WorkspaceDesign.structuralAccent, in: Circle())
       VStack(alignment: .leading, spacing: 4) {
-        HStack(spacing: 6) {
-          Text(comment.author).font(.caption.weight(.semibold))
-          Text(AgentRunTimestampPresentation.displayText(for: comment.createdAt))
-            .font(.caption)
-            .foregroundStyle(.tertiary)
-        }
+        Text(AgentRunTimestampPresentation.displayText(for: comment.createdAt))
+          .font(.caption)
+          .foregroundStyle(.tertiary)
         Text(comment.body)
           .font(.callout)
           .textSelection(.enabled)
@@ -355,69 +259,6 @@ struct RunHandoffBubble: View {
         )
       )
     }
-  }
-}
-
-/// A clickable source the run cited.
-struct RunSourceChip: View {
-  let context: AgentRunContextItem
-  let open: () -> Void
-
-  var body: some View {
-    Button(action: open) {
-      Label(context.displayTitle, systemImage: context.isMeetingReference ? "waveform" : "doc.text")
-        .font(.caption.weight(.medium))
-        .lineLimit(1)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(WorkspaceDesign.controlFill, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-    }
-    .buttonStyle(.plain)
-    .disabled(context.fileReference == nil)
-    .help(context.citation ?? context.ref)
-  }
-}
-
-/// Wraps chips onto as many rows as needed. Measures each subview once.
-struct RunChipFlowLayout: Layout {
-  var spacing: CGFloat = 6
-
-  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-    arrange(maxWidth: proposal.width ?? .infinity, subviews: subviews).size
-  }
-
-  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-    let arrangement = arrange(maxWidth: bounds.width, subviews: subviews)
-    for (index, origin) in arrangement.origins.enumerated() {
-      subviews[index].place(
-        at: CGPoint(x: bounds.minX + origin.x, y: bounds.minY + origin.y),
-        proposal: ProposedViewSize(arrangement.sizes[index])
-      )
-    }
-  }
-
-  private func arrange(maxWidth: CGFloat, subviews: Subviews) -> (origins: [CGPoint], sizes: [CGSize], size: CGSize) {
-    var origins: [CGPoint] = []
-    var sizes: [CGSize] = []
-    var x: CGFloat = 0
-    var y: CGFloat = 0
-    var rowHeight: CGFloat = 0
-    var widest: CGFloat = 0
-    for subview in subviews {
-      var size = subview.sizeThatFits(.unspecified)
-      size.width = min(size.width, maxWidth)
-      if x > 0, x + size.width > maxWidth {
-        x = 0
-        y += rowHeight + spacing
-        rowHeight = 0
-      }
-      origins.append(CGPoint(x: x, y: y))
-      sizes.append(size)
-      x += size.width + spacing
-      rowHeight = max(rowHeight, size.height)
-      widest = max(widest, x - spacing)
-    }
-    return (origins, sizes, CGSize(width: widest, height: y + rowHeight))
   }
 }
 
