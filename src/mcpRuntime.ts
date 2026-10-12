@@ -17,6 +17,7 @@ import {
 import { defaultCorpusCachePath } from "./indexPaths.js";
 import { safeIdentifier } from "./safeIdentifier.js";
 import { queueAIChatInboxMessage } from "./aiChatInbox.js";
+import { isOpenClawThreadSettled, loadOpenClawThreadState, openClawDateMilliseconds } from "./openClawThreadState.js";
 import { celorgaToolName, legacyToolName, stateDir } from "./brandNames.js";
 
 type JsonObject = Record<string, unknown>;
@@ -404,6 +405,8 @@ function legacyMcpTools(readOnly: boolean) {
     ...readTools,
     { name: "org2_run_create", description: "Create a durable Celorga agent run from a reusable workflow", inputSchema: { type: "object", required: ["workflow"], properties: { workflow: { type: "string" }, inputs: { type: "object" }, owner: { type: "string" }, agentRef: { type: "string" }, goalRef: { type: "string" } } }, annotations: writeAnnotations },
     { name: "org2_run_transition", description: "Transition a durable Celorga run. Completion requires a concise, human-readable summary.", inputSchema: { type: "object", required: ["run", "status"], properties: { run: { type: "string" }, status: { type: "string" }, actor: { type: "string" }, reason: { type: "string" }, summary: { type: "string" }, highlights: { type: "array", items: { type: "string" } }, nextActions: { type: "array", items: { type: "string" } } } }, annotations: writeAnnotations },
+    { name: "org2_thread_list", description: "List Celorga AI chats (newest first) with each thread's ID, title, state, runtime, destination, and whether it is a shared room. Use the ID with thread_send or thread_post", inputSchema: { type: "object", properties: { state: { type: "string", enum: ["all", "active", "settled"], default: "active" }, limit: { type: "integer", minimum: 1, maximum: 200, default: 50 } } }, annotations: readOnlyAnnotations },
+    { name: "org2_thread_send", description: "Message the agent in an existing single-agent Celorga AI chat and start its turn, as if the user sent it (a follow-up if it is busy). Use this, not a new automation or scheduled job, to hand work to another agent. For a shared room use thread_post with requestTurn", inputSchema: { type: "object", required: ["threadId", "message"], properties: { threadId: { type: "string" }, message: { type: "string" }, author: { type: "string" }, idempotencyKey: { type: "string" } } }, annotations: writeAnnotations },
     { name: "org2_thread_post", description: "Post an attributed background message to an existing Celorga AI chat. It is context only unless requestTurn names shared-room agents (destination IDs or @mentions) that should each take a turn in response", inputSchema: { type: "object", required: ["threadId", "message", "author"], properties: { threadId: { type: "string" }, message: { type: "string" }, author: { type: "string" }, agentRef: { type: "string" }, source: { type: "string" }, idempotencyKey: { type: "string" }, requestTurn: { type: "array", items: { type: "string" }, maxItems: 8 } } }, annotations: writeAnnotations },
   ];
 }
@@ -456,8 +459,40 @@ async function handle(root: string, request: JsonRpcRequest, options: McpServerO
       const resolved = resolveAgentProfile(root, requiredString(args.runtime, "runtime"), requiredString(args.runtimeAgentId, "runtimeAgentId"));
       return result(toolResult(resolved));
     }
-    if (readOnly && ["org2_run_create", "org2_run_transition", "org2_thread_post"].includes(String(name))) {
+    if (readOnly && ["org2_run_create", "org2_run_transition", "org2_thread_list", "org2_thread_send", "org2_thread_post"].includes(String(name))) {
       throw new Error("tool is unavailable on the read-only MCP endpoint");
+    }
+    if (name === "org2_thread_list") {
+      const filter = optionalString(args.state, "state") ?? "active";
+      if (!["all", "active", "settled"].includes(filter)) throw new Error("state must be all, active, or settled");
+      const limit = Math.min(200, Math.max(1, Number.isInteger(args.limit) ? Number(args.limit) : 50));
+      const threads = loadOpenClawThreadState(root).threads
+        .filter((thread) => filter === "all" || (filter === "settled") === isOpenClawThreadSettled(thread))
+        .sort((left, right) => (openClawDateMilliseconds(right.updatedAt) || 0) - (openClawDateMilliseconds(left.updatedAt) || 0))
+        .slice(0, limit)
+        .map((thread) => ({
+          id: thread.id.toLowerCase(),
+          title: thread.title || "Untitled",
+          state: isOpenClawThreadSettled(thread) ? "settled" : "active",
+          runtime: thread.runtime,
+          destinationId: thread.destinationID,
+          sharedRoom: thread.isSharedRoom === true,
+        }));
+      return result({ content: [{ type: "text", text: JSON.stringify({ threads }, null, 2) }] });
+    }
+    if (name === "org2_thread_send") {
+      const queued = queueAIChatInboxMessage(
+        root,
+        requiredString(args.threadId, "threadId"),
+        requiredString(args.message, "message"),
+        {
+          send: true,
+          authorLabel: optionalString(args.author, "author"),
+          idempotencyKey: optionalString(args.idempotencyKey, "idempotencyKey"),
+          apply: true,
+        },
+      );
+      return result({ content: [{ type: "text", text: JSON.stringify(queued, null, 2) }] });
     }
     if (name === "org2_thread_post") {
       const queued = queueAIChatInboxMessage(

@@ -5,7 +5,21 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { waitForThread, activityEventHistory } from "../dist/activityEvents.js";
 import { explainActivity } from "../dist/activityState.js";
+import { PassThrough } from "node:stream";
 import { queueAIChatInboxMessage, AI_CHAT_SEND_SCHEMA } from "../dist/aiChatInbox.js";
+import { serveMcp } from "../dist/mcpRuntime.js";
+
+async function mcp(root, requests, options) {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let text = "";
+  output.setEncoding("utf8");
+  output.on("data", (chunk) => { text += chunk; });
+  const serving = serveMcp(root, input, output, options);
+  input.end(requests.map((request, index) => JSON.stringify({ jsonrpc: "2.0", id: index + 1, ...request })).join("\n") + "\n");
+  await serving;
+  return text.trim().split("\n").map((line) => JSON.parse(line));
+}
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "celorga-single-send-"));
 const singleID = "00000000-0000-4000-8000-0000000000a2";
@@ -92,6 +106,27 @@ try {
   const post = cli("post", singleID, "--message", "FYI", "--author", "CLI", "--json");
   assert.equal(post.status, 0, post.stderr);
   assert.equal(JSON.parse(post.stdout).turnStatus, "not-requested");
+
+  // MCP clients can find a chat and start its agent's turn without the CLI.
+  const [tools, listed, sent, rejected] = await mcp(root, [
+    { method: "tools/list" },
+    { method: "tools/call", params: { name: "celorga_thread_list", arguments: {} } },
+    { method: "tools/call", params: { name: "celorga_thread_send", arguments: { threadId: singleID, message: "Over to you.", author: "Research agent", idempotencyKey: "mcp-handoff" } } },
+    { method: "tools/call", params: { name: "celorga_thread_send", arguments: { threadId: "missing", message: "OK" } } },
+  ]);
+  const toolNames = tools.result.tools.map((tool) => tool.name);
+  assert.ok(toolNames.includes("celorga_thread_send") && toolNames.includes("celorga_thread_list"));
+  const listedThreads = JSON.parse(listed.result.content[0].text).threads;
+  assert.deepEqual(listedThreads.map((thread) => [thread.id, thread.destinationId, thread.sharedRoom]), [[singleID, "builtin.codex", false]]);
+  const mcpQueued = JSON.parse(sent.result.content[0].text);
+  assert.equal(mcpQueued.applied, true);
+  assert.equal(mcpQueued.message.schema, AI_CHAT_SEND_SCHEMA);
+  assert.equal(mcpQueued.message.authorLabel, "Research agent");
+  assert.equal(mcpQueued.turnStatus, "unconfirmed");
+  assert.equal(fs.existsSync(mcpQueued.file), true);
+  assert.ok(rejected.error || rejected.result?.isError, "an unknown thread must not queue a send");
+  const [readOnlyTools] = await mcp(root, [{ method: "tools/list" }], { readOnly: true });
+  assert.equal(readOnlyTools.result.tools.some((tool) => tool.name.startsWith("celorga_thread_")), false);
   console.log("single-agent send CLI tests passed");
 } finally {
   fs.rmSync(root, { recursive: true, force: true });

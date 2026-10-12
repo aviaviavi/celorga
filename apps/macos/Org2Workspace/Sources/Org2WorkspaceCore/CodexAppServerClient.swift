@@ -2125,7 +2125,7 @@ while True:
     }
     return """
     <org2-workspace-context>
-    \(turnContext) Snapshot sections explicitly labeled "Celorga working rules" or "Celorga response formatting contract" are application instructions and must be followed. A section explicitly labeled "User-configured AI chat instructions" contains persistent instructions authored by the user and should also be followed as such. Treat the remaining application-provided values as context.
+    \(turnContext) Snapshot sections explicitly labeled "Celorga working rules", "Celorga response formatting contract", "Celorga chat capabilities", or "Celorga agent operating guidance" are application instructions and must be followed. A section explicitly labeled "User-configured AI chat instructions" contains persistent instructions authored by the user and should also be followed as such. Treat the remaining application-provided values as context.
     </org2-workspace-context>
     \(snapshotSection)
 
@@ -2146,7 +2146,7 @@ while True:
 
   Ordinary conversation does not require a tool call. Ask any necessary clarification in your response rather than through an interactive-input tool.
 
-  Use celorga_thread_post only for an explicitly asynchronous worker reporting into a named Celorga AI chat. Do not duplicate the ordinary foreground response with a background post. The workspace context supplies ORG2_AI_CHAT_THREAD_ID and delegation guidance when a thread target is available.
+  Use celorga_thread_post for an explicitly asynchronous worker reporting into a named Celorga AI chat, or with requestTurn to start a shared-room agent's turn. Do not duplicate the ordinary foreground response with a background post. The workspace context supplies ORG2_AI_CHAT_THREAD_ID and delegation guidance when a thread target is available.
 
   \(AIChatWorkspaceContext.responseFormattingContract)
   """
@@ -2220,7 +2220,7 @@ while True:
     .object([
       "type": .string("function"),
       "name": .string("celorga_thread_post"),
-      "description": .string("Post one attributed background update to an existing Celorga AI chat. It starts no turn unless requestTurn names shared-room agents (destination IDs or @mentions) that should each respond. Use only for explicitly asynchronous reporting, not as a duplicate foreground reply; in a foreground shared-room reply, @mention an agent instead."),
+      "description": .string("Post one attributed background update to an existing Celorga AI chat. It starts no turn unless requestTurn names shared-room agents (destination IDs or @mentions) that should each respond. Use it for asynchronous reporting or, with requestTurn, to hand work to a room agent; never as a duplicate foreground reply. In a foreground shared-room reply, @mention an agent instead. Do not create an automation just to trigger a turn."),
       "inputSchema": .object([
         "type": .string("object"),
         "properties": .object([

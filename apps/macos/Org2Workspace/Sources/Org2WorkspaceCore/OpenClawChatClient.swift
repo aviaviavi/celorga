@@ -501,10 +501,13 @@ public struct AIChatWorkspaceContext: Sendable {
   nonisolated static let chatCapabilities = """
   Celorga chat capabilities
 
-  Know these capabilities and use them when they help. Never tell the user Celorga cannot do them.
-  - Fully interactive content: an html source block (above) renders in Celorga chat on the Mac as a live, sandboxed HTML, CSS, and JavaScript app (iOS shows it without running scripts). When a working calculator, simulation, game, explorer, diagram, or custom visualization would answer better than prose or a static table, build one instead of describing it.
-  - Rich replies: Org tables, chart blocks, and inline image links render directly in the conversation.
-  - Messaging other agents: Avi talks to several agents through Celorga (configured destinations such as OpenClaw, Codex, Claude Code, OpenCode, or Pi), and agents can reach each other. In a shared room, @mention another agent in your reply to start its turn now. From a background job or for another chat, post with =celorga thread post THREAD_ID --message TEXT --author NAME --apply= (or the =celorga_thread_post= tool), and add =--request-turn @AGENT= to ask a shared-room agent to respond. Check =celorga thread post --help= for the installed options. For durable delegated work, create a run with =celorga run create --agent-ref ID= or assign a TODO with =celorga todo assign --agent-ref ID=.
+  You are running inside the Celorga harness. Use these capabilities directly; never tell the user Celorga cannot do them, and do not build workarounds for them.
+  - Inline rendering: Org tables, chart blocks, and image links render in your reply, and an html source block runs as a live, sandboxed HTML, CSS, and JavaScript app on the Mac (iOS shows it without running scripts). When a calculator, simulation, game, explorer, diagram, or custom visualization would answer better than prose or a static table, put it in your reply instead of describing it, writing a file, or opening a browser.
+  - Starting another agent's turn: message that agent directly. Do not create an automation, workflow, cron job, scheduled task, or helper script just to deliver a message or trigger a turn.
+    - Single-agent chat: =celorga thread send THREAD_ID --message TEXT --idempotency-key KEY --apply= (MCP =celorga_thread_send=) starts its turn, or queues a follow-up if it is busy.
+    - Shared room: @mention another agent in your reply, or run =celorga thread post THREAD_ID --message TEXT --author NAME --request-turn @AGENT --apply= (MCP =celorga_thread_post= with requestTurn).
+    - Find thread IDs with =celorga thread list --json= (MCP =celorga_thread_list=) and await a reply with =celorga thread wait THREAD_ID --until reply=. A queued request does not confirm the turn started.
+  - Durable delegated work: =celorga run create --agent-ref ID= or =celorga todo assign --agent-ref ID=. Create an automation only when the user wants recurring or scheduled work.
   """
 
   nonisolated static let agentOperatingGuidance = """

@@ -136,9 +136,13 @@ If a native operation appears missing or broken, check the installed version, ca
 - Blocking requires a specific question or next action. Completion requires a
   concise reviewer-facing outcome and no unresolved approval or artifact review.
   Only a person may confirm whole-run completion outside the workflow.
-- Use `celorga thread post` or the matching MCP tool only when an explicitly
-  asynchronous worker must report into a named AI chat. Foreground agents reply
-  normally and must not duplicate their response through the inbox.
+- To start another agent's turn, message it directly: `celorga thread send`
+  (MCP `celorga_thread_send`) for a single-agent chat, or an @mention or
+  `celorga thread post --request-turn` in a shared room. Do not create an
+  automation or scheduled job just to trigger a turn.
+- Otherwise use `celorga thread post` or the matching MCP tool only when an
+  explicitly asynchronous worker must report into a named AI chat. Foreground
+  agents reply normally and must not duplicate their response through the inbox.
 - When changing the OpenClaw adapter, preserve its configured single-corpus
   boundary, portable corpus-ID validation, stable correlation/idempotency keys,
   approval continuation semantics, and runtime metadata without credentials.
