@@ -249,7 +249,7 @@ Definitions are ordinary JSON files in =views/=, named by view ID, using =celorg
 * Data notebooks and charts
 
 #+begin_export html
-<figure class="celorga-section-shot"><img src="assets/screenshots/macos-workspace-data.png" alt="Celorga data notebook with a table and chart" loading="lazy" /><figcaption>Keep results and charts beside the notes that explain them.</figcaption></figure>
+<figure class="celorga-section-shot"><img src="assets/screenshots/macos-workspace-data.png?v=20261012" alt="Celorga data notebook with activation and revenue charts" loading="lazy" /><figcaption>Keep results and charts beside the notes that explain them.</figcaption></figure>
 #+end_export
 
 With Celorga, Org documents can connect notes to CSV, Parquet, JSON, ClickHouse, or Metabase data, define SQL views, materialize results, and render charts. Refresh is explicit: opening a note never runs a remote query. Results retain source and freshness information so readers can see where the numbers came from.

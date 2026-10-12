@@ -3749,3 +3749,488 @@ html {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Homepage logos: one inline SVG sprite, referenced with <use>. The sprite
+   stays in the layout (not display:none) so gradient fills still resolve. */
+#content .celorga-logo-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+#content svg.celorga-logo {
+  flex: none;
+  width: 1.1em;
+  height: 1.1em;
+}
+
+#content .celorga-home-harness-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+#content .celorga-home-harness-list li {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  min-height: 6.4rem;
+  padding: 0.9rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  text-align: center;
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+
+#content .celorga-home-harness-list li:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+#content .celorga-home-harness-list svg.celorga-logo {
+  width: 2.25rem;
+  height: 2.25rem;
+  color: var(--fg);
+}
+
+#content .celorga-home-harness-list strong {
+  font-size: 0.86rem;
+}
+
+#content .celorga-home-share-targets li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+#content .celorga-home-share-targets svg.celorga-logo {
+  width: 1rem;
+  height: 1rem;
+  color: var(--muted);
+}
+
+#content .celorga-home-share-targets use[href="#logo-google-docs"] { color: #4285f4; }
+#content .celorga-home-share-targets use[href="#logo-google-slides"] { color: #f4b400; }
+#content .celorga-home-share-targets use[href="#logo-google-sheets"] { color: #0f9d58; }
+
+#content .celorga-home-card-logos {
+  display: flex;
+  gap: 0.8rem;
+  margin-top: 0.9rem;
+  color: var(--muted);
+}
+
+#content .celorga-home-card-logos svg.celorga-logo {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+/* Homepage: server, devices, and synced corpus diagram. */
+#content .celorga-home-anywhere {
+  max-width: 70rem;
+  margin: 0 0 clamp(4rem, 8vw, 6.5rem);
+  scroll-margin-top: 5rem;
+}
+
+#content .celorga-topology {
+  --topo-server-bg: #17201d;
+  --topo-server-fg: #f1f4ef;
+  --topo-server-muted: #9eb0a8;
+  --topo-server-line: rgba(255, 255, 255, 0.1);
+  --topo-wire: var(--border-strong);
+  display: grid;
+  margin-top: clamp(1.5rem, 3vw, 2.25rem);
+  padding: clamp(1rem, 3vw, 2rem);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--link) 7%, transparent), transparent 60%),
+    var(--surface-raised);
+  box-shadow: var(--shadow-small);
+}
+
+#content .celorga-topology svg.celorga-topology-icon {
+  flex: none;
+  width: 1.6rem;
+  height: 1.6rem;
+}
+
+#content .celorga-topology-devices {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(0.6rem, 1.5vw, 1rem);
+}
+
+#content .celorga-topology-device {
+  display: grid;
+  justify-items: center;
+  gap: 0.2rem;
+  padding: 0.9rem 0.6rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--fg);
+  text-align: center;
+}
+
+#content .celorga-topology-device > svg,
+#content .celorga-topology-icon-row {
+  margin-bottom: 0.35rem;
+  color: var(--link);
+}
+
+#content .celorga-topology-icon-row {
+  display: flex;
+  gap: 0.35rem;
+}
+
+#content .celorga-topology-icon-row svg.celorga-topology-icon {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+#content .celorga-topology-device strong {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+#content .celorga-topology-device span:not(.celorga-topology-icon-row) {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+#content .celorga-topology-wires {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(0.6rem, 1.5vw, 1rem);
+  height: 3.6rem;
+}
+
+#content .celorga-topology-wires-sync {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  height: 2.6rem;
+}
+
+#content .celorga-topology-wires i {
+  position: relative;
+  justify-self: center;
+  width: 2px;
+  height: 100%;
+  overflow: hidden;
+  background: repeating-linear-gradient(to bottom, var(--topo-wire) 0 4px, transparent 4px 8px);
+}
+
+#content .celorga-topology-wires i::after {
+  position: absolute;
+  left: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--link);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--link) 20%, transparent);
+  content: "";
+  animation: celorga-topology-pulse 2.6s ease-in-out infinite;
+}
+
+#content .celorga-topology-wires i:nth-child(2)::after { animation-delay: -0.7s; animation-direction: reverse; }
+#content .celorga-topology-wires i:nth-child(3)::after { animation-delay: -1.4s; }
+#content .celorga-topology-wires i:nth-child(4)::after { animation-delay: -2s; animation-direction: reverse; }
+
+#content .celorga-topology-wires-sync i::after {
+  background: var(--signal);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal) 20%, transparent);
+}
+
+@keyframes celorga-topology-pulse {
+  0% { top: -8px; opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #content .celorga-topology-wires i::after {
+    display: none;
+  }
+}
+
+#content .celorga-topology-wires > span {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+}
+
+#content svg.celorga-topology-wire-logo {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--fg);
+}
+
+#content .celorga-topology-server {
+  padding: clamp(1rem, 2.5vw, 1.4rem);
+  border: 1px solid #0c1210;
+  border-radius: 12px;
+  background: var(--topo-server-bg);
+  color: var(--topo-server-fg);
+  box-shadow: 0 18px 40px rgba(16, 24, 21, 0.22);
+}
+
+#content .celorga-topology-server-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--topo-server-line);
+}
+
+#content .celorga-topology-server-head > svg {
+  color: #8fb4ff;
+}
+
+#content .celorga-topology-server-head div {
+  display: grid;
+}
+
+#content .celorga-topology-server-head strong {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+#content .celorga-topology-server-head span {
+  color: var(--topo-server-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+#content p.celorga-topology-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0 auto;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.12);
+  color: #86efac;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+#content .celorga-topology-status i {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.2);
+}
+
+#content .celorga-topology-server-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 1px;
+  margin-top: 0.9rem;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--topo-server-line);
+}
+
+#content .celorga-topology-server-grid > div {
+  padding: 0.85rem 0.95rem;
+  background: var(--topo-server-bg);
+}
+
+#content p.celorga-topology-label {
+  margin: 0 0 0.6rem;
+  color: var(--topo-server-muted);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+#content .celorga-topology-logos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+#content .celorga-topology-logos svg.celorga-logo {
+  width: 2rem;
+  height: 2rem;
+  padding: 0.35rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--topo-server-fg);
+}
+
+#content p.celorga-topology-note {
+  margin: 0.7rem 0 0;
+  color: var(--topo-server-muted);
+  font-size: 0.78rem;
+}
+
+#content .celorga-topology-jobs {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#content .celorga-topology-jobs li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin: 0;
+  color: var(--topo-server-fg);
+  font-size: 0.82rem;
+}
+
+#content .celorga-topology-jobs li span {
+  color: var(--topo-server-fg);
+}
+
+#content .celorga-topology-jobs code {
+  padding: 0.05rem 0.4rem;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--topo-server-muted);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+#content .celorga-topology-server-grid > div:last-child code {
+  background: rgba(251, 146, 60, 0.15);
+  color: #fdba74;
+}
+
+#content .celorga-topology-corpus {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.75rem 1.25rem;
+  align-items: center;
+  padding: 0.95rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+#content .celorga-topology-corpus-head {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  color: var(--signal);
+}
+
+#content .celorga-topology-corpus-head div {
+  display: grid;
+  color: var(--fg);
+}
+
+#content .celorga-topology-corpus-head strong {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+#content .celorga-topology-corpus-head span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+#content .celorga-topology-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#content .celorga-topology-files li {
+  margin: 0;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--code-border);
+  border-radius: 5px;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+#content .celorga-topology-sync {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--muted);
+}
+
+#content .celorga-topology-sync span {
+  font-size: 0.75rem;
+}
+
+#content .celorga-topology-sync svg.celorga-logo {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+#content .celorga-home-anywhere > .celorga-home-links {
+  margin-top: 1.1rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  #content .celorga-topology {
+    --topo-server-bg: #111816;
+  }
+
+  #content .celorga-topology-server {
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+}
+
+@media (max-width: 920px) {
+  #content .celorga-topology-server-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #content .celorga-topology-corpus {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  #content .celorga-topology-devices {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #content .celorga-topology-wires {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #content .celorga-topology-wires i:nth-child(n + 3) {
+    display: none;
+  }
+
+  #content .celorga-home-harness-list li {
+    min-height: 5.4rem;
+  }
+}

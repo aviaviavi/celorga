@@ -102,7 +102,7 @@ const scenarios = [
     height: 1150,
     scale: 2,
     settleMs: 6000,
-    crop: { x: 236, y: 148, width: 644, height: 772 },
+    crop: { x: 228, y: 150, width: 660, height: 740 },
     fileName: "home-data-notebook.png",
   },
   {

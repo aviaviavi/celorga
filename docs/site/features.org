@@ -77,7 +77,7 @@
       <p class="celorga-feature-links"><a href="language-reference.html#local-datasets-and-sql-views">Notebook syntax</a><a href="tooling-reference.html">Query-data options</a></p>
     </div>
     <div class="celorga-feature-media">
-      <figure><img src="assets/screenshots/macos-workspace-data.png?v=20261009" alt="Celorga rendering a launch readiness data notebook with a materialized table and chart" loading="lazy" /><figcaption>Materialized rows, freshness metadata, and visualization stay connected to the source note.</figcaption></figure>
+      <figure><img src="assets/screenshots/macos-workspace-data.png?v=20261012" alt="Celorga rendering a launch readiness data notebook with activation and revenue charts" loading="lazy" /><figcaption>Materialized rows, freshness metadata, and visualization stay connected to the source note.</figcaption></figure>
     </div>
   </section>
 
@@ -115,7 +115,7 @@
       <p>Agent work can finish as a talk, an evidence-backed analysis, a customer quote, marketing collateral, a shareable document, or a published site. The artifact stays connected to the source material and approvals that produced it without granting recipients access to the source corpus.</p>
     </div>
     <div class="celorga-editor-strip">
-      <figure><img src="assets/screenshots/macos-workspace-data.png?v=20261009" alt="Celorga rendering an evidence-backed data notebook with an interactive chart" loading="lazy" /><figcaption><strong>Analytics.</strong> Materialized results and visualizations stay connected to their query, freshness, and source context.</figcaption></figure>
+      <figure><img src="assets/screenshots/macos-workspace-data.png?v=20261012" alt="Celorga rendering an evidence-backed data notebook with an interactive chart" loading="lazy" /><figcaption><strong>Analytics.</strong> Materialized results and visualizations stay connected to their query, freshness, and source context.</figcaption></figure>
       <div class="celorga-editor-cards">
         <article><strong>Talks and slides</strong><p>Develop the narrative beside its research, preview the deck in the Mac app, and export Beamer-compatible TeX or a presentation-ready PDF.</p></article>
         <article><strong>Customer-ready documents</strong><p>Turn approved source material into quotes, reports, and marketing collateral, then export a clean reading-layout PDF.</p></article>

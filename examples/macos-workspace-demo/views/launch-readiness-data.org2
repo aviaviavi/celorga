@@ -1,28 +1,27 @@
 #+TITLE: Beacon launch readiness
-#+SUBTITLE: A local, reproducible view over project data
+#+SUBTITLE: Pilot health from the product database, refreshed every morning
 
-* Weekly activation
+* Activation
 
-This materialized view keeps the query result, freshness metadata, and chart definition beside the launch notes that use it. Refreshing the data is explicit; reading the document does not contact an external service.
+Activation pulled ahead of signups after guided import shipped on May 4. Twelve weeks in, 79% of new teams reach a first dashboard.
 
-#+query-data: result=weekly_activation rows=5 ran_at=2026-06-15T16:30:00Z freshness=24h source_hash=demo
-#+name: weekly_activation
-| week | activated_teams |
-|------+-----------------|
-|    1 |              18 |
-|    2 |              31 |
-|    3 |              47 |
-|    4 |              62 |
-|    5 |              78 |
-
-#+name: weekly_activation_chart
-```chart line
-title: Activated teams by beta week
+#+name: activation_chart
+#+begin_src chart line
+title: Weekly signups and activated teams
 x: week
-y: activated_teams
+y: signups, activated
 source: weekly_activation
-height: 240
-```
+height: 300
+#+end_src
+
+#+name: arr_chart
+#+begin_src chart bar
+title: New ARR by plan
+x: month
+y: self_serve, team, enterprise
+source: arr_by_plan
+height: 280
+#+end_src
 
 * Launch blockers
 
@@ -35,10 +34,42 @@ height: 240
 | Support     |             1 |
 
 #+name: blockers_chart
-```chart bar
+#+begin_src chart bar
 title: Open blockers by area
 x: area
 y: open_blockers
-source: blockers_by_area
-height: 260
-```
+sort: y-desc
+height: 240
+#+end_src
+
+* Source data
+
+This materialized view keeps each query result, its freshness metadata, and the chart definitions beside the launch notes that use them. Refreshing is explicit; reading the document does not contact an external service.
+
+#+query-data: result=weekly_activation rows=12 ran_at=2026-06-15T16:30:00Z freshness=24h source_hash=demo
+#+name: weekly_activation
+| week   | signups | activated | retained_pct |
+|--------+---------+-----------+--------------|
+| Mar 30 |      42 |        11 |          71% |
+| Apr 6  |      58 |        17 |          74% |
+| Apr 13 |      55 |        21 |          73% |
+| Apr 20 |      71 |        29 |          76% |
+| Apr 27 |      84 |        34 |          78% |
+| May 4  |      79 |        45 |          81% |
+| May 11 |      96 |        58 |          82% |
+| May 18 |     112 |        71 |          84% |
+| May 25 |     104 |        77 |          83% |
+| Jun 1  |     131 |        94 |          85% |
+| Jun 8  |     149 |       112 |          86% |
+| Jun 15 |     163 |       128 |          87% |
+
+#+query-data: result=arr_by_plan rows=6 ran_at=2026-06-15T16:30:00Z freshness=24h source_hash=demo
+#+name: arr_by_plan
+| month | self_serve | team    | enterprise |
+|-------+------------+---------+------------|
+| Jan   |     $4,200 |  $9,800 |    $18,000 |
+| Feb   |     $5,100 | $12,400 |    $18,000 |
+| Mar   |     $6,900 | $15,200 |    $36,000 |
+| Apr   |     $8,300 | $19,700 |    $36,000 |
+| May   |    $11,600 | $24,100 |    $54,000 |
+| Jun   |    $14,900 | $31,500 |    $72,000 |

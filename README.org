@@ -2,10 +2,10 @@
 
 *Every AI agent you use. One workspace you own.*
 
-Celorga is an open-source control plane for AI agents, built for knowledge work
-instead of code. Run Claude Code, Codex, OpenCode, and local models side by side
-on your notes, tasks, meetings, and data, and approve what matters from your
-desk or your phone. Everything they read and write is a plain-text file you own.
+Celorga is an open-source control plane for all your agents, built for knowledge
+work, not just code. Run your agents and local models side by side on your
+notes, tasks, meetings, and data, and approve what matters from your desk or
+your phone. Everything they read and write is a plain-text file you own.
 
 [[https://celorga.io/][Website]] · [[https://celorga.io/downloads.html][Download]] · [[https://celorga.io/getting-started.html][Getting started]] · [[https://celorga.io/features.html][Features]] · [[https://celorga.io/reference.html][Developer docs]]
 
