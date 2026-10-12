@@ -7157,6 +7157,108 @@ final class Org2ModelsTests: XCTestCase {
   }
 
   @MainActor
+  func testFailedDictationTranscriptionKeepsRecordingAndShowsError() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-dictation-failure-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try WorkspaceStore(
+      cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()),
+      aiChatTranscriptURL: root.appendingPathComponent("chat.json")
+    )
+    store.aiChatDictationRecoveryDirectory = root.appendingPathComponent("kept", isDirectory: true)
+    store.meetingTranscriptionForTesting = { _ in
+      MeetingTranscriptResult(
+        text: "",
+        status: .failed,
+        engine: "Fluid Voice",
+        errorMessage: "Fluid Voice Local API is unavailable"
+      )
+    }
+    store.createAIChatThread(runtime: .openClaw)
+    let threadID = try XCTUnwrap(store.selectedAIChatThreadID)
+    let audioURL = root.appendingPathComponent("rant.wav")
+    try Data("long rant".utf8).write(to: audioURL)
+
+    await store.finishAIChatDictationForTesting(audioURL: audioURL, duration: 90, threadID: threadID)
+
+    XCTAssertFalse(store.isTranscribingAIChatVoiceNote)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: audioURL.path))
+    let kept = try FileManager.default.contentsOfDirectory(
+      at: store.aiChatDictationRecoveryDirectory,
+      includingPropertiesForKeys: nil
+    )
+    XCTAssertEqual(kept.count, 1)
+    XCTAssertEqual(try Data(contentsOf: kept[0]), Data("long rant".utf8))
+    let error = try XCTUnwrap(store.errorText)
+    XCTAssertTrue(error.contains("Fluid Voice Local API is unavailable"), error)
+    XCTAssertTrue(error.contains(kept[0].lastPathComponent), error)
+  }
+
+  @MainActor
+  func testSuccessfulDictationDeletesRecordingAndFillsComposer() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-dictation-success-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try WorkspaceStore(
+      cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()),
+      aiChatTranscriptURL: root.appendingPathComponent("chat.json")
+    )
+    store.aiChatDictationRecoveryDirectory = root.appendingPathComponent("kept", isDirectory: true)
+    store.meetingTranscriptionForTesting = { _ in
+      MeetingTranscriptResult(text: "Dictated rant", status: .complete, engine: "test")
+    }
+    store.createAIChatThread(runtime: .openClaw)
+    let threadID = try XCTUnwrap(store.selectedAIChatThreadID)
+    let audioURL = root.appendingPathComponent("rant.wav")
+    try Data("audio".utf8).write(to: audioURL)
+
+    await store.finishAIChatDictationForTesting(audioURL: audioURL, duration: 5, threadID: threadID)
+
+    XCTAssertEqual(store.aiChatDraft, "Dictated rant")
+    XCTAssertFalse(store.isTranscribingAIChatVoiceNote)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: audioURL.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: store.aiChatDictationRecoveryDirectory.path))
+    XCTAssertNil(store.errorText)
+  }
+
+  func testDictationFallsBackWhenConfiguredTranscriberFails() async {
+    let fellBack = await WorkspaceStore.transcribeAIChatDictation(
+      primary: {
+        MeetingTranscriptResult(
+          text: "",
+          status: .failed,
+          engine: "Fluid Voice",
+          errorMessage: "Fluid Voice Local API is unavailable"
+        )
+      },
+      fallback: { MeetingTranscriptResult(text: "Hello", status: .complete, engine: "whisper.cpp") }
+    )
+    XCTAssertEqual(fellBack.text, "Hello")
+    XCTAssertEqual(fellBack.status, .complete)
+    XCTAssertEqual(fellBack.engine, "whisper.cpp (fallback)")
+
+    let bothFailed = await WorkspaceStore.transcribeAIChatDictation(
+      primary: { MeetingTranscriptResult(text: "", status: .failed, engine: "Fluid Voice", errorMessage: "down") },
+      fallback: { MeetingTranscriptResult(text: " ", status: .complete, engine: "macOS Speech") }
+    )
+    XCTAssertEqual(bothFailed.status, .failed)
+    XCTAssertTrue(bothFailed.errorMessage?.contains("Fluid Voice: down") == true)
+
+    var fallbackRan = false
+    let primaryOK = await WorkspaceStore.transcribeAIChatDictation(
+      primary: { MeetingTranscriptResult(text: "Hi", status: .complete, engine: "Fluid Voice") },
+      fallback: {
+        fallbackRan = true
+        return MeetingTranscriptResult(text: "", status: .failed, engine: "x")
+      }
+    )
+    XCTAssertEqual(primaryOK.text, "Hi")
+    XCTAssertFalse(fallbackRan)
+  }
+
+  @MainActor
   func testQueuedMessagesCanReturnToComposerOrBeRemovedBeforeSending() async throws {
     let recorder = AIChatSuspendedSendRecorder()
     let transcriptURL = FileManager.default.temporaryDirectory

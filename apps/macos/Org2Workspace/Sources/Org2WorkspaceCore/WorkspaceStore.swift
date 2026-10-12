@@ -3381,6 +3381,7 @@ public final class WorkspaceStore {
   var aiChatDeferredComposerDidResolveForTesting: (() -> Void)?
   var meetingReadyAutomationEnqueueDidResolveForTesting: ((String) -> Void)?
   var meetingTranscriptionForTesting: (@Sendable (URL) async -> MeetingTranscriptResult)?
+  var aiChatDictationRecoveryDirectory = WorkspaceStore.defaultAIChatDictationRecoveryDirectory
   private(set) var aiChatFullDisplayRebuildCountForTesting = 0
   var aiChatTranscriptSaverForTesting: (() throws -> Void)?
   var editorPersistenceDelayNanosecondsForTesting: UInt64 = 0
@@ -22216,72 +22217,9 @@ extension WorkspaceStore {
     }
     defer { activeAIChatDictationOrigin = nil }
 
+    let duration: TimeInterval
     do {
-      let duration = try aiChatVoiceRecorder.stopRecording()
-      activeAIChatVoiceNoteURL = nil
-      isRecordingAIChatVoiceNote = false
-      stopAIChatVoiceMetering()
-      guard duration >= 0.2 else {
-        try? FileManager.default.removeItem(at: audioURL)
-        aiChatVoiceStatusText = "Dictation was too short."
-        aiChatStatusText = aiChatVoiceStatusText
-        return
-      }
-
-      isTranscribingAIChatVoiceNote = true
-      aiChatVoiceStatusText = "Transcribing dictation for \(origin.threadTitle) locally..."
-      aiChatStatusText = aiChatVoiceStatusText
-      startAIChatVoiceTranscriptionProgress(audioDuration: duration)
-      defer {
-        try? FileManager.default.removeItem(at: audioURL)
-      }
-
-      let transcript = await transcribeAudioForAIChatVoiceNote(audioURL)
-      guard isCurrentAIChatCorpusContext(origin.context) else {
-        let dictatedText = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if transcript.status == .complete, !dictatedText.isEmpty {
-          returnAIChatDictationToOriginComposer(dictatedText, origin: origin)
-        }
-        return
-      }
-      isTranscribingAIChatVoiceNote = false
-      stopAIChatVoiceTranscriptionProgress()
-      let dictatedText = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard transcript.status == .complete, !dictatedText.isEmpty else {
-        let suffix = transcript.errorMessage.map { ": \($0)" } ?? ""
-        aiChatVoiceStatusText = "Dictation transcription \(transcript.status.label)\(suffix)"
-        aiChatStatusText = aiChatVoiceStatusText
-        return
-      }
-
-      switch action {
-      case .insertIntoComposer:
-        let inserted = insertAIChatDictationIntoDraft(dictatedText, in: origin.threadID)
-        aiChatVoiceStatusText = inserted
-          ? "Dictation added to \(origin.threadTitle)."
-          : "The original AI chat is no longer available. Dictation was not added."
-        aiChatStatusText = aiChatVoiceStatusText
-      case .send:
-        aiChatVoiceStatusText = "Sending dictated note in \(origin.threadTitle)..."
-        aiChatStatusText = aiChatVoiceStatusText
-        let accepted = await sendAIChatDictation(
-          dictatedText,
-          to: origin.threadID,
-          workspaceContext: origin.workspaceContext,
-          context: origin.context
-        )
-        guard isCurrentAIChatCorpusContext(origin.context) else {
-          if !accepted {
-            returnAIChatDictationToOriginComposer(dictatedText, origin: origin)
-          }
-          return
-        }
-        if !accepted {
-          returnAIChatDictationToOriginComposer(dictatedText, origin: origin)
-          aiChatVoiceStatusText = "Dictation could not be sent and was returned to \(origin.threadTitle)'s composer."
-          aiChatStatusText = aiChatVoiceStatusText
-        }
-      }
+      duration = try aiChatVoiceRecorder.stopRecording()
     } catch {
       activeAIChatVoiceNoteURL = nil
       activeAIChatDictationOrigin = nil
@@ -22289,10 +22227,147 @@ extension WorkspaceStore {
       isTranscribingAIChatVoiceNote = false
       stopAIChatVoiceMetering()
       stopAIChatVoiceTranscriptionProgress()
+      reportFailedAIChatDictation(
+        audioURL: audioURL,
+        message: "Dictation stop failed: \(error.localizedDescription)"
+      )
+      return
+    }
+    activeAIChatVoiceNoteURL = nil
+    isRecordingAIChatVoiceNote = false
+    stopAIChatVoiceMetering()
+    await finishAIChatDictation(audioURL: audioURL, duration: duration, origin: origin, action: action)
+  }
+
+  func finishAIChatDictationForTesting(
+    audioURL: URL,
+    duration: TimeInterval,
+    threadID: UUID
+  ) async {
+    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else { return }
+    let origin = AIChatDictationOrigin(
+      threadID: threadID,
+      threadTitle: thread.title,
+      runtime: thread.runtime,
+      workspaceContext: threadScopedAIChatWorkspaceContext(for: thread),
+      context: captureAIChatCorpusContext()
+    )
+    await finishAIChatDictation(
+      audioURL: audioURL,
+      duration: duration,
+      origin: origin,
+      action: .insertIntoComposer
+    )
+  }
+
+  /// Keeps the recording of a dictation that produced no text and surfaces
+  /// the failure as a visible error, so a long dictation is never lost.
+  private func reportFailedAIChatDictation(audioURL: URL, message: String) {
+    var visibleMessage = message
+    if let keptURL = Self.retainFailedAIChatDictationAudio(
+      audioURL,
+      in: aiChatDictationRecoveryDirectory
+    ) {
+      visibleMessage += " The recording was kept at \(keptURL.path)."
+    }
+    errorText = visibleMessage
+    aiChatVoiceStatusText = visibleMessage
+    aiChatStatusText = visibleMessage
+  }
+
+  nonisolated static var defaultAIChatDictationRecoveryDirectory: URL {
+    FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Application Support/org2/failed-dictations", isDirectory: true)
+  }
+
+  nonisolated static func retainFailedAIChatDictationAudio(_ audioURL: URL, in directory: URL) -> URL? {
+    let fileManager = FileManager.default
+    guard fileManager.fileExists(atPath: audioURL.path) else { return nil }
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+    let ext = audioURL.pathExtension.isEmpty ? "wav" : audioURL.pathExtension
+    let destination = directory.appendingPathComponent(
+      "dictation-\(formatter.string(from: Date()))-\(UUID().uuidString.prefix(8)).\(ext)"
+    )
+    do {
+      try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+      try fileManager.moveItem(at: audioURL, to: destination)
+      return destination
+    } catch {
+      return nil
+    }
+  }
+
+  private func finishAIChatDictation(
+    audioURL: URL,
+    duration: TimeInterval,
+    origin: AIChatDictationOrigin,
+    action: AIChatDictationCompletionAction
+  ) async {
+    guard duration >= 0.2 else {
       try? FileManager.default.removeItem(at: audioURL)
-      errorText = error.localizedDescription
-      aiChatVoiceStatusText = "Dictation stop failed: \(error.localizedDescription)"
+      aiChatVoiceStatusText = "Dictation was too short."
       aiChatStatusText = aiChatVoiceStatusText
+      return
+    }
+
+    isTranscribingAIChatVoiceNote = true
+    aiChatVoiceStatusText = "Transcribing dictation for \(origin.threadTitle) locally..."
+    aiChatStatusText = aiChatVoiceStatusText
+    startAIChatVoiceTranscriptionProgress(audioDuration: duration)
+
+    let transcript = await transcribeAudioForAIChatVoiceNote(audioURL)
+    isTranscribingAIChatVoiceNote = false
+    stopAIChatVoiceTranscriptionProgress()
+    let dictatedText = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard transcript.status == .complete, !dictatedText.isEmpty else {
+      let suffix = transcript.errorMessage.map { ": \($0)" } ?? ""
+      reportFailedAIChatDictation(
+        audioURL: audioURL,
+        message: "Dictation transcription \(transcript.status.label)\(suffix)."
+      )
+      return
+    }
+    // Text is in hand; the audio is no longer needed.
+    try? FileManager.default.removeItem(at: audioURL)
+    guard isCurrentAIChatCorpusContext(origin.context) else {
+      returnAIChatDictationToOriginComposer(dictatedText, origin: origin)
+      return
+    }
+
+    switch action {
+    case .insertIntoComposer:
+      if insertAIChatDictationIntoDraft(dictatedText, in: origin.threadID) {
+        aiChatVoiceStatusText = "Dictation added to \(origin.threadTitle)."
+      } else {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(dictatedText, forType: .string)
+        aiChatVoiceStatusText =
+          "The original AI chat is no longer available. The dictation was copied to the clipboard."
+        errorText = aiChatVoiceStatusText
+      }
+      aiChatStatusText = aiChatVoiceStatusText
+    case .send:
+      aiChatVoiceStatusText = "Sending dictated note in \(origin.threadTitle)..."
+      aiChatStatusText = aiChatVoiceStatusText
+      let accepted = await sendAIChatDictation(
+        dictatedText,
+        to: origin.threadID,
+        workspaceContext: origin.workspaceContext,
+        context: origin.context
+      )
+      guard isCurrentAIChatCorpusContext(origin.context) else {
+        if !accepted {
+          returnAIChatDictationToOriginComposer(dictatedText, origin: origin)
+        }
+        return
+      }
+      if !accepted {
+        returnAIChatDictationToOriginComposer(dictatedText, origin: origin)
+        aiChatVoiceStatusText = "Dictation could not be sent and was returned to \(origin.threadTitle)'s composer."
+        aiChatStatusText = aiChatVoiceStatusText
+      }
     }
   }
 
@@ -47572,7 +47647,61 @@ extension WorkspaceStore {
   }
 
   private func transcribeAudioForAIChatVoiceNote(_ audioURL: URL) async -> MeetingTranscriptResult {
-    await transcribeAudioForMeeting(audioURL)
+    if let meetingTranscriptionForTesting {
+      return await meetingTranscriptionForTesting(audioURL)
+    }
+    let configuration = meetingTranscriptionConfiguration()
+    // Dictation has no second chance: if the chosen provider (for example a
+    // Fluid Voice Local API that is not listening) fails, fall back to the
+    // on-device chain instead of returning nothing.
+    let fallbackConfiguration: MeetingTranscriptionConfiguration? =
+      configuration.provider == .automatic
+        ? nil
+        : MeetingTranscriptionConfiguration(
+            provider: .automatic,
+            whisperModelPath: configuration.whisperModelPath,
+            language: configuration.language
+          )
+    return await Self.transcribeAIChatDictation(
+      primary: { await self.transcribeAudioForMeeting(audioURL, configuration: configuration) },
+      fallback: fallbackConfiguration.map { fallbackConfiguration in
+        { await self.transcribeAudioForMeeting(audioURL, configuration: fallbackConfiguration) }
+      }
+    )
+  }
+
+  /// Runs the configured dictation transcriber, then the fallback when the
+  /// primary produced no usable text.
+  static func transcribeAIChatDictation(
+    primary: () async -> MeetingTranscriptResult,
+    fallback: (() async -> MeetingTranscriptResult)?
+  ) async -> MeetingTranscriptResult {
+    let first = await primary()
+    if first.status == .complete,
+       !first.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return first
+    }
+    guard let fallback else { return first }
+    let second = await fallback()
+    let firstFailure = "\(first.engine): \(first.errorMessage ?? first.status.label)"
+    if second.status == .complete,
+       !second.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return MeetingTranscriptResult(
+        text: second.text,
+        status: second.status,
+        engine: "\(second.engine) (fallback)",
+        errorMessage: firstFailure
+      )
+    }
+    return MeetingTranscriptResult(
+      text: "",
+      status: .failed,
+      engine: first.engine,
+      errorMessage: [
+        firstFailure,
+        "\(second.engine): \(second.errorMessage ?? second.status.label)"
+      ].joined(separator: "; ")
+    )
   }
 
   private func refreshAfterMeetingWrite(
