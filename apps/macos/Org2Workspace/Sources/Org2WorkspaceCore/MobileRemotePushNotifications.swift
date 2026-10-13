@@ -14,6 +14,18 @@ struct MobileRemoteStoredPushRegistration: Codable, Hashable, Sendable {
   }
 }
 
+struct MobileRemoteStoredPushToTalkRegistration: Codable, Hashable, Sendable {
+  let pushToken: String
+  let environment: String
+  let registeredAt: Date
+
+  init(pushToken: String, environment: String, registeredAt: Date = Date()) {
+    self.pushToken = pushToken
+    self.environment = environment
+    self.registeredAt = registeredAt
+  }
+}
+
 struct MobileRemotePushProviderCredentials: Sendable {
   let teamID: String
   let keyID: String
@@ -25,6 +37,13 @@ struct MobileRemotePushEnvelope: Sendable {
   let threadID: UUID
   let title: String
   let body: String
+}
+
+struct MobileRemotePushToTalkEnvelope: Sendable {
+  let messageID: UUID
+  let runID: String
+  let approvalID: String
+  let fingerprint: String
 }
 
 final class MobileRemotePushCredentialStore: @unchecked Sendable {
@@ -170,6 +189,26 @@ actor MobileRemotePushSender {
     throw lastError ?? MobileRemotePushError.deliveryFailed("Unknown APNs failure")
   }
 
+  func sendPushToTalk(
+    _ envelope: MobileRemotePushToTalkEnvelope,
+    to registration: MobileRemoteStoredPushToTalkRegistration,
+    credentials: MobileRemotePushProviderCredentials
+  ) async throws {
+    var lastError: Error?
+    for attempt in 0..<3 {
+      do {
+        try await sendPushToTalkOnce(envelope, to: registration, credentials: credentials)
+        return
+      } catch let error as MobileRemotePushError where error.isRetryable && attempt < 2 {
+        lastError = error
+        try? await Task.sleep(for: .seconds(attempt == 0 ? 1 : 3))
+      } catch {
+        throw error
+      }
+    }
+    throw lastError ?? MobileRemotePushError.deliveryFailed("Unknown APNs failure")
+  }
+
   private func sendOnce(
     _ envelope: MobileRemotePushEnvelope,
     to registration: MobileRemoteStoredPushRegistration,
@@ -206,6 +245,47 @@ actor MobileRemotePushSender {
     // an undeliverable alert and surface it hours later as an apparent resend.
     request.setValue("0", forHTTPHeaderField: "apns-expiration")
     request.setValue(envelope.threadID.uuidString, forHTTPHeaderField: "apns-collapse-id")
+    request.setValue(envelope.messageID.uuidString, forHTTPHeaderField: "apns-id")
+
+    let (responseData, response) = try await session.data(for: request)
+    guard let httpResponse = response as? HTTPURLResponse else {
+      throw MobileRemotePushError.deliveryFailed("APNs returned an unreadable response")
+    }
+    guard httpResponse.statusCode == 200 else {
+      let reason = (try? JSONSerialization.jsonObject(with: responseData) as? [String: Any])?["reason"] as? String
+      throw MobileRemotePushError.apns(status: httpResponse.statusCode, reason: reason)
+    }
+  }
+
+  private func sendPushToTalkOnce(
+    _ envelope: MobileRemotePushToTalkEnvelope,
+    to registration: MobileRemoteStoredPushToTalkRegistration,
+    credentials: MobileRemotePushProviderCredentials
+  ) async throws {
+    guard Self.isValidDeviceToken(registration.pushToken) else {
+      throw MobileRemotePushError.invalidDeviceToken
+    }
+    let host = registration.environment == "sandbox"
+      ? "api.sandbox.push.apple.com"
+      : "api.push.apple.com"
+    guard let url = URL(string: "https://\(host)/3/device/\(registration.pushToken)") else {
+      throw MobileRemotePushError.invalidDeviceToken
+    }
+    let body: [String: Any] = [
+      "aps": [:],
+      "runID": envelope.runID,
+      "approvalID": envelope.approvalID,
+      "fingerprint": envelope.fingerprint
+    ]
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.timeoutInterval = 20
+    request.httpBody = try JSONSerialization.data(withJSONObject: body)
+    request.setValue("bearer \(try providerToken(credentials: credentials))", forHTTPHeaderField: "authorization")
+    request.setValue("org.org2.mobile.voip-ptt", forHTTPHeaderField: "apns-topic")
+    request.setValue("pushtotalk", forHTTPHeaderField: "apns-push-type")
+    request.setValue("10", forHTTPHeaderField: "apns-priority")
+    request.setValue("0", forHTTPHeaderField: "apns-expiration")
     request.setValue(envelope.messageID.uuidString, forHTTPHeaderField: "apns-id")
 
     let (responseData, response) = try await session.data(for: request)

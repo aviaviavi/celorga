@@ -57,6 +57,17 @@ struct MobileRemotePushRegistrationResponse: Codable {
   let providerConfigured: Bool
 }
 
+struct MobileRemotePushToTalkRegistrationRequest: Codable {
+  let pushToken: String?
+  let environment: String?
+  let enabled: Bool
+}
+
+struct MobileRemotePushToTalkRegistrationResponse: Codable {
+  let enabled: Bool
+  let providerConfigured: Bool
+}
+
 struct MobileRemoteAIDestination: Codable, Hashable, Identifiable {
   let id: String
   let name: String
@@ -332,6 +343,16 @@ struct MobileRemoteWorkspaceSnapshot: Codable, Hashable {
   let agenda: [MobileRemoteAgendaItem]
   let approvals: [MobileRemoteApprovalItem]
   let workflows: [MobileRemoteWorkflowItem]
+  let approvalDecisionReceipt: MobileRemoteApprovalDecisionReceipt?
+}
+
+struct MobileRemoteApprovalDecisionReceipt: Codable, Hashable {
+  let runID: String
+  let approvalID: String
+  let decision: String
+  let runStatus: String
+  let pendingApprovalCount: Int
+  let continuation: String
 }
 
 struct MobileRemoteAgendaItem: Codable, Hashable, Identifiable {
@@ -448,6 +469,10 @@ struct MobileRemoteApprovalDecisionRequest: Codable {
   let decision: String
   let note: String?
   let endStatus: String?
+  // Optional exact identity. The host refuses the decision if the current approval differs.
+  var runID: String?
+  var approvalID: String?
+  var fingerprint: String?
 }
 
 struct MobileRemoteWorkflowStateRequest: Codable {

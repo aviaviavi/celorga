@@ -2349,6 +2349,7 @@ public final class WorkspaceStore {
     didSet {
       rebuildApprovalSearchIndex()
       rebuildApprovalDisplayCache()
+      approvalQueueChangeHandler(approvalItems)
     }
   }
   public var approvalFilter = "" {
@@ -2664,6 +2665,7 @@ public final class WorkspaceStore {
     _ thread: AIChatThread,
     _ messages: [AIChatMessage]
   ) -> Void = { _, _ in }
+  public var approvalQueueChangeHandler: @MainActor (_ approvals: [ApprovalItem]) -> Void = { _ in }
   public var aiChatDraft = ""
   public var aiChatPendingAttachments: [AIChatAttachment] = []
   public var openClawAgentID = "main"
@@ -24948,11 +24950,34 @@ extension WorkspaceStore {
     itemID: String,
     decision: String,
     note rawNote: String?,
-    endStatus rawEndStatus: String?
+    endStatus rawEndStatus: String?,
+    expectedRunID: String? = nil,
+    expectedApprovalID: String? = nil,
+    expectedFingerprint: String? = nil
   ) async throws -> MobileRemoteWorkspaceSnapshot {
     await refreshApprovals(updatesStatus: false)
+    let hasExactIdentity = expectedRunID != nil || expectedApprovalID != nil || expectedFingerprint != nil
     guard let item = approvalItems.first(where: { $0.id == itemID }) else {
+      if hasExactIdentity {
+        // An exact decision must never fall through to a silent no-op: the caller asked for one approval.
+        throw CocoaError(
+          .fileWriteUnknown,
+          userInfo: [NSLocalizedDescriptionKey: "This approval is no longer pending. Nothing was changed."]
+        )
+      }
       return currentMobileRemoteWorkspaceSnapshot()
+    }
+    if hasExactIdentity {
+      // Exact identity: the decision applies only to the approval the caller was shown.
+      guard expectedRunID == item.runId,
+            expectedApprovalID == item.approvalId,
+            expectedFingerprint == item.fingerprint
+      else {
+        throw CocoaError(
+          .fileWriteUnknown,
+          userInfo: [NSLocalizedDescriptionKey: "The approval changed after it was read. Nothing was changed; review it again."]
+        )
+      }
     }
     guard !isApprovalActionInProgress(item) else {
       throw CocoaError(

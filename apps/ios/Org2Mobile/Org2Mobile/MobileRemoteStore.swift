@@ -452,6 +452,58 @@ final class MobileRemoteStore: ObservableObject {
     }
   }
 
+  /// Exact-identity decision used by audio approvals. Unlike `decideApproval`, it does not swallow
+  /// errors: the caller needs to know whether the host applied the decision.
+  func decideApprovalExactly(
+    _ approval: ApprovalEntry,
+    decision: String,
+    note: String?
+  ) async throws -> MobileRemoteWorkspaceSnapshot {
+    guard let runID = approval.runID, let approvalID = approval.approvalID, let fingerprint = approval.fingerprint else {
+      throw AudioApprovalError.approvalIdentityMissing
+    }
+    let snapshot = try await pairedClient().post(
+      workspacePath(collection: "approvals", id: approval.id, action: "decision"),
+      payload: MobileRemoteApprovalDecisionRequest(
+        decision: decision,
+        note: note,
+        endStatus: nil,
+        runID: runID,
+        approvalID: approvalID,
+        fingerprint: fingerprint
+      ),
+      timeout: 90,
+      as: MobileRemoteWorkspaceSnapshot.self
+    )
+    apply(snapshot)
+    isConnected = true
+    return snapshot
+  }
+
+  /// Registers the framework-issued ephemeral Push to Talk token with the paired Mac.
+  /// The token deliberately remains in memory only on iOS and is valid only while joined.
+  func setAudioApprovalPushRegistration(
+    token: Data?,
+    enabled: Bool
+  ) async throws -> MobileRemotePushToTalkRegistrationResponse {
+    let environment: String
+    #if DEBUG
+    environment = "sandbox"
+    #else
+    environment = "production"
+    #endif
+    let tokenHex = token?.map { String(format: "%02x", $0) }.joined()
+    return try await pairedClient().post(
+      "/v1/push-to-talk-registration",
+      payload: MobileRemotePushToTalkRegistrationRequest(
+        pushToken: enabled ? tokenHex : nil,
+        environment: enabled ? environment : nil,
+        enabled: enabled
+      ),
+      as: MobileRemotePushToTalkRegistrationResponse.self
+    )
+  }
+
   func setWorkflowState(_ state: String, for workflow: MobileRemoteWorkflowItem) async {
     await mutateWorkspaceItem(workflow.id) {
       try await self.pairedClient().post(

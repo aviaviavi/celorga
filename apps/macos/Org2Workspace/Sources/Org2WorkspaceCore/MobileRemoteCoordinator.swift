@@ -49,6 +49,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
   private var failedPairingAttempts = 0
   private var serverGeneration = 0
   private var restartTask: Task<Void, Never>?
+  private var activePushToTalkPromptKey: String?
 
   public init(
     defaults: UserDefaults = .standard,
@@ -105,6 +106,10 @@ public final class MobileRemoteCoordinator: ObservableObject {
     store.aiChatIncomingMessageHandler = { [weak self] thread, messages in
       self?.enqueuePushNotifications(for: thread, messages: messages)
     }
+    store.approvalQueueChangeHandler = { [weak self] approvals in
+      self?.enqueuePushToTalkApproval(from: approvals)
+    }
+    enqueuePushToTalkApproval(from: store.approvalItems)
   }
 
   public func setPushTeamID(_ value: String) {
@@ -350,6 +355,24 @@ public final class MobileRemoteCoordinator: ObservableObject {
       }
     }
 
+    if request.method == "POST", path == "/v1/push-to-talk-registration" {
+      guard let payload = try? request.decode(MobileRemotePushToTalkRegistrationRequest.self) else {
+        return .error("The Push to Talk registration could not be read.", statusCode: 400)
+      }
+      do {
+        let enabled = try credentialVault.setPushToTalkRegistration(payload, forAccessToken: token)
+        pairedDevices = credentialVault.devices
+        activePushToTalkPromptKey = nil
+        enqueuePushToTalkApproval(from: store.approvalItems)
+        return .json(MobileRemotePushToTalkRegistrationResponse(
+          enabled: enabled,
+          providerConfigured: pushProviderConfigured
+        ))
+      } catch {
+        return .error(error.localizedDescription, statusCode: 400)
+      }
+    }
+
     if request.method == "POST", path == "/v1/push-test" {
       guard pushProviderConfigured else {
         return .error("Finish push notification setup in the Mac app.", statusCode: 503)
@@ -471,7 +494,10 @@ public final class MobileRemoteCoordinator: ObservableObject {
             itemID: itemID,
             decision: payload.decision,
             note: payload.note,
-            endStatus: payload.endStatus
+            endStatus: payload.endStatus,
+            expectedRunID: payload.runID,
+            expectedApprovalID: payload.approvalID,
+            expectedFingerprint: payload.fingerprint
           ))
         }
         if request.method == "POST",
@@ -819,6 +845,10 @@ public final class MobileRemoteCoordinator: ObservableObject {
     } else {
       pushStatusText = "Import the APNs authentication key"
     }
+    if pushProviderConfigured, let store {
+      activePushToTalkPromptKey = nil
+      enqueuePushToTalkApproval(from: store.approvalItems)
+    }
   }
 
   private func enqueuePushNotifications(
@@ -859,6 +889,51 @@ public final class MobileRemoteCoordinator: ObservableObject {
     }
   }
 
+  private func enqueuePushToTalkApproval(from approvals: [ApprovalItem]) {
+    guard pushProviderConfigured else { return }
+    guard let approval = approvals.first(where: {
+      $0.isRunApproval
+        && $0.status == "pending"
+        && $0.runId?.isEmpty == false
+        && $0.approvalId?.isEmpty == false
+        && $0.fingerprint?.isEmpty == false
+    }), let runID = approval.runId,
+       let approvalID = approval.approvalId,
+       let fingerprint = approval.fingerprint
+    else {
+      activePushToTalkPromptKey = nil
+      return
+    }
+    let promptKey = "\(runID)|\(approvalID)|\(fingerprint)"
+    guard promptKey != activePushToTalkPromptKey else { return }
+    let registrations = credentialVault.pushToTalkRegistrations
+    guard !registrations.isEmpty else { return }
+    activePushToTalkPromptKey = promptKey
+    let envelope = MobileRemotePushToTalkEnvelope(
+      messageID: UUID(),
+      runID: runID,
+      approvalID: approvalID,
+      fingerprint: fingerprint
+    )
+    for registration in registrations {
+      Task { [weak self] in
+        guard let self else { return }
+        do {
+          try await self.deliverPushToTalk(envelope, to: registration.registration)
+          self.pushStatusText = "Last audio approval push delivered at \(Date().formatted(date: .omitted, time: .shortened))"
+        } catch let error as MobileRemotePushError {
+          self.pushStatusText = error.localizedDescription
+          if error.invalidatesDeviceToken {
+            try? self.credentialVault.clearPushToTalkRegistration(deviceID: registration.deviceID)
+            self.pairedDevices = self.credentialVault.devices
+          }
+        } catch {
+          self.pushStatusText = error.localizedDescription
+        }
+      }
+    }
+  }
+
   private func deliverPush(
     _ envelope: MobileRemotePushEnvelope,
     to registration: MobileRemoteStoredPushRegistration
@@ -871,6 +946,20 @@ public final class MobileRemoteCoordinator: ObservableObject {
       throw MobileRemotePushError.deliveryFailed("APNs credentials are not configured.")
     }
     try await pushSender.send(envelope, to: registration, credentials: credentials)
+  }
+
+  private func deliverPushToTalk(
+    _ envelope: MobileRemotePushToTalkEnvelope,
+    to registration: MobileRemoteStoredPushToTalkRegistration
+  ) async throws {
+    let credentialStore = pushCredentialStore
+    let credentials = await Task.detached(priority: .userInitiated) {
+      credentialStore.credentials
+    }.value
+    guard let credentials else {
+      throw MobileRemotePushError.deliveryFailed("APNs credentials are not configured.")
+    }
+    try await pushSender.sendPushToTalk(envelope, to: registration, credentials: credentials)
   }
 
   private func threadProjectionContext(
@@ -1012,10 +1101,16 @@ final class MobileRemoteCredentialVault {
     let registration: MobileRemoteStoredPushRegistration
   }
 
+  struct PushToTalkTarget: Sendable {
+    let deviceID: UUID
+    let registration: MobileRemoteStoredPushToTalkRegistration
+  }
+
   private struct Record: Codable {
     let device: MobileRemotePairedDevice
     let token: String
     var pushRegistration: MobileRemoteStoredPushRegistration?
+    var pushToTalkRegistration: MobileRemoteStoredPushToTalkRegistration?
   }
 
   private let service: String
@@ -1037,7 +1132,9 @@ final class MobileRemoteCredentialVault {
         id: record.device.id,
         name: record.device.name,
         pairedAt: record.device.pairedAt,
-        pushRegisteredAt: record.pushRegistration?.registeredAt
+        pushRegisteredAt: [record.pushRegistration?.registeredAt, record.pushToTalkRegistration?.registeredAt]
+          .compactMap { $0 }
+          .max()
       )
     }.sorted { $0.pairedAt > $1.pairedAt }
   }
@@ -1046,6 +1143,14 @@ final class MobileRemoteCredentialVault {
     records.compactMap { record in
       record.pushRegistration.map {
         PushTarget(deviceID: record.device.id, registration: $0)
+      }
+    }
+  }
+
+  public var pushToTalkRegistrations: [PushToTalkTarget] {
+    records.compactMap { record in
+      record.pushToTalkRegistration.map {
+        PushToTalkTarget(deviceID: record.device.id, registration: $0)
       }
     }
   }
@@ -1066,7 +1171,12 @@ final class MobileRemoteCredentialVault {
       pairedAt: Date()
     )
     let token = try Self.randomToken()
-    records.append(Record(device: device, token: storedToken(token), pushRegistration: nil))
+    records.append(Record(
+      device: device,
+      token: storedToken(token),
+      pushRegistration: nil,
+      pushToTalkRegistration: nil
+    ))
     do {
       try save()
     } catch {
@@ -1118,6 +1228,40 @@ final class MobileRemoteCredentialVault {
     }
   }
 
+  public func setPushToTalkRegistration(
+    _ request: MobileRemotePushToTalkRegistrationRequest,
+    forAccessToken accessToken: String
+  ) throws -> Bool {
+    guard let index = records.firstIndex(where: { Self.securelyEqual($0.token, storedToken(accessToken)) }) else {
+      throw MobileRemoteCredentialError.unknownDevice
+    }
+    let previous = records[index].pushToTalkRegistration
+    if request.enabled {
+      guard let pushToken = request.pushToken?.lowercased(),
+            !pushToken.isEmpty,
+            pushToken.count <= 512,
+            pushToken.allSatisfy(\.isHexDigit),
+            let environment = request.environment,
+            environment == "production" || environment == "sandbox"
+      else {
+        throw MobileRemoteCredentialError.invalidPushRegistration
+      }
+      records[index].pushToTalkRegistration = MobileRemoteStoredPushToTalkRegistration(
+        pushToken: pushToken,
+        environment: environment
+      )
+    } else {
+      records[index].pushToTalkRegistration = nil
+    }
+    do {
+      try save()
+    } catch {
+      records[index].pushToTalkRegistration = previous
+      throw error
+    }
+    return records[index].pushToTalkRegistration != nil
+  }
+
   public func clearPushRegistration(deviceID: UUID) throws {
     guard let index = records.firstIndex(where: { $0.device.id == deviceID }) else { return }
     let previous = records[index].pushRegistration
@@ -1126,6 +1270,18 @@ final class MobileRemoteCredentialVault {
       try save()
     } catch {
       records[index].pushRegistration = previous
+      throw error
+    }
+  }
+
+  public func clearPushToTalkRegistration(deviceID: UUID) throws {
+    guard let index = records.firstIndex(where: { $0.device.id == deviceID }) else { return }
+    let previous = records[index].pushToTalkRegistration
+    records[index].pushToTalkRegistration = nil
+    do {
+      try save()
+    } catch {
+      records[index].pushToTalkRegistration = previous
       throw error
     }
   }

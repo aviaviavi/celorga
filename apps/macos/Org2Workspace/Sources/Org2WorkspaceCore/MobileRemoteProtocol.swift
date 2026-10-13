@@ -90,6 +90,28 @@ public struct MobileRemotePushRegistrationResponse: Codable, Hashable, Sendable 
   }
 }
 
+public struct MobileRemotePushToTalkRegistrationRequest: Codable, Hashable, Sendable {
+  public let pushToken: String?
+  public let environment: String?
+  public let enabled: Bool
+
+  public init(pushToken: String?, environment: String?, enabled: Bool) {
+    self.pushToken = pushToken
+    self.environment = environment
+    self.enabled = enabled
+  }
+}
+
+public struct MobileRemotePushToTalkRegistrationResponse: Codable, Hashable, Sendable {
+  public let enabled: Bool
+  public let providerConfigured: Bool
+
+  public init(enabled: Bool, providerConfigured: Bool) {
+    self.enabled = enabled
+    self.providerConfigured = providerConfigured
+  }
+}
+
 public struct MobileRemoteAIDestination: Codable, Hashable, Identifiable, Sendable {
   public let id: String
   public let name: String
@@ -682,17 +704,45 @@ public struct MobileRemoteWorkspaceSnapshot: Codable, Hashable, Sendable {
   public let agenda: [MobileRemoteAgendaItem]
   public let approvals: [MobileRemoteApprovalItem]
   public let workflows: [MobileRemoteWorkflowItem]
+  public let approvalDecisionReceipt: MobileRemoteApprovalDecisionReceipt?
 
   public init(
     updatedAt: Date = Date(),
     agenda: [MobileRemoteAgendaItem],
     approvals: [MobileRemoteApprovalItem],
-    workflows: [MobileRemoteWorkflowItem]
+    workflows: [MobileRemoteWorkflowItem],
+    approvalDecisionReceipt: MobileRemoteApprovalDecisionReceipt? = nil
   ) {
     self.updatedAt = updatedAt
     self.agenda = agenda
     self.approvals = approvals
     self.workflows = workflows
+    self.approvalDecisionReceipt = approvalDecisionReceipt
+  }
+}
+
+public struct MobileRemoteApprovalDecisionReceipt: Codable, Hashable, Sendable {
+  public let runID: String
+  public let approvalID: String
+  public let decision: String
+  public let runStatus: String
+  public let pendingApprovalCount: Int
+  public let continuation: String
+
+  public init(
+    runID: String,
+    approvalID: String,
+    decision: String,
+    runStatus: String,
+    pendingApprovalCount: Int,
+    continuation: String
+  ) {
+    self.runID = runID
+    self.approvalID = approvalID
+    self.decision = decision
+    self.runStatus = runStatus
+    self.pendingApprovalCount = pendingApprovalCount
+    self.continuation = continuation
   }
 }
 
@@ -878,11 +928,27 @@ public struct MobileRemoteApprovalDecisionRequest: Codable, Hashable, Sendable {
   public let decision: String
   public let note: String?
   public let endStatus: String?
+  /// Optional exact identity. When present, the host applies the decision only to this
+  /// run, approval, and fingerprint, and refuses it if the current approval differs.
+  /// Older clients omit these fields and keep the previous behaviour.
+  public let runID: String?
+  public let approvalID: String?
+  public let fingerprint: String?
 
-  public init(decision: String, note: String? = nil, endStatus: String? = nil) {
+  public init(
+    decision: String,
+    note: String? = nil,
+    endStatus: String? = nil,
+    runID: String? = nil,
+    approvalID: String? = nil,
+    fingerprint: String? = nil
+  ) {
     self.decision = decision
     self.note = note
     self.endStatus = endStatus
+    self.runID = runID
+    self.approvalID = approvalID
+    self.fingerprint = fingerprint
   }
 }
 

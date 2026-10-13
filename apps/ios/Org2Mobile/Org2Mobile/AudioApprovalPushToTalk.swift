@@ -1,0 +1,175 @@
+import AVFoundation
+import Foundation
+import PushToTalk
+
+/// Plain events the Push to Talk framework produces, forwarded to the main actor.
+enum AudioApprovalChannelEvent: Sendable {
+  case managerReady(failure: String?)
+  case joined
+  case left
+  case transmitBegan(initiated: Bool)
+  case transmitEnded(initiated: Bool)
+  case incomingPush(AudioApprovalTarget?)
+  case ephemeralToken(Data)
+  case audioSessionActivated
+  case audioSessionDeactivated
+  case failed(String)
+}
+
+enum AudioApprovalChannel {
+  /// Stable channel identity. Derived from the approvals task ID in notes/celorga.org.
+  static let channelUUID = UUID(uuidString: "5C63891E-48AE-49DD-B79D-77932360F017")!
+  static let channelName = "Celorga approvals"
+  static let participantName = "Celorga"
+}
+
+/// Thread-safe flag the framework reads synchronously when an incoming push arrives.
+private final class AudioApprovalEnrollment: @unchecked Sendable {
+  private let lock = NSLock()
+  private var enrolled = false
+
+  var value: Bool {
+    get { lock.lock(); defer { lock.unlock() }; return enrolled }
+    set { lock.lock(); enrolled = newValue; lock.unlock() }
+  }
+}
+
+/// Owns the single PTChannelManager. Delegate callbacks arrive on framework threads,
+/// so each one is converted to an `AudioApprovalChannelEvent` and delivered on the main actor.
+final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, PTChannelRestorationDelegate, @unchecked Sendable {
+  private let deliver: @MainActor @Sendable (AudioApprovalChannelEvent) -> Void
+  private let enrollment = AudioApprovalEnrollment()
+  private var manager: PTChannelManager?
+
+  init(deliver: @escaping @MainActor @Sendable (AudioApprovalChannelEvent) -> Void) {
+    self.deliver = deliver
+    super.init()
+  }
+
+  /// Creates the manager. Call only when the feature is enabled; never at launch.
+  func start() {
+    PTChannelManager.channelManager(delegate: self, restorationDelegate: self) { [weak self] channelManager, error in
+      guard let self else { return }
+      self.manager = channelManager
+      self.post(.managerReady(failure: error?.localizedDescription))
+    }
+  }
+
+  /// Explicit user action only. Joining is a foreground request.
+  func join() {
+    guard let manager else { return post(.failed("Push to Talk is not ready.")) }
+    let descriptor = PTChannelDescriptor(name: AudioApprovalChannel.channelName, image: nil)
+    manager.requestJoinChannel(channelUUID: AudioApprovalChannel.channelUUID, descriptor: descriptor)
+  }
+
+  func leave() {
+    enrollment.value = false
+    manager?.leaveChannel(channelUUID: AudioApprovalChannel.channelUUID)
+  }
+
+  /// Marks locally generated spoken detail as an active remote response so the
+  /// framework, not the app, activates the audio session before playback.
+  func beginReceiving() {
+    guard let manager else { return post(.failed("Push to Talk is not ready.")) }
+    manager.setActiveRemoteParticipant(
+      PTParticipant(name: AudioApprovalChannel.participantName, image: nil),
+      channelUUID: AudioApprovalChannel.channelUUID
+    ) { [weak self] error in
+      if let error { self?.post(.failed("Could not activate approval audio: \(error.localizedDescription)")) }
+    }
+  }
+
+  /// Ends receive mode after speech stops so the system can deactivate the
+  /// session and allow the headset button to begin a reply.
+  func finishReceiving() {
+    manager?.setActiveRemoteParticipant(
+      nil,
+      channelUUID: AudioApprovalChannel.channelUUID
+    ) { [weak self] error in
+      if let error { self?.post(.failed("Could not finish approval audio: \(error.localizedDescription)")) }
+    }
+  }
+
+  // MARK: PTChannelRestorationDelegate
+
+  func channelDescriptor(restoredChannelUUID channelUUID: UUID) -> PTChannelDescriptor {
+    PTChannelDescriptor(name: AudioApprovalChannel.channelName, image: nil)
+  }
+
+  // MARK: PTChannelManagerDelegate
+
+  func channelManager(_ channelManager: PTChannelManager, didJoinChannel channelUUID: UUID, reason: PTChannelJoinReason) {
+    enrollment.value = true
+    post(.joined)
+  }
+
+  func channelManager(_ channelManager: PTChannelManager, didLeaveChannel channelUUID: UUID, reason: PTChannelLeaveReason) {
+    enrollment.value = false
+    post(.left)
+  }
+
+  func channelManager(_ channelManager: PTChannelManager, channelUUID: UUID, didBeginTransmittingFrom source: PTChannelTransmitRequestSource) {
+    post(.transmitBegan(initiated: Self.isInitiated(source)))
+  }
+
+  func channelManager(_ channelManager: PTChannelManager, channelUUID: UUID, didEndTransmittingFrom source: PTChannelTransmitRequestSource) {
+    post(.transmitEnded(initiated: Self.isInitiated(source)))
+  }
+
+  func channelManager(_ channelManager: PTChannelManager, receivedEphemeralPushToken pushToken: Data) {
+    post(.ephemeralToken(pushToken))
+  }
+
+  /// Must answer synchronously. Enrolled devices take the incoming audio so the
+  /// framework activates a session; unenrolled devices leave the channel.
+  func incomingPushResult(channelManager: PTChannelManager, channelUUID: UUID, pushPayload: [String: Any]) -> PTPushResult {
+    let target = Self.target(from: pushPayload)
+    post(.incomingPush(target))
+    guard enrollment.value else { return PTPushResult.leaveChannel }
+    guard target != nil else { return PTPushResult.leaveChannel }
+    return PTPushResult.activeRemoteParticipant(PTParticipant(name: AudioApprovalChannel.participantName, image: nil))
+  }
+
+  func channelManager(_ channelManager: PTChannelManager, didActivate audioSession: AVAudioSession) {
+    post(.audioSessionActivated)
+  }
+
+  func channelManager(_ channelManager: PTChannelManager, didDeactivate audioSession: AVAudioSession) {
+    post(.audioSessionDeactivated)
+  }
+
+  func channelManager(_ channelManager: PTChannelManager, failedToJoinChannel channelUUID: UUID, error: Error) {
+    post(.failed("Join failed: \(error.localizedDescription)"))
+  }
+
+  func channelManager(_ channelManager: PTChannelManager, failedToLeaveChannel channelUUID: UUID, error: Error) {
+    post(.failed("Leave failed: \(error.localizedDescription)"))
+  }
+
+  func channelManager(_ channelManager: PTChannelManager, failedToBeginTransmittingInChannel channelUUID: UUID, error: Error) {
+    post(.failed("Transmit failed: \(error.localizedDescription)"))
+  }
+
+  func channelManager(_ channelManager: PTChannelManager, failedToStopTransmittingInChannel channelUUID: UUID, error: Error) {
+    post(.failed("Stop transmit failed: \(error.localizedDescription)"))
+  }
+
+  /// Only a button press or accessory press initiates a reply. Developer-requested
+  /// or unknown sources never authorize a decision.
+  static func isInitiated(_ source: PTChannelTransmitRequestSource) -> Bool {
+    source == .userRequest || source == .handsfreeButton
+  }
+
+  static func target(from payload: [String: Any]) -> AudioApprovalTarget? {
+    guard let runID = payload["runID"] as? String, !runID.isEmpty,
+          let approvalID = payload["approvalID"] as? String, !approvalID.isEmpty,
+          let fingerprint = payload["fingerprint"] as? String, !fingerprint.isEmpty
+    else { return nil }
+    return AudioApprovalTarget(runID: runID, approvalID: approvalID, fingerprint: fingerprint)
+  }
+
+  private func post(_ event: AudioApprovalChannelEvent) {
+    let deliver = self.deliver
+    Task { @MainActor in deliver(event) }
+  }
+}

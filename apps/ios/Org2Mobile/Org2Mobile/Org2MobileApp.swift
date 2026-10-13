@@ -134,12 +134,15 @@ struct Org2MobileApp: App {
   @UIApplicationDelegateAdaptor(Org2MobileAppDelegate.self) private var appDelegate
   @StateObject private var store = CorpusStore()
   @StateObject private var mobileRemote = MobileRemoteStore()
+  @StateObject private var audioApprovals = AudioApprovalController()
 
   var body: some Scene {
     WindowGroup {
       StartupHostView()
         .environmentObject(store)
         .environmentObject(mobileRemote)
+        .environmentObject(audioApprovals)
+        .task { audioApprovals.attach(remote: mobileRemote) }
     }
   }
 }

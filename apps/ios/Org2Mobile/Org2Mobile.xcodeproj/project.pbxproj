@@ -25,6 +25,10 @@
 		0A10010B2C20000000000001 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A10020C2C20000000000001 /* ShareViewController.swift */; };
 		0A10010C2C20000000000001 /* Org2ShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 0A10020E2C20000000000001 /* Org2ShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		0A10010D2C20000000000001 /* MobileRemoteModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A10020F2C20000000000001 /* MobileRemoteModels.swift */; };
+		0A1001A12C20000000000001 /* AudioApprovalCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002A12C20000000000001 /* AudioApprovalCore.swift */; };
+		0A1001A12C20000000000002 /* AudioApprovalPushToTalk.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002A12C20000000000002 /* AudioApprovalPushToTalk.swift */; };
+		0A1001A12C20000000000003 /* AudioApprovalController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002A12C20000000000003 /* AudioApprovalController.swift */; };
+		0A1001A12C20000000000004 /* AudioApprovalSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002A12C20000000000004 /* AudioApprovalSettingsSection.swift */; };
 		FA10010D2C20000000000001 /* MobileNotificationRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA10020F2C20000000000001 /* MobileNotificationRouting.swift */; };
 		0A10010E2C20000000000001 /* MobileRemoteClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002102C20000000000001 /* MobileRemoteClient.swift */; };
 		0A1001802C20000000000001 /* MobileRemoteTranscriptPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002802C20000000000001 /* MobileRemoteTranscriptPage.swift */; };
@@ -80,6 +84,10 @@
 		0A10020D2C20000000000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		0A10020E2C20000000000001 /* Org2ShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = Org2ShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		0A10020F2C20000000000001 /* MobileRemoteModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileRemoteModels.swift; sourceTree = "<group>"; };
+		0A1002A12C20000000000001 /* AudioApprovalCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioApprovalCore.swift; sourceTree = "<group>"; };
+		0A1002A12C20000000000002 /* AudioApprovalPushToTalk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioApprovalPushToTalk.swift; sourceTree = "<group>"; };
+		0A1002A12C20000000000003 /* AudioApprovalController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioApprovalController.swift; sourceTree = "<group>"; };
+		0A1002A12C20000000000004 /* AudioApprovalSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioApprovalSettingsSection.swift; sourceTree = "<group>"; };
 		FA10020F2C20000000000001 /* MobileNotificationRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileNotificationRouting.swift; sourceTree = "<group>"; };
 		0A1002102C20000000000001 /* MobileRemoteClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileRemoteClient.swift; sourceTree = "<group>"; };
 		0A1002802C20000000000001 /* MobileRemoteTranscriptPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileRemoteTranscriptPage.swift; sourceTree = "<group>"; };
@@ -138,6 +146,10 @@
 				CE10A0022C20000000000001 /* CelorgaNames.swift */,
 				0A1002092C20000000000001 /* MobileCaptureSupport.swift */,
 				0A10020F2C20000000000001 /* MobileRemoteModels.swift */,
+				0A1002A12C20000000000001 /* AudioApprovalCore.swift */,
+				0A1002A12C20000000000002 /* AudioApprovalPushToTalk.swift */,
+				0A1002A12C20000000000003 /* AudioApprovalController.swift */,
+				0A1002A12C20000000000004 /* AudioApprovalSettingsSection.swift */,
 				FA10020F2C20000000000001 /* MobileNotificationRouting.swift */,
 				0A1002102C20000000000001 /* MobileRemoteClient.swift */,
 		0A1002802C20000000000001 /* MobileRemoteTranscriptPage.swift */,
@@ -276,6 +288,10 @@
 				CE10A0012C20000000000001 /* CelorgaNames.swift in Sources */,
 				0A1001092C20000000000001 /* MobileCaptureSupport.swift in Sources */,
 				0A10010D2C20000000000001 /* MobileRemoteModels.swift in Sources */,
+				0A1001A12C20000000000001 /* AudioApprovalCore.swift in Sources */,
+				0A1001A12C20000000000002 /* AudioApprovalPushToTalk.swift in Sources */,
+				0A1001A12C20000000000003 /* AudioApprovalController.swift in Sources */,
+				0A1001A12C20000000000004 /* AudioApprovalSettingsSection.swift in Sources */,
 				FA10010D2C20000000000001 /* MobileNotificationRouting.swift in Sources */,
 				0A10010E2C20000000000001 /* MobileRemoteClient.swift in Sources */,
 		0A1001802C20000000000001 /* MobileRemoteTranscriptPage.swift in Sources */,
