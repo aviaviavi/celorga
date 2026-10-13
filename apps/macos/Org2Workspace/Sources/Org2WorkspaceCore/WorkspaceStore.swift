@@ -2666,6 +2666,7 @@ public final class WorkspaceStore {
     _ messages: [AIChatMessage]
   ) -> Void = { _, _ in }
   public var approvalQueueChangeHandler: @MainActor (_ approvals: [ApprovalItem]) -> Void = { _ in }
+  var mobileRemoteRunLookupForTesting: ((_ runID: String) async -> AgentRunItem?)?
   public var aiChatDraft = ""
   public var aiChatPendingAttachments: [AIChatAttachment] = []
   public var openClawAgentID = "main"
@@ -8611,7 +8612,10 @@ extension WorkspaceStore {
     }
   }
 
-  private func continueOpenClawAfterApprovalBoundary(_ run: AgentRunItem) async {
+  /// Resumes the requesting agent after a decision when the run supports it, and reports
+  /// what happened. `nil` means no automatic continuation applies to this run.
+  @discardableResult
+  private func continueOpenClawAfterApprovalBoundary(_ run: AgentRunItem) async -> MobileRemoteApprovalContinuation? {
     if run.status == "running",
        run.pendingApprovalCount == 0,
        run.hasOpenClawApprovalContinuation {
@@ -8620,28 +8624,32 @@ extension WorkspaceStore {
         statusText = continued
           ? "Review decisions recorded; continued \(run.goal)"
           : "Review decisions recorded; \(run.goal) is already continuing"
+        return continued ? .continued : .alreadyContinuing
       } catch {
         errorText = error.localizedDescription
         do {
           let blocked = try await recordAgentRunApprovalContinuationFailure(run)
           statusText = "Review decisions recorded; \(blocked.goal) is blocked because continuation failed"
+          return .continuationFailedBlocked
         } catch {
           statusText = "Review decisions recorded; continuation failed and the run could not be durably blocked"
+          return .continuationFailed
         }
       }
-      return
     }
-    guard run.workflowId != nil else { return }
-    guard let revision = run.resumableRevisionApproval else { return }
+    guard run.workflowId != nil else { return nil }
+    guard let revision = run.resumableRevisionApproval else { return nil }
     do {
       guard try await continueOpenClawWorkflowAfterRevision(run, approval: revision) else {
-        return
+        return nil
       }
       await refreshAgentRuns()
       statusText = "Changes requested; continuing \(run.goal)"
+      return .revisionContinuing
     } catch {
       errorText = error.localizedDescription
       statusText = "Changes recorded; OpenClaw continuation pending"
+      return .continuationFailed
     }
   }
 
@@ -24953,13 +24961,37 @@ extension WorkspaceStore {
     endStatus rawEndStatus: String?,
     expectedRunID: String? = nil,
     expectedApprovalID: String? = nil,
-    expectedFingerprint: String? = nil
+    expectedFingerprint: String? = nil,
+    receipt rawReceipt: String? = nil
   ) async throws -> MobileRemoteWorkspaceSnapshot {
     await refreshApprovals(updatesStatus: false)
     let hasExactIdentity = expectedRunID != nil || expectedApprovalID != nil || expectedFingerprint != nil
+    if rawReceipt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+       MobileRemoteApprovalDecisionRequest.normalizedReceipt(rawReceipt) == nil {
+      throw CocoaError(
+        .validationMissingMandatoryProperty,
+        userInfo: [NSLocalizedDescriptionKey: "The decision receipt is not a short single-line key. Nothing was changed."]
+      )
+    }
+    let receipt = MobileRemoteApprovalDecisionRequest.normalizedReceipt(rawReceipt)
     guard let item = approvalItems.first(where: { $0.id == itemID }) else {
       if hasExactIdentity {
-        // An exact decision must never fall through to a silent no-op: the caller asked for one approval.
+        // A replay of a decision this host already recorded with the same receipt returns
+        // the original outcome. Anything else is refused: an exact decision must never
+        // fall through to a silent no-op.
+        if let receipt,
+           let expectedRunID,
+           let expectedApprovalID,
+           let expectedFingerprint,
+           let replayed = await mobileRemoteReplayedDecisionReceipt(
+             runID: expectedRunID,
+             approvalID: expectedApprovalID,
+             fingerprint: expectedFingerprint,
+             decision: decision,
+             receipt: receipt
+           ) {
+          return currentMobileRemoteWorkspaceSnapshot(decisionReceipt: replayed)
+        }
         throw CocoaError(
           .fileWriteUnknown,
           userInfo: [NSLocalizedDescriptionKey: "This approval is no longer pending. Nothing was changed."]
@@ -24996,7 +25028,7 @@ extension WorkspaceStore {
     switch normalizedDecision {
     case "approved":
       if item.isRunApproval {
-        continuationRun = try await decideRunApprovalItem(item, decision: "approved")
+        continuationRun = try await decideRunApprovalItem(item, decision: "approved", receipt: receipt)
       } else {
         try await approveAndAgentHandoff(HeadlineMutationTarget(
           file: item.file,
@@ -25013,7 +25045,7 @@ extension WorkspaceStore {
         )
       }
       if item.isRunApproval {
-        continuationRun = try await decideRunApprovalItem(item, decision: "rejected", note: note)
+        continuationRun = try await decideRunApprovalItem(item, decision: "rejected", note: note, receipt: receipt)
       } else {
         let endStatus = rawEndStatus.flatMap(TodoEditStatus.init(rawValue:)) ?? .canceled
         try await rejectApproval(
@@ -25052,10 +25084,79 @@ extension WorkspaceStore {
     if !item.isRunApproval {
       await refreshAgenda(preserveSelection: true, updatesStatus: false)
     }
+    var continuation: MobileRemoteApprovalContinuation?
     if let continuationRun {
-      await continueOpenClawAfterApprovalBoundary(continuationRun)
+      continuation = await continueOpenClawAfterApprovalBoundary(continuationRun)
     }
-    return currentMobileRemoteWorkspaceSnapshot()
+    guard hasExactIdentity, let continuationRun, let approvalID = item.approvalId else {
+      return currentMobileRemoteWorkspaceSnapshot()
+    }
+    // Report the run as it stands after the decision and any agent continuation.
+    let settledRun = agentRuns.first(where: { $0.id == continuationRun.id }) ?? continuationRun
+    return currentMobileRemoteWorkspaceSnapshot(decisionReceipt: Self.mobileRemoteDecisionReceipt(
+      run: settledRun,
+      approvalID: approvalID,
+      decision: normalizedDecision,
+      continuation: continuation,
+      receipt: receipt,
+      duplicate: false
+    ))
+  }
+
+  nonisolated static func mobileRemoteDecisionReceipt(
+    run: AgentRunItem,
+    approvalID: String,
+    decision: String,
+    continuation: MobileRemoteApprovalContinuation?,
+    receipt: String?,
+    duplicate: Bool
+  ) -> MobileRemoteApprovalDecisionReceipt {
+    let resolved = continuation
+      ?? (run.pendingApprovalCount > 0 ? .awaitingOtherApprovals : .recorded)
+    return MobileRemoteApprovalDecisionReceipt(
+      runID: run.id,
+      approvalID: approvalID,
+      decision: decision,
+      runStatus: run.status,
+      pendingApprovalCount: run.pendingApprovalCount,
+      continuation: resolved.rawValue,
+      receipt: receipt,
+      duplicate: duplicate
+    )
+  }
+
+  /// Returns the original outcome when this exact approval was already decided with the
+  /// same receipt and decision. A different decision, fingerprint, or receipt returns nil.
+  private func mobileRemoteReplayedDecisionReceipt(
+    runID: String,
+    approvalID: String,
+    fingerprint: String,
+    decision: String,
+    receipt: String
+  ) async -> MobileRemoteApprovalDecisionReceipt? {
+    let normalizedDecision = decision.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let run: AgentRunItem?
+    if let mobileRemoteRunLookupForTesting {
+      run = await mobileRemoteRunLookupForTesting(runID)
+    } else if let corpusRoot {
+      run = try? await cli.runJSON(["run", "show", runID, "--dir", corpusRoot.path, "--json"])
+    } else {
+      run = nil
+    }
+    guard let run,
+          let approval = run.approvals.first(where: { $0.id == approvalID }),
+          approval.fingerprint == fingerprint,
+          approval.receipt == receipt,
+          approval.status == normalizedDecision
+    else { return nil }
+    return Self.mobileRemoteDecisionReceipt(
+      run: run,
+      approvalID: approvalID,
+      decision: normalizedDecision,
+      continuation: nil,
+      receipt: receipt,
+      duplicate: true
+    )
   }
 
   public func setMobileRemoteWorkflowState(
@@ -25123,7 +25224,9 @@ extension WorkspaceStore {
     return threadID
   }
 
-  private func currentMobileRemoteWorkspaceSnapshot() -> MobileRemoteWorkspaceSnapshot {
+  private func currentMobileRemoteWorkspaceSnapshot(
+    decisionReceipt: MobileRemoteApprovalDecisionReceipt? = nil
+  ) -> MobileRemoteWorkspaceSnapshot {
     let agendaItems = (agenda?.overdue ?? []).flatMap { day in
       day.items.map { mobileRemoteAgendaItem($0, date: day.date) }
     } + (agenda?.days ?? []).flatMap { day in
@@ -25178,7 +25281,8 @@ extension WorkspaceStore {
             )
           }
         )
-      }
+      },
+      approvalDecisionReceipt: decisionReceipt
     )
   }
 

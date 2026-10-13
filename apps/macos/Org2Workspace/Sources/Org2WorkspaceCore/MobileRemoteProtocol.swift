@@ -94,11 +94,39 @@ public struct MobileRemotePushToTalkRegistrationRequest: Codable, Hashable, Send
   public let pushToken: String?
   public let environment: String?
   public let enabled: Bool
+  /// Quiet or snoozed until this time. The host sends no audio approval pushes
+  /// to this device before then. `nil` means prompts are allowed.
+  public let quietUntil: Date?
 
-  public init(pushToken: String?, environment: String?, enabled: Bool) {
+  public init(pushToken: String?, environment: String?, enabled: Bool, quietUntil: Date? = nil) {
     self.pushToken = pushToken
     self.environment = environment
     self.enabled = enabled
+    self.quietUntil = quietUntil
+  }
+}
+
+/// "Later" for one exact prompt. The host skips this exact approval until `until`
+/// and moves on to the next pending approval, so a snooze never blocks other agents.
+public struct MobileRemoteAudioApprovalSnoozeRequest: Codable, Hashable, Sendable {
+  public let runID: String
+  public let approvalID: String
+  public let fingerprint: String
+  public let until: Date
+
+  public init(runID: String, approvalID: String, fingerprint: String, until: Date) {
+    self.runID = runID
+    self.approvalID = approvalID
+    self.fingerprint = fingerprint
+    self.until = until
+  }
+}
+
+public struct MobileRemoteAudioApprovalSnoozeResponse: Codable, Hashable, Sendable {
+  public let snoozedUntil: Date
+
+  public init(snoozedUntil: Date) {
+    self.snoozedUntil = snoozedUntil
   }
 }
 
@@ -721,13 +749,20 @@ public struct MobileRemoteWorkspaceSnapshot: Codable, Hashable, Sendable {
   }
 }
 
+/// What the host did with an exact decision, read back from the durable run after the
+/// decision and any agent continuation. The phone acknowledges this, not its own request.
 public struct MobileRemoteApprovalDecisionReceipt: Codable, Hashable, Sendable {
   public let runID: String
   public let approvalID: String
   public let decision: String
   public let runStatus: String
   public let pendingApprovalCount: Int
+  /// One of `MobileRemoteApprovalContinuation`'s raw values.
   public let continuation: String
+  /// The provenance key recorded on the approval, when the client supplied one.
+  public let receipt: String?
+  /// True when this request replayed a decision that was already recorded with the same receipt.
+  public let duplicate: Bool
 
   public init(
     runID: String,
@@ -735,7 +770,9 @@ public struct MobileRemoteApprovalDecisionReceipt: Codable, Hashable, Sendable {
     decision: String,
     runStatus: String,
     pendingApprovalCount: Int,
-    continuation: String
+    continuation: String,
+    receipt: String? = nil,
+    duplicate: Bool = false
   ) {
     self.runID = runID
     self.approvalID = approvalID
@@ -743,7 +780,27 @@ public struct MobileRemoteApprovalDecisionReceipt: Codable, Hashable, Sendable {
     self.runStatus = runStatus
     self.pendingApprovalCount = pendingApprovalCount
     self.continuation = continuation
+    self.receipt = receipt
+    self.duplicate = duplicate
   }
+}
+
+/// How the requesting agent learns about a decision.
+public enum MobileRemoteApprovalContinuation: String, Codable, Sendable {
+  /// The host resumed the requesting agent's session.
+  case continued
+  /// The requesting agent was already resumed for this decision.
+  case alreadyContinuing = "already-continuing"
+  /// Resuming the agent failed; the run is durably blocked with the reason.
+  case continuationFailedBlocked = "continuation-failed-blocked"
+  /// Resuming the agent failed and the block could not be recorded.
+  case continuationFailed = "continuation-failed"
+  /// A requested revision was handed back to the workflow.
+  case revisionContinuing = "revision-continuing"
+  /// The run still waits on other approvals on the same boundary.
+  case awaitingOtherApprovals = "awaiting-other-approvals"
+  /// Recorded in the durable run; the requesting agent reads it with `run wait` or `run show`.
+  case recorded
 }
 
 public struct MobileRemoteAgendaItem: Codable, Hashable, Identifiable, Sendable {
@@ -934,6 +991,10 @@ public struct MobileRemoteApprovalDecisionRequest: Codable, Hashable, Sendable {
   public let runID: String?
   public let approvalID: String?
   public let fingerprint: String?
+  /// Optional provenance key recorded on the approval, for example
+  /// `audio-approval:<prompt UUID>`. Replaying the same key returns the original
+  /// receipt instead of failing or applying again.
+  public let receipt: String?
 
   public init(
     decision: String,
@@ -941,7 +1002,8 @@ public struct MobileRemoteApprovalDecisionRequest: Codable, Hashable, Sendable {
     endStatus: String? = nil,
     runID: String? = nil,
     approvalID: String? = nil,
-    fingerprint: String? = nil
+    fingerprint: String? = nil,
+    receipt: String? = nil
   ) {
     self.decision = decision
     self.note = note
@@ -949,6 +1011,18 @@ public struct MobileRemoteApprovalDecisionRequest: Codable, Hashable, Sendable {
     self.runID = runID
     self.approvalID = approvalID
     self.fingerprint = fingerprint
+    self.receipt = receipt
+  }
+
+  /// Receipts are short single-line keys. Anything else is refused rather than recorded.
+  public static func normalizedReceipt(_ value: String?) -> String? {
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+      return nil
+    }
+    guard trimmed.count <= 200,
+          trimmed.unicodeScalars.allSatisfy({ $0.value >= 0x21 && $0.value < 0x7F })
+    else { return nil }
+    return trimmed
   }
 }
 

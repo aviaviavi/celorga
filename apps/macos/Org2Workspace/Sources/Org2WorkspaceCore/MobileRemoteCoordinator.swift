@@ -49,7 +49,13 @@ public final class MobileRemoteCoordinator: ObservableObject {
   private var failedPairingAttempts = 0
   private var serverGeneration = 0
   private var restartTask: Task<Void, Never>?
-  private var activePushToTalkPromptKey: String?
+  /// Exact prompt key most recently pushed to each device. A device gets one push per prompt.
+  private var deliveredPushToTalkPromptKeys: [UUID: String] = [:]
+  /// "Later" for one exact prompt, keyed by `AudioApprovalPromptTarget.key`.
+  private var snoozedAudioApprovalPrompts: [String: Date] = [:]
+  private var pushToTalkWakeTask: Task<Void, Never>?
+  /// Test seam: replaces APNs delivery so the full host flow can run without Apple's servers.
+  var pushToTalkDeliveryForTesting: ((MobileRemotePushToTalkEnvelope, MobileRemoteStoredPushToTalkRegistration) async throws -> Void)?
 
   public init(
     defaults: UserDefaults = .standard,
@@ -191,6 +197,13 @@ public final class MobileRemoteCoordinator: ObservableObject {
     failedPairingAttempts = 0
   }
 
+  /// Test seam: pairing normally requires a live Tailscale listener.
+  func setPairingCodeForTesting(_ code: String) {
+    pairingCode = code
+    pairingExpiresAt = Date().addingTimeInterval(Self.pairingLifetime)
+    failedPairingAttempts = 0
+  }
+
   public func revoke(_ device: MobileRemotePairedDevice) {
     do {
       try credentialVault.revoke(device.id)
@@ -301,7 +314,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
     return detected
   }
 
-  private func handle(_ request: MobileRemoteHTTPRequest) async -> MobileRemoteHTTPResponse {
+  func handle(_ request: MobileRemoteHTTPRequest) async -> MobileRemoteHTTPResponse {
     let path = request.path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? request.path
     if request.method == "POST", path == "/v1/pair" {
       return handlePair(request)
@@ -362,7 +375,10 @@ public final class MobileRemoteCoordinator: ObservableObject {
       do {
         let enabled = try credentialVault.setPushToTalkRegistration(payload, forAccessToken: token)
         pairedDevices = credentialVault.devices
-        activePushToTalkPromptKey = nil
+        if let deviceID = credentialVault.deviceID(forAccessToken: token) {
+          // A new token, or leaving quiet, should receive the current prompt again.
+          deliveredPushToTalkPromptKeys[deviceID] = nil
+        }
         enqueuePushToTalkApproval(from: store.approvalItems)
         return .json(MobileRemotePushToTalkRegistrationResponse(
           enabled: enabled,
@@ -371,6 +387,23 @@ public final class MobileRemoteCoordinator: ObservableObject {
       } catch {
         return .error(error.localizedDescription, statusCode: 400)
       }
+    }
+
+    if request.method == "POST", path == "/v1/audio-approvals/snooze" {
+      guard let payload = try? request.decode(MobileRemoteAudioApprovalSnoozeRequest.self) else {
+        return .error("The snooze request could not be read.", statusCode: 400)
+      }
+      let now = Date()
+      // Bounded: at least a minute, at most a day. A snooze is never a decision.
+      let until = min(max(payload.until, now.addingTimeInterval(60)), now.addingTimeInterval(24 * 60 * 60))
+      let target = AudioApprovalPromptTarget(
+        runID: payload.runID,
+        approvalID: payload.approvalID,
+        fingerprint: payload.fingerprint
+      )
+      snoozedAudioApprovalPrompts[target.key] = until
+      enqueuePushToTalkApproval(from: store.approvalItems)
+      return .json(MobileRemoteAudioApprovalSnoozeResponse(snoozedUntil: until))
     }
 
     if request.method == "POST", path == "/v1/push-test" {
@@ -497,7 +530,8 @@ public final class MobileRemoteCoordinator: ObservableObject {
             endStatus: payload.endStatus,
             expectedRunID: payload.runID,
             expectedApprovalID: payload.approvalID,
-            expectedFingerprint: payload.fingerprint
+            expectedFingerprint: payload.fingerprint,
+            receipt: payload.receipt
           ))
         }
         if request.method == "POST",
@@ -846,7 +880,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
       pushStatusText = "Import the APNs authentication key"
     }
     if pushProviderConfigured, let store {
-      activePushToTalkPromptKey = nil
+      deliveredPushToTalkPromptKeys.removeAll()
       enqueuePushToTalkApproval(from: store.approvalItems)
     }
   }
@@ -889,33 +923,34 @@ public final class MobileRemoteCoordinator: ObservableObject {
     }
   }
 
+  /// Pushes the single next audio approval prompt to every enrolled device that is not quiet.
+  /// The host is the serializer: competing agents' approvals are offered one at a time,
+  /// oldest first, and the next one is offered only after the current one is decided,
+  /// snoozed, or withdrawn.
   private func enqueuePushToTalkApproval(from approvals: [ApprovalItem]) {
-    guard pushProviderConfigured else { return }
-    guard let approval = approvals.first(where: {
-      $0.isRunApproval
-        && $0.status == "pending"
-        && $0.runId?.isEmpty == false
-        && $0.approvalId?.isEmpty == false
-        && $0.fingerprint?.isEmpty == false
-    }), let runID = approval.runId,
-       let approvalID = approval.approvalId,
-       let fingerprint = approval.fingerprint
-    else {
-      activePushToTalkPromptKey = nil
+    guard pushProviderConfigured || pushToTalkDeliveryForTesting != nil else { return }
+    let now = Date()
+    snoozedAudioApprovalPrompts = snoozedAudioApprovalPrompts.filter { $0.value > now }
+    let registrations = credentialVault.pushToTalkRegistrations
+    scheduleAudioApprovalWake(registrations: registrations, now: now)
+    guard let target = Self.nextAudioApprovalPrompt(
+      from: approvals,
+      snoozed: snoozedAudioApprovalPrompts,
+      now: now
+    ) else {
+      deliveredPushToTalkPromptKeys.removeAll()
       return
     }
-    let promptKey = "\(runID)|\(approvalID)|\(fingerprint)"
-    guard promptKey != activePushToTalkPromptKey else { return }
-    let registrations = credentialVault.pushToTalkRegistrations
-    guard !registrations.isEmpty else { return }
-    activePushToTalkPromptKey = promptKey
-    let envelope = MobileRemotePushToTalkEnvelope(
-      messageID: UUID(),
-      runID: runID,
-      approvalID: approvalID,
-      fingerprint: fingerprint
-    )
     for registration in registrations {
+      if let quietUntil = registration.registration.quietUntil, quietUntil > now { continue }
+      guard deliveredPushToTalkPromptKeys[registration.deviceID] != target.key else { continue }
+      deliveredPushToTalkPromptKeys[registration.deviceID] = target.key
+      let envelope = MobileRemotePushToTalkEnvelope(
+        messageID: UUID(),
+        runID: target.runID,
+        approvalID: target.approvalID,
+        fingerprint: target.fingerprint
+      )
       Task { [weak self] in
         guard let self else { return }
         do {
@@ -923,15 +958,63 @@ public final class MobileRemoteCoordinator: ObservableObject {
           self.pushStatusText = "Last audio approval push delivered at \(Date().formatted(date: .omitted, time: .shortened))"
         } catch let error as MobileRemotePushError {
           self.pushStatusText = error.localizedDescription
+          if self.deliveredPushToTalkPromptKeys[registration.deviceID] == target.key {
+            self.deliveredPushToTalkPromptKeys[registration.deviceID] = nil
+          }
           if error.invalidatesDeviceToken {
             try? self.credentialVault.clearPushToTalkRegistration(deviceID: registration.deviceID)
             self.pairedDevices = self.credentialVault.devices
           }
         } catch {
           self.pushStatusText = error.localizedDescription
+          if self.deliveredPushToTalkPromptKeys[registration.deviceID] == target.key {
+            self.deliveredPushToTalkPromptKeys[registration.deviceID] = nil
+          }
         }
       }
     }
+  }
+
+  /// Re-evaluates the queue when the earliest quiet period or prompt snooze ends.
+  private func scheduleAudioApprovalWake(registrations: [MobileRemoteCredentialVault.PushToTalkTarget], now: Date) {
+    pushToTalkWakeTask?.cancel()
+    pushToTalkWakeTask = nil
+    let candidates = registrations.compactMap(\.registration.quietUntil).filter { $0 > now }
+      + snoozedAudioApprovalPrompts.values.filter { $0 > now }
+    guard let wake = candidates.min(), wake < now.addingTimeInterval(48 * 60 * 60) else { return }
+    pushToTalkWakeTask = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(max(1, wake.timeIntervalSinceNow + 1)))
+      guard !Task.isCancelled, let self, let store = self.store else { return }
+      self.enqueuePushToTalkApproval(from: store.approvalItems)
+    }
+  }
+
+  /// The oldest pending run approval with a complete exact identity that is not snoozed.
+  nonisolated static func nextAudioApprovalPrompt(
+    from approvals: [ApprovalItem],
+    snoozed: [String: Date],
+    now: Date
+  ) -> AudioApprovalPromptTarget? {
+    approvals
+      .compactMap { approval -> (AudioApprovalPromptTarget, String)? in
+        guard approval.isRunApproval,
+              approval.status == "pending",
+              let runID = approval.runId, !runID.isEmpty,
+              let approvalID = approval.approvalId, !approvalID.isEmpty,
+              let fingerprint = approval.fingerprint, !fingerprint.isEmpty
+        else { return nil }
+        return (
+          AudioApprovalPromptTarget(runID: runID, approvalID: approvalID, fingerprint: fingerprint),
+          approval.requestedAt ?? ""
+        )
+      }
+      .filter { candidate in (snoozed[candidate.0.key] ?? .distantPast) <= now }
+      .sorted { lhs, rhs in
+        if lhs.1 != rhs.1 { return lhs.1 < rhs.1 }
+        if lhs.0.runID != rhs.0.runID { return lhs.0.runID < rhs.0.runID }
+        return lhs.0.approvalID < rhs.0.approvalID
+      }
+      .first?.0
   }
 
   private func deliverPush(
@@ -952,6 +1035,10 @@ public final class MobileRemoteCoordinator: ObservableObject {
     _ envelope: MobileRemotePushToTalkEnvelope,
     to registration: MobileRemoteStoredPushToTalkRegistration
   ) async throws {
+    if let pushToTalkDeliveryForTesting {
+      try await pushToTalkDeliveryForTesting(envelope, registration)
+      return
+    }
     let credentialStore = pushCredentialStore
     let credentials = await Task.detached(priority: .userInitiated) {
       credentialStore.credentials
@@ -1155,6 +1242,10 @@ final class MobileRemoteCredentialVault {
     }
   }
 
+  func deviceID(forAccessToken accessToken: String) -> UUID? {
+    records.first(where: { Self.securelyEqual($0.token, storedToken(accessToken)) })?.device.id
+  }
+
   public func contains(token: String) -> Bool {
     records.contains { Self.securelyEqual($0.token, storedToken(token)) }
   }
@@ -1248,7 +1339,8 @@ final class MobileRemoteCredentialVault {
       }
       records[index].pushToTalkRegistration = MobileRemoteStoredPushToTalkRegistration(
         pushToken: pushToken,
-        environment: environment
+        environment: environment,
+        quietUntil: request.quietUntil
       )
     } else {
       records[index].pushToTalkRegistration = nil
@@ -1405,4 +1497,13 @@ private enum MobileRemoteCredentialError: LocalizedError {
       "Pair this device with this host again."
     }
   }
+}
+
+/// The exact identity one audio approval prompt is bound to.
+struct AudioApprovalPromptTarget: Hashable, Sendable {
+  let runID: String
+  let approvalID: String
+  let fingerprint: String
+
+  var key: String { "\(runID)|\(approvalID)|\(fingerprint)" }
 }

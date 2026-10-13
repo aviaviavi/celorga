@@ -18,11 +18,14 @@ struct MobileRemoteStoredPushToTalkRegistration: Codable, Hashable, Sendable {
   let pushToken: String
   let environment: String
   let registeredAt: Date
+  /// No audio approval pushes before this time (quiet mode or a timed snooze).
+  let quietUntil: Date?
 
-  init(pushToken: String, environment: String, registeredAt: Date = Date()) {
+  init(pushToken: String, environment: String, registeredAt: Date = Date(), quietUntil: Date? = nil) {
     self.pushToken = pushToken
     self.environment = environment
     self.registeredAt = registeredAt
+    self.quietUntil = quietUntil
   }
 }
 
@@ -271,18 +274,12 @@ actor MobileRemotePushSender {
     guard let url = URL(string: "https://\(host)/3/device/\(registration.pushToken)") else {
       throw MobileRemotePushError.invalidDeviceToken
     }
-    let body: [String: Any] = [
-      "aps": [:],
-      "runID": envelope.runID,
-      "approvalID": envelope.approvalID,
-      "fingerprint": envelope.fingerprint
-    ]
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.timeoutInterval = 20
-    request.httpBody = try JSONSerialization.data(withJSONObject: body)
+    request.httpBody = try JSONSerialization.data(withJSONObject: Self.pushToTalkPayload(envelope))
     request.setValue("bearer \(try providerToken(credentials: credentials))", forHTTPHeaderField: "authorization")
-    request.setValue("org.org2.mobile.voip-ptt", forHTTPHeaderField: "apns-topic")
+    request.setValue(Self.pushToTalkTopic, forHTTPHeaderField: "apns-topic")
     request.setValue("pushtotalk", forHTTPHeaderField: "apns-push-type")
     request.setValue("10", forHTTPHeaderField: "apns-priority")
     request.setValue("0", forHTTPHeaderField: "apns-expiration")
@@ -296,6 +293,20 @@ actor MobileRemotePushSender {
       let reason = (try? JSONSerialization.jsonObject(with: responseData) as? [String: Any])?["reason"] as? String
       throw MobileRemotePushError.apns(status: httpResponse.statusCode, reason: reason)
     }
+  }
+
+  /// Apple's Push to Talk topic: the app bundle identifier with the `.voip-ptt` suffix.
+  static let pushToTalkTopic = "org.org2.mobile.voip-ptt"
+
+  /// Identity only. Approval titles and actions never travel through APNs; the phone
+  /// reads them from the paired host after the push wakes it.
+  static func pushToTalkPayload(_ envelope: MobileRemotePushToTalkEnvelope) -> [String: Any] {
+    [
+      "aps": [String: Any](),
+      "runID": envelope.runID,
+      "approvalID": envelope.approvalID,
+      "fingerprint": envelope.fingerprint
+    ]
   }
 
   private func providerToken(credentials: MobileRemotePushProviderCredentials) throws -> String {
