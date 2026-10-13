@@ -496,16 +496,29 @@ final class MobileRemoteStore: ObservableObject {
     environment = "production"
     #endif
     let tokenHex = token?.map { String(format: "%02x", $0) }.joined()
-    return try await pairedClient().post(
-      "/v1/push-to-talk-registration",
-      payload: MobileRemotePushToTalkRegistrationRequest(
-        pushToken: enabled ? tokenHex : nil,
-        environment: enabled ? environment : nil,
-        enabled: enabled,
-        quietUntil: enabled ? quietUntil : nil
-      ),
-      as: MobileRemotePushToTalkRegistrationResponse.self
-    )
+    do {
+      return try await pairedClient().post(
+        "/v1/push-to-talk-registration",
+        payload: MobileRemotePushToTalkRegistrationRequest(
+          pushToken: enabled ? tokenHex : nil,
+          environment: enabled ? environment : nil,
+          enabled: enabled,
+          quietUntil: enabled ? quietUntil : nil
+        ),
+        as: MobileRemotePushToTalkRegistrationResponse.self
+      )
+    } catch MobileRemoteClientError.server(let message) where message == Self.legacyUnknownRouteError {
+      // Hosts built before audio approvals route unknown paths to the thread
+      // lookup and answer "Thread not found." Name the real problem instead.
+      throw MobileRemoteClientError.server(Self.audioApprovalsUnsupportedMessage(hostName: serverName))
+    }
+  }
+
+  /// What a Celorga host built before audio approvals answers for an unknown route.
+  static let legacyUnknownRouteError = "Thread not found."
+
+  static func audioApprovalsUnsupportedMessage(hostName: String) -> String {
+    "\(hostName) runs a Celorga build without audio approvals. Update Celorga on that Mac, or switch to a host that has them under Mac Connection."
   }
 
   /// "Later" for one exact prompt. The Mac moves on to the next pending approval.

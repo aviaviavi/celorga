@@ -640,9 +640,11 @@ public final class MobileRemoteCoordinator: ObservableObject {
        let threadID = UUID(uuidString: components[2]) {
       return await handleThreadShare(request, threadID: threadID, components: components, store: store)
     }
+    guard components.count >= 2, components[0] == "v1", components[1] == "threads" else {
+      // Not a thread route. Saying "Thread not found." here hid unsupported requests.
+      return .error("This Celorga host does not support \(request.method) \(path). Update Celorga on this Mac.", statusCode: 404)
+    }
     guard components.count >= 3,
-          components[0] == "v1",
-          components[1] == "threads",
           let threadID = UUID(uuidString: components[2]),
           let thread = store.aiChatThreads.first(where: { $0.id == threadID })
     else {

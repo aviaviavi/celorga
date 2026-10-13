@@ -199,6 +199,13 @@ final class AudioApprovalHostTests: XCTestCase {
       token: token, as: MobileRemotePushToTalkRegistrationResponse.self)
     XCTAssertTrue(registration.enabled)
 
+    // An unknown route names itself instead of the misleading thread-lookup error.
+    let unknown = try await rawCall(remote, "POST", "/v1/not-a-route", Optional<String>.none, token: token)
+    XCTAssertEqual(unknown.statusCode, 404)
+    let unknownText = (try JSONSerialization.jsonObject(with: unknown.body) as? [String: Any])?["error"] as? String ?? ""
+    XCTAssertTrue(unknownText.contains("does not support POST /v1/not-a-route"), unknownText)
+    XCTAssertFalse(unknownText.contains("Thread not found"), unknownText)
+
     // The host serializes: one push, for the oldest approval.
     await store.refreshApprovals(updatesStatus: false)
     try await waitUntil { pushes.count == 1 }

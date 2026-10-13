@@ -120,4 +120,10 @@ for (const file of ["AudioApprovalCore.swift", "AudioApprovalPushToTalk.swift", 
 // 10. The TypeScript broker binds replies to a heard prompt too.
 assert.match(broker, /reason: "prompt-not-heard"/);
 
+// Hosts without audio approvals answer the registration with the thread-lookup 404.
+// The phone must name that problem, and new hosts must not reuse the message.
+assert.match(iosStore, /legacyUnknownRouteError = "Thread not found\."/);
+assert.match(iosStore, /catch MobileRemoteClientError\.server\(let message\) where message == Self\.legacyUnknownRouteError/);
+assert.match(macCoordinator, /This Celorga host does not support \\\(request\.method\) \\\(path\)/);
+
 console.log("ios audio approval contract tests passed");
