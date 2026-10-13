@@ -138,7 +138,13 @@ export interface AgentRunApproval {
   decisionNote?: string;
   note?: string;
   receipt?: string;
+  /** Delivery order for interrupting channels such as walkie-talkie prompts. Absent means normal.
+   * Not part of the fingerprint: urgency changes when a person is asked, not what is approved. */
+  priority?: AgentRunApprovalPriority;
 }
+
+export const AGENT_RUN_APPROVAL_PRIORITIES = ["normal", "urgent"] as const;
+export type AgentRunApprovalPriority = typeof AGENT_RUN_APPROVAL_PRIORITIES[number];
 
 export interface AgentRunAttempt {
   id: string;
@@ -542,6 +548,9 @@ export function validateAgentRun(value: unknown): AgentRunValidationResult {
     } else if (approval.fingerprint !== expected) {
       issues.push({ path: `$.approvals[${index}].fingerprint`, message: "does not match immutable approval material" });
     }
+    if (approval.priority !== undefined && !AGENT_RUN_APPROVAL_PRIORITIES.includes(approval.priority)) {
+      issues.push({ path: `$.approvals[${index}].priority`, message: `must be one of: ${AGENT_RUN_APPROVAL_PRIORITIES.join(", ")}` });
+    }
   }
   if (run.outcome !== undefined) {
     if (!String(run.outcome.summary || "").trim()) issues.push({ path: "$.outcome.summary", message: "must not be empty" });
@@ -854,9 +863,12 @@ export function requestAgentRunApproval(run: AgentRun, input: Omit<AgentRunAppro
     ...(optional(input.note) ? { note: optional(input.note) } : {}),
     ...(optional(input.receipt) ? { receipt: optional(input.receipt) } : {}),
   };
+  const priority = input.priority ?? "normal";
+  if (!AGENT_RUN_APPROVAL_PRIORITIES.includes(priority)) throw new Error(`invalid approval priority: ${priority}`);
   const approval: AgentRunApproval = {
     ...material,
     fingerprint: agentRunApprovalFingerprint(material),
+    ...(priority === "urgent" ? { priority } : {}),
   };
   if (!approval.title || !approval.action) throw new Error("approval title and action are required");
   const opensApprovalBoundary = run.status === "running"

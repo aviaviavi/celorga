@@ -126,4 +126,14 @@ assert.match(iosStore, /legacyUnknownRouteError = "Thread not found\."/);
 assert.match(iosStore, /catch MobileRemoteClientError\.server\(let message\) where message == Self\.legacyUnknownRouteError/);
 assert.match(macCoordinator, /This Celorga host does not support \\\(request\.method\) \\\(path\)/);
 
+// Delivery: refresh canonical approvals before choosing and after every decision; a delivered,
+// unanswered prompt never blocks newer ones; urgency is explicit; answers are never interrupted.
+assert.match(macCoordinator, /await store\.refreshApprovals\(clearsError: false\)\s*\n\s*\}\s*\n\s*self\.enqueuePushToTalkApproval/);
+assert.match(macCoordinator, /workspaceComponents\[4\] == "decision",[\s\S]{0,200}defer \{ requestPushToTalkEvaluation\(\) \}/);
+assert.match(macCoordinator, /excluding: Set\(delivered\.keys\)/);
+assert.match(macCoordinator, /if lhs\.urgent != rhs\.urgent \{ return lhs\.urgent \}/);
+assert.match(core, /if leftUrgent != rightUrgent \{ return leftUrgent \}/);
+assert.doesNotMatch(core, /A push must never complete a partial reply/);
+assert.match(core, /deferredPush = target/);
+
 console.log("ios audio approval contract tests passed");

@@ -432,6 +432,7 @@ struct MobileRemoteApprovalItem: Codable, Hashable, Identifiable {
   let runGoal: String?
   let runStatus: String?
   let runDecisionEffect: String?
+  var priority: String? = nil
 
   var localEntry: ApprovalEntry {
     ApprovalEntry(
@@ -453,7 +454,8 @@ struct MobileRemoteApprovalItem: Codable, Hashable, Identifiable {
       action: action,
       riskClass: riskClass,
       requestedFrom: requestedFrom,
-      requestedAt: requestedAt
+      requestedAt: requestedAt,
+      priority: priority
     )
   }
 }

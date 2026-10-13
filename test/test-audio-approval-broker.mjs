@@ -82,6 +82,10 @@ assert.equal(parseAudioSpokenReply(""), "unclear", "silence is not authorization
 const runA = waitingRun("run-a", "appr-a", T0);
 const runB = waitingRun("run-b", "appr-b", T1);
 assert.deepEqual(pendingAudioTargets([runB, runA]).map((t) => t.runId), ["run-a", "run-b"]);
+{
+  const urgentB = { ...runB, approvals: runB.approvals.map((approval) => ({ ...approval, priority: "urgent" })) };
+  assert.deepEqual(pendingAudioTargets([runA, urgentB]).map((t) => t.runId), ["run-b", "run-a"], "explicit urgency outranks age");
+}
 let state = selectActiveAudioPrompt(createAudioBrokerState(), [runA, runB], T1);
 assert.equal(state.active.target.runId, "run-a");
 const firstPrompt = state.active.promptId;

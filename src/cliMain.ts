@@ -741,6 +741,7 @@ type ApprovalQueueItem = {
   runApprovalCount?: number;
   runDecisionEffect?: string;
   decisionKeys?: string[];
+  priority?: string;
 };
 
 type ApprovalQueuePayload = {
@@ -1210,6 +1211,7 @@ function approvalCandidatesFromRuns(rootDir: string, runs: AgentRun[]): Approval
           runApprovalCount: run.approvals.length,
           runDecisionEffect,
           decisionKeys: agentRunApprovalDecisionKeys(approval),
+          ...(approval.priority === "urgent" ? { priority: "urgent" } : {}),
         },
         decisionKeys: agentRunApprovalDecisionKeys(approval),
         requestedAt: approval.requestedAt,

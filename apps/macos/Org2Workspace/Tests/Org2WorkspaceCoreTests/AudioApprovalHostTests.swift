@@ -275,6 +275,74 @@ final class AudioApprovalHostTests: XCTestCase {
                    "Snooze and quiet never decide anything")
   }
 
+  func testUrgentFirstAndDeliveredPromptsDoNotBlockNewerOnes() {
+    let now = Date()
+    let older = approvalItem(run: "run-a", approval: "a", fingerprint: "sha256:a", requestedAt: "2026-10-13T10:00:00Z")
+    let newer = approvalItem(run: "run-b", approval: "b", fingerprint: "sha256:b", requestedAt: "2026-10-13T10:05:00Z")
+    let urgent = approvalItem(run: "run-u", approval: "u", fingerprint: "sha256:u", requestedAt: "2026-10-13T11:00:00Z", priority: "urgent")
+    XCTAssertEqual(MobileRemoteCoordinator.nextAudioApprovalPrompt(from: [older, newer, urgent], snoozed: [:], now: now)?.approvalID, "u")
+    XCTAssertEqual(MobileRemoteCoordinator.nextAudioApprovalPrompt(from: [newer, older], snoozed: [:], now: now)?.approvalID, "a",
+                   "Without explicit urgency, age decides the order")
+    XCTAssertEqual(MobileRemoteCoordinator.nextAudioApprovalPrompt(
+      from: [older, newer], snoozed: [:], excluding: ["run-a|a|sha256:a"], now: now)?.approvalID, "b",
+      "A delivered, unanswered prompt does not block the next one")
+    XCTAssertNil(MobileRemoteCoordinator.nextAudioApprovalPrompt(
+      from: [older], snoozed: [:], excluding: ["run-a|a|sha256:a"], now: now), "A delivered prompt is not pushed again")
+    XCTAssertEqual(AudioApprovalPromptPolicy.holdEnds(delivered: ["k": now], now: now.addingTimeInterval(10)),
+                   now.addingTimeInterval(AudioApprovalPromptPolicy.answerWindow))
+    XCTAssertNil(AudioApprovalPromptPolicy.holdEnds(delivered: ["k": now], now: now.addingTimeInterval(AudioApprovalPromptPolicy.answerWindow + 1)))
+  }
+
+  @MainActor
+  func testUnansweredPromptDoesNotStarveNewOnesAndCanonicalUrgentGoesFirst() async throws {
+    let repoRoot = try Org2CLI.defaultRepoRoot()
+    guard FileManager.default.fileExists(atPath: repoRoot.appendingPathComponent("dist/cli.js").path) else {
+      throw XCTSkip("Run npm run build first; this test drives the real CLI.")
+    }
+    let corpus = FileManager.default.temporaryDirectory
+      .appendingPathComponent("celorga-audio-approval-starve-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: corpus, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: corpus) }
+    let first = try createWaitingRun(repoRoot: repoRoot, corpus: corpus, title: "Stale demo A")
+    let second = try createWaitingRun(repoRoot: repoRoot, corpus: corpus, title: "Demo B")
+
+    let suite = "AudioApprovalHostTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let store = WorkspaceStore(cli: Org2CLI(repoRoot: repoRoot), defaults: defaults, legacyDefaultsDomains: [])
+    store.corpusRoot = corpus
+    let remote = MobileRemoteCoordinator(defaults: defaults, credentialFile: corpus.appendingPathComponent("devices.json"))
+    remote.pushToTalkAnswerWindow = 0.2
+    var pushes: [MobileRemotePushToTalkEnvelope] = []
+    remote.pushToTalkDeliveryForTesting = { envelope, _ in pushes.append(envelope) }
+    remote.attach(to: store)
+    remote.setPairingCodeForTesting("434343")
+    let token = try await call(remote, "POST", "/v1/pair", MobileRemotePairRequest(code: "434343", deviceName: "Demo phone"),
+                               as: MobileRemotePairResponse.self).accessToken
+    // Enrollment refreshes canonical approvals itself; nothing else loads them.
+    _ = try await call(remote, "POST", "/v1/push-to-talk-registration",
+      MobileRemotePushToTalkRegistrationRequest(pushToken: "abcdef0123", environment: "sandbox", enabled: true),
+      token: token, as: MobileRemotePushToTalkRegistrationResponse.self)
+    try await waitUntil { pushes.count == 1 }
+    XCTAssertEqual(pushes[0].approvalID, first.approvalID)
+
+    // A is left unanswered. After the answer window B gets its own delivery.
+    try await waitUntil { pushes.count == 2 }
+    XCTAssertEqual(pushes[1].approvalID, second.approvalID)
+    XCTAssertEqual(try runApproval(repoRoot: repoRoot, corpus: corpus, first)["status"] as? String, "pending")
+
+    // Written by another process; the host's cache is not told. The urgent one goes first.
+    let normal = try createWaitingRun(repoRoot: repoRoot, corpus: corpus, title: "Demo C")
+    let urgent = try createWaitingRun(repoRoot: repoRoot, corpus: corpus, title: "Urgent demo D", priority: "urgent")
+    XCTAssertEqual(try runApproval(repoRoot: repoRoot, corpus: corpus, urgent)["priority"] as? String, "urgent")
+    try await waitUntil { pushes.count == 3 }
+    XCTAssertEqual(pushes[2].approvalID, urgent.approvalID, "Canonical state is reread before choosing")
+    try await waitUntil { pushes.count == 4 }
+    XCTAssertEqual(pushes[3].approvalID, normal.approvalID)
+    try await Task.sleep(for: .milliseconds(1_500))
+    XCTAssertEqual(pushes.count, 4, "Each prompt is pushed once")
+  }
+
   // MARK: Helpers
 
   private struct DemoApproval {
@@ -289,7 +357,8 @@ final class AudioApprovalHostTests: XCTestCase {
     fingerprint: String?,
     requestedAt: String,
     status: String = "pending",
-    kind: String = "run"
+    kind: String = "run",
+    priority: String? = nil
   ) -> ApprovalItem {
     ApprovalItem(
       title: "Approve \(approval)",
@@ -306,7 +375,8 @@ final class AudioApprovalHostTests: XCTestCase {
       approvalId: approval,
       fingerprint: fingerprint,
       requestedAt: requestedAt,
-      runId: run
+      runId: run,
+      priority: priority
     )
   }
 
@@ -325,7 +395,7 @@ final class AudioApprovalHostTests: XCTestCase {
     return (json["run"] as? [String: Any]) ?? json
   }
 
-  private func createWaitingRun(repoRoot: URL, corpus: URL, title: String) throws -> DemoApproval {
+  private func createWaitingRun(repoRoot: URL, corpus: URL, title: String, priority: String? = nil) throws -> DemoApproval {
     let created = try cli(repoRoot, ["run", "create", "--title", title, "--goal", "Reversible audio approval demo", "--dir", corpus.path, "--json"])
     let runID = try XCTUnwrap(created["id"] as? String)
     _ = try cli(repoRoot, ["run", "start", runID, "--dir", corpus.path, "--json"])
@@ -335,7 +405,7 @@ final class AudioApprovalHostTests: XCTestCase {
       "--action", "No external action; demo only",
       "--risk", "external-action",
       "--dir", corpus.path, "--json",
-    ])
+    ] + (priority.map { ["--priority", $0] } ?? []))
     let approval = try XCTUnwrap((waiting["approvals"] as? [[String: Any]])?.last)
     // Keep requestedAt strictly ordered between the two demo runs.
     Thread.sleep(forTimeInterval: 0.01)

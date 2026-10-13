@@ -185,24 +185,109 @@ do {
   let decided = decisions(session.handle(.transcriptReady("no", now: t0.addingTimeInterval(3))))
   expect(decided.first?.0.target == targetA && decided.first?.1 == "rejected", "the reply decides A, the prompt that was heard")
   expect(session.handle(.transmitBegan(initiated: true, now: t0.addingTimeInterval(3))).isEmpty, "one decision in flight at a time")
+  expect(spoken(session.handle(.transmitEnded(initiated: true, interrupted: false))).first?.hasPrefix("Still sending") == true, "the rejected press is announced on release")
+  _ = session.handle(.playbackFinished(completed: true, now: t0.addingTimeInterval(3)))
   _ = session.handle(.decisionSucceeded(targetA, AudioDecisionOutcome(decision: "rejected", runStatus: "running", pendingApprovalCount: 0, continuation: "recorded", duplicate: false)))
   _ = session.handle(.sessionDeactivated)
   let next = session.handle(.approvalsUpdated([b], now: t0.addingTimeInterval(4)))
   expect(next == [.requestAudioSession] && session.active?.target == targetB, "B is offered only after A settles")
 }
 
-// 11. A push during a reply discards the partial reply.
+// 11. A push during a reply never interrupts it; the new prompt waits until the answer ends.
 do {
   var session = joinedSession()
   heardAndCapturing(&session)
-  expect(session.handle(.pushReceived(targetB, now: t0)).contains(.cancelCapture), "a push cancels the capture")
-  expect(session.handle(.transmitEnded(initiated: true, interrupted: true)).isEmpty, "the interrupted transmission finishes nothing")
-  expect(decisions(session.handle(.transcriptReady("yeah", now: t0))).isEmpty, "a partial reply never decides")
+  let pushed = session.handle(.pushReceived(targetB, now: t0.addingTimeInterval(6)))
+  expect(!pushed.contains(.cancelCapture) && session.capture == .capturing, "a push does not cancel the reply in progress")
+  expect(session.deferredPush == targetB && session.active?.target == targetA, "B waits while A is answered")
+  _ = session.handle(.transmitEnded(initiated: true, interrupted: false))
+  let decided = decisions(session.handle(.transcriptReady("yeah", now: t0.addingTimeInterval(7))))
+  expect(decided.first?.0.target == targetA && decided.first?.1 == "approved", "the reply still decides A")
+  let settled = session.handle(.decisionSucceeded(targetA, AudioDecisionOutcome(decision: "approved", runStatus: "running", pendingApprovalCount: 0, continuation: "continued", duplicate: false)))
+  expect(spoken(settled) == ["Approved. The agent is continuing."], "the result is spoken")
+  let afterAck = session.handle(.playbackFinished(completed: true, now: t0.addingTimeInterval(8)))
+  expect(afterAck.contains(.refreshApprovals) && session.deferredPush == nil && session.pushedTarget == targetB, "B is taken up once the answer ends")
 }
 do {
   var session = joinedSession()
   heardAndCapturing(&session)
-  expect(session.handle(.transmitEnded(initiated: true, interrupted: true)) == [.cancelCapture], "an interrupted transmission cancels capture")
+  let interrupted = session.handle(.transmitEnded(initiated: true, interrupted: true))
+  expect(interrupted.contains(.cancelCapture), "an interrupted transmission cancels capture")
+  expect(spoken(interrupted).first?.contains("Nothing was decided") == true, "an interrupted reply is announced")
+  expect(decisions(session.handle(.transcriptReady("yeah", now: t0))).isEmpty, "a partial reply never decides")
+}
+
+// 11b. A prompt heard but left unanswered does not monopolize audio.
+do {
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  _ = session.handle(.sessionActivated(headset, now: t0))
+  _ = session.handle(.playbackFinished(completed: true, now: t0))
+  _ = session.handle(.sessionDeactivated)
+  let early = session.handle(.pushReceived(targetB, now: t0.addingTimeInterval(5)))
+  expect(session.deferredPush == targetB && session.active?.target == targetA, "within the answer grace B waits")
+  expect(early.contains(.scheduleTick(after: AudioApprovalFeature.answerGrace - 5)), "a tick is scheduled for the end of the grace")
+  let tick = session.handle(.tick(now: t0.addingTimeInterval(AudioApprovalFeature.answerGrace + 1)))
+  expect(tick.contains(.refreshApprovals) && session.active == nil && session.pushedTarget == targetB, "after the grace B replaces the unanswered A")
+  let played = session.handle(.approvalsUpdated([a, b], now: t0.addingTimeInterval(AudioApprovalFeature.answerGrace + 2)))
+  expect(played == [.requestAudioSession] && session.active?.target == targetB, "B is offered even though A is still pending")
+}
+do {
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  _ = session.handle(.sessionActivated(headset, now: t0))
+  _ = session.handle(.playbackFinished(completed: true, now: t0))
+  _ = session.handle(.sessionDeactivated)
+  let late = session.handle(.pushReceived(targetB, now: t0.addingTimeInterval(AudioApprovalFeature.answerGrace + 30)))
+  expect(late.contains(.refreshApprovals) && session.active == nil && session.heardTarget == nil, "a push after the grace replaces the stale prompt at once")
+}
+
+// 11c. Explicit urgency orders prompts; age alone does not.
+do {
+  let urgentNewer = AudioApprovalCandidate(
+    id: "appr-u", title: "Urgent", action: "send", body: "", riskClass: nil, requestedFrom: nil,
+    requestedAt: "2026-10-13T11:00:00Z", priority: "urgent", status: "pending",
+    isRunApproval: true, runID: "run-u", approvalID: "appr-u", fingerprint: "sha256:u"
+  )
+  expect(selectAudioApprovalCandidate(from: [a, b, urgentNewer], snoozedUntil: [:], answeredKeys: [], now: t0)?.target.approvalID == "appr-u", "an urgent approval goes first")
+  expect(selectAudioApprovalCandidate(from: [b, a], snoozedUntil: [:], answeredKeys: [], now: t0)?.target == targetA, "without urgency the oldest goes first")
+}
+
+// 11d. Every Push to Talk attempt ends with a spoken result.
+do {
+  var session = joinedSession()
+  _ = session.handle(.transmitBegan(initiated: true, now: t0))
+  let nothing = session.handle(.transmitEnded(initiated: true, interrupted: false))
+  expect(spoken(nothing).isEmpty && nothing == [.requestAudioSession] && session.lastAcknowledgement?.contains("Nothing to answer") == true, "a press with no prompt is announced after release")
+  expect(spoken(session.handle(.sessionActivated(headset, now: t0))).first?.contains("Nothing to answer") == true, "and spoken once audio is available")
+}
+do {
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  _ = session.handle(.sessionActivated(headset, now: t0))
+  _ = session.handle(.playbackFinished(completed: true, now: t0))
+  _ = session.handle(.transmitBegan(initiated: true, now: t0.addingTimeInterval(AudioApprovalFeature.replyWindow + 1)))
+  let expired = session.handle(.transmitEnded(initiated: true, interrupted: false))
+  expect(spoken(expired).first?.contains("expired") == true, "an expired prompt is announced")
+}
+do {
+  var session = joinedSession()
+  heardAndCapturing(&session)
+  expect(session.handle(.captureFailed("Microphone unavailable.")).isEmpty, "a capture failure waits for the release")
+  let failed = session.handle(.transmitEnded(initiated: true, interrupted: false))
+  expect(spoken(failed) == ["I couldn't hear your reply. Nothing was decided."], "a capture failure is spoken")
+  expect(session.lastAcknowledgement?.contains("Microphone unavailable.") == true, "and shown with its reason")
+}
+do {
+  var session = joinedSession()
+  heardAndCapturing(&session)
+  _ = session.handle(.transmitEnded(initiated: true, interrupted: false))
+  _ = session.handle(.transcriptReady("yes", now: t0.addingTimeInterval(6)))
+  let rejected = session.handle(.decisionFailed(targetA, "The approval changed on the Mac."))
+  expect(spoken(rejected) == ["Not applied. Nothing was changed."], "a server rejection is spoken")
 }
 
 // 12. The reply window expires.

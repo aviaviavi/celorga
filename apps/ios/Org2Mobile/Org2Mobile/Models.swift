@@ -120,6 +120,8 @@ struct ApprovalEntry: Identifiable, Hashable, Codable {
   /// Who asked, for example the requesting agent. Absent for local corpus approvals.
   var requestedFrom: String? = nil
   var requestedAt: String? = nil
+  /// "urgent" or absent. Set explicitly by the requester.
+  var priority: String? = nil
 
   var isRunApproval: Bool {
     kind == "run" && runID != nil && approvalID != nil

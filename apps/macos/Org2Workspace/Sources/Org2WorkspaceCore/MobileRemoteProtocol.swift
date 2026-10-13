@@ -870,6 +870,7 @@ public struct MobileRemoteApprovalItem: Codable, Hashable, Identifiable, Sendabl
   public let runGoal: String?
   public let runStatus: String?
   public let runDecisionEffect: String?
+  public let priority: String?
 
   public init(
     id: String,
@@ -894,7 +895,8 @@ public struct MobileRemoteApprovalItem: Codable, Hashable, Identifiable, Sendabl
     requestedAt: String?,
     runGoal: String?,
     runStatus: String?,
-    runDecisionEffect: String?
+    runDecisionEffect: String?,
+    priority: String? = nil
   ) {
     self.id = id
     self.title = title
@@ -919,6 +921,7 @@ public struct MobileRemoteApprovalItem: Codable, Hashable, Identifiable, Sendabl
     self.runGoal = runGoal
     self.runStatus = runStatus
     self.runDecisionEffect = runDecisionEffect
+    self.priority = priority
   }
 }
 

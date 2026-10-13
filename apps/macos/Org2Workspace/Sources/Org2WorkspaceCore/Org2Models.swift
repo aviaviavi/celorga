@@ -1310,6 +1310,8 @@ public struct ApprovalItem: Identifiable, Hashable, Sendable, Decodable {
   public let runApprovalCount: Int?
   public let runDecisionEffect: String?
   public let decisionKeys: [String]?
+  /// "urgent" or absent (normal). Orders interrupting prompts; never inferred from age.
+  public let priority: String?
 
   public init(
     title: String,
@@ -1336,7 +1338,8 @@ public struct ApprovalItem: Identifiable, Hashable, Sendable, Decodable {
     runPendingApprovalCount: Int? = nil,
     runApprovalCount: Int? = nil,
     runDecisionEffect: String? = nil,
-    decisionKeys: [String]? = nil
+    decisionKeys: [String]? = nil,
+    priority: String? = nil
   ) {
     self.kind = kind
     self.title = title
@@ -1363,7 +1366,10 @@ public struct ApprovalItem: Identifiable, Hashable, Sendable, Decodable {
     self.runApprovalCount = runApprovalCount
     self.runDecisionEffect = runDecisionEffect
     self.decisionKeys = decisionKeys
+    self.priority = priority
   }
+
+  public var isUrgent: Bool { priority == "urgent" }
 
   public var id: String {
     if let runId, let approvalId { return "run:\(runId):\(approvalId)" }

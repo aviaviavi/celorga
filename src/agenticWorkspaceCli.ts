@@ -9,6 +9,7 @@ import {
   AGENT_RUN_ARTIFACT_REVIEW_STATUSES,
   AGENT_RUN_ARTIFACT_ROLES,
   AGENT_RUN_RISK_CLASSES,
+  AGENT_RUN_APPROVAL_PRIORITIES,
   AGENT_RUN_STEP_KINDS,
   AGENT_RUN_STEP_STATUSES,
   AGENT_RUN_VALIDATION_STATUSES,
@@ -218,7 +219,7 @@ const HELP = `Agentic workspace commands:
   celorga run artifact ID --path FILE [--role ROLE] [--review-status STATUS]
   celorga run artifact-review ID ARTIFACT --status reviewed|promoted|rejected [--actor NAME]
   celorga run validation ID --name NAME --status passed|failed|warning|skipped
-  celorga run approval-request ID --title TEXT --action TEXT [--risk CLASS] [--role ROLE]
+  celorga run approval-request ID --title TEXT --action TEXT [--risk CLASS] [--priority normal|urgent] [--role ROLE]
   celorga run approval-decide ID APPROVAL --decision approved|rejected|revised|canceled --actor NAME [--fingerprint SHA256] [--if-revision SHA256] [--note TEXT] [--receipt TEXT]
   celorga run approval-resolve --decision-key PROVIDER_KEY [--json]
   celorga run approval-reconcile [--apply] [--json]
@@ -1333,7 +1334,7 @@ async function runCommand(parsed: ParsedArgs): Promise<void> {
       output(parsed, correlated, `${correlated.id}: ${correlated.status}`);
       return;
     }
-    run = requestAgentRunApproval(existing, { title: required(flag(parsed, "title"), "--title is required"), action: required(flag(parsed, "action"), "--action is required"), riskClass: choice(flag(parsed, "risk", existing.riskClass), AGENT_RUN_RISK_CLASSES, "approval risk class"), requestedRole: flag(parsed, "role"), requestedFrom: flag(parsed, "from"), note: flag(parsed, "note") }, flag(parsed, "actor"));
+    run = requestAgentRunApproval(existing, { title: required(flag(parsed, "title"), "--title is required"), action: required(flag(parsed, "action"), "--action is required"), riskClass: choice(flag(parsed, "risk", existing.riskClass), AGENT_RUN_RISK_CLASSES, "approval risk class"), requestedRole: flag(parsed, "role"), requestedFrom: flag(parsed, "from"), note: flag(parsed, "note"), priority: choice(flag(parsed, "priority", "normal"), AGENT_RUN_APPROVAL_PRIORITIES, "approval priority") }, flag(parsed, "actor"));
   }
   else if (action === "approval-decide") {
     const correlated = correlatedApprovalDecision(parsed, corpus, existingSnapshot);

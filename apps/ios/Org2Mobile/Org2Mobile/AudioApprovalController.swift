@@ -253,6 +253,11 @@ final class AudioApprovalController: ObservableObject {
       }
     case .sendDecision(let candidate, let decision, let note, let receipt):
       sendDecision(candidate, decision: decision, note: note, receipt: receipt)
+    case .scheduleTick(let delay):
+      Task { [weak self] in
+        try? await Task.sleep(for: .seconds(delay))
+        self?.send(.tick(now: Date()))
+      }
     case .sendSnooze(let target, let until):
       Task {
         do {
@@ -355,6 +360,7 @@ final class AudioApprovalController: ObservableObject {
       riskClass: entry.riskClass,
       requestedFrom: entry.requestedFrom,
       requestedAt: entry.requestedAt,
+      priority: entry.priority,
       status: entry.status,
       isRunApproval: entry.isRunApproval,
       runID: entry.runID,
@@ -408,7 +414,7 @@ final class AudioApprovalController: ObservableObject {
       break
     case .finishCapture:
       send(.transcriptReady(demoTranscript, now: Date()))
-    case .refreshApprovals, .sendDecision, .sendSnooze:
+    case .refreshApprovals, .sendDecision, .sendSnooze, .scheduleTick:
       isDemo = false
       perform(effect)
       isDemo = true

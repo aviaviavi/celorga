@@ -108,26 +108,27 @@ function sameTarget(a: AudioApprovalTarget, b: AudioApprovalTarget): boolean {
   return targetKey(a) === targetKey(b);
 }
 
-/** Pending approvals on the current approval boundary of waiting runs, oldest first. */
-export function pendingAudioTargets(runs: AgentRun[]): Array<AudioApprovalTarget & { requestedAt: string }> {
-  const targets: Array<AudioApprovalTarget & { requestedAt: string }> = [];
+/** Pending approvals on the current approval boundary of waiting runs: explicitly urgent first, then oldest. */
+export function pendingAudioTargets(runs: AgentRun[]): Array<AudioApprovalTarget & { requestedAt: string; urgent: boolean }> {
+  const targets: Array<AudioApprovalTarget & { requestedAt: string; urgent: boolean }> = [];
   for (const run of runs) {
     if (run.status !== "waiting-approval") continue;
     for (const approval of currentAgentRunApprovalBoundary(run)) {
       if (approval.status !== "pending") continue;
       if (approval.fingerprint !== agentRunApprovalFingerprint(approval)) continue;
-      targets.push({ runId: run.id, approvalId: approval.id, fingerprint: approval.fingerprint, requestedAt: approval.requestedAt });
+      targets.push({ runId: run.id, approvalId: approval.id, fingerprint: approval.fingerprint, requestedAt: approval.requestedAt, urgent: approval.priority === "urgent" });
     }
   }
   return targets.sort((a, b) =>
-    a.requestedAt.localeCompare(b.requestedAt)
+    Number(b.urgent) - Number(a.urgent)
+    || a.requestedAt.localeCompare(b.requestedAt)
     || a.runId.localeCompare(b.runId)
     || a.approvalId.localeCompare(b.approvalId));
 }
 
 /**
  * Keep the current prompt while its exact target is still pending; otherwise
- * select the oldest pending, non-snoozed target. Never more than one active.
+ * select the next pending, non-snoozed target (urgent first, then oldest). Never more than one active.
  */
 export function selectActiveAudioPrompt(state: AudioBrokerState, runs: AgentRun[], nowIso: string): AudioBrokerState {
   const now = Date.parse(nowIso);

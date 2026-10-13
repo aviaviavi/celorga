@@ -502,4 +502,16 @@ assert.equal(remainingRunApproval.runId, "release-run");
 assert.equal(remainingRunApproval.runPendingApprovalCount, 1);
 assert.equal(remainingRunApproval.runDecisionEffect, "This is the last pending approval; approving it resumes the run.");
 
+// Explicit priority: stored only when urgent, outside the fingerprint, and validated.
+{
+  const base = createAgentRun({ id: "priority-run", title: "Priority", goal: "Priority", status: "running" });
+  const material = { title: "Send now", action: "send the reply", riskClass: "external-action" };
+  const urgent = requestAgentRunApproval(base, { ...material, priority: "urgent" }).approvals.at(-1);
+  const normal = requestAgentRunApproval(base, { ...material }).approvals.at(-1);
+  assert.equal(urgent.priority, "urgent");
+  assert.equal(normal.priority, undefined, "normal priority is the absent default");
+  assert.equal(urgent.fingerprint, normal.fingerprint, "urgency changes when a person is asked, not what is approved");
+  assert.throws(() => requestAgentRunApproval(base, { ...material, priority: "asap" }), /invalid approval priority/);
+}
+
 console.log("✓ cli approvals");

@@ -25258,7 +25258,8 @@ extension WorkspaceStore {
           requestedAt: item.requestedAt,
           runGoal: item.runGoal,
           runStatus: item.runStatus,
-          runDecisionEffect: item.runDecisionEffect
+          runDecisionEffect: item.runDecisionEffect,
+          priority: item.priority
         )
       },
       workflows: agentWorkflows.map { workflow in
