@@ -1605,6 +1605,51 @@ body #content {
   color: var(--fg);
 }
 
+/* Between the mobile menu and a wide window, tighten the bar so it stays on one line. */
+@media (min-width: 760px) and (max-width: 1099px) {
+  #content .celorga-nav-menu nav {
+    flex-wrap: nowrap;
+    gap: 0;
+  }
+
+  #content .celorga-nav-menu nav > * {
+    flex-shrink: 0;
+  }
+
+  #content .celorga-nav a,
+  #content .celorga-nav-dropdown > summary {
+    padding-left: 0.42rem;
+    padding-right: 0.42rem;
+    white-space: nowrap;
+  }
+
+  #content .celorga-nav-menu nav > a:first-child {
+    min-width: 0;
+    margin-right: 0.3rem;
+  }
+
+  #content .celorga-nav a.celorga-nav-github {
+    padding-left: 0.55rem;
+    font-size: 0;
+  }
+
+  #content .celorga-nav a.celorga-nav-github .celorga-nav-github-icon {
+    width: 0.95rem;
+    height: 0.95rem;
+    transform: none;
+  }
+}
+
+@media (min-width: 760px) and (max-width: 879px) {
+  #content .celorga-nav-menu nav > a:first-child::after {
+    content: "";
+  }
+
+  #content .celorga-nav-menu nav > a:first-child::before {
+    margin-right: 0;
+  }
+}
+
 #content .celorga-site-search-toggle {
   width: 1.9rem;
   height: 1.9rem;
