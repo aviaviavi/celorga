@@ -16,6 +16,19 @@ Release validation builds the shared runtime once, then uses the `*:built` check
 
 The normal iOS path passes `--skip-testflight-groups`: the orchestrator uploads the build, then the release operator uses the signed-in App Store Connect browser to set `What to Test`, attach both tester groups, and submit external beta review. API keys are not used for those distribution actions because App Store Connect may permit upload and reads while forbidding external-group or review mutations. macOS publication requires the existing `OPENORG_NOTARY_KEYCHAIN_PROFILE`, the Sparkle EdDSA signing key stored under the `org.org2.workspace` Keychain account, and `ORG2_GOOGLE_OAUTH_CLIENT_JSON` pointing at the protected Desktop OAuth client JSON. The release build reads that JSON without copying it into source and fails closed if the shared Google client is absent. Each release signs architecture-specific update feeds and publishes them with the site. Run `npm run release:openorg -- --help` for repair and partial-run options.
 
+## iOS-only TestFlight beta
+
+`ios-beta.mjs` archives and uploads only the iOS app, for example a feature-branch beta, without the npm, DMG, tag, or tester-group steps of the full release. It uses the same team (`9MW3N969TR`), TestFlight app, and ExportOptions as `release-openorg.mjs`, and it is read-only unless `--execute` is given:
+
+```bash
+node tools/ios-beta.mjs check --build 48            # offline preflight
+node tools/ios-beta.mjs archive --build 48 --execute
+node tools/ios-beta.mjs export  --build 48 --execute   # optional local .ipa, nothing uploaded
+node tools/ios-beta.mjs upload  --build 48 --execute   # App Store Connect / TestFlight
+```
+
+Run archive and upload on the build Mac with Xcode 26 or later. Use the Apple account signed in under Xcode › Settings › Accounts, or an App Store Connect API key through `OPENORG_ASC_*`. Automatic signing with `-allowProvisioningUpdates` may enable App ID capabilities that the entitlements request, such as Push to Talk; that is an account change, so it is made by or for the account holder. The build number must be higher than every build already uploaded. After the upload, attach the build to a tester group in the App Store Connect browser. Printed commands mask API key identifiers.
+
 ## Parallel test runner
 
 `npm test` builds once and uses `run-tests-parallel.mjs` with automatic retries disabled. The runner expands the leaves of `test:built` on a bounded worker pool, starts known-slow tests first, then runs wall-clock performance tests one at a time after the pool drains. The `&&` chains in `package.json` remain the canonical test list; `npm run test:serial` builds and runs that same list sequentially for debugging. `--report FILE` writes per-test timings.
