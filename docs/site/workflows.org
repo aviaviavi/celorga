@@ -154,3 +154,16 @@ The [[file:headless-server.org][headless server]] reuses these workflow and run 
 Enable walkie-talkie approvals in iPhone Settings, grant Microphone and Speech Recognition access, and join the approvals channel. Celorga reads one exact pending run approval on a connected headset. A completely played prompt is required before a spoken yes or no can request a decision from the paired Mac. If playback or capture fails, nothing is decided.
 
 In *Approvals → Reply and decision history*, inspect the recognized words, their interpretation, and the Mac-confirmed result or failure. The latest 50 spoken attempts persist on the phone for the selected Mac, including unsuccessful attempts. Recorded decisions returned by the Mac include their actor and reason, so a canceled test can be distinguished from a spoken rejection. Older paired hosts continue to support the queue but do not supply canonical decision history.
+
+* Explicit automation failure receipts
+
+An automation may return a standalone =ORG2_RUN_OUTCOME: failed= line when
+admission or execution fails. The scheduler records a failed attempt instead of
+mistaking a delivered response for completed work, including when a remote
+host-local lifecycle update has not synchronized yet. A conflicting completed
+receipt never overrides failure. Native run lifecycle commands remain the
+canonical outcome record; existing terminal states and approvals are preserved.
+
+Syncthing =.sync-conflict-= workflow copies are retained as recovery evidence but
+ignored by live workflow inventory. They cannot override the canonical workflow
+version or scheduling state because of filename ordering.

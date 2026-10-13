@@ -138,6 +138,49 @@ final class AudioApprovalHostTests: XCTestCase {
 
   // MARK: Registration storage
 
+  func testHeadlessPushCredentialsSurviveExecutableReplacementWithoutKeychainACLs() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("apns-private-key.pem")
+    let suite = "AudioApprovalHostTests.PushCredentials.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let original = MobileRemotePushCredentialStore(
+      defaults: defaults,
+      credentialNamespace: suite,
+      privateKeyFile: file
+    )
+    original.setTeamID("team123")
+    original.setKeyID("key123")
+    let privateKey = P256.Signing.PrivateKey().pemRepresentation
+    try original.importPrivateKey(Data(privateKey.utf8))
+
+    XCTAssertTrue(original.isConfigured)
+    XCTAssertEqual(original.credentials?.privateKeyPEM, privateKey)
+    let permissions = try XCTUnwrap(
+      FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+    )
+    XCTAssertEqual(permissions.intValue & 0o777, 0o600)
+
+    let afterUpgrade = MobileRemotePushCredentialStore(
+      defaults: defaults,
+      credentialNamespace: suite,
+      privateKeyFile: file
+    )
+    XCTAssertTrue(afterUpgrade.isConfigured, "A rebuilt headless executable reads the same machine-local key file")
+    XCTAssertEqual(afterUpgrade.credentials?.privateKeyPEM, privateKey)
+
+    try afterUpgrade.clearPrivateKey()
+    XCTAssertFalse(afterUpgrade.isConfigured)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+  }
+
   func testVaultStoresPushToTalkTokenWithQuietUntilAndRejectsInvalidTokens() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

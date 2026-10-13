@@ -20,10 +20,27 @@ final class AutomationChatConfigurationTests: XCTestCase {
     )
   }
 
+  func testFailedAdmissionReplyFailsScheduledRun() async throws {
+    try await checkAutomationConfiguration(
+      destinationModel: nil,
+      reply: "Run visibility retry exhausted.\nORG2_RUN_OUTCOME: failed",
+      expectedStatus: "failed"
+    )
+  }
+
+  func testOutcomeReceiptParsingIsExactAndFailureWins() {
+    XCTAssertNil(AutomationRunReplyOutcome.parse("I saw ORG2_RUN_OUTCOME: failed in a log"))
+    XCTAssertNil(AutomationRunReplyOutcome.parse("> ORG2_RUN_OUTCOME: failed"))
+    XCTAssertEqual(AutomationRunReplyOutcome.parse("ORG2_RUN_OUTCOME: completed"), .completed)
+    XCTAssertEqual(AutomationRunReplyOutcome.parse("ORG2_RUN_OUTCOME: completed\nORG2_RUN_OUTCOME: failed"), .failed)
+  }
+
   private func checkAutomationConfiguration(
     destinationModel: String?,
     automationModel: String? = nil,
-    automationReasoningEffort: String? = nil
+    automationReasoningEffort: String? = nil,
+    reply: String = "Local summary ready.",
+    expectedStatus: String = "completed"
   ) async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("automation-chat-defaults-\(UUID().uuidString)", isDirectory: true)
@@ -62,7 +79,7 @@ final class AutomationChatConfigurationTests: XCTestCase {
       aiChatSendHandler: { messages, _, _, _ in
         XCTAssertTrue(messages.last(where: { $0.role == .user })?.content
           .contains("ORG2_WORKFLOW_ID: configuration-regression") == true)
-        return "Local summary ready."
+        return reply
       },
       legacyDefaultsDomains: []
     )
@@ -79,19 +96,19 @@ final class AutomationChatConfigurationTests: XCTestCase {
     let timeout = Date().addingTimeInterval(8)
     while Date() < timeout {
       if store.agentRuns.contains(where: {
-        $0.workflowId == "configuration-regression" && $0.status == "completed"
+        $0.workflowId == "configuration-regression" && $0.status == expectedStatus
       }) { break }
       try await Task.sleep(for: .milliseconds(25))
     }
     let run = try XCTUnwrap(store.agentRuns.first(where: { $0.workflowId == "configuration-regression" }))
-    XCTAssertEqual(run.status, "completed")
+    XCTAssertEqual(run.status, expectedStatus)
     XCTAssertEqual(run.attempt?.triggerId, "schedule")
     let automation = try XCTUnwrap(store.aiChatThreads.first(where: {
       $0.title == "Automation: Configuration regression"
     }))
     XCTAssertEqual(automation.model, automationModel ?? destinationModel)
     XCTAssertEqual(automation.reasoningEffort, automationReasoningEffort)
-    XCTAssertEqual(automation.messages.last(where: { $0.role == .assistant })?.content, "Local summary ready.")
+    XCTAssertEqual(automation.messages.last(where: { $0.role == .assistant })?.content, reply)
 
     // Automation dispatch must not clear the user's preferences for ordinary chats.
     store.createAIChatThread(runtime: .openClaw)

@@ -189,6 +189,7 @@ import readline from 'node:readline';
 console.log(JSON.stringify({event:'ready'}));
 for await (const line of readline.createInterface({input:process.stdin})) {
  const request=JSON.parse(line);
+ if (request.command==='retry-message' || request.command==='stop-thread') { console.log(JSON.stringify({id:request.id,result:{command:request.command,messageID:request.messageID,threadID:request.threadID}})); continue; }
  console.log(JSON.stringify({id:request.id,result:request.command==='stop'?{stopped:true}:{listening:true}}));
  if(request.command==='stop') process.exit(0);
 }
@@ -210,6 +211,11 @@ for await (const line of readline.createInterface({input:process.stdin})) {
           supervisor.once("error", reject);
         });
         assert.equal((await serverControl(configFile, "status")).listening, true);
+        assert.deepEqual(await serverControl(configFile, "retry-message", { messageID: "exact-message" }),
+          { command: "retry-message", messageID: "exact-message" });
+        assert.deepEqual(await serverControl(configFile, "stop-thread", { threadID: "exact-thread" }),
+          { command: "stop-thread", threadID: "exact-thread" });
+        assert.deepEqual(await serverControl(configFile, "not-a-command"), { error: "Unknown control command" });
         const stopped = await concurrent("server", "stop", "--config", configFile);
         assert.equal(stopped.code, 0, stopped.stderr);
         assert.equal(JSON.parse(stopped.stdout).stopped, true);

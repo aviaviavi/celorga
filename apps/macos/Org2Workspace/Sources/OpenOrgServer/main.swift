@@ -126,7 +126,9 @@ struct OpenOrgServer {
       await store.restoreLocalDocumentPublications()
       let remote = MobileRemoteCoordinator(
         defaults: defaults, credentialNamespace: namespace,
-        credentialFile: stateDirectory.appendingPathComponent("paired-devices-\(config.hostRef).json"), serverName: config.name,
+        credentialFile: stateDirectory.appendingPathComponent("paired-devices-\(config.hostRef).json"),
+        pushCredentialFile: stateDirectory.appendingPathComponent("apns-private-key-\(config.hostRef).pem"),
+        serverName: config.name,
         hostRef: config.hostRef, port: config.port
       )
       remote.attach(to: store)
@@ -187,6 +189,22 @@ struct OpenOrgServer {
               result = remote.pushProviderConfigured ? ["configured": true] : ["error": remote.pushStatusText]
             } else { result = ["error": remote.pushStatusText] }
           } else { result = ["error": "Missing APNs configuration"] }
+        case "stop-thread":
+          if let rawID = request["threadID"] as? String,
+             let threadID = UUID(uuidString: rawID) {
+            result = ["stopped": await store.stopAIChatRemoteRun(threadID: threadID)]
+          } else { result = ["error": "Missing or invalid thread ID"] }
+        case "retry-message":
+          if let rawID = request["messageID"] as? String,
+             let messageID = UUID(uuidString: rawID),
+             store.aiChatThreads.contains(where: { thread in
+               thread.messages.contains(where: {
+                 $0.id == messageID && $0.role == .user && $0.sendFailure != nil
+               })
+             }) {
+            Task { await store.retryAIChatMessage(messageID) }
+            result = ["retryRequested": true]
+          } else { result = ["error": "Choose an existing failed user message"] }
         case "drain":
           // Finish running turns before a restart or update: accept no new
           // turns or hand-offs (clients route them to another online host)

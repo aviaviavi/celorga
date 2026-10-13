@@ -711,7 +711,16 @@ final class AIChatTranscriptStore: @unchecked Sendable {
         // the committed marker and collect only artifacts it no longer
         // references, then check once more for writes enqueued during cleanup.
         for key in cleanupPaths {
-          Self.garbageCollect(legacyURL: URL(fileURLWithPath: key))
+          let completed = Self.garbageCollect(legacyURL: URL(fileURLWithPath: key)) {
+            self.condition.lock()
+            defer { self.condition.unlock() }
+            return !self.pendingWrites.isEmpty || !self.exactPendingWrites.isEmpty
+          }
+          if !completed {
+            condition.lock()
+            garbageCollectionPaths.insert(key)
+            condition.unlock()
+          }
         }
         condition.lock()
         if pendingWrites.isEmpty && exactPendingWrites.isEmpty {
@@ -2055,17 +2064,25 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     }
   }
 
-  private static func garbageCollect(legacyURL: URL) {
+  // Cleanup remains serialized with commits, but a newly queued durable write
+  // can preempt the expensive historical-manifest scan before any deletion.
+  private static func garbageCollect(
+    legacyURL: URL,
+    shouldYield: () -> Bool = { false }
+  ) -> Bool {
     guard let state = loadStoreState(legacyURL: legacyURL),
           !state.recoveryStatus.blocksWrites,
           let current = state.current
-    else { return }
+    else { return true }
+    guard !shouldYield() else { return false }
     let storeURL = storeDirectory(for: legacyURL)
     let cutoff = Date().addingTimeInterval(-garbageCollectionGraceInterval)
     let recentManifestFiles = recoveryManifestFiles(
       storeURL: storeURL,
-      modifiedAfter: cutoff
+      modifiedAfter: cutoff,
+      shouldYield: shouldYield
     )
+    guard !shouldYield() else { return false }
     // Every writer's head (and its previous commit) stays loadable even when
     // that writer has been offline longer than the grace interval.
     let headManifests = headPointers(storeURL: storeURL).flatMap { pointer in
@@ -2090,14 +2107,23 @@ final class AIChatTranscriptStore: @unchecked Sendable {
         ? file.url.lastPathComponent
         : nil
     })
-    let retainedShards = Set(retainedManifests.flatMap { $0.threads.map(\.shard) })
-    var retainedBlobs = Set(retainedManifests.flatMap { manifest in
-      manifest.threads.flatMap { $0.blobs ?? [] }
-    })
-    let entriesWithoutBlobIndexes = retainedManifests
-      .flatMap(\.threads)
-      .filter { $0.blobs == nil }
-    for entry in entriesWithoutBlobIndexes {
+    // Historical manifests often repeat the same immutable shard. Collect
+    // references incrementally and decode each legacy shard at most once,
+    // rather than materializing every repeated thread entry in memory.
+    var retainedShards = Set<String>()
+    var retainedBlobs = Set<String>()
+    var entriesWithoutBlobIndexes: [String: ManifestThread] = [:]
+    for manifest in retainedManifests {
+      for entry in manifest.threads {
+        retainedShards.insert(entry.shard)
+        if let blobs = entry.blobs {
+          retainedBlobs.formUnion(blobs)
+        } else {
+          entriesWithoutBlobIndexes[entry.shard] = entry
+        }
+      }
+    }
+    for entry in entriesWithoutBlobIndexes.values {
       let shard = entry.shard
       let shardURL = storeURL.appendingPathComponent(shard)
       guard isDescendant(shardURL, of: threadsDirectory(storeURL: storeURL)),
@@ -2107,6 +2133,7 @@ final class AIChatTranscriptStore: @unchecked Sendable {
       retainedBlobs.formUnion(decoded.messages.flatMap { $0.attachments.map(\.blob) })
     }
 
+    guard !shouldYield() else { return false }
     removeUnretainedFiles(
       in: manifestsDirectory(storeURL: storeURL),
       retaining: retainedCommitFiles,
@@ -2122,7 +2149,16 @@ final class AIChatTranscriptStore: @unchecked Sendable {
       retaining: retainedBlobs,
       modifiedBefore: cutoff
     )
+    return true
   }
+
+#if DEBUG
+  static func collectGarbageForTesting(
+    legacyURL: URL, shouldYield: () -> Bool
+  ) -> Bool {
+    garbageCollect(legacyURL: legacyURL, shouldYield: shouldYield)
+  }
+#endif
 
   private struct RecoveryManifestFile {
     let url: URL
@@ -2186,7 +2222,8 @@ final class AIChatTranscriptStore: @unchecked Sendable {
 
   private static func recoveryManifestFiles(
     storeURL: URL,
-    modifiedAfter cutoff: Date
+    modifiedAfter cutoff: Date,
+    shouldYield: () -> Bool = { false }
   ) -> [RecoveryManifestFile] {
     let fileManager = FileManager.default
     let manifestDirectory = manifestsDirectory(storeURL: storeURL)
@@ -2207,6 +2244,7 @@ final class AIChatTranscriptStore: @unchecked Sendable {
       $0.lastPathComponent.hasPrefix("manifest") && $0.pathExtension == "json"
     }
     let candidates = urls.compactMap { url -> RecoveryManifestFile? in
+      guard !shouldYield() else { return nil }
       guard let values = try? url.resourceValues(forKeys: [
         .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey,
       ]),

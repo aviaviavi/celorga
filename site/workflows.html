@@ -185,6 +185,16 @@ celorga workflow migrate --dir ~/notes</code></pre>
 <h1 id="headset-approval-replies-on-iphone">Headset approval replies on iPhone</h1>
 <p>Enable walkie-talkie approvals in iPhone Settings, grant Microphone and Speech Recognition access, and join the approvals channel. Celorga reads one exact pending run approval on a connected headset. A completely played prompt is required before a spoken yes or no can request a decision from the paired Mac. If playback or capture fails, nothing is decided.</p>
 <p>In <strong>Approvals → Reply and decision history</strong>, inspect the recognized words, their interpretation, and the Mac-confirmed result or failure. The latest 50 spoken attempts persist on the phone for the selected Mac, including unsuccessful attempts. Recorded decisions returned by the Mac include their actor and reason, so a canceled test can be distinguished from a spoken rejection. Older paired hosts continue to support the queue but do not supply canonical decision history.</p>
+<h1 id="explicit-automation-failure-receipts">Explicit automation failure receipts</h1>
+<p>An automation may return a standalone <code>ORG2_RUN_OUTCOME: failed</code> line when
+admission or execution fails. The scheduler records a failed attempt instead of
+mistaking a delivered response for completed work, including when a remote
+host-local lifecycle update has not synchronized yet. A conflicting completed
+receipt never overrides failure. Native run lifecycle commands remain the
+canonical outcome record; existing terminal states and approvals are preserved.</p>
+<p>Syncthing <code>.sync-conflict-</code> workflow copies are retained as recovery evidence but
+ignored by live workflow inventory. They cannot override the canonical workflow
+version or scheduling state because of filename ordering.</p>
 </section>
 </main>
 </div>

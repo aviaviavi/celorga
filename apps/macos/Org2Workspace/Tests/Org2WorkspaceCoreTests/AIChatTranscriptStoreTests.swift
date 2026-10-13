@@ -831,6 +831,35 @@ final class AIChatTranscriptStoreTests: XCTestCase {
     XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.transcriptURL.path))
   }
 
+  func testPreemptedGarbageCollectionNeverDeletesFromPartialScan() throws {
+    let fixture = try makeRecoveryFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    try writeTwoRecoveryCommits(fixture)
+    AIChatTranscriptStore.shared.waitUntilIdleForTesting()
+    let storeURL = AIChatTranscriptStore.storeDirectory(for: fixture.transcriptURL)
+    let orphan = storeURL.appendingPathComponent("threads/old-orphan.json")
+    try Data("collect only after a complete scan".utf8).write(to: orphan)
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date().addingTimeInterval(-31 * 24 * 60 * 60)],
+      ofItemAtPath: orphan.path
+    )
+    var checks = 0
+    let completed = AIChatTranscriptStore.collectGarbageForTesting(
+      legacyURL: fixture.transcriptURL
+    ) {
+      checks += 1
+      return checks >= 2
+    }
+    XCTAssertFalse(completed)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: orphan.path))
+    XCTAssertNotNil(AIChatTranscriptStore.shared.loadIfAvailable(legacyURL: fixture.transcriptURL))
+    XCTAssertTrue(AIChatTranscriptStore.collectGarbageForTesting(
+      legacyURL: fixture.transcriptURL, shouldYield: { false }
+    ))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+    XCTAssertNotNil(AIChatTranscriptStore.shared.loadIfAvailable(legacyURL: fixture.transcriptURL))
+  }
+
   func testGarbageCollectionPreservesFreshUnreferencedSyncArtifacts() throws {
     let fixture = try makeRecoveryFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }

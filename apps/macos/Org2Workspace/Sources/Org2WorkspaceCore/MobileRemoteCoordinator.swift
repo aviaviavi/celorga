@@ -65,6 +65,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
     defaults: UserDefaults = .standard,
     credentialNamespace: String? = nil,
     credentialFile: URL? = nil,
+    pushCredentialFile: URL? = nil,
     serverName: String? = nil,
     hostRef: String? = nil,
     port: UInt16 = MobileRemoteProtocol.defaultPort
@@ -73,7 +74,11 @@ public final class MobileRemoteCoordinator: ObservableObject {
     self.hostRef = hostRef
     self.port = port
     self.defaults = defaults
-    pushCredentialStore = MobileRemotePushCredentialStore(defaults: defaults, credentialNamespace: credentialNamespace)
+    pushCredentialStore = MobileRemotePushCredentialStore(
+      defaults: defaults,
+      credentialNamespace: credentialNamespace,
+      privateKeyFile: pushCredentialFile
+    )
     pushSender = MobileRemotePushSender()
     credentialVault = MobileRemoteCredentialVault(credentialNamespace: credentialNamespace, credentialFile: credentialFile)
     isEnabled = defaults.bool(forKey: Self.enabledKey)

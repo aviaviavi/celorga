@@ -325,7 +325,7 @@ async function serve(configFile: string, config: ServerConfiguration): Promise<v
       client.removeAllListeners("data");
       try {
         const request = JSON.parse(buffer.slice(0, buffer.indexOf("\n")));
-        if (!["status", "pair", "revoke", "stop", "push-config", "drain", "resume"].includes(request.command)) throw new Error("Unknown control command");
+        if (!["status", "pair", "revoke", "stop", "push-config", "drain", "resume", "stop-thread", "retry-message"].includes(request.command)) throw new Error("Unknown control command");
         if (!child?.stdin?.writable) throw new Error("Server worker is starting or unavailable");
         const id = crypto.randomUUID();
         const timer = setTimeout(() => { pending.delete(id); client.end('{"error":"Worker timed out"}\n'); }, controlTimeoutMs(request.command));

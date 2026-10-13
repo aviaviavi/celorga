@@ -505,7 +505,7 @@ export function listWorkflows(root: string): AgentWorkflow[] {
   // both locations contain the same id during migration.
   for (const dir of [legacyWorkflowDirectory(root), workflowDirectory(root)]) {
     if (!fs.existsSync(dir)) continue;
-    for (const name of fs.readdirSync(dir).filter((item) => isOrgRecordFileName(item))) {
+    for (const name of fs.readdirSync(dir).filter((item) => isOrgRecordFileName(item) && !/\.sync-conflict-/i.test(item))) {
       try {
         const workflow = parseWorkflowOrg(fs.readFileSync(path.join(dir, name), "utf8"));
         byID.set(workflow.id, workflow);

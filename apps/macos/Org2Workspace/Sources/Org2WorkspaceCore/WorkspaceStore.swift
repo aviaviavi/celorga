@@ -8317,6 +8317,14 @@ extension WorkspaceStore {
       "--dir", corpusRoot.path,
       "--json"
     ])
+    // A successful transport reply is not proof that the delegated sweep ran.
+    // Honor the executor's explicit terminal failure even if its host-local run
+    // mutation has not yet synchronized back to this scheduler's corpus.
+    if currentRun?.status == "running",
+       AutomationRunReplyOutcome.parse(reply) == .failed {
+      await failAgentAutomationRun(runID, reason: String(normalizedReply.prefix(4_000)))
+      return
+    }
     if currentRun?.status == "running" {
       let summary = String(normalizedReply.prefix(4_000))
       _ = try? await cli.run([

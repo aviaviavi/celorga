@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { loadWorkflow, parseWorkflowOrg, promptAutomation, renderWorkflowOrg, saveWorkflow, updateWorkflow, workflowPath } from "../dist/agentWorkflow.js";
+import { listWorkflows, loadWorkflow, parseWorkflowOrg, promptAutomation, renderWorkflowOrg, saveWorkflow, updateWorkflow, workflowPath } from "../dist/agentWorkflow.js";
 
 const workflow = promptAutomation({
   id: "serialization-regression",
@@ -68,6 +68,14 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), "org2-workflow-serialization-
 try {
   saveWorkflow(root, workflow, { expectedRevision: null });
   const file = workflowPath(root, workflow.id);
+  // Syncthing conflicts preserve evidence; they must never become live bindings
+  // or shadow the canonical schedule merely because they sort after its filename.
+  const conflict = file.replace(/\.org2$/, ".sync-conflict-20261009-184637-DEVICE.org2");
+  fs.writeFileSync(conflict, renderWorkflowOrg({ ...workflow, version: "0.0.1", state: "paused" }));
+  assert.equal(listWorkflows(root).length, 1);
+  assert.equal(listWorkflows(root)[0].version, workflow.version);
+  assert.equal(listWorkflows(root)[0].state, "active");
+  assert.ok(fs.existsSync(conflict), "conflict evidence is not deleted");
   fs.writeFileSync(file, preamble + corrupted);
   for (const action of ["pause", "activate", "pause"]) {
     // These are the same structured CLI actions used by the Mac app.

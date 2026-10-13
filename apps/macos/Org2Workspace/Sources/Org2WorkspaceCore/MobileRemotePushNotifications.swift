@@ -56,10 +56,18 @@ final class MobileRemotePushCredentialStore: @unchecked Sendable {
 
   private let defaults: UserDefaults
   private let service: String
+  /// Headless servers use a mode-0600 file because replacing their executable during an
+  /// upgrade invalidates a Keychain item's per-binary ACL. Desktop apps keep using Keychain.
+  private let privateKeyFile: URL?
   private let account = "apns-private-key"
 
-  init(defaults: UserDefaults = .standard, credentialNamespace: String? = nil) {
+  init(
+    defaults: UserDefaults = .standard,
+    credentialNamespace: String? = nil,
+    privateKeyFile: URL? = nil
+  ) {
     self.defaults = defaults
+    self.privateKeyFile = privateKeyFile
     service = (credentialNamespace ?? Bundle.main.bundleIdentifier ?? "org.org2.workspace") + ".mobile-remote-push"
   }
 
@@ -72,9 +80,14 @@ final class MobileRemotePushCredentialStore: @unchecked Sendable {
   }
 
   var isConfigured: Bool {
-    !Self.normalizedIdentifier(teamID).isEmpty
-      && !Self.normalizedIdentifier(keyID).isEmpty
-      && defaults.bool(forKey: Self.privateKeyConfiguredKey)
+    guard !Self.normalizedIdentifier(teamID).isEmpty,
+          !Self.normalizedIdentifier(keyID).isEmpty
+    else { return false }
+    if privateKeyFile != nil {
+      guard let privateKeyPEM = readPrivateKey() else { return false }
+      return (try? P256.Signing.PrivateKey(pemRepresentation: privateKeyPEM)) != nil
+    }
+    return defaults.bool(forKey: Self.privateKeyConfiguredKey)
   }
 
   var credentials: MobileRemotePushProviderCredentials? {
@@ -111,6 +124,13 @@ final class MobileRemotePushCredentialStore: @unchecked Sendable {
   }
 
   func clearPrivateKey() throws {
+    if let privateKeyFile {
+      if FileManager.default.fileExists(atPath: privateKeyFile.path) {
+        try FileManager.default.removeItem(at: privateKeyFile)
+      }
+      defaults.set(false, forKey: Self.privateKeyConfiguredKey)
+      return
+    }
     let status = SecItemDelete(keychainQuery as CFDictionary)
     guard status == errSecSuccess || status == errSecItemNotFound else {
       throw MobileRemotePushError.keychain(status)
@@ -127,6 +147,10 @@ final class MobileRemotePushCredentialStore: @unchecked Sendable {
   }
 
   private func readPrivateKey() -> String? {
+    if let privateKeyFile {
+      guard let data = try? Data(contentsOf: privateKeyFile) else { return nil }
+      return String(data: data, encoding: .utf8)
+    }
     var query = keychainQuery
     query[kSecReturnData as String] = true
     query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -138,6 +162,16 @@ final class MobileRemotePushCredentialStore: @unchecked Sendable {
   }
 
   private func savePrivateKey(_ value: String) throws {
+    if let privateKeyFile {
+      try FileManager.default.createDirectory(
+        at: privateKeyFile.deletingLastPathComponent(),
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+      )
+      try Data(value.utf8).write(to: privateKeyFile, options: .atomic)
+      try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: privateKeyFile.path)
+      return
+    }
     let attributes: [String: Any] = [
       kSecValueData as String: Data(value.utf8),
       kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
