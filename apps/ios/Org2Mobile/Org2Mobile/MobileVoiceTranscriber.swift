@@ -35,8 +35,13 @@ final class MobileVoiceTranscriber: ObservableObject {
   private var pendingStartID: UUID?
   private var recognitionID: UUID?
   private var idleTimerWasDisabled: Bool?
+  /// False while Push to Talk owns the audio session. The system activates and
+  /// deactivates it; this class must not.
+  private var managesAudioSession = true
 
-  func start() async {
+  /// - Parameter managesAudioSession: Pass false inside a Push to Talk transmission,
+  ///   after `channelManager(_:didActivate:)`. The session is then left untouched.
+  func start(managesAudioSession: Bool = true) async {
     guard !isRecording else { return }
     let startID = UUID()
     pendingStartID = startID
@@ -62,11 +67,14 @@ final class MobileVoiceTranscriber: ObservableObject {
     reset(cancelRecognition: true)
     transcript = ""
     errorMessage = nil
+    self.managesAudioSession = managesAudioSession
 
     do {
-      let audioSession = AVAudioSession.sharedInstance()
-      try audioSession.setCategory(.record, mode: .measurement, options: [])
-      try audioSession.setActive(true)
+      if managesAudioSession {
+        let audioSession = AVAudioSession.sharedInstance()
+        try audioSession.setCategory(.record, mode: .measurement, options: [])
+        try audioSession.setActive(true)
+      }
 
       let request = SFSpeechAudioBufferRecognitionRequest()
       request.shouldReportPartialResults = true
@@ -177,7 +185,9 @@ final class MobileVoiceTranscriber: ObservableObject {
     recognitionRequest = nil
     recognitionTask = nil
     recognitionID = nil
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    if managesAudioSession {
+      try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
     if let errorText, transcript.isEmpty {
       errorMessage = "Transcription stopped: \(errorText)"
     }
@@ -194,7 +204,9 @@ final class MobileVoiceTranscriber: ObservableObject {
     recognitionRequest = nil
     recognitionTask = nil
     isRecording = false
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    if managesAudioSession {
+      try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
   }
 
   private func stopAudioCapture() {

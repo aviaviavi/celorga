@@ -457,7 +457,8 @@ final class MobileRemoteStore: ObservableObject {
   func decideApprovalExactly(
     _ approval: ApprovalEntry,
     decision: String,
-    note: String?
+    note: String?,
+    receipt: String
   ) async throws -> MobileRemoteWorkspaceSnapshot {
     guard let runID = approval.runID, let approvalID = approval.approvalID, let fingerprint = approval.fingerprint else {
       throw AudioApprovalError.approvalIdentityMissing
@@ -470,7 +471,8 @@ final class MobileRemoteStore: ObservableObject {
         endStatus: nil,
         runID: runID,
         approvalID: approvalID,
-        fingerprint: fingerprint
+        fingerprint: fingerprint,
+        receipt: receipt
       ),
       timeout: 90,
       as: MobileRemoteWorkspaceSnapshot.self
@@ -484,7 +486,8 @@ final class MobileRemoteStore: ObservableObject {
   /// The token deliberately remains in memory only on iOS and is valid only while joined.
   func setAudioApprovalPushRegistration(
     token: Data?,
-    enabled: Bool
+    enabled: Bool,
+    quietUntil: Date?
   ) async throws -> MobileRemotePushToTalkRegistrationResponse {
     let environment: String
     #if DEBUG
@@ -498,10 +501,29 @@ final class MobileRemoteStore: ObservableObject {
       payload: MobileRemotePushToTalkRegistrationRequest(
         pushToken: enabled ? tokenHex : nil,
         environment: enabled ? environment : nil,
-        enabled: enabled
+        enabled: enabled,
+        quietUntil: enabled ? quietUntil : nil
       ),
       as: MobileRemotePushToTalkRegistrationResponse.self
     )
+  }
+
+  /// "Later" for one exact prompt. The Mac moves on to the next pending approval.
+  func snoozeAudioApproval(_ target: AudioApprovalTarget, until: Date) async throws -> Date {
+    try await pairedClient().post(
+      "/v1/audio-approvals/snooze",
+      payload: MobileRemoteAudioApprovalSnoozeRequest(
+        runID: target.runID,
+        approvalID: target.approvalID,
+        fingerprint: target.fingerprint,
+        until: until
+      ),
+      as: MobileRemoteAudioApprovalSnoozeResponse.self
+    ).snoozedUntil
+  }
+
+  var isPairedForAudioApprovals: Bool {
+    accessToken != nil && !isPairing
   }
 
   func setWorkflowState(_ state: String, for workflow: MobileRemoteWorkflowItem) async {

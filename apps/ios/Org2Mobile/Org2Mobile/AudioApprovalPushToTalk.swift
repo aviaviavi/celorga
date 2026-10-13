@@ -8,7 +8,8 @@ enum AudioApprovalChannelEvent: Sendable {
   case joined
   case left
   case transmitBegan(initiated: Bool)
-  case transmitEnded(initiated: Bool)
+  /// `interrupted` is true when this bridge ended the transmission to accept an incoming push.
+  case transmitEnded(initiated: Bool, interrupted: Bool)
   case incomingPush(AudioApprovalTarget?)
   case ephemeralToken(Data)
   case audioSessionActivated
@@ -23,14 +24,34 @@ enum AudioApprovalChannel {
   static let participantName = "Celorga"
 }
 
-/// Thread-safe flag the framework reads synchronously when an incoming push arrives.
-private final class AudioApprovalEnrollment: @unchecked Sendable {
+/// Thread-safe state the framework reads synchronously from its own threads.
+private final class AudioApprovalBridgeState: @unchecked Sendable {
   private let lock = NSLock()
   private var enrolled = false
+  private var transmitting = false
+  private var interruptedTransmission = false
 
-  var value: Bool {
-    get { lock.lock(); defer { lock.unlock() }; return enrolled }
-    set { lock.lock(); enrolled = newValue; lock.unlock() }
+  var isEnrolled: Bool {
+    get { lock.withLock { enrolled } }
+    set { lock.withLock { enrolled = newValue } }
+  }
+
+  var isTransmitting: Bool {
+    get { lock.withLock { transmitting } }
+    set { lock.withLock { transmitting = newValue } }
+  }
+
+  /// Marks the current transmission as ended by the bridge, not by the person.
+  func markInterrupted() {
+    lock.withLock { interruptedTransmission = true }
+  }
+
+  /// Returns whether the transmission that just ended was interrupted, and clears the flag.
+  func takeInterrupted() -> Bool {
+    lock.withLock {
+      defer { interruptedTransmission = false }
+      return interruptedTransmission
+    }
   }
 }
 
@@ -38,7 +59,7 @@ private final class AudioApprovalEnrollment: @unchecked Sendable {
 /// so each one is converted to an `AudioApprovalChannelEvent` and delivered on the main actor.
 final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, PTChannelRestorationDelegate, @unchecked Sendable {
   private let deliver: @MainActor @Sendable (AudioApprovalChannelEvent) -> Void
-  private let enrollment = AudioApprovalEnrollment()
+  private let state = AudioApprovalBridgeState()
   private var manager: PTChannelManager?
 
   init(deliver: @escaping @MainActor @Sendable (AudioApprovalChannelEvent) -> Void) {
@@ -46,8 +67,10 @@ final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, P
     super.init()
   }
 
-  /// Creates the manager. Call only when the feature is enabled; never at launch.
+  /// Creates the manager. Call as early as possible after launch, but only when the person has
+  /// turned the feature on, so the framework can restore a joined channel and deliver pushes.
   func start() {
+    Self.configureAudioSessionCategory()
     PTChannelManager.channelManager(delegate: self, restorationDelegate: self) { [weak self] channelManager, error in
       guard let self else { return }
       self.manager = channelManager
@@ -63,8 +86,19 @@ final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, P
   }
 
   func leave() {
-    enrollment.value = false
+    state.isEnrolled = false
     manager?.leaveChannel(channelUUID: AudioApprovalChannel.channelUUID)
+  }
+
+  /// Category only. Push to Talk activates and deactivates the session itself; the app never
+  /// calls `setActive`. Nothing forces the built-in speaker: without a headset output stays on the
+  /// receiver, which the playback gate also refuses. Bluetooth HFP carries the headset microphone.
+  static func configureAudioSessionCategory() {
+    try? AVAudioSession.sharedInstance().setCategory(
+      .playAndRecord,
+      mode: .default,
+      options: [.allowBluetooth, .allowBluetoothA2DP]
+    )
   }
 
   /// Marks locally generated spoken detail as an active remote response so the
@@ -99,21 +133,23 @@ final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, P
   // MARK: PTChannelManagerDelegate
 
   func channelManager(_ channelManager: PTChannelManager, didJoinChannel channelUUID: UUID, reason: PTChannelJoinReason) {
-    enrollment.value = true
+    state.isEnrolled = true
     post(.joined)
   }
 
   func channelManager(_ channelManager: PTChannelManager, didLeaveChannel channelUUID: UUID, reason: PTChannelLeaveReason) {
-    enrollment.value = false
+    state.isEnrolled = false
     post(.left)
   }
 
   func channelManager(_ channelManager: PTChannelManager, channelUUID: UUID, didBeginTransmittingFrom source: PTChannelTransmitRequestSource) {
+    state.isTransmitting = true
     post(.transmitBegan(initiated: Self.isInitiated(source)))
   }
 
   func channelManager(_ channelManager: PTChannelManager, channelUUID: UUID, didEndTransmittingFrom source: PTChannelTransmitRequestSource) {
-    post(.transmitEnded(initiated: Self.isInitiated(source)))
+    state.isTransmitting = false
+    post(.transmitEnded(initiated: Self.isInitiated(source), interrupted: state.takeInterrupted()))
   }
 
   func channelManager(_ channelManager: PTChannelManager, receivedEphemeralPushToken pushToken: Data) {
@@ -124,9 +160,16 @@ final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, P
   /// framework activates a session; unenrolled devices leave the channel.
   func incomingPushResult(channelManager: PTChannelManager, channelUUID: UUID, pushPayload: [String: Any]) -> PTPushResult {
     let target = Self.target(from: pushPayload)
+    guard state.isEnrolled else { return PTPushResult.leaveChannel }
+    if state.isTransmitting {
+      // Half duplex: Apple requires ending the local transmission before reporting a remote
+      // participant. The partial reply is discarded, never decided.
+      state.markInterrupted()
+      channelManager.stopTransmitting(channelUUID: channelUUID)
+    }
     post(.incomingPush(target))
-    guard enrollment.value else { return PTPushResult.leaveChannel }
-    guard target != nil else { return PTPushResult.leaveChannel }
+    // The controller checks the identity against the Mac and releases the session if the
+    // prompt is stale, quiet, or incomplete. Nothing plays before that check.
     return PTPushResult.activeRemoteParticipant(PTParticipant(name: AudioApprovalChannel.participantName, image: nil))
   }
 

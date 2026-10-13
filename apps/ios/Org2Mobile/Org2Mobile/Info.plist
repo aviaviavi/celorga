@@ -35,7 +35,7 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect to your paired Celorga workspace over Tailscale.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Transcribe voice messages into Celorga AI chat drafts.</string>
+	<string>Transcribe voice messages into Celorga AI chat drafts and hear your spoken replies to approval requests.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Attach photos to Celorga notes.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
@@ -52,6 +52,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
+		<string>push-to-talk</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>

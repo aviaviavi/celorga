@@ -61,6 +61,19 @@ struct MobileRemotePushToTalkRegistrationRequest: Codable {
   let pushToken: String?
   let environment: String?
   let enabled: Bool
+  /// The host sends no audio approval pushes before this time. `nil` allows prompts.
+  let quietUntil: Date?
+}
+
+struct MobileRemoteAudioApprovalSnoozeRequest: Codable {
+  let runID: String
+  let approvalID: String
+  let fingerprint: String
+  let until: Date
+}
+
+struct MobileRemoteAudioApprovalSnoozeResponse: Codable {
+  let snoozedUntil: Date
 }
 
 struct MobileRemotePushToTalkRegistrationResponse: Codable {
@@ -353,6 +366,8 @@ struct MobileRemoteApprovalDecisionReceipt: Codable, Hashable {
   let runStatus: String
   let pendingApprovalCount: Int
   let continuation: String
+  let receipt: String?
+  let duplicate: Bool?
 }
 
 struct MobileRemoteAgendaItem: Codable, Hashable, Identifiable {
@@ -436,7 +451,9 @@ struct MobileRemoteApprovalItem: Codable, Hashable, Identifiable {
       approvalID: approvalID,
       fingerprint: fingerprint,
       action: action,
-      riskClass: riskClass
+      riskClass: riskClass,
+      requestedFrom: requestedFrom,
+      requestedAt: requestedAt
     )
   }
 }
@@ -473,6 +490,8 @@ struct MobileRemoteApprovalDecisionRequest: Codable {
   var runID: String?
   var approvalID: String?
   var fingerprint: String?
+  // Provenance key recorded on the approval; replaying it returns the original receipt.
+  var receipt: String?
 }
 
 struct MobileRemoteWorkflowStateRequest: Codable {

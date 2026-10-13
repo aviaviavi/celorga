@@ -11,8 +11,9 @@
  * - Disabled unless CELORGA_AUDIO_APPROVALS=1.
  * - Playback only on an active headset route; no speaker fallback; held during
  *   calls and music; quiet mode holds everything.
- * - Silence, unclear speech, passive (non-initiated) audio, and replies that
- *   name a stale prompt never authorize anything.
+ * - Silence, unclear speech, passive (non-initiated) audio, replies to a prompt
+ *   that did not finish playing, and replies that name a stale prompt never
+ *   authorize anything.
  * - Decisions are idempotent per prompt: a replayed reply returns the original
  *   receipt instead of applying again.
  *
@@ -83,7 +84,7 @@ export type AudioPlaybackPlan =
 
 export type AudioReplyOutcome =
   | { status: "disabled" }
-  | { status: "ignored"; reason: "not-initiated" | "no-active-prompt" }
+  | { status: "ignored"; reason: "not-initiated" | "no-active-prompt" | "prompt-not-heard" }
   | { status: "unclear" }
   | { status: "info"; intent: "why" | "read" }
   | { status: "snoozed"; until: string }
@@ -219,6 +220,11 @@ export interface AudioReplyDecision {
 export function resolveAudioSpokenReply(state: AudioBrokerState, runs: AgentRun[], input: AudioSpokenReplyInput): AudioReplyDecision {
   if (!input.initiated) return { state, outcome: { status: "ignored", reason: "not-initiated" } };
   if (!state.active) return { state, outcome: { status: "ignored", reason: "no-active-prompt" } };
+  // A reply binds only to a prompt that finished playing. A queued or interrupted prompt
+  // (for example after headset loss) must be heard again first.
+  if (state.active.stage === "queued" || state.active.stage === "delivered") {
+    return { state, outcome: { status: "ignored", reason: "prompt-not-heard" } };
+  }
 
   const intent = parseAudioSpokenReply(input.transcript);
   if (intent === "unclear") return { state, outcome: { status: "unclear" } };

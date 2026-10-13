@@ -103,6 +103,18 @@ const playing = markAudioPrompt(state, firstPrompt, "played");
 const lost = handleAudioRouteChange(playing, { route: "speaker" });
 assert.equal(lost.active.stage, "queued");
 assert.equal(lost.active.promptId, firstPrompt, "route loss keeps the same retained prompt");
+{
+  // A prompt interrupted by headset loss must be heard again before any reply binds to it.
+  const afterLoss = resolveAudioSpokenReply(lost, [runA, runB], {
+    transcript: "yes", promptId: firstPrompt, target: lost.active.target, initiated: true, clientId: "avi-headset", nowIso: T2,
+  });
+  assert.deepEqual(afterLoss.outcome, { status: "ignored", reason: "prompt-not-heard" });
+  const neverPlayed = resolveAudioSpokenReply(state, [runA, runB], {
+    transcript: "yes", promptId: firstPrompt, target: state.active.target, initiated: true, clientId: "avi-headset", nowIso: T2,
+  });
+  assert.deepEqual(neverPlayed.outcome, { status: "ignored", reason: "prompt-not-heard" }, "a queued prompt cannot be answered");
+  assert.equal(runA.approvals[0].status, "pending");
+}
 
 // 5. Passive (non-initiated) audio never decides.
 {
@@ -120,7 +132,10 @@ saveAgentRun(root, runA, { expectedRevision: null });
 saveAgentRun(root, runB, { expectedRevision: null });
 const stateFile = audioBrokerStatePath(root);
 assert.equal(stateFile.includes(`${path.sep}audio-approvals${path.sep}broker-state.json`), true);
-writeAudioBrokerState(root, selectActiveAudioPrompt(createAudioBrokerState(), [runA, runB], T1));
+{
+  const selected = selectActiveAudioPrompt(createAudioBrokerState(), [runA, runB], T1);
+  writeAudioBrokerState(root, markAudioPrompt(selected, selected.active.promptId, "played"));
+}
 const active = readAudioBrokerState(root).active;
 assert.equal(active.target.runId, "run-a");
 const reply = (transcript, extra = {}) => applyAudioSpokenReplyToCorpus(root, ["run-a", "run-b"], {
@@ -162,7 +177,8 @@ assert.equal(fs.existsSync(stateFile), true);
 // 7. Stale and mismatched targets are rejected without changing the run.
 {
   const runBState = loadAgentRunSnapshot(root, "run-b").run;
-  const current = selectActiveAudioPrompt(createAudioBrokerState(), [runBState], T2);
+  const selectedB = selectActiveAudioPrompt(createAudioBrokerState(), [runBState], T2);
+  const current = markAudioPrompt(selectedB, selectedB.active.promptId, "played");
   const wrongFingerprint = { ...current.active.target, fingerprint: "sha256:stale" };
   const r1 = resolveAudioSpokenReply(current, [runBState], {
     transcript: "yes", promptId: current.active.promptId, target: wrongFingerprint, initiated: true, clientId: "avi-headset", nowIso: T2,
@@ -188,7 +204,8 @@ assert.equal(fs.existsSync(stateFile), true);
 // 8. The existing gate still decides who may answer: a requestedFrom approval refuses other clients.
 {
   const gated = waitingRun("run-gated", "appr-gated", T0, { requestedFrom: "avi" });
-  const sel = selectActiveAudioPrompt(createAudioBrokerState(), [gated], T1);
+  const selGated = selectActiveAudioPrompt(createAudioBrokerState(), [gated], T1);
+  const sel = markAudioPrompt(selGated, selGated.active.promptId, "played");
   const r = resolveAudioSpokenReply(sel, [gated], {
     transcript: "yes", promptId: sel.active.promptId, target: sel.active.target, initiated: true, clientId: "someone-else", nowIso: T2,
   });
@@ -200,7 +217,8 @@ assert.equal(fs.existsSync(stateFile), true);
 // 9. Snooze keeps the approval pending and returns it after the window.
 {
   const snoozeRun = waitingRun("run-snooze", "appr-snooze", T0);
-  const sel = selectActiveAudioPrompt(createAudioBrokerState(), [snoozeRun], T1);
+  const selSnooze = selectActiveAudioPrompt(createAudioBrokerState(), [snoozeRun], T1);
+  const sel = markAudioPrompt(selSnooze, selSnooze.active.promptId, "played");
   const r = resolveAudioSpokenReply(sel, [snoozeRun], {
     transcript: "Later", promptId: sel.active.promptId, target: sel.active.target, initiated: true, clientId: "avi-headset", nowIso: T1,
   });

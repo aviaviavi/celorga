@@ -117,6 +117,9 @@ struct ApprovalEntry: Identifiable, Hashable, Codable {
   let fingerprint: String?
   let action: String?
   let riskClass: String?
+  /// Who asked, for example the requesting agent. Absent for local corpus approvals.
+  var requestedFrom: String? = nil
+  var requestedAt: String? = nil
 
   var isRunApproval: Bool {
     kind == "run" && runID != nil && approvalID != nil

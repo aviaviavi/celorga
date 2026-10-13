@@ -385,9 +385,7 @@ struct MobileSettingsView: View {
 
   var body: some View {
     Form {
-      if AudioApprovalFeature.isEnabled {
-        AudioApprovalSettingsSection()
-      }
+      AudioApprovalSettingsSection()
       Section("Corpus") {
         LabeledContent("Current corpus", value: store.rootURL == nil ? "Not selected" : store.corpusName)
         Button {

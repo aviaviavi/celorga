@@ -4,6 +4,8 @@
 <dict>
 	<key>aps-environment</key>
 	<string>$(APS_ENVIRONMENT)</string>
+	<key>com.apple.developer.push-to-talk</key>
+	<true/>
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>group.org.org2.mobile</string>

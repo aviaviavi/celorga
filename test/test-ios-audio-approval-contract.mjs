@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Source-contract checks for the feature-gated walkie-talkie audio approval slice.
-// These verify invariants that must hold across the TypeScript broker, the iOS client,
-// and the Mac host. They do NOT exercise audio routes, Push to Talk, or a locked phone;
-// those behaviours are unverified until tested on a physical device.
+// Source contracts for walkie-talkie audio approvals across the TypeScript broker, the iOS
+// client, and the Mac host. Behavior is covered by test-ios-audio-approval-core.mjs (iOS policy),
+// test-audio-approval-broker.mjs (broker), and AudioApprovalHostTests (Mac host, end to end).
+// None of these exercise real audio routes, Push to Talk delivery, or a locked phone.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -11,18 +11,27 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 const ios = "apps/ios/Org2Mobile/Org2Mobile";
+const mac = "apps/macos/Org2Workspace/Sources/Org2WorkspaceCore";
 
 const core = read(`${ios}/AudioApprovalCore.swift`);
 const ptt = read(`${ios}/AudioApprovalPushToTalk.swift`);
 const controller = read(`${ios}/AudioApprovalController.swift`);
 const settings = read(`${ios}/AudioApprovalSettingsSection.swift`);
-const broker = read("src/audioApprovalBroker.ts");
+const transcriber = read(`${ios}/MobileVoiceTranscriber.swift`);
+const iosStore = read(`${ios}/MobileRemoteStore.swift`);
 const iosModels = read(`${ios}/MobileRemoteModels.swift`);
-const macProtocol = read("apps/macos/Org2Workspace/Sources/Org2WorkspaceCore/MobileRemoteProtocol.swift");
-const macStore = read("apps/macos/Org2Workspace/Sources/Org2WorkspaceCore/WorkspaceStore.swift");
+const iosViews = read(`${ios}/MobileRemoteViews.swift`);
+const app = read(`${ios}/Org2MobileApp.swift`);
+const infoPlist = read(`${ios}/Info.plist`);
+const entitlements = read(`${ios}/Org2Mobile.entitlements`);
+const broker = read("src/audioApprovalBroker.ts");
+const macProtocol = read(`${mac}/MobileRemoteProtocol.swift`);
+const macCoordinator = read(`${mac}/MobileRemoteCoordinator.swift`);
+const macPush = read(`${mac}/MobileRemotePushNotifications.swift`);
+const macStore = read(`${mac}/WorkspaceStore.swift`);
 const pbxproj = read("apps/ios/Org2Mobile/Org2Mobile.xcodeproj/project.pbxproj");
 
-// 1. Spoken phrase tables are identical to the TypeScript broker.
+// 1. Spoken phrase tables are identical in Swift and TypeScript.
 function swiftSet(name) {
   const match = core.match(new RegExp(`static let ${name}: Set<String> = \\[([^\\]]*)\\]`));
   assert.ok(match, `Swift phrase table ${name} missing`);
@@ -32,55 +41,83 @@ assert.deepEqual(swiftSet("approvePhrases"), ["approve", "yeah", "yep", "yes"]);
 assert.deepEqual(swiftSet("rejectPhrases"), ["deny", "no", "nope", "reject"]);
 assert.deepEqual(swiftSet("readPhrases"), ["read it", "read it to me", "read to me"]);
 assert.deepEqual(swiftSet("snoozePhrases"), ["later", "not now"]);
-// The TypeScript broker must accept the same phrases.
 for (const phrase of ["yes", "yeah", "yep", "approve", "no", "nope", "reject", "deny", "later", "not now", "read it to me"]) {
   assert.ok(broker.includes(`"${phrase}"`), `TypeScript broker lacks phrase ${phrase}`);
 }
-assert.ok(core.includes(`if normalized == "why" { return .why }`), "why intent is whole-utterance");
 
-// 2. Feature is off by default and only enabled explicitly.
+// 2. Off by default, but discoverable: Settings always lists the section with an opt-in toggle.
 assert.ok(core.includes(`static let defaultsKey = "celorga.audioApprovals.enabled"`));
-assert.ok(core.includes("UserDefaults.standard.bool(forKey: defaultsKey)"), "flag reads without a default-true registration");
-assert.ok(!/registerDefaults[\s\S]{0,200}audioApprovals/.test(read(`${ios}/Org2MobileApp.swift`)), "no default registration for the flag");
+assert.ok(core.includes("UserDefaults.standard.bool(forKey: defaultsKey)"), "flag defaults to off");
+assert.ok(!/register\(defaults[\s\S]{0,200}audioApprovals/.test(app), "no default-on registration");
+assert.match(iosViews, /^\s*AudioApprovalSettingsSection\(\)\s*$/m, "the Settings section is always listed");
+assert.ok(!/if AudioApprovalFeature\.isEnabled \{\s*AudioApprovalSettingsSection/.test(iosViews), "the section is not hidden behind the flag");
+assert.match(settings, /Toggle\("Walkie-talkie approvals"/);
+assert.match(settings, /Snooze 30 minutes/);
+assert.match(settings, /Quiet until I turn it off/);
+assert.match(app, /audioApprovals\.attach\(remote: mobileRemote\)/);
 
-// 3. Headset-only, no speaker fallback, no speaker override anywhere in the slice.
+// 3. Headset only. No speaker fallback or override anywhere in the slice.
 for (const [name, source] of Object.entries({ core, ptt, controller })) {
   assert.ok(!/defaultToSpeaker/.test(source), `${name} must not use defaultToSpeaker`);
-  assert.ok(!/overrideOutputAudioPort\(\s*\.speaker/.test(source), `${name} must not force the speaker`);
+  assert.ok(!/overrideOutputAudioPort/.test(source), `${name} must not override the output port`);
 }
 assert.match(core, /if snapshot\.route != \.headset \{ return \.hold\(\.noHeadset\) \}/);
-assert.match(core, /if quiet \{ return \.hold\(\.quiet\) \}/);
-assert.match(core, /if !snapshot\.pushToTalkSessionActive \{ return \.hold\(\.noPushToTalkSession\) \}/);
-assert.match(core, /if snapshot\.inCall \{ return \.hold\(\.callActive\) \}/);
-assert.match(core, /if snapshot\.mediaPlaying \{ return \.hold\(\.mediaActive\) \}/);
 assert.match(core, /allSatisfy \{ headsetPorts\.contains\(\$0\) \}/, "route is headset only when every output is headset");
+assert.match(controller, /case \.hold:\s*\/\/[^\n]*\n\s*send\(\.playbackFinished\(completed: false/, "a held prompt is reported unheard, not rerouted");
 
-// 4. Only user-initiated transmissions can authorize a reply.
+// 4. Apple's Push to Talk audio-session rules: the system activates the session.
+for (const [name, source] of Object.entries({ ptt, controller })) {
+  assert.ok(!/\.setActive\(/.test(source), `${name} must not activate the audio session itself`);
+}
+assert.match(controller, /transcriber\.start\(managesAudioSession: false\)/, "replies are captured inside the system session");
+assert.match(transcriber, /if managesAudioSession \{\s*let audioSession = AVAudioSession\.sharedInstance\(\)\s*try audioSession\.setCategory/);
+assert.match(ptt, /\.playAndRecord/);
+assert.match(core, /if capture == \.awaitingSession \{\s*capture = \.capturing/, "capture starts only after didActivate");
+assert.match(ptt, /state\.markInterrupted\(\)\s*channelManager\.stopTransmitting/, "a push mid-reply ends the transmission as interrupted");
+
+// 5. Only user-initiated transmissions authorize a reply.
 assert.match(ptt, /source == \.userRequest \|\| source == \.handsfreeButton/);
-assert.ok(!/source == \.developerRequest/.test(ptt), "developer-requested transmission must not be treated as initiated");
-assert.match(controller, /guard initiated, active != nil, !isQuiet else \{ return \}/);
+assert.ok(!/source == \.developerRequest/.test(ptt));
 
-// 5. Exact identity: iOS request, Mac request, and Mac guard use the same fields.
-for (const field of ["runID", "approvalID", "fingerprint"]) {
-  assert.ok(iosModels.includes(`var ${field}: String?`), `iOS request carries ${field}`);
-  assert.ok(macProtocol.includes(`public let ${field}: String?`), `Mac request carries ${field}`);
+// 6. Exact identity end to end, with a receipt key for idempotent replays.
+for (const field of ["runID", "approvalID", "fingerprint", "receipt"]) {
+  assert.ok(iosModels.includes(`var ${field}: String?`), `iOS decision request carries ${field}`);
+  assert.ok(macProtocol.includes(`public let ${field}: String?`), `Mac decision request carries ${field}`);
 }
 assert.match(macStore, /Nothing was changed; review it again\./, "Mac refuses a changed approval");
 assert.match(macStore, /no longer pending\. Nothing was changed\./, "Mac refuses an exact decision with no pending approval");
-assert.match(read(`${ios}/MobileRemoteStore.swift`), /runID: runID,\s*approvalID: approvalID,\s*fingerprint: fingerprint/);
+assert.match(macStore, /approval\.receipt == receipt/, "only the same receipt replays");
+assert.match(iosStore, /fingerprint: fingerprint,\s*receipt: receipt/);
+assert.match(core, /"\\\(runID\)\|\\\(approvalID\)\|\\\(fingerprint\)"/, "iOS prompt key");
+assert.match(macCoordinator, /var key: String \{ "\\\(runID\)\|\\\(approvalID\)\|\\\(fingerprint\)" \}/, "Mac prompt key matches");
 
-// 6. Receipts are keyed by the exact prompt identity, and the decision goes through the host.
-assert.match(core, /"\\\(runID\)\|\\\(approvalID\)\|\\\(fingerprint\)"/);
-assert.match(controller, /if let prior = receipts\[key\]/);
+// 7. Push to Talk transport: token registration, APNs topic, identity-only payload, snooze endpoint.
+assert.match(controller, /setAudioApprovalPushRegistration\(\s*token: enabled \? pushToken : nil/);
+assert.match(iosStore, /"\/v1\/push-to-talk-registration"/);
+assert.match(macCoordinator, /path == "\/v1\/push-to-talk-registration"/);
+assert.match(iosStore, /"\/v1\/audio-approvals\/snooze"/);
+assert.match(macCoordinator, /path == "\/v1\/audio-approvals\/snooze"/);
+assert.match(macPush, /static let pushToTalkTopic = "org\.org2\.mobile\.voip-ptt"/);
+assert.match(macPush, /"pushtotalk", forHTTPHeaderField: "apns-push-type"/);
+assert.match(macPush, /"0", forHTTPHeaderField: "apns-expiration"/);
+for (const key of ["runID", "approvalID", "fingerprint"]) {
+  assert.ok(macPush.includes(`"${key}": envelope.${key}`), `APNs payload carries ${key}`);
+  assert.ok(ptt.includes(`payload["${key}"] as? String`), `iOS reads ${key} from the push`);
+}
 
-// 7. Every new Swift file is in the Xcode target.
+// 8. Entitlement and background mode per Apple's Push to Talk guide.
+assert.match(entitlements, /<key>com\.apple\.developer\.push-to-talk<\/key>\s*<true\/>/);
+assert.match(entitlements, /<key>aps-environment<\/key>/);
+assert.match(infoPlist, /<key>UIBackgroundModes<\/key>\s*<array>[\s\S]*?<string>push-to-talk<\/string>[\s\S]*?<\/array>/);
+assert.match(infoPlist, /<key>NSMicrophoneUsageDescription<\/key>\s*<string>[^<]*approval[^<]*<\/string>/);
+
+// 9. Every audio Swift file is in the Xcode target.
 for (const file of ["AudioApprovalCore.swift", "AudioApprovalPushToTalk.swift", "AudioApprovalController.swift", "AudioApprovalSettingsSection.swift"]) {
   const count = pbxproj.split(file).length - 1;
   assert.ok(count >= 4, `${file} must be in the file reference, group, build file, and sources phase (saw ${count})`);
 }
 
-// 8. The Push to Talk entitlement is not added by default; device signing will need it.
-const entitlements = read(`${ios}/Org2Mobile.entitlements`);
-assert.ok(!entitlements.includes("com.apple.developer.push-to-talk"), "PTT entitlement is a signing dependency, not default");
+// 10. The TypeScript broker binds replies to a heard prompt too.
+assert.match(broker, /reason: "prompt-not-heard"/);
 
 console.log("ios audio approval contract tests passed");
