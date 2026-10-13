@@ -1,103 +1,125 @@
-#+TITLE: Celorga vs Org Mode
-#+DESCRIPTION: Org Mode and Celorga compared: what carries over, where Org remains stronger, and why Celorga exists.
+#+TITLE: Celorga for Org mode users
+#+DESCRIPTION: Org, rebuilt without Emacs: a portable Org runtime and CLI, and the Mac, iPhone, editor, and AI agent tools built on it.
 
-The short version: if you want the best Org experience inside Emacs, use Org Mode. Celorga is for a different constraint: keeping much of Org's useful structure in ordinary files while using a native Mac app, VS Code, a standalone CLI, or other non-Emacs tools.
+Org mode got plain-text planning right: outlines, TODO states, schedules, properties, IDs, and links in files you own forever. But almost everything that truly understands an Org file still runs inside Emacs.
 
-Celorga has two layers: the application, and the independently specified parser/runtime and semantic profile underneath it. Celorga is an independent project: it is not a fork, successor, or replacement for Org Mode, it is not affiliated with or endorsed by the GNU Org Mode project, and it does not claim complete Org compatibility. It implements a deliberately defined, portable interpretation of Org text.
+Celorga rebuilds the Org ecosystem without Emacs, with portability as the starting point. The parser, the semantics, and the command line form a standalone runtime that any app, editor, script, or agent can use. On top of it sit a native Mac app that combines an Org editor with an AI agent workspace, an iPhone app, VS Code and Vim support, and tools for the agents you already use.
 
-* At a glance
+Point it at your existing =~/org= folder. There is nothing to import or convert, and every file still opens in Emacs exactly as before.
 
-| Question | Org Mode | Celorga |
-|----------+----------+----------------|
-| What is it? | A major mode and extensive toolset for GNU Emacs | A native workspace built on a standalone parser/runtime, CLI, and semantic profile |
-| Natural home | Emacs | Celorga for Mac, VS Code, the CLI, and lightweight iOS workflows |
-| Source files | =.org= | =.org= |
-| Editing | Deep structural editing, folding, capture, refile, tables, and keyboard workflows | Native rendered/source views and a VS Code extension; less editing depth than Org Mode |
-| Planning | Highly configurable TODOs, agendas, clocks, habits, repeaters, reports, and logs | Common TODO and planning semantics shared by the Mac app, VS Code, CLI, and agenda TUI |
-| Tables and code | Spreadsheet-like tables and the mature Babel ecosystem | Safe =#+TBLFM:= evaluation, structured tables, preserved source blocks, SQL-backed data notes, and charts; not a Babel replacement |
-| Publishing | Many built-in and third-party export backends and publishing projects | HTML/site publishing and Beamer-compatible presentation export |
-| Automation | Emacs Lisp APIs and Emacs batch mode | Standalone commands, JSON output, LSP, MCP, and source-range-aware compiler output |
-| Maturity | Decades of use, documentation, packages, and hard-won edge-case handling | Early alpha; useful today, but still changing |
+#+begin_export html
+<p class="celorga-feature-links"><a href="downloads.html">Download for Mac</a><a href="getting-started.html">Getting started</a><a href="https://github.com/aviaviavi/celorga">GitHub</a></p>
+<figure class="celorga-section-shot"><img src="assets/screenshots/macos-workspace-agenda.png?v=20261009" alt="Celorga agenda showing overdue, today, and upcoming tasks beside the Org note behind the selected task" loading="eager" /><figcaption>An agenda built from ordinary .org files, with the note behind each task one click away.</figcaption></figure>
+#+end_export
 
-* What carries over
+* Why rebuild Org without Emacs?
 
-The family resemblance is intentional. Celorga supports familiar outlines, TODO keywords, priorities, tags, scheduled and deadline timestamps, repeaters, property drawers, IDs, links, lists, tables, source blocks, clocks, habits, and agenda files.
+Org the file format is useful far beyond Org the Emacs mode. Today, though, the ecosystem has a gap: there is no portable base to build on.
 
-The files remain the source of truth. There is no private note database that must be exported before another editor can read the work. Higher-level views are derived from the text.
+- *Org shouldn't require an editor.* A script, a CI job, a server, a phone app, or an AI agent that needs a real agenda, repeaters, or =:ID:= links has two options today: bundle a whole Emacs binary, or write another partial parser. Bundling Emacs is heavy, and starting Emacs just to answer an Org question adds startup time to every call.
+- *Extending Org should use a language people already know.* Emacs Lisp is powerful, but few developers write it. Celorga's runtime is TypeScript, published on npm, and its plugins are ordinary programs that exchange JSON, so you can write them in Python, Go, Rust, shell, or whatever you already use. That opens Org tooling to a much larger community.
+- *Every tool should agree on what a file means.* Most Org tools outside Emacs ship their own small parser that handles part of the format in its own way, so your agenda in one app doesn't quite match another. Celorga has one runtime that every client uses.
 
-That does not mean every Org file has identical behavior in both systems. The common syntax travels well; Emacs Lisp configuration and the long tail of Org semantics do not.
+So Celorga decouples Org from Emacs completely. The format has a written specification and conformance fixtures, and the parser, semantics, CLI, and language server run without Emacs anywhere in the stack.
 
-* Where Org Mode is still far ahead
+** What a portable base makes possible
 
-** Editing and customization
+Once Org no longer depends on an editor, the apps built on it don't have to stop where an editor does. Celorga for Mac puts your agenda and notes in a native window and lets coding agents and local models work on the same files, with citations and approvals. The iPhone app brings the same files to your phone.
 
-Org Mode's editing model is the product of years of daily use: structural movement, folding, subtree operations, capture, refile, sparse trees, narrowing, table editing, links, and the agenda all fit together inside Emacs. Emacs Lisp makes the whole environment programmable.
+None of these apps reimplements Org. The Mac app, the iPhone app, the VS Code extension, and the language server all use the same runtime and CLI that you can install with npm, so anything they do with your files, a script or a different app can do too.
 
-Celorga does not reproduce that environment. Its Mac app is designed around files, agenda, meetings, search, data, and review. It includes rendered and source editing, but Org Mode remains the more powerful text editor. VS Code is currently Celorga's strongest general source-editing client.
+* What Celorga is
 
-** Planning
+- *A portable Org runtime.* One parser, one set of semantics, and one command line, with no Emacs dependency.
+- *A native workspace.* A Mac app with an agenda, rendered and source editing, backlinks, a graph, meetings, data notebooks, and publishing, plus an iPhone app for capture, agenda, and approvals.
+- *An agent control plane on plain text.* Claude Code, Codex, OpenCode, local models, and other agents read and cite your =.org= files, take on TODOs as work, and wait for your approval before anything consequential happens.
 
-Celorga covers the planning features needed by ordinary agendas: TODO state, schedules, deadlines, priorities, tags, effort, repeaters, habits, clocks, filters, and mutations. Org Mode goes much further. Custom agenda commands, logging rules, column views, clock reports, dependency rules, capture templates, and user-defined TODO workflows are substantially deeper and more configurable.
+Celorga is free, open source under Apache-2.0, and needs no account. It is an independent project, not a fork of Org mode, and it is not affiliated with the GNU Org mode project.
 
-** Tables, Babel, and export
+* What feels familiar
 
-Org tables can behave like a small spreadsheet, complete with formulas and a polished editor. Babel supports a large language ecosystem for literate programming and reproducible research. Org's exporter ships with several backends and has many more in packages.
+If you know Org, you already know how to write for Celorga:
 
-Celorga parses tables and source blocks and evaluates a safe, useful subset of =#+TBLFM:= spreadsheet formulas across its CLI, rendered views, and exports. Its broader execution story remains narrower: explicit SQL/data blocks, materialized results, deterministic charts, HTML publishing, and presentation export. It does not execute Emacs Lisp formulas or replace Babel, so a serious Babel setup should stay in Org Mode.
+- Headlines, TODO keywords, priorities, tags, and your own TODO workflows.
+- =SCHEDULED=, =DEADLINE=, =CLOSED=, repeaters, effort, clocks, and habits.
+- Property drawers, =:ID:= links, and org-roam style notes, dailies, and backlinks.
+- Lists, checkboxes and progress cookies, tables with =#+TBLFM:= formulas, and source blocks.
+- Agenda files, capture, archive, and refile.
 
-** Ecosystem and stability
+The files remain the source of truth. Celorga keeps no private database that you have to export from, and the agenda, backlinks, graph, and search are all built from the text. Notes that Celorga creates are ordinary =.org= files, so you can keep editing in Emacs and use Celorga beside it.
 
-Org Mode has a large community, a mature package ecosystem, and behavior that people have relied on for years. Celorga is an early-alpha project. Its format and core invariants are documented, but APIs and client UX are still evolving.
+* What's new
 
-* Why build Celorga at all?
+** A polished app that isn't Emacs
 
-Emacs already has batch mode and excellent APIs, so Celorga is not based on the idea that Org cannot be automated. The difference is packaging and scope.
+Celorga for Mac is a native app with a real reading view. Open a note to read it rendered, or switch to source or split view to edit the text. The agenda, the backlinks for the current note, the graph, and fuzzy search all sit in one window. Prose mode gives you a calm writing surface where alternative phrasings, ghosted sentences, and cut passages stay recoverable in the file.
 
-Celorga makes a standalone, language-neutral runtime the default contract. A program can ask for an agenda, resolved links, diagnostics, search results, source ranges, or a published site without embedding Emacs or scraping an editor buffer. The Mac app, VS Code extension, scripts, and agents all consume that same runtime rather than inventing separate parsers.
+It is the Org experience for the times and people that Emacs doesn't reach: your laptop on the couch, a colleague who will never learn Emacs, or a day when you just want your agenda.
 
-That foundation lets Celorga provide a few things that are outside Org Mode's main job:
+** Your Org files on your phone
 
-- a native Mac workspace for files, agenda, meetings, data notes, and search,
-- an iOS companion for capture, agenda, file viewing, and approvals,
-- explicit local imports from configured sources such as Slack and Notion,
-- cited agent conversations and durable work records with outputs, validation, and approval steps,
-- preview-first command-line mutations that can be reviewed before they touch a file.
+The iPhone app reads the same synced folder. Capture a note, check the agenda, search everything, read rendered entries, and approve agent work from anywhere. Sync with iCloud, Git, Syncthing, or anything else that syncs a folder.
 
-None of that requires AI. Parsing, agenda, links, graph checks, data materialization, linting, and publishing work without a model or API key.
+** Agents that work on your Org files
 
-* Compatibility in practice
+This is where Celorga goes well beyond any Org tool. Your notes become shared memory for every agent you use:
 
-- Existing =.org= files are normal Celorga compiler input.
-- Celorga creates documents as ordinary =.org= files, which open in =org-mode= without extra configuration.
-- Common headings, TODOs, planning lines, properties, tags, links, blocks, lists, tables, and timestamps should be unsurprising in either editor.
-- Celorga-specific declarations remain readable text in Emacs, but Emacs does not automatically give them Celorga behavior.
-- Custom Emacs Lisp, complex Babel graphs, specialized export backends, and heavily customized agenda rules do not port merely because the underlying file parses.
-- Celorga favors one coherent interpretation across its clients over bug-for-bug compatibility with every Org version and configuration.
+- *Bring the agents you already pay for.* Claude Code, Codex, OpenCode, Pi, OpenClaw, Ollama, and API providers all work, with no resold tokens.
+- *Put several agents in one conversation.* Ask the same question of two agents, or let one hand work to another while you watch.
+- *Turn a TODO into agent work.* Pick a heading, choose /Start work/, and the agent starts from the task and the notes behind it. The heading shows whether the agent is working, waiting on you, or done.
+- *Cited answers.* Agents quote your notes with file and line references, so you can check every claim.
+- *You approve what matters.* Edits are previewed as diffs, AI-written text stays marked until you accept it, and consequential steps wait in one approval queue on your Mac and phone.
+- *Use any MCP client.* =celorga mcp serve= exposes your corpus to any MCP-compatible tool.
 
-The practical rule is simple: test a real corpus before depending on both runtimes for the same behavior. Keep advanced Org workflows in Org Mode unless Celorga explicitly documents support for them.
+If you already ask agents to work on your Org files, Celorga gives them proper tooling, such as agenda queries, structured edits, link resolution, and validation, instead of leaving them to regex their way through your headlines.
 
-* Should an Org user switch?
+** More from plain text
 
-Not by default. If Org Mode already fits your editing and planning life, there is no reason to leave it.
+- *Data notebooks.* Run SQL over CSV, Parquet, DuckDB, or ClickHouse from a note, and keep the results and charts in the file.
+- *Meetings.* Record and transcribe on your machine, then turn decisions into TODOs.
+- *Publishing.* Turn a note into a web page, PDF, Beamer slides, or a Google Doc, with private details stripped first.
+- *Encryption.* Encrypt one section to yourself, a device, or a single agent, and keep the rest of the file readable.
 
-Celorga is worth a look if you like Org's plain-text model but want:
+* The best foundation for Org outside Emacs
 
-- a native application for day-to-day workspace use,
-- the same planning and link semantics available outside Emacs,
-- a standalone CLI for scripts, CI, or other editors,
-- local data and meeting workflows beside your notes,
-- review and approval machinery for work delegated to agents.
+If you use Org outside Emacs, or want to build something on it, this is what the shared runtime gives you:
 
-Using both is reasonable. Org Mode can remain the editor for =.org= files while Celorga supplies additional views and automation. Just treat the documented compatibility boundary as real rather than assuming that every Emacs customization has a portable equivalent.
+- *One interpretation everywhere.* The Mac app, the iPhone app, VS Code, Vim and Neovim, the CLI, and agents all use the same parser and semantics. A TODO, a repeater, or an =:ID:= link means the same thing in every client.
+- *Plugins in any language.* Add commands, templates, and source-block renderers as Git packages that exchange JSON with Celorga, pinned to an exact commit in your corpus.
+- *A strong VS Code extension.* It includes an agenda, TODO and planning commands, folding, backlinks, org-roam style dailies and ID links, formatting, and diagnostics, on macOS and Linux.
+- *A language server for any editor.* The same diagnostics, navigation, and code actions are available in Vim, Neovim, Emacs, or anything else that speaks LSP.
+- *A CLI that's built for scripts.* =celorga agenda=, =search=, =todo=, =lint=, and =publish= return JSON, and every change is a preview until you pass =--apply=.
+
+Improvements to the runtime reach every client at once, so the experience keeps getting better everywhere instead of in one app at a time.
+
+#+begin_src sh
+npm install -g celorga
+celorga agenda --dir ~/org --recursive
+celorga search "quarterly review" --dir ~/org --recursive
+celorga lint --dir ~/org --recursive
+#+end_src
+
+* Keep Emacs too
+
+You don't have to choose. Celorga and Emacs read the same files, so many people keep Emacs as their editor and use Celorga for their phone, agenda, agents, and publishing.
+
+Celorga covers the Org you use every day. It doesn't run Emacs Lisp, so custom agenda commands, Babel pipelines, and packages that depend on your =init.el= stay in Emacs. Celorga-specific additions are ordinary Org text, so Emacs shows them as normal text without breaking anything. For details, see [[file:semantics-status.org][Semantics and status]].
+
+* Try it in five minutes
+
+1. [[file:downloads.org][Download Celorga for Mac]], or run =npm install -g celorga= on macOS or Linux.
+2. Open your existing Org folder. Your headings, TODOs, schedules, and links appear right away.
+3. Open the agenda, then connect an agent you already use and ask it about your notes.
+
+Questions, bug reports, and Org edge cases that Celorga gets wrong are very welcome on [[https://github.com/aviaviavi/celorga/issues][GitHub]].
 
 * Related
 
-- [[https://orgmode.org/][Org Mode]]
-- [[https://orgmode.org/manual/][The Org Manual]]
-- [[https://orgmode.org/features.html][Org Mode features]]
-- [[file:editors-emacs.org][Using Org files from Emacs]]
-- [[file:migration.org][Migration guidance]]
+- [[file:getting-started.org][Getting started]]
+- [[file:features.org][Everything Celorga does]]
+- [[file:editors-vscode.org][Celorga for VS Code]]
+- [[file:editors-emacs.org][Using Celorga beside Emacs]]
+- [[file:migration.org][Practical migration]]
 - [[file:semantics-status.org][Semantics and status]]
-- [[file:features.org][Current Celorga features]]
-- [[file:celorga-vs-markdown.org][Celorga vs Markdown]]
 - [[file:celorga-vs-obsidian.org][Celorga vs Obsidian]]
+- [[file:celorga-vs-markdown.org][Celorga vs Markdown]]

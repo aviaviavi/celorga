@@ -17,7 +17,7 @@
   {"title":"VS Code","url":"editors-vscode.html","description":"Celorga VS Code extension features and setup."},
   {"title":"Vim / Neovim","url":"editors-vim.html","description":"Celorga Vim and Neovim integration notes."},
   {"title":"Emacs","url":"editors-emacs.html","description":"Using Celorga files from Emacs."},
-  {"title":"Celorga vs Org Mode","url":"celorga-vs-org-mode.html","description":"Org Mode and Celorga compared: what carries over, where Org remains stronger, and why Celorga exists."},
+  {"title":"Celorga for Org mode users","url":"celorga-vs-org-mode.html","description":"Celorga vs Org mode: Org rebuilt without Emacs, with a portable runtime and CLI and the Mac, iPhone, editor, and AI agent tools built on it."},
   {"title":"Celorga vs Markdown","url":"celorga-vs-markdown.html","description":"When Markdown notes become a planning, graph, publishing, and automation corpus."},
   {"title":"Celorga vs Obsidian","url":"celorga-vs-obsidian.html","description":"How open-source Celorga compares with Obsidian as a portable compiler/runtime for local knowledge work."},
   {"title":"AI adapters","url":"ai-adapters.html","description":"Provider-agnostic AI adapter concepts for Celorga."},
