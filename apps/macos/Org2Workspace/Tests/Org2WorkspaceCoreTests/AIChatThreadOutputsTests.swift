@@ -159,4 +159,82 @@ final class AIChatThreadOutputsTests: XCTestCase {
     XCTAssertEqual(entries.map(\.name), ["b-dir", "a.org", "c.pdf"])
     XCTAssertTrue(entries[0].isDirectory)
   }
+
+  func testMobileRemoteProjectionMatchesTheMacChipAndUsesCorpusRelativePaths() throws {
+    let first = reply(
+      "Done. [[file:/corpus/views/data-rooms/acme/sales/pipeline.pdf][PDF]] and [[file:/corpus/views/data-rooms/acme/INDEX.org][Index]]",
+      edits: [("views/data-rooms/acme/sales/pipeline.org", .modified), ("views/data-rooms/acme/INDEX.org", .created)]
+    )
+    let second = reply(
+      "Also see [[file:~/dev/tool/README.md][README]].",
+      edits: [("daily/2026-09-29.org", .modified)]
+    )
+    let threadID = UUID()
+    let outputs = AIChatThreadOutputs.derive(
+      messages: [first, second],
+      corpusRoot: root,
+      homeDirectory: home
+    )
+
+    let projection = outputs.mobileRemoteProjection(threadID: threadID, homeDirectory: home)
+
+    XCTAssertEqual(projection.threadID, threadID)
+    XCTAssertEqual(projection.folderName, "acme")
+    XCTAssertEqual(projection.folderDisplayPath, "views/data-rooms/acme")
+    XCTAssertFalse(projection.isTruncated)
+    XCTAssertEqual(
+      projection.groups.filter(\.isInFolder).map(\.title).sorted(),
+      ["INDEX.org", "sales/pipeline"],
+      "in-folder rows are titled relative to the working folder, as on the Mac"
+    )
+    XCTAssertEqual(
+      projection.groups.filter { !$0.isInFolder }.map(\.title).sorted(),
+      ["daily/2026-09-29.org", "~/dev/tool/README.md"]
+    )
+    XCTAssertTrue(projection.groups.prefix(2).allSatisfy(\.isInFolder), "folder outputs come first")
+
+    let pipeline = try XCTUnwrap(projection.groups.first { $0.title == "sales/pipeline" })
+    XCTAssertEqual(pipeline.files.map(\.path), [
+      "views/data-rooms/acme/sales/pipeline.org",
+      "views/data-rooms/acme/sales/pipeline.pdf",
+    ])
+    XCTAssertEqual(pipeline.files.map(\.isPrimary), [true, false])
+    XCTAssertTrue(pipeline.files.allSatisfy(\.isInCorpus))
+    XCTAssertEqual(pipeline.activitySummary, "edited 1× · linked 1×")
+    XCTAssertEqual(pipeline.lastMessageID, first.id)
+    XCTAssertTrue(try XCTUnwrap(projection.groups.first { $0.title == "INDEX.org" }).wasCreated)
+
+    let readme = try XCTUnwrap(projection.groups.first { $0.title == "~/dev/tool/README.md" })
+    XCTAssertEqual(readme.files.first?.path, "/Users/me/dev/tool/README.md", "files outside the corpus keep the host path")
+    XCTAssertEqual(readme.files.first?.isInCorpus, false)
+
+    let decoded = try MobileRemoteProtocol.decoder().decode(
+      MobileRemoteThreadOutputs.self,
+      from: MobileRemoteProtocol.encoder().encode(projection)
+    )
+    XCTAssertEqual(decoded, projection)
+  }
+
+  func testMobileRemoteProjectionFlagsStaleFormats() throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("outputs-mobile-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: base.appendingPathComponent("room"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let corpus = base.standardizedFileURL.path
+    let source = base.appendingPathComponent("room/report.org")
+    let pdf = base.appendingPathComponent("room/report.pdf")
+    try Data("* Report".utf8).write(to: source)
+    try Data().write(to: pdf)
+    try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -3600)], ofItemAtPath: pdf.path)
+    let message = reply("", edits: [("room/report.org", .modified)])
+
+    let projection = AIChatThreadOutputs.derive(messages: [message], corpusRoot: corpus, homeDirectory: home)
+      .resolvingFileStatus()
+      .mobileRemoteProjection(threadID: UUID(), homeDirectory: home)
+
+    let report = try XCTUnwrap(projection.groups.first)
+    XCTAssertEqual(report.staleFormats, ["PDF"])
+    XCTAssertEqual(report.files.map(\.path), ["room/report.org", "room/report.pdf"])
+    XCTAssertEqual(report.files.map(\.isStale), [false, true])
+    XCTAssertEqual(report.files.map(\.isSibling), [false, true])
+  }
 }

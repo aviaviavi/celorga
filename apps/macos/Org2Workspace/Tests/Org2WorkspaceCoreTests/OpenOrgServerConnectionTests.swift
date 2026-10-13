@@ -357,3 +357,45 @@ final class ChatThreadRelayShareTests: XCTestCase {
     XCTAssertTrue(store.chatThreadShareAppearanceOverrides.isEmpty)
   }
 }
+
+@MainActor
+final class MobileRemoteThreadOutputsEndpointTests: XCTestCase {
+  func testOutputsEndpointServesTheThreadsEditedAndLinkedFiles() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("openorg-thread-outputs-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let suiteName = "openorg-thread-outputs-\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let report = root.appendingPathComponent("report.org")
+    try Data("* Report".utf8).write(to: report)
+    let store = try WorkspaceStore(
+      cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()),
+      defaults: defaults,
+      aiChatTranscriptURL: root.appendingPathComponent("openclaw-chat.json"),
+      legacyDefaultsDomains: []
+    )
+    let reply = AIChatMessage(role: .assistant, content: "Wrote [[file:\(report.path)][the report]].")
+    store.aiChatMessages = [AIChatMessage(role: .user, content: "Write the report"), reply]
+    let threadID = try XCTUnwrap(store.selectedAIChatThreadID)
+    let coordinator = MobileRemoteCoordinator(
+      defaults: defaults,
+      credentialFile: root.appendingPathComponent("devices.json")
+    )
+
+    let response = await coordinator.handleThreadOutputs(threadID: threadID, store: store)
+
+    XCTAssertEqual(response.statusCode, 200)
+    let outputs = try MobileRemoteProtocol.decoder().decode(MobileRemoteThreadOutputs.self, from: response.body)
+    XCTAssertEqual(outputs.threadID, threadID)
+    let group = try XCTUnwrap(outputs.groups.first)
+    XCTAssertEqual(group.files.map(\.fileExtension), ["org"])
+    XCTAssertTrue(group.exists)
+    XCTAssertEqual(group.lastMessageID, reply.id)
+    XCTAssertEqual(group.activitySummary, "linked 1×")
+
+    let missing = await coordinator.handleThreadOutputs(threadID: UUID(), store: store)
+    XCTAssertEqual(missing.statusCode, 503)
+  }
+}

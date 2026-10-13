@@ -1157,6 +1157,17 @@ final class MobileRemoteStore: ObservableObject {
     )
   }
 
+  /// The files this thread edited or linked, derived on the host exactly as
+  /// the Mac's Outputs chip derives them. Nil when the host predates outputs.
+  func threadOutputs(threadID: UUID) async throws -> MobileRemoteThreadOutputs? {
+    guard status?.supportsThreadOutputs == true else { return nil }
+    return try await pairedClient().get(
+      "/v1/threads/\(threadID.uuidString)/outputs",
+      timeout: 30,
+      as: MobileRemoteThreadOutputs.self
+    )
+  }
+
   func imageData(path: String) async throws -> Data {
     try await pairedClient().post(
       "/v1/files/image",

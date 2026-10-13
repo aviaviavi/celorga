@@ -34,6 +34,8 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
   public let supportsClientThreadIDs: Bool?
   /// The host can publish a live read-only link for a thread it stores.
   public let supportsThreadSharing: Bool?
+  /// The host serves `GET /v1/threads/ID/outputs`.
+  public let supportsThreadOutputs: Bool?
 
   public init(
     protocolVersion: Int = MobileRemoteProtocol.version,
@@ -47,8 +49,10 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
     pushNotificationsSupported: Bool? = nil,
     pushNotificationsConfigured: Bool? = nil,
     supportsClientThreadIDs: Bool? = true,
-    supportsThreadSharing: Bool? = true
+    supportsThreadSharing: Bool? = true,
+    supportsThreadOutputs: Bool? = true
   ) {
+    self.supportsThreadOutputs = supportsThreadOutputs
     self.supportsClientThreadIDs = supportsClientThreadIDs
     self.supportsThreadSharing = supportsThreadSharing
     self.protocolVersion = protocolVersion
@@ -568,6 +572,108 @@ public struct MobileRemoteThreadShare: Codable, Hashable, Sendable {
     self.isShared = isShared
     self.url = url
     self.sharedAt = sharedAt
+  }
+}
+
+/// `GET /v1/threads/ID/outputs`: the files a thread edited or linked, as shown
+/// by the Mac's AI chat Outputs chip. File paths are corpus-relative when the
+/// file lives in the host corpus, so the phone can open its synced copy first.
+public struct MobileRemoteThreadOutputs: Codable, Hashable, Sendable {
+  public let threadID: UUID
+  public let folderName: String?
+  public let folderDisplayPath: String?
+  public let isTruncated: Bool
+  public let maxGroups: Int
+  public let groups: [MobileRemoteThreadOutputGroup]
+
+  public init(
+    threadID: UUID,
+    folderName: String?,
+    folderDisplayPath: String?,
+    isTruncated: Bool,
+    maxGroups: Int,
+    groups: [MobileRemoteThreadOutputGroup]
+  ) {
+    self.threadID = threadID
+    self.folderName = folderName
+    self.folderDisplayPath = folderDisplayPath
+    self.isTruncated = isTruncated
+    self.maxGroups = maxGroups
+    self.groups = groups
+  }
+}
+
+public struct MobileRemoteThreadOutputGroup: Codable, Hashable, Identifiable, Sendable {
+  public let id: String
+  public let title: String
+  public let isInFolder: Bool
+  public let exists: Bool
+  public let wasCreated: Bool
+  public let editCount: Int
+  public let linkCount: Int
+  public let activitySummary: String
+  public let staleFormats: [String]
+  public let lastMessageID: UUID?
+  public let files: [MobileRemoteThreadOutputFile]
+
+  public init(
+    id: String,
+    title: String,
+    isInFolder: Bool,
+    exists: Bool,
+    wasCreated: Bool,
+    editCount: Int,
+    linkCount: Int,
+    activitySummary: String,
+    staleFormats: [String],
+    lastMessageID: UUID?,
+    files: [MobileRemoteThreadOutputFile]
+  ) {
+    self.id = id
+    self.title = title
+    self.isInFolder = isInFolder
+    self.exists = exists
+    self.wasCreated = wasCreated
+    self.editCount = editCount
+    self.linkCount = linkCount
+    self.activitySummary = activitySummary
+    self.staleFormats = staleFormats
+    self.lastMessageID = lastMessageID
+    self.files = files
+  }
+}
+
+public struct MobileRemoteThreadOutputFile: Codable, Hashable, Identifiable, Sendable {
+  /// Corpus-relative when inside the host corpus, otherwise the host's absolute path.
+  public let path: String
+  public let displayPath: String
+  public let fileExtension: String
+  public let isInCorpus: Bool
+  public let exists: Bool
+  public let isSibling: Bool
+  public let isPrimary: Bool
+  public let isStale: Bool
+
+  public var id: String { path }
+
+  public init(
+    path: String,
+    displayPath: String,
+    fileExtension: String,
+    isInCorpus: Bool,
+    exists: Bool,
+    isSibling: Bool,
+    isPrimary: Bool,
+    isStale: Bool
+  ) {
+    self.path = path
+    self.displayPath = displayPath
+    self.fileExtension = fileExtension
+    self.isInCorpus = isInCorpus
+    self.exists = exists
+    self.isSibling = isSibling
+    self.isPrimary = isPrimary
+    self.isStale = isStale
   }
 }
 

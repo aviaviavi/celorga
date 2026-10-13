@@ -208,21 +208,11 @@ struct AIChatThreadOutputsPanel: View {
   }
 
   private func rowTitle(_ group: AIChatThreadOutputGroup, relativeTo folder: String?) -> String {
-    let name = group.files.count > 1 ? group.stem : group.primary.fileName
-    let directory = group.directory
-    if let folder, AIChatThreadOutputs.path(directory, isInside: folder) {
-      return directory == folder ? name : String(directory.dropFirst(folder.count + 1)) + "/" + name
-    }
-    if directory == outputs.corpusRoot { return name }
-    return outputs.displayPath(directory) + "/" + name
+    outputs.rowTitle(group, relativeTo: folder)
   }
 
   private func activityText(_ group: AIChatThreadOutputGroup) -> String {
-    var parts: [String] = []
-    if group.editCount > 0 { parts.append("edited \(group.editCount)×") }
-    if group.linkCount > 0 { parts.append("linked \(group.linkCount)×") }
-    if !group.exists { parts.append("missing") }
-    return parts.joined(separator: " · ")
+    group.activitySummary
   }
 
   private func open(_ path: String) {

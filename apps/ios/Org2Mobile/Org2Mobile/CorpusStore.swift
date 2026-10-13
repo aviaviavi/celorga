@@ -305,6 +305,31 @@ final class CorpusStore: ObservableObject {
     }.value
   }
 
+  /// Copies a synced corpus file (a published PDF or DOCX) into a private
+  /// temporary folder so Quick Look can show it outside the security scope.
+  func quickLookCopy(path rawPath: String) async throws -> URL {
+    guard let rootURL else { throw CorpusFileError.noCorpus }
+    return try await Task.detached(priority: .userInitiated) {
+      let hasSecurityAccess = rootURL.startAccessingSecurityScopedResource()
+      defer {
+        if hasSecurityAccess {
+          rootURL.stopAccessingSecurityScopedResource()
+        }
+      }
+      let baseURL = try Self.corpusBaseURL(for: rootURL)
+      let relativePath = try Self.canonicalCorpusRelativePath(rawPath, baseURL: baseURL)
+      let url = baseURL.appendingPathComponent(relativePath).standardizedFileURL
+      guard try Self.isRegularFile(url) else { throw CorpusFileError.unavailable }
+      let folder = FileManager.default.temporaryDirectory
+        .appendingPathComponent("celorga-quicklook", isDirectory: true)
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      let copy = folder.appendingPathComponent(url.lastPathComponent)
+      try FileManager.default.copyItem(at: url, to: copy)
+      return copy
+    }.value
+  }
+
   func pathForDocumentLink(_ link: MobileDocumentLink) async throws -> String {
     guard let nodeID = link.nodeID else { return link.path }
     if !searchIndex.entries.contains(where: { $0.nodeID == nodeID }) { await refresh() }

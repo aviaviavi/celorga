@@ -30,6 +30,12 @@ struct MobileTranscriptRegression {
     precondition(MobileRemoteTranscriptPage.make(messages: [Message](), endingAt: nil).isEmpty)
     precondition(MobileRemoteTranscriptPage.make(messages: messages, endingAt: -1) == latest)
 
+    precondition(MobileRemoteTranscriptPage.reveal(1_000, in: messages) == .latest)
+    precondition(MobileRemoteTranscriptPage.reveal(87, in: messages) == .endingAt(93))
+    let revealed = MobileRemoteTranscriptPage.make(messages: messages, endingAt: 93)
+    precondition(revealed.contains(87), "Jumping to an output's reply must page it into view")
+    precondition(MobileRemoteTranscriptPage.reveal(5_000, in: messages) == nil)
+
     for text in ["", "A short reply", "* Heading\n\nA [[https://example.com][link]].", "Hello 👨‍👩‍👧‍👦"] {
       let preview = MobileRemoteTranscriptPage.preview(text)
       precondition(preview.text == text && !preview.isTruncated)

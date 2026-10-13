@@ -598,6 +598,9 @@ public final class MobileRemoteCoordinator: ObservableObject {
         context: threadDetailProjectionContext(for: hydratedThread, store: store)
       )
     }
+    if request.method == "GET", components.count == 4, components[3] == "outputs" {
+      return await handleThreadOutputs(threadID: threadID, store: store)
+    }
     if request.method == "GET", components.count == 4, components[3] == "configuration" {
       do {
         let configuration = try await store.aiChatRemoteConfiguration(for: threadID)
@@ -710,6 +713,19 @@ public final class MobileRemoteCoordinator: ObservableObject {
         : .error("There is no live turn to stop.", statusCode: 409)
     }
     return .error("Remote action not found.", statusCode: 404)
+  }
+
+  /// `GET /v1/threads/ID/outputs` returns the files the thread edited or
+  /// linked, derived exactly as the Mac's Outputs chip derives them.
+  func handleThreadOutputs(threadID: UUID, store: WorkspaceStore) async -> MobileRemoteHTTPResponse {
+    guard let thread = await store.hydratedAIChatThreadForDetail(threadID) else {
+      return .error("This conversation could not be loaded.", statusCode: 503)
+    }
+    return await backgroundWork.threadOutputsResponse(
+      thread: thread,
+      corpusRoot: store.corpusRoot?.standardizedFileURL.path,
+      remoteCorpusRoot: store.aiChatOutputsRemoteCorpusPath
+    )
   }
 
   /// `GET|POST /v1/threads/ID/share` and `POST /v1/threads/ID/share/stop`

@@ -48,6 +48,15 @@ struct AIChatThreadOutputGroup: Identifiable, Hashable, Sendable {
     files.filter { !$0.isSibling }.max { $0.lastMessageIndex < $1.lastMessageIndex }?.lastMessageID
   }
   var exists: Bool { files.contains(where: \.exists) }
+
+  /// "edited 2× · linked 1× · missing", shared by the Mac panel and the phone.
+  var activitySummary: String {
+    var parts: [String] = []
+    if editCount > 0 { parts.append("edited \(editCount)×") }
+    if linkCount > 0 { parts.append("linked \(linkCount)×") }
+    if !exists { parts.append("missing") }
+    return parts.joined(separator: " · ")
+  }
 }
 
 struct AIChatThreadOutputs: Equatable, Sendable {
@@ -103,6 +112,22 @@ struct AIChatThreadOutputs: Equatable, Sendable {
       return "~" + String(path.dropFirst(home.count))
     }
     return path
+  }
+
+  /// Row label for a group: relative to the working folder when inside it,
+  /// otherwise a corpus- or home-relative path.
+  func rowTitle(
+    _ group: AIChatThreadOutputGroup,
+    relativeTo folder: String?,
+    homeDirectory: String = NSHomeDirectory()
+  ) -> String {
+    let name = group.files.count > 1 ? group.stem : group.primary.fileName
+    let directory = group.directory
+    if let folder, Self.path(directory, isInside: folder) {
+      return directory == folder ? name : String(directory.dropFirst(folder.count + 1)) + "/" + name
+    }
+    if directory == corpusRoot { return name }
+    return displayPath(directory, homeDirectory: homeDirectory) + "/" + name
   }
 
   // MARK: - Derivation
@@ -386,5 +411,59 @@ struct AIChatThreadOutputs: Equatable, Sendable {
     var value = path
     while value.count > 1, value.hasSuffix("/") { value.removeLast() }
     return value
+  }
+}
+
+extension AIChatThreadOutputs {
+  /// The phone's view of the Outputs chip. Ordering, grouping, folder choice,
+  /// stale detection and row titles come from the same derivation as the Mac.
+  func mobileRemoteProjection(
+    threadID: UUID,
+    homeDirectory: String = NSHomeDirectory()
+  ) -> MobileRemoteThreadOutputs {
+    func file(_ file: AIChatThreadOutputFile, in group: AIChatThreadOutputGroup) -> MobileRemoteThreadOutputFile {
+      var path = file.path
+      var isInCorpus = false
+      if let corpusRoot, Self.path(file.path, isInside: corpusRoot), file.path != corpusRoot {
+        path = String(file.path.dropFirst(corpusRoot.count + 1))
+        isInCorpus = true
+      }
+      return MobileRemoteThreadOutputFile(
+        path: path,
+        displayPath: displayPath(file.path, homeDirectory: homeDirectory),
+        fileExtension: file.fileExtension,
+        isInCorpus: isInCorpus,
+        exists: file.exists,
+        isSibling: file.isSibling,
+        isPrimary: file.path == group.primary.path,
+        isStale: group.staleFormats.contains(file.fileExtension.uppercased())
+      )
+    }
+    let inFolder = Set(groupsInFolder.map(\.id))
+    // In-folder outputs first, matching the Mac panel's sections.
+    let ordered = groupsInFolder + groupsOutsideFolder
+    return MobileRemoteThreadOutputs(
+      threadID: threadID,
+      folderName: folder.map { ($0 as NSString).lastPathComponent },
+      folderDisplayPath: folder.map { displayPath($0, homeDirectory: homeDirectory) },
+      isTruncated: isTruncated,
+      maxGroups: Self.maxGroups,
+      groups: ordered.map { group in
+        let isInFolder = folder != nil && inFolder.contains(group.id)
+        return MobileRemoteThreadOutputGroup(
+          id: group.id,
+          title: rowTitle(group, relativeTo: isInFolder ? folder : nil, homeDirectory: homeDirectory),
+          isInFolder: folder == nil || isInFolder,
+          exists: group.exists,
+          wasCreated: group.primary.wasCreated,
+          editCount: group.editCount,
+          linkCount: group.linkCount,
+          activitySummary: group.activitySummary,
+          staleFormats: group.staleFormats,
+          lastMessageID: group.lastMessageID,
+          files: group.files.map { file($0, in: group) }
+        )
+      }
+    )
   }
 }

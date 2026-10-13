@@ -42,6 +42,8 @@ struct MobileRemoteServerStatus: Codable, Hashable {
   let pushNotificationsSupported: Bool?
   let pushNotificationsConfigured: Bool?
   let supportsClientThreadIDs: Bool?
+  /// The host serves `GET /v1/threads/ID/outputs`.
+  let supportsThreadOutputs: Bool?
 }
 
 struct MobileRemotePushRegistrationRequest: Codable {
@@ -132,6 +134,63 @@ struct MobileRemoteFilePreview: Codable, Hashable {
   let startLine: Int
   let highlightedLine: Int?
   let content: String
+}
+
+/// The files a thread edited or linked, mirroring the Mac's Outputs chip.
+/// Paths are corpus-relative when the file lives in the host corpus.
+struct MobileRemoteThreadOutputs: Codable, Hashable {
+  let threadID: UUID
+  let folderName: String?
+  let folderDisplayPath: String?
+  let isTruncated: Bool
+  let maxGroups: Int
+  let groups: [MobileRemoteThreadOutputGroup]
+
+  var isEmpty: Bool { groups.isEmpty }
+  var groupsInFolder: [MobileRemoteThreadOutputGroup] { groups.filter(\.isInFolder) }
+  var groupsOutsideFolder: [MobileRemoteThreadOutputGroup] { groups.filter { !$0.isInFolder } }
+  var staleCount: Int { groups.filter { !$0.staleFormats.isEmpty }.count }
+
+  /// "acme · 3 outputs", the same label as the Mac chip.
+  var chipCountText: String {
+    let count = groupsInFolder.count
+    return "\(count)\(isTruncated ? "+" : "") output\(count == 1 && !isTruncated ? "" : "s")"
+  }
+}
+
+struct MobileRemoteThreadOutputGroup: Codable, Hashable, Identifiable {
+  let id: String
+  let title: String
+  let isInFolder: Bool
+  let exists: Bool
+  let wasCreated: Bool
+  let editCount: Int
+  let linkCount: Int
+  let activitySummary: String
+  let staleFormats: [String]
+  let lastMessageID: UUID?
+  let files: [MobileRemoteThreadOutputFile]
+
+  var primary: MobileRemoteThreadOutputFile? { files.first(where: \.isPrimary) ?? files.first }
+}
+
+struct MobileRemoteThreadOutputFile: Codable, Hashable, Identifiable {
+  let path: String
+  let displayPath: String
+  let fileExtension: String
+  let isInCorpus: Bool
+  let exists: Bool
+  let isSibling: Bool
+  let isPrimary: Bool
+  let isStale: Bool
+
+  var id: String { path }
+  /// Text formats open in the corpus reader (synced copy first, then the Mac).
+  var opensInReader: Bool { exists && isInCorpus && !MobileRemoteThreadOutputFile.binaryExtensions.contains(fileExtension) }
+  static let binaryExtensions: Set<String> = [
+    "pdf", "docx", "odt", "xlsx", "pptx", "key", "pages", "numbers", "zip",
+    "png", "jpg", "jpeg", "gif", "webp", "heic", "mp3", "m4a", "wav", "mp4", "mov",
+  ]
 }
 
 struct MobileRemoteModelOption: Codable, Hashable, Identifiable {

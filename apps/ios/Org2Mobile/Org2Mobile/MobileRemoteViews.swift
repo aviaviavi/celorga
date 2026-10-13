@@ -1,4 +1,5 @@
 import PhotosUI
+import QuickLook
 import SwiftUI
 import UIKit
 import VisionKit
@@ -1355,6 +1356,9 @@ struct MobileRemoteThreadView: View {
   @State private var hasPresentedInitialContent = false
   @State private var pollingLeaseID: UUID?
   @State private var transcriptPageEndID: UUID?
+  @State private var threadOutputs: MobileRemoteThreadOutputs?
+  @State private var isShowingOutputs = false
+  @State private var pendingScrollMessageID: UUID?
 
   var body: some View {
     Group {
@@ -1397,6 +1401,13 @@ struct MobileRemoteThreadView: View {
     .toolbar {
       ToolbarItem(placement: .topBarLeading) {
         MobileSidebarToolbarButton()
+      }
+      if let outputs = threadOutputs, outputs.threadID == threadID, !outputs.isEmpty {
+        ToolbarItem(placement: .topBarTrailing) {
+          MobileRemoteThreadOutputsChip(outputs: outputs) {
+            isShowingOutputs = true
+          }
+        }
       }
       if let thread = remote.threadDetail?.thread, thread.id == threadID {
         ToolbarItem(placement: .topBarTrailing) {
@@ -1490,6 +1501,68 @@ struct MobileRemoteThreadView: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
+    .sheet(isPresented: $isShowingOutputs) {
+      if let outputs = threadOutputs {
+        MobileRemoteThreadOutputsSheet(outputs: outputs) { messageID in
+          isShowingOutputs = false
+          revealMessage(messageID)
+        }
+        .environmentObject(remote)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+      }
+    }
+    // Outputs are derived on the host from the stored transcript. Refresh when
+    // a reply lands or the turn ends, not on every streamed token.
+    .task(id: outputsSignature) {
+      await refreshThreadOutputs()
+    }
+  }
+
+  private struct OutputsSignature: Hashable {
+    let threadID: UUID
+    let isLoaded: Bool
+    let messageCount: Int
+    let lastMessageID: UUID?
+    let isRunning: Bool
+    let supportsOutputs: Bool
+  }
+
+  private var outputsSignature: OutputsSignature {
+    let detail = remote.threadDetail?.thread.id == threadID ? remote.threadDetail : nil
+    return OutputsSignature(
+      threadID: threadID,
+      isLoaded: detail != nil,
+      messageCount: detail?.messages.count ?? 0,
+      lastMessageID: detail?.messages.last?.id,
+      isRunning: detail?.thread.isRunning ?? false,
+      supportsOutputs: remote.status?.supportsThreadOutputs == true
+    )
+  }
+
+  private func refreshThreadOutputs() async {
+    if threadOutputs?.threadID != threadID { threadOutputs = nil }
+    guard outputsSignature.isLoaded, outputsSignature.supportsOutputs else { return }
+    try? await Task.sleep(for: .milliseconds(400))
+    guard !Task.isCancelled else { return }
+    // Keep the last known outputs when the host is briefly unreachable.
+    guard let outputs = try? await remote.threadOutputs(threadID: threadID),
+          !Task.isCancelled,
+          outputs.threadID == threadID
+    else { return }
+    threadOutputs = outputs
+  }
+
+  /// Pages the transcript so the reply is loaded, then scrolls to it.
+  private func revealMessage(_ messageID: UUID) {
+    guard let messages = remote.threadDetail?.messages.filter({ $0.isRoomDispatchCopy != true }),
+          let reveal = MobileRemoteTranscriptPage.reveal(messageID, in: messages)
+    else { return }
+    switch reveal {
+    case .latest: transcriptPageEndID = nil
+    case .endingAt(let endID): transcriptPageEndID = endID
+    }
+    pendingScrollMessageID = messageID
   }
 
   private func chatContent(detail: MobileRemoteThreadDetail) -> some View {
@@ -1514,6 +1587,17 @@ struct MobileRemoteThreadView: View {
       }
       .onChange(of: detail.messages.count) { _, _ in
         scrollToBottomIfFollowing(proxy: proxy)
+      }
+      .onChange(of: pendingScrollMessageID) { _, messageID in
+        guard let messageID else { return }
+        Task { @MainActor in
+          // Let the revealed page lay out before scrolling to the reply.
+          try? await Task.sleep(for: .milliseconds(350))
+          withAnimation(.easeOut(duration: 0.2)) {
+            proxy.scrollTo(messageID, anchor: .top)
+          }
+          pendingScrollMessageID = nil
+        }
       }
       .onChange(of: detail.streamingReply) { _, _ in
         scrollToBottomIfFollowing(proxy: proxy)
@@ -3451,6 +3535,193 @@ private struct MobileRemoteInlineImage: View {
     }
     MobileRemoteInlineImageCache.images.setObject(loaded, forKey: cacheKey as NSString, cost: data.count)
     image = loaded
+  }
+}
+
+/// Toolbar chip for the files this thread edited or linked, the phone's
+/// counterpart to the Mac AI chat header's Outputs chip.
+private struct MobileRemoteThreadOutputsChip: View {
+  let outputs: MobileRemoteThreadOutputs
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      HStack(spacing: 4) {
+        Image(systemName: outputs.folderName == nil ? "doc.on.doc" : "folder")
+        Text("\(outputs.groupsInFolder.count)\(outputs.isTruncated ? "+" : "")")
+          .monospacedDigit()
+        if outputs.staleCount > 0 {
+          Image(systemName: "exclamationmark.triangle.fill")
+            .foregroundStyle(.orange)
+        }
+      }
+      .font(.footnote.weight(.semibold))
+      .padding(.horizontal, 8)
+      .padding(.vertical, 4)
+      .background(.quaternary, in: Capsule())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(accessibilityText)
+    .accessibilityIdentifier("mobile-thread-outputs-chip")
+  }
+
+  private var accessibilityText: String {
+    var parts = ["Outputs"]
+    if let folder = outputs.folderName { parts.append(folder) }
+    parts.append(outputs.chipCountText)
+    if outputs.staleCount > 0 { parts.append("\(outputs.staleCount) stale") }
+    return parts.joined(separator: ", ")
+  }
+}
+
+/// The Outputs list: the working folder, its outputs grouped by source and
+/// published formats, everything else the thread touched, and a jump back to
+/// the reply that last touched each file.
+private struct MobileRemoteThreadOutputsSheet: View {
+  @EnvironmentObject private var store: CorpusStore
+  @EnvironmentObject private var remote: MobileRemoteStore
+  @Environment(\.dismiss) private var dismiss
+  let outputs: MobileRemoteThreadOutputs
+  let onJumpToMessage: (UUID) -> Void
+  @State private var openedFile: MobileRemoteThreadOutputFile?
+  @State private var quickLookURL: URL?
+  @State private var errorMessage: String?
+
+  var body: some View {
+    NavigationStack {
+      List {
+        if let folder = outputs.folderDisplayPath {
+          Section("Folder") {
+            Label(folder, systemImage: "folder.fill")
+              .font(.callout.monospaced())
+              .lineLimit(1)
+              .truncationMode(.head)
+          }
+        }
+        Section(outputs.folderName == nil ? "Files" : "In this folder") {
+          ForEach(outputs.groupsInFolder) { group in
+            row(group)
+          }
+        }
+        if !outputs.groupsOutsideFolder.isEmpty {
+          Section("Also touched (\(outputs.groupsOutsideFolder.count))") {
+            ForEach(outputs.groupsOutsideFolder) { group in
+              row(group)
+            }
+          }
+        }
+        if outputs.isTruncated {
+          Section {
+            Text("Showing the \(outputs.maxGroups) most recently edited or linked files.")
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+          }
+        }
+      }
+      .navigationTitle("Outputs")
+      .navigationBarTitleDisplayMode(.inline)
+      .navigationDestination(item: $openedFile) { file in
+        CorpusFileDocumentView(
+          citation: MobileRemoteFileCitation(path: file.path, line: nil, label: file.displayPath),
+          allowsRemoteFallback: true,
+          prefersRendered: ["org", "org2"].contains(file.fileExtension)
+        )
+      }
+      .toolbar {
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Done") { dismiss() }
+        }
+      }
+      .quickLookPreview($quickLookURL)
+      .alert("File Unavailable", isPresented: Binding(
+        get: { errorMessage != nil },
+        set: { if !$0 { errorMessage = nil } }
+      )) {
+        Button("OK", role: .cancel) {}
+      } message: {
+        Text(errorMessage ?? "")
+      }
+    }
+    .accessibilityIdentifier("mobile-thread-outputs-sheet")
+  }
+
+  private func row(_ group: MobileRemoteThreadOutputGroup) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        Image(systemName: group.wasCreated ? "plus.circle" : (group.editCount > 0 ? "pencil" : "link"))
+          .font(.caption)
+          .foregroundStyle(group.wasCreated ? Color.green : Color.secondary)
+          .frame(width: 16)
+        Button {
+          if let primary = group.primary { open(primary) }
+        } label: {
+          Text(group.title)
+            .font(.callout.monospaced())
+            .lineLimit(2)
+            .truncationMode(.middle)
+            .foregroundStyle(group.exists ? Color.primary : Color.secondary)
+            .strikethrough(!group.exists)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .disabled(group.primary.map(canOpen) != true)
+        if let messageID = group.lastMessageID {
+          Button {
+            onJumpToMessage(messageID)
+          } label: {
+            Image(systemName: "arrow.uturn.backward")
+          }
+          .buttonStyle(.borderless)
+          .accessibilityLabel("Jump to the last reply that touched this file")
+        }
+      }
+      HStack(spacing: 6) {
+        Text(group.activitySummary)
+        if !group.staleFormats.isEmpty {
+          Label("\(group.staleFormats.joined(separator: ", ")) stale", systemImage: "exclamationmark.triangle.fill")
+            .foregroundStyle(.orange)
+        }
+      }
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .padding(.leading, 24)
+      if group.files.count > 1 {
+        HStack(spacing: 6) {
+          ForEach(group.files) { file in
+            Button(file.fileExtension.isEmpty ? "file" : file.fileExtension) {
+              open(file)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
+            .tint(file.isStale ? .orange : .accentColor)
+            .disabled(!canOpen(file))
+          }
+        }
+        .padding(.leading, 24)
+      }
+    }
+    .padding(.vertical, 2)
+  }
+
+  /// Text formats use the corpus reader, which falls back to the Mac. Binary
+  /// formats need the locally synced copy for Quick Look.
+  private func canOpen(_ file: MobileRemoteThreadOutputFile) -> Bool {
+    guard file.exists, file.isInCorpus else { return false }
+    return file.opensInReader || store.rootURL != nil
+  }
+
+  private func open(_ file: MobileRemoteThreadOutputFile) {
+    if file.opensInReader {
+      openedFile = file
+      return
+    }
+    Task {
+      do {
+        quickLookURL = try await store.quickLookCopy(path: file.path)
+      } catch {
+        errorMessage = "\(file.displayPath) isn't in the synced corpus on this phone yet. Let the corpus sync, then try again."
+      }
+    }
   }
 }
 

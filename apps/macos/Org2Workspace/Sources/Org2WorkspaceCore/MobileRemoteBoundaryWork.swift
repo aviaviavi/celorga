@@ -413,6 +413,29 @@ public struct MobileRemoteBackgroundWork: Sendable {
     }.value
   }
 
+  /// Derives a thread's Outputs (message scan plus file stats) off the main actor.
+  public func threadOutputsResponse(
+    thread: AIChatThread,
+    corpusRoot: String?,
+    remoteCorpusRoot: String?
+  ) async -> MobileRemoteHTTPResponse {
+    let beforeWork = self.beforeWork
+    let didFinishWork = self.didFinishWork
+    return await Task.detached(priority: .userInitiated) {
+      await beforeWork()
+      let outputs = AIChatThreadOutputs.derive(
+        messages: thread.messages,
+        corpusRoot: corpusRoot,
+        remoteCorpusRoot: remoteCorpusRoot
+      ).resolvingFileStatus()
+      let response = MobileRemoteHTTPResponse.json(
+        outputs.mobileRemoteProjection(threadID: thread.id)
+      )
+      didFinishWork(mobileRemoteIsMainThread())
+      return response
+    }.value
+  }
+
   public func prepareSendMessage(
     from request: MobileRemoteHTTPRequest
   ) async throws -> MobileRemotePreparedSendMessage {

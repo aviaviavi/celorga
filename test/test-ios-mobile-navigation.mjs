@@ -226,3 +226,17 @@ console.log("iOS mobile navigation tests passed");
 
 assert.match(remoteViews, /resultsIndexID == store.searchIndex.id/, "Results must belong to the current corpus index before they can be opened");
 assert.match(remoteViews, /ForEach\(hasCurrentResults \? results : \[\]\)/);
+
+// The thread outputs chip mirrors the Mac AI chat header chip.
+const threadView = remoteViews.slice(
+  remoteViews.indexOf("struct MobileRemoteThreadView: View"),
+  remoteViews.indexOf("private struct MobileRemoteBoundedMessageText"),
+);
+assert.match(threadView, /MobileRemoteThreadOutputsChip\(outputs: outputs\)/, "The thread toolbar should show the outputs chip");
+assert.match(threadView, /\.task\(id: outputsSignature\)/, "Outputs should refresh when a reply lands, not per streamed token");
+assert.match(threadView, /MobileRemoteTranscriptPage\.reveal\(messageID, in: messages\)/, "Jumping to a reply must page it into view first");
+assert.match(remoteStore, /guard status\?\.supportsThreadOutputs == true else \{ return nil \}/, "Older hosts without outputs must not be queried");
+assert.match(remoteStore, /"\/v1\/threads\/\\\(threadID\.uuidString\)\/outputs"/);
+assert.match(remoteCoordinator, /components\[3\] == "outputs"/);
+assert.match(remoteViews, /\.quickLookPreview\(\$quickLookURL\)/, "Published PDFs open from the synced copy");
+console.log("iOS thread outputs tests passed");
