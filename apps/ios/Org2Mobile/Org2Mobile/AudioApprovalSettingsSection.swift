@@ -13,6 +13,9 @@ struct AudioApprovalSettingsSection: View {
         get: { audio.isEnabled },
         set: { audio.setEnabled($0) }
       ))
+      if audio.isEnabled || !audio.replyHistory.isEmpty {
+        NavigationLink("Reply and decision history") { AudioApprovalHistoryView() }
+      }
       if audio.isEnabled {
         if audio.channelJoined {
           Button("Leave approvals channel", role: .destructive) { audio.leave() }
@@ -85,4 +88,93 @@ struct AudioApprovalSettingsSection: View {
     }
   }
   #endif
+}
+
+/// Available directly from Approvals as well as Settings, even after the audio feature is off.
+struct AudioApprovalFeedbackSection: View {
+  @EnvironmentObject private var audio: AudioApprovalController
+  @EnvironmentObject private var remote: MobileRemoteStore
+
+  var body: some View {
+    if audio.isEnabled || !audio.replyHistory.isEmpty || !remote.approvalHistory.isEmpty {
+      Section("Audio replies") {
+        if audio.isEnabled {
+          Text(audio.phase).font(.subheadline)
+          if let prompt = audio.promptText {
+            Text(prompt).font(.footnote).foregroundStyle(.secondary)
+          }
+        }
+        if let latest = audio.replyHistory.first {
+          AudioApprovalReplyRow(record: latest)
+        } else if let result = audio.acknowledgement {
+          Text(result).font(.subheadline)
+        }
+        NavigationLink("Reply and decision history") { AudioApprovalHistoryView() }
+      }
+    }
+  }
+}
+
+private struct AudioApprovalReplyRow: View {
+  let record: AudioApprovalReplyRecord
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text(record.title).font(.headline)
+      Text(record.createdAt.formatted(date: .abbreviated, time: .standard))
+        .font(.caption).foregroundStyle(.secondary)
+      if let transcript = record.transcript {
+        Text(transcript.isEmpty ? "Heard: no speech recognized" : "Heard: “\(transcript)”")
+        if let interpretation = record.interpretation { Text("Interpreted as: \(interpretation)") }
+      } else {
+        Text("No speech was transcribed.").foregroundStyle(.secondary)
+      }
+      Text(record.outcome).font(.subheadline)
+      if let target = record.target {
+        Text("Run: \(target.runID)\nRequest: \(target.approvalID)")
+          .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+      }
+    }
+    .padding(.vertical, 4)
+    .textSelection(.enabled)
+  }
+}
+
+struct AudioApprovalHistoryView: View {
+  @EnvironmentObject private var audio: AudioApprovalController
+  @EnvironmentObject private var remote: MobileRemoteStore
+
+  var body: some View {
+    List {
+      Section {
+        if audio.replyHistory.isEmpty {
+          Text("No spoken replies recorded on this phone yet.").foregroundStyle(.secondary)
+        }
+        ForEach(audio.replyHistory) { record in AudioApprovalReplyRow(record: record) }
+      } header: {
+        Text("Spoken replies on this phone")
+      } footer: {
+        Text("The latest 50 attempts are kept on this phone for this Mac. An interpretation is only a request; the result tells you whether the Mac confirmed it.")
+      }
+      Section("Recorded decisions on the Mac") {
+        if remote.approvalHistory.isEmpty {
+          Text("No recorded decisions returned by this Mac yet.").foregroundStyle(.secondary)
+        }
+        ForEach(remote.approvalHistory) { item in
+          VStack(alignment: .leading, spacing: 6) {
+            Text(item.title).font(.headline)
+            Text("\(item.status.capitalized) by \(item.decidedBy ?? "Unknown actor")")
+            if let date = item.decidedAt { Text(date).font(.caption).foregroundStyle(.secondary) }
+            if let note = item.decisionNote { Text(note).font(.subheadline) }
+            Text("Run: \(item.runID)\nRequest: \(item.approvalID)")
+              .font(.caption).foregroundStyle(.secondary)
+          }
+          .textSelection(.enabled)
+        }
+      }
+    }
+    .navigationTitle("Reply history")
+    .refreshable { await remote.refreshWorkspace(reportsErrors: false) }
+    .task { await remote.refreshWorkspace(reportsErrors: false) }
+  }
 }

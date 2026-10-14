@@ -42,7 +42,7 @@ enum AudioApprovalError: LocalizedError {
 }
 
 /// The exact identity a spoken decision is bound to.
-struct AudioApprovalTarget: Hashable, Sendable {
+struct AudioApprovalTarget: Codable, Hashable, Sendable {
   let runID: String
   let approvalID: String
   let fingerprint: String
@@ -50,6 +50,67 @@ struct AudioApprovalTarget: Hashable, Sendable {
   /// Stable per-prompt key. Matches the Mac host's prompt key.
   var promptKey: String {
     "\(runID)|\(approvalID)|\(fingerprint)"
+  }
+}
+
+/// Recognition and server acceptance are separate facts. This local receipt never authorizes work.
+struct AudioApprovalReplyRecord: Codable, Equatable, Identifiable, Sendable {
+  let id: UUID
+  let createdAt: Date
+  let title: String
+  let target: AudioApprovalTarget?
+  var transcript: String?
+  var interpretation: String?
+  var outcome: String
+}
+
+/// Speech synthesis can finish before its buffered audio has reached the headset.
+/// Every callback is scoped to one playback so canceled speech cannot finish its replacement.
+struct AudioSpeechPlaybackProgress {
+  private(set) var id: UUID?
+  private var pendingBuffers = 0
+  private var renderingEnded = false
+
+  mutating func start(_ id: UUID) {
+    self.id = id
+    pendingBuffers = 0
+    renderingEnded = false
+  }
+
+  mutating func stop() { id = nil; pendingBuffers = 0; renderingEnded = false }
+
+  mutating func enqueued(_ id: UUID) {
+    guard self.id == id else { return }
+    pendingBuffers += 1
+  }
+
+  mutating func played(_ id: UUID) -> Bool {
+    guard self.id == id, pendingBuffers > 0 else { return false }
+    pendingBuffers -= 1
+    return renderingEnded && pendingBuffers == 0
+  }
+
+  mutating func renderingFinished(_ id: UUID) -> Bool {
+    guard self.id == id else { return false }
+    renderingEnded = true
+    return pendingBuffers == 0
+  }
+}
+
+/// Synthesis callbacks cross into the main actor asynchronously; preserve their audio order.
+struct AudioSpeechBufferOrdering<Value> {
+  private var nextIndex = 0
+  private var waiting: [Int: Value] = [:]
+
+  mutating func insert(_ value: Value, at index: Int) -> [Value] {
+    guard index >= nextIndex else { return [] }
+    waiting[index] = value
+    var ready: [Value] = []
+    while let value = waiting.removeValue(forKey: nextIndex) {
+      ready.append(value)
+      nextIndex += 1
+    }
+    return ready
   }
 }
 
@@ -337,6 +398,8 @@ struct AudioApprovalSession: Sendable, Equatable {
   private(set) var snoozedUntil: [String: Date] = [:]
   private(set) var status = "Off"
   private(set) var lastAcknowledgement: String?
+  private(set) var replyHistory: [AudioApprovalReplyRecord] = []
+  private var currentReplyID: UUID?
   /// A prompt pushed while another was being answered. Taken up once the answer ends.
   private(set) var deferredPush: AudioApprovalTarget?
   /// The person is holding the Push to Talk button.
@@ -346,6 +409,7 @@ struct AudioApprovalSession: Sendable, Equatable {
   private var clock = Date.distantPast
   private var scheduledTick: Date?
   private var headsetRouteSettleUntil: Date?
+  private var captureEndDeadline: Date?
 
   private let makeReceipt: @Sendable () -> String
 
@@ -471,6 +535,7 @@ struct AudioApprovalSession: Sendable, Equatable {
       if capture == .awaitingSession {
         capture = .capturing
         status = "Listening for your reply…"
+        updateReply(outcome: status)
         return [.startCapture]
       }
       guard playback == .idle, capture == .idle else { return [] }
@@ -489,10 +554,20 @@ struct AudioApprovalSession: Sendable, Equatable {
       if case .speaking(let kind) = playback {
         playback = .idle
         effects.append(.stopSpeaking)
-        if kind == .prompt { clearHeard() }
+        if kind == .prompt {
+          clearHeard()
+          status = "The prompt did not finish playing. Replay it before answering."
+        } else {
+          status = "Audio ended. See the reply result in Approvals."
+        }
       }
-      if capture == .capturing || capture == .awaitingSession {
-        // The session ended without the transmission ending normally.
+      if capture == .capturing {
+        // didDeactivate and didEndTransmitting may arrive in either order. Keep recognition
+        // alive briefly for the normal button-release event; the mic is already stopped by iOS.
+        captureEndDeadline = clock.addingTimeInterval(0.5)
+        effects.append(.scheduleTick(after: 0.5))
+      } else if capture == .awaitingSession {
+        // The session ended before the microphone could start.
         capture = .idle
         effects.append(.cancelCapture)
         effects += terminal("Audio ended during your reply. Nothing was decided.")
@@ -533,6 +608,13 @@ struct AudioApprovalSession: Sendable, Equatable {
         return []
       }
       transmitting = true
+      let record = AudioApprovalReplyRecord(
+        id: UUID(), createdAt: now, title: active?.title ?? "No active approval",
+        target: active?.target, outcome: "Waiting for the microphone…"
+      )
+      currentReplyID = record.id
+      replyHistory.insert(record, at: 0)
+      replyHistory = Array(replyHistory.prefix(50))
       pendingTransmitNotice = nil
       guard !isQuiet(at: now) else {
         return reject("Quiet is on. Nothing was decided.")
@@ -556,6 +638,7 @@ struct AudioApprovalSession: Sendable, Equatable {
       if sessionActive {
         capture = .capturing
         status = "Listening for your reply…"
+        updateReply(outcome: status)
         effects.append(.startCapture)
       } else {
         capture = .awaitingSession
@@ -564,6 +647,7 @@ struct AudioApprovalSession: Sendable, Equatable {
       return effects
 
     case .transmitEnded(_, let interrupted):
+      captureEndDeadline = nil
       transmitting = false
       switch capture {
       case .capturing:
@@ -573,6 +657,7 @@ struct AudioApprovalSession: Sendable, Equatable {
         }
         capture = .finishing
         status = "Understanding your reply…"
+        updateReply(outcome: status)
         return [.finishCapture]
       case .awaitingSession:
         capture = .idle
@@ -588,6 +673,12 @@ struct AudioApprovalSession: Sendable, Equatable {
       return terminal("Reply not captured: \(message) Nothing was decided.", spoken: "I couldn't hear your reply. Nothing was decided.")
 
     case .tick(let now):
+      if let due = captureEndDeadline, now >= due, capture == .capturing {
+        captureEndDeadline = nil
+        capture = .idle
+        transmitting = false
+        return [.cancelCapture] + terminal("Audio ended during your reply. Nothing was decided.")
+      }
       if let due = headsetRouteSettleUntil, now >= due {
         headsetRouteSettleUntil = nil
         status = "Held (no-headset). The prompt is kept; nothing was played on another output."
@@ -615,6 +706,7 @@ struct AudioApprovalSession: Sendable, Equatable {
       guard wasBusy || active != nil else { return effects }
       effects.append(.releaseAudioSession)
       status = "Headset disconnected. The prompt is kept; nothing moved to the speaker and nothing was decided."
+      updateReply(outcome: status)
       return effects
 
     case .interrupted:
@@ -622,7 +714,10 @@ struct AudioApprovalSession: Sendable, Equatable {
       var effects = abandonTransientAudio()
       effects.append(.releaseAudioSession)
       status = "Audio was interrupted. Nothing was decided; play the prompt again when ready."
-      if wasReplying { lastAcknowledgement = "Audio was interrupted during your reply. Nothing was decided." }
+      if wasReplying {
+        lastAcknowledgement = "Audio was interrupted during your reply. Nothing was decided."
+        updateReply(outcome: lastAcknowledgement!)
+      }
       return effects
 
     case .decisionSucceeded(let target, let outcome):
@@ -631,6 +726,7 @@ struct AudioApprovalSession: Sendable, Equatable {
       let text = AudioApprovalSpeech.acknowledgement(outcome)
       answered[target.promptKey] = text
       lastAcknowledgement = text
+      updateReply(outcome: text)
       if active?.target == target {
         active = nil
         activeReceipt = nil
@@ -647,11 +743,22 @@ struct AudioApprovalSession: Sendable, Equatable {
       let text = "Not applied. \(message) Nothing was changed."
       lastAcknowledgement = text
       status = "Decision not applied."
+      updateReply(outcome: text)
       return queueSpeech("Not applied. Nothing was changed.", .acknowledgement)
     }
   }
 
   // MARK: Internals
+
+  mutating func restoreReplyHistory(_ history: [AudioApprovalReplyRecord]) {
+    replyHistory = Array(history.prefix(50))
+    currentReplyID = nil
+  }
+
+  private mutating func updateReply(outcome: String) {
+    guard let index = replyHistory.firstIndex(where: { $0.id == currentReplyID }) else { return }
+    replyHistory[index].outcome = outcome
+  }
 
   /// Switches to a pushed prompt. An earlier prompt that was heard but left unanswered past the
   /// grace window stays pending on the Mac and in the list; it does not block newer prompts.
@@ -672,6 +779,7 @@ struct AudioApprovalSession: Sendable, Equatable {
   private mutating func reject(_ text: String) -> [AudioApprovalEffect] {
     status = text
     lastAcknowledgement = text
+    updateReply(outcome: text)
     pendingTransmitNotice = (text, text)
     return []
   }
@@ -680,6 +788,7 @@ struct AudioApprovalSession: Sendable, Equatable {
   private mutating func terminal(_ text: String, spoken: String? = nil) -> [AudioApprovalEffect] {
     status = text
     lastAcknowledgement = text
+    updateReply(outcome: text)
     if transmitting {
       pendingTransmitNotice = (text, spoken ?? text)
       return []
@@ -691,14 +800,29 @@ struct AudioApprovalSession: Sendable, Equatable {
     guard let active, let target = active.target, heardTarget == target else {
       return terminal("The prompt changed while you spoke. Nothing was decided.")
     }
-    switch AudioSpokenReplyParser.intent(for: transcript) {
+    let intent = AudioSpokenReplyParser.intent(for: transcript)
+    if let index = replyHistory.firstIndex(where: { $0.id == currentReplyID }) {
+      replyHistory[index].transcript = transcript
+      replyHistory[index].interpretation = switch intent {
+      case .approve: "Approve"
+      case .reject: "Reject"
+      case .why: "Explain"
+      case .read: "Read details"
+      case .snooze: "Snooze for 30 minutes"
+      case .unclear: "Not understood"
+      }
+    }
+    switch intent {
     case .unclear:
       lastAcknowledgement = "Did not understand. Nothing was decided."
+      updateReply(outcome: lastAcknowledgement!)
       heardAt = now
       return queueSpeech("Sorry, I didn't catch that. Nothing was decided. Say yes, no, why, or later.", .info)
     case .why:
+      updateReply(outcome: "Explanation requested. Nothing was decided.")
       return queueSpeech(AudioApprovalSpeech.why(for: active), .info)
     case .read:
+      updateReply(outcome: "Details requested. Nothing was decided.")
       return queueSpeech(AudioApprovalSpeech.read(for: active), .info)
     case .snooze:
       let until = now.addingTimeInterval(AudioApprovalFeature.snoozeInterval)
@@ -708,6 +832,7 @@ struct AudioApprovalSession: Sendable, Equatable {
       if pushedTarget == target { pushedTarget = nil }
       clearHeard()
       lastAcknowledgement = "Snoozed for 30 minutes. Nothing was decided."
+      updateReply(outcome: lastAcknowledgement!)
       status = "Snoozed this prompt."
       return [.sendSnooze(target, until: until)] + queueSpeech("Okay, later.", .acknowledgement)
     case .approve, .reject:
@@ -720,6 +845,7 @@ struct AudioApprovalSession: Sendable, Equatable {
       activeReceipt = receipt
       deciding = target
       status = "Sending the decision to the Mac…"
+      updateReply(outcome: "Sending to the Mac…")
       // The Mac requires a reason to reject. Record the fact of a spoken "no" rather than inventing one.
       let note = decision == "rejected" ? "Rejected by spoken reply (walkie-talkie approval)." : nil
       return [.sendDecision(active, decision: decision, note: note, receipt: receipt)]
@@ -830,6 +956,7 @@ struct AudioApprovalSession: Sendable, Equatable {
 
   private mutating func abandonTransientAudio() -> [AudioApprovalEffect] {
     headsetRouteSettleUntil = nil
+    captureEndDeadline = nil
     var effects: [AudioApprovalEffect] = []
     if playback != .idle {
       playback = .idle

@@ -3,43 +3,17 @@ import CallKit
 import Combine
 import Foundation
 
-/// Speech completion callback. Delegate calls arrive on AVFoundation threads.
-final class AudioApprovalSpeechDelegate: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
-  private let finished: @MainActor @Sendable (_ completed: Bool) -> Void
-  private let progressed: @MainActor @Sendable () -> Void
+/// AVFoundation delivers synthesis buffers off the main actor. A buffer is transferred once
+/// to the playback queue and is immutable thereafter.
+private final class AudioApprovalSpeechBuffer: @unchecked Sendable {
+  let pcm: AVAudioPCMBuffer
+  init(_ pcm: AVAudioPCMBuffer) { self.pcm = pcm }
+}
 
-  init(
-    finished: @escaping @MainActor @Sendable (_ completed: Bool) -> Void,
-    progressed: @escaping @MainActor @Sendable () -> Void
-  ) {
-    self.finished = finished
-    self.progressed = progressed
-    super.init()
-  }
-
-  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
-    let progressed = self.progressed
-    Task { @MainActor in progressed() }
-  }
-
-  func speechSynthesizer(
-    _ synthesizer: AVSpeechSynthesizer,
-    willSpeakRangeOfSpeechString characterRange: NSRange,
-    utterance: AVSpeechUtterance
-  ) {
-    let progressed = self.progressed
-    Task { @MainActor in progressed() }
-  }
-
-  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-    let finished = self.finished
-    Task { @MainActor in finished(true) }
-  }
-
-  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-    let finished = self.finished
-    Task { @MainActor in finished(false) }
-  }
+private final class AudioApprovalSpeechSequence: @unchecked Sendable {
+  private let lock = NSLock()
+  private var nextIndex = 0
+  func take() -> Int { lock.withLock { defer { nextIndex += 1 }; return nextIndex } }
 }
 
 /// Runs walkie-talkie audio approvals on the phone.
@@ -58,6 +32,7 @@ final class AudioApprovalController: ObservableObject {
   @Published private(set) var phase = "Off"
   @Published private(set) var promptText: String?
   @Published private(set) var acknowledgement: String?
+  @Published private(set) var replyHistory: [AudioApprovalReplyRecord] = []
   @Published private(set) var registrationText = "Not registered with the Mac"
   @Published private(set) var pushToTalkAvailable = false
   #if DEBUG
@@ -70,9 +45,14 @@ final class AudioApprovalController: ObservableObject {
   private weak var remote: MobileRemoteStore?
   private var bridge: AudioApprovalPushToTalkBridge?
   private var session = AudioApprovalSession()
-  private var speechDelegate: AudioApprovalSpeechDelegate?
+  private var speechProgress = AudioSpeechPlaybackProgress()
+  private var speechBuffers = AudioSpeechBufferOrdering<AudioApprovalSpeechBuffer>()
+  private var speechEngine: AVAudioEngine?
+  private var speechPlayer: AVAudioPlayerNode?
+  private var historyKey: String?
+  private var historySubscription: AnyCancellable?
   private var speechWatchdog: Task<Void, Never>?
-  private let synthesizer = AVSpeechSynthesizer()
+  private var synthesizer: AVSpeechSynthesizer?
   private let callObserver = CXCallObserver()
   private let transcriber = MobileVoiceTranscriber()
   private var observers: [NSObjectProtocol] = []
@@ -83,7 +63,6 @@ final class AudioApprovalController: ObservableObject {
   init() {
     let stored = UserDefaults.standard.object(forKey: AudioApprovalFeature.quietUntilDefaultsKey) as? Date
     quietUntil = stored.flatMap { $0 > Date() ? $0 : nil }
-    synthesizer.usesApplicationAudioSession = true
   }
 
   var isQuiet: Bool { (quietUntil ?? .distantPast) > Date() }
@@ -91,6 +70,9 @@ final class AudioApprovalController: ObservableObject {
   /// Called once from the app root. Creates nothing unless the person turned the feature on.
   func attach(remote: MobileRemoteStore) {
     self.remote = remote
+    historySubscription = remote.$activeHostID.removeDuplicates().sink { [weak self] hostID in
+      self?.loadReplyHistory(hostID: hostID)
+    }
     approvalsSubscription = remote.$workspaceApprovals
       .receive(on: DispatchQueue.main)
       .sink { [weak self] approvals in
@@ -107,7 +89,17 @@ final class AudioApprovalController: ObservableObject {
     isEnabled = enabled
     UserDefaults.standard.set(enabled, forKey: AudioApprovalFeature.defaultsKey)
     if enabled {
-      startPushToTalk()
+      phase = "Checking microphone and speech permissions…"
+      Task {
+        let allowed = await transcriber.preparePermissions()
+        guard isEnabled else { return }
+        if allowed {
+          startPushToTalk()
+        } else {
+          setEnabled(false)
+          phase = transcriber.errorMessage ?? "Microphone and Speech Recognition permissions are required."
+        }
+      }
     } else {
       leave()
       phase = "Off"
@@ -117,8 +109,15 @@ final class AudioApprovalController: ObservableObject {
   func join() {
     guard isEnabled else { return }
     guard let bridge else { return startPushToTalk() }
-    phase = "Joining the approvals channel…"
-    bridge.join()
+    phase = "Checking microphone and speech permissions…"
+    Task {
+      guard await transcriber.preparePermissions(), isEnabled else {
+        phase = transcriber.errorMessage ?? "Audio approvals are off."
+        return
+      }
+      phase = "Joining the approvals channel…"
+      bridge.join()
+    }
   }
 
   func leave() {
@@ -236,6 +235,12 @@ final class AudioApprovalController: ObservableObject {
     phase = session.status
     promptText = session.active.map(AudioApprovalSpeech.prompt(for:))
     acknowledgement = session.lastAcknowledgement
+    if replyHistory != session.replyHistory {
+      replyHistory = session.replyHistory
+      if let historyKey, let data = try? JSONEncoder().encode(replyHistory) {
+        UserDefaults.standard.set(data, forKey: historyKey)
+      }
+    }
   }
 
   private func perform(_ effect: AudioApprovalEffect) {
@@ -250,8 +255,7 @@ final class AudioApprovalController: ObservableObject {
     case .speak(let text, let kind):
       speak(text, kind: kind)
     case .stopSpeaking:
-      cancelSpeechWatchdog()
-      if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
+      stopSpeech()
     case .startCapture:
       Task {
         await transcriber.start(managesAudioSession: false)
@@ -297,18 +301,118 @@ final class AudioApprovalController: ObservableObject {
       // Report an incomplete playback: a prompt that was not heard cannot be answered.
       send(.playbackFinished(completed: false, now: Date()))
     case .play:
-      let delegate = AudioApprovalSpeechDelegate(
-        finished: { [weak self] completed in
-          self?.cancelSpeechWatchdog()
-          self?.send(.playbackFinished(completed: completed, now: Date()))
-        },
-        progressed: { [weak self] in self?.armSpeechWatchdog() }
-      )
-      speechDelegate = delegate
-      synthesizer.delegate = delegate
+      stopSpeech()
+      let playbackID = UUID()
+      speechProgress.start(playbackID)
+      let synthesizer = AVSpeechSynthesizer()
+      synthesizer.usesApplicationAudioSession = true
+      self.synthesizer = synthesizer
       armSpeechWatchdog()
-      synthesizer.speak(AVSpeechUtterance(string: text))
+      // Generate PCM locally; play it on our own engine in the PTT-owned session. Direct
+      // synthesizer playback can stop when backgrounded without a finish/cancel callback.
+      // Generation completion is not playback completion: the last buffer must be heard.
+      let sequence = AudioApprovalSpeechSequence()
+      synthesizer.write(AVSpeechUtterance(string: text)) { @Sendable [weak self] buffer in
+        guard let pcm = buffer as? AVAudioPCMBuffer else { return }
+        let index = sequence.take()
+        let transferred = AudioApprovalSpeechBuffer(pcm)
+        Task { @MainActor [weak self] in
+          guard let self, self.speechProgress.id == playbackID else { return }
+          for ordered in self.speechBuffers.insert(transferred, at: index) {
+            self.playSpeechBuffer(ordered.pcm, playbackID: playbackID)
+          }
+        }
+      }
     }
+  }
+
+  private func playSpeechBuffer(_ buffer: AVAudioPCMBuffer, playbackID: UUID) {
+    guard speechProgress.id == playbackID else { return }
+    if buffer.frameLength == 0 {
+      if speechProgress.renderingFinished(playbackID) { completeSpeech(playbackID) }
+      return
+    }
+    // Recheck the private output for every buffer, including background route transitions.
+    guard case .play = planAudioPlayback(quiet: isQuiet, snapshot: currentRouteSnapshot()) else {
+      stopSpeech()
+      send(.playbackFinished(completed: false, now: Date()))
+      return
+    }
+    do {
+      if speechEngine == nil {
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: buffer.format)
+        speechEngine = engine
+        speechPlayer = player
+        engine.prepare()
+        try engine.start()
+      }
+      guard let player = speechPlayer else { return }
+      speechProgress.enqueued(playbackID)
+      player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { @Sendable [weak self] _ in
+        Task { @MainActor [weak self] in
+          guard let self, self.speechProgress.id == playbackID else { return }
+          if self.speechProgress.played(playbackID) {
+            self.completeSpeech(playbackID)
+          } else {
+            self.armSpeechWatchdog()
+          }
+        }
+      }
+      if !player.isPlaying { player.play() }
+    } catch {
+      stopSpeech()
+      send(.playbackFinished(completed: false, now: Date()))
+    }
+  }
+
+  private func completeSpeech(_ playbackID: UUID) {
+    guard speechProgress.id == playbackID else { return }
+    stopSpeech()
+    send(.playbackFinished(completed: true, now: Date()))
+  }
+
+  private func stopSpeech() {
+    // Invalidate before stopping: queued callbacks from canceled audio are ignored.
+    speechProgress.stop()
+    speechBuffers = AudioSpeechBufferOrdering()
+    cancelSpeechWatchdog()
+    synthesizer?.stopSpeaking(at: .immediate)
+    synthesizer = nil
+    speechPlayer?.stop()
+    speechEngine?.stop()
+    speechPlayer = nil
+    speechEngine = nil
+  }
+
+  private func loadReplyHistory(hostID: UUID?) {
+    let key = "celorga.audioApprovals.replyHistory.\(hostID?.uuidString ?? "local")"
+    guard key != historyKey else { return }
+    // A host switch invalidates the current prompt and its in-flight answer.
+    if historyKey != nil {
+      stopSpeech()
+      transcriber.cancel()
+      session = AudioApprovalSession()
+      _ = session.handle(.enrollmentChanged(joined: channelJoined))
+      _ = session.handle(.quietChanged(until: quietUntil, now: Date()))
+    }
+    historyKey = key
+    replyHistory = []
+    let stored = UserDefaults.standard.data(forKey: key)
+      .flatMap { try? JSONDecoder().decode([AudioApprovalReplyRecord].self, from: $0) } ?? []
+    // A crash or suspension must not leave an old attempt indefinitely saying "Sending".
+    let restored = stored.map { record in
+      var record = record
+      if record.outcome == "Sending to the Mac…" || record.outcome == "Listening for your reply…"
+        || record.outcome == "Waiting for the microphone…" || record.outcome == "Understanding your reply…" {
+        record.outcome = "No confirmation received. Check the approval's current status before retrying."
+      }
+      return record
+    }
+    session.restoreReplyHistory(restored)
+    publish()
   }
 
   /// AVSpeechSynthesizer can stop producing audible output under a Push to Talk session without
@@ -343,7 +447,9 @@ final class AudioApprovalController: ObservableObject {
         let snapshot = try await remote.decideApprovalExactly(entry, decision: decision, note: note, receipt: receipt)
         if let hostReceipt = snapshot.approvalDecisionReceipt,
            hostReceipt.runID == target.runID,
-           hostReceipt.approvalID == target.approvalID {
+           hostReceipt.approvalID == target.approvalID,
+           hostReceipt.receipt == receipt,
+           hostReceipt.decision == decision {
           send(.decisionSucceeded(target, AudioDecisionOutcome(
             decision: hostReceipt.decision,
             runStatus: hostReceipt.runStatus,
@@ -351,13 +457,10 @@ final class AudioApprovalController: ObservableObject {
             continuation: hostReceipt.continuation,
             duplicate: hostReceipt.duplicate ?? false
           )))
-        } else if snapshot.approvals.contains(where: { $0.approvalID == target.approvalID && $0.status == "pending" }) {
-          send(.decisionFailed(target, "The Mac did not confirm the decision."))
         } else {
-          // An older Mac without receipts: the approval left the pending queue.
-          send(.decisionSucceeded(target, AudioDecisionOutcome(
-            decision: decision, runStatus: "unknown", pendingApprovalCount: 0, continuation: "recorded", duplicate: false
-          )))
+          // Leaving the queue can also mean a cancellation elsewhere. Only our exact host
+          // receipt confirms this reply; disappearance must never be announced as approval.
+          send(.decisionFailed(target, "The Mac did not return a matching decision receipt. Check the request's status before retrying."))
         }
       } catch {
         send(.decisionFailed(target, error.localizedDescription))

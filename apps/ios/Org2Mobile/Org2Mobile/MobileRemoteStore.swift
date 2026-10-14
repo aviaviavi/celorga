@@ -37,6 +37,7 @@ final class MobileRemoteStore: ObservableObject {
   @Published private(set) var isLoadingExternalThread = false
   @Published private(set) var workspaceAgenda: [AgendaEntry] = []
   @Published private(set) var workspaceApprovals: [ApprovalEntry] = []
+  @Published private(set) var approvalHistory: [MobileRemoteApprovalHistoryItem] = []
   @Published private(set) var workspaceWorkflows: [MobileRemoteWorkflowItem] = []
   @Published private(set) var workspaceUpdatedAt: Date?
   @Published private(set) var workspaceConnectionError: String?
@@ -313,6 +314,7 @@ final class MobileRemoteStore: ObservableObject {
     externalThreadDetailCacheOrder.removeAll()
     workspaceAgenda = []
     workspaceApprovals = []
+    approvalHistory = []
     workspaceWorkflows = []
     workspaceUpdatedAt = nil
     workspaceConnectionError = nil
@@ -593,6 +595,7 @@ final class MobileRemoteStore: ObservableObject {
   private func apply(_ snapshot: MobileRemoteWorkspaceSnapshot) {
     workspaceAgenda = snapshot.agenda.map(\.localEntry)
     workspaceApprovals = snapshot.approvals.map(\.localEntry)
+    approvalHistory = snapshot.approvalHistory ?? []
     workspaceWorkflows = snapshot.workflows
     workspaceUpdatedAt = snapshot.updatedAt
   }

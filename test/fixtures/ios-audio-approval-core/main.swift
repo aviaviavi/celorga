@@ -432,5 +432,66 @@ expect(AudioApprovalSpeech.acknowledgement(AudioDecisionOutcome(decision: "appro
 expect(AudioApprovalSpeech.acknowledgement(AudioDecisionOutcome(decision: "rejected", runStatus: "running", pendingApprovalCount: 0, continuation: "recorded", duplicate: true))
   == "That was already recorded: rejected.", "a replay is announced as a duplicate")
 
+// Reply feedback survives failed capture and records interpretation separately from host acceptance.
+do {
+  var session = joinedSession()
+  heardAndCapturing(&session)
+  _ = session.handle(.transmitEnded(initiated: true, interrupted: false))
+  _ = session.handle(.transcriptReady("yes", now: t0.addingTimeInterval(6)))
+  expect(session.replyHistory.first?.transcript == "yes", "feedback retains recognized speech")
+  expect(session.replyHistory.first?.interpretation == "Approve", "feedback shows the parsed command")
+  expect(session.replyHistory.first?.outcome == "Sending to the Mac…", "local recognition is not host acceptance")
+  _ = session.handle(.decisionFailed(targetA, "Mac unreachable"))
+  expect(session.replyHistory.first?.outcome.contains("Mac unreachable") == true, "failed submission remains inspectable")
+  let restored = try! JSONDecoder().decode([AudioApprovalReplyRecord].self, from: JSONEncoder().encode(session.replyHistory))
+  expect(restored == session.replyHistory, "reply history persists across app launches")
+}
+do {
+  var session = joinedSession()
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  _ = session.handle(.playRequested(now: t0))
+  _ = session.handle(.sessionActivated(headset, now: t0))
+  _ = session.handle(.sessionDeactivated)
+  expect(session.status.contains("did not finish"), "background session loss must not leave UI saying playing")
+  _ = session.handle(.transmitBegan(initiated: true, now: t0.addingTimeInterval(2)))
+  expect(session.replyHistory.first?.outcome.contains("Nothing was decided") == true, "reply after truncated playback gets visible feedback")
+  expect(session.replyHistory.first?.interpretation == nil, "uncaptured speech is never claimed interpreted")
+}
+// PTT may deactivate the session before reporting the normal button release.
+do {
+  var session = joinedSession()
+  heardAndCapturing(&session)
+  _ = session.handle(.sessionDeactivated)
+  expect(session.capture == .capturing, "deactivation waits briefly for the transmission-end callback")
+  _ = session.handle(.transmitEnded(initiated: true, interrupted: false))
+  let result = decisions(session.handle(.transcriptReady("yes", now: t0.addingTimeInterval(6))))
+  expect(result.first?.1 == "approved", "normal button release survives reversed framework callback order")
+}
+// Dispatching buffer callbacks to an actor must not reorder audio or deliver EOF early.
+do {
+  var ordering = AudioSpeechBufferOrdering<String>()
+  expect(ordering.insert("EOF", at: 2).isEmpty, "EOF waits for earlier buffers")
+  expect(ordering.insert("second", at: 1).isEmpty, "later buffers wait for their predecessors")
+  expect(ordering.insert("first", at: 0) == ["first", "second", "EOF"], "audio drains in synthesis order")
+  expect(ordering.insert("duplicate", at: 0).isEmpty, "late duplicates cannot replay old audio")
+}
+// Generation ending does not mean the queued audio has finished playing.
+do {
+  var progress = AudioSpeechPlaybackProgress()
+  let first = UUID(), second = UUID()
+  progress.start(first)
+  progress.enqueued(first)
+  progress.enqueued(first)
+  expect(!progress.renderingFinished(first), "speech rendering cannot release receive mode early")
+  expect(!progress.played(first), "first audio buffer cannot finish a longer prompt")
+  expect(progress.played(first), "completion waits for the last audible buffer")
+  progress.start(second)
+  progress.enqueued(second)
+  expect(!progress.played(first), "late callback from stopped speech cannot finish its replacement")
+  expect(!progress.renderingFinished(first), "late generator cannot release a newer audio session")
+  expect(!progress.played(second), "drained audio waits for rendering EOF")
+  expect(progress.renderingFinished(second), "EOF completes an already drained utterance")
+}
+
 print("ios audio approval core: \(checks - failures)/\(checks) checks passed")
 exit(failures == 0 ? 0 : 1)

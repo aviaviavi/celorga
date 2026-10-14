@@ -46,6 +46,31 @@ final class AudioApprovalHostTests: XCTestCase {
     super.tearDown()
   }
 
+  func testHistoryShowsCanonicalActorAndReasonAndExcludesPending() throws {
+    let json = """
+    {"id":"run-test","title":"Test","goal":"Test","status":"waiting-approval",
+     "acceptanceCriteria":[],"riskClass":"read-only","capabilities":[],"context":[],
+     "plan":[],"artifacts":[],"validations":[],"comments":[],"events":[],
+     "createdAt":"2026-10-14T00:00:00Z","updatedAt":"2026-10-14T01:00:00Z",
+     "approvals":[
+       {"id":"old","title":"Old test","action":"test","riskClass":"read-only",
+        "status":"canceled","requestedAt":"2026-10-14T00:00:00Z",
+        "decidedAt":"2026-10-14T01:00:00Z","decidedBy":"Codex","decisionNote":"Superseded test"},
+       {"id":"new","title":"Current test","action":"test","riskClass":"read-only",
+        "status":"pending","requestedAt":"2026-10-14T01:00:00Z"}]}
+    """
+    let run = try JSONDecoder().decode(AgentRunItem.self, from: Data(json.utf8))
+    let history = WorkspaceStore.mobileRemoteApprovalHistory(from: [run])
+    XCTAssertEqual(history.count, 1)
+    XCTAssertEqual(history.first?.status, "canceled")
+    XCTAssertEqual(history.first?.decidedBy, "Codex")
+    XCTAssertEqual(history.first?.decisionNote, "Superseded test")
+    XCTAssertEqual(history.first?.runID, "run-test")
+    let oldSnapshot = Data(#"{"updatedAt":0,"agenda":[],"approvals":[],"workflows":[]}"#.utf8)
+    XCTAssertNil(try JSONDecoder().decode(MobileRemoteWorkspaceSnapshot.self, from: oldSnapshot).approvalHistory,
+                 "New phones remain compatible with hosts that do not return history")
+  }
+
   // MARK: APNs Push to Talk request
 
   func testPushToTalkRequestFollowsApplesHeadersAndCarriesIdentityOnly() async throws {

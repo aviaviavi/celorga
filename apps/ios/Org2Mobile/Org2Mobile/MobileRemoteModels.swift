@@ -357,6 +357,18 @@ struct MobileRemoteWorkspaceSnapshot: Codable, Hashable {
   let approvals: [MobileRemoteApprovalItem]
   let workflows: [MobileRemoteWorkflowItem]
   let approvalDecisionReceipt: MobileRemoteApprovalDecisionReceipt?
+  var approvalHistory: [MobileRemoteApprovalHistoryItem]? = nil
+}
+
+struct MobileRemoteApprovalHistoryItem: Codable, Hashable, Identifiable {
+  var id: String { "\(runID):\(approvalID)" }
+  let runID: String
+  let approvalID: String
+  let title: String
+  let status: String
+  let decidedAt: String?
+  let decidedBy: String?
+  let decisionNote: String?
 }
 
 struct MobileRemoteApprovalDecisionReceipt: Codable, Hashable {

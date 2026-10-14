@@ -141,4 +141,14 @@ assert.match(core, /if leftUrgent != rightUrgent \{ return leftUrgent \}/);
 assert.doesNotMatch(core, /A push must never complete a partial reply/);
 assert.match(core, /deferredPush = target/);
 
+assert.match(transcriber, /self\.managesAudioSession = managesAudioSession\s+reset\(cancelRecognition: true\)/,
+  "the PTT ownership policy must apply before reset can deactivate the shared session");
+assert.match(controller, /synthesizer\.write\(AVSpeechUtterance/, "speech is rendered to audio buffers");
+assert.match(controller, /completionCallbackType: \.dataPlayedBack/, "receive mode waits for audible playback completion");
+assert.doesNotMatch(controller, /synthesizer\.speak\(/, "the background speech path uses the PTT-owned player");
+assert.match(settings, /Heard:/);
+assert.match(settings, /Interpreted as:/);
+assert.match(settings, /Recorded decisions on the Mac/);
+assert.match(iosStore, /approvalHistory = snapshot\.approvalHistory \?\? \[\]/);
+
 console.log("ios audio approval contract tests passed");

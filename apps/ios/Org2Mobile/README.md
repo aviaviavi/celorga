@@ -84,3 +84,17 @@ The Files view warms one background document renderer unless Low Power Mode is a
 `node test/test-ios-transcript.mjs` exercises renderer reuse, source/workflow invalidation, cancellation, resource release, ordered cache persistence, and long-prose performance through the actual JavaScriptCore bridge.
 
 Chat renders labeled and bare Org entry links as tappable links. Stable `id:` links resolve within the selected synced corpus; `file:note.org::*Heading`, `::#CUSTOM_ID`, and `::42` select the entry from freshly read source. Missing or ambiguous entries show an error instead of opening the wrong section. Entry views include Open full note and Source. Internal links in rendered notes use the same reader and resolve file paths relative to the source note; external web links remain external.
+
+Spoken replies are visible directly in **Approvals → Reply and decision history** and in
+Settings → Audio approvals. The phone keeps the latest 50 reply attempts, scoped to the
+paired Mac, including recognized words, interpretation, and the host-confirmed result or
+failure. Incomplete prompts cannot authorize a reply; that failure is visible too. The
+history survives app relaunch and turning audio approvals off. Raw microphone audio is
+not retained. Canonical decisions supplied by an updated host show their actor and reason,
+so cancellations by an agent are not presented as the user's spoken decisions. Older hosts
+remain compatible but do not return the canonical decision-history section.
+
+Speech is synthesized into PCM buffers and played through an AVAudioEngine in the
+system-owned Push to Talk session. Receive mode ends only after the final audio buffer
+has played. Canceled playback callbacks cannot finish a newer prompt. Bluetooth uses HFP
+for both listening and replying; the app never activates or deactivates a PTT session.

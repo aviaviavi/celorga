@@ -506,6 +506,7 @@ private struct AgendaRow: View {
 private struct ApprovalsView: View {
   @EnvironmentObject private var store: CorpusStore
   @EnvironmentObject private var remote: MobileRemoteStore
+  @EnvironmentObject private var audio: AudioApprovalController
   @State private var selected: ApprovalEntry?
   @State private var shareText: String?
   @State private var approvingID: ApprovalEntry.ID?
@@ -517,57 +518,62 @@ private struct ApprovalsView: View {
 
   var body: some View {
     NavigationStack {
-      List(approvals) { item in
-        Button {
-          selected = item
-        } label: {
-          ApprovalRow(item: item, isApproving: approvingID == item.id)
-        }
-        .buttonStyle(.plain)
-        .swipeActions(edge: .leading) {
-          Button {
-            Task { await approve(item) }
-          } label: {
-            Label(approvingID == item.id ? "Approving" : "Approve", systemImage: approvingID == item.id ? "hourglass" : "checkmark")
-          }
-          .tint(.green)
-          .disabled(approvingID != nil)
-
-          Button(role: .destructive) {
-            rejection = item
-          } label: {
-            Label("Reject", systemImage: "xmark")
-          }
-          .disabled(approvingID != nil)
-        }
-        .swipeActions(edge: .trailing) {
-          Button {
-            openWhatsApp(text: item.whatsappText) {
-              shareText = item.whatsappText
+      List {
+        AudioApprovalFeedbackSection()
+        Section("Pending approvals") {
+          ForEach(approvals) { item in
+            Button {
+              selected = item
+            } label: {
+              ApprovalRow(item: item, isApproving: approvingID == item.id)
             }
-          } label: {
-            Label("WhatsApp", systemImage: "message")
-          }
-          .tint(.teal)
+            .buttonStyle(.plain)
+            .swipeActions(edge: .leading) {
+              Button {
+                Task { await approve(item) }
+              } label: {
+                Label(approvingID == item.id ? "Approving" : "Approve", systemImage: approvingID == item.id ? "hourglass" : "checkmark")
+              }
+              .tint(.green)
+              .disabled(approvingID != nil)
 
-          Button {
-            Task { await store.sendToAIChat(.discuss, approval: item) }
-          } label: {
-            Label("Discuss", systemImage: "paperplane")
+              Button(role: .destructive) {
+                rejection = item
+              } label: {
+                Label("Reject", systemImage: "xmark")
+              }
+              .disabled(approvingID != nil)
+            }
+            .swipeActions(edge: .trailing) {
+              Button {
+                openWhatsApp(text: item.whatsappText) {
+                  shareText = item.whatsappText
+                }
+              } label: {
+                Label("WhatsApp", systemImage: "message")
+              }
+              .tint(.teal)
+
+              Button {
+                Task { await store.sendToAIChat(.discuss, approval: item) }
+              } label: {
+                Label("Discuss", systemImage: "paperplane")
+              }
+              .tint(.blue)
+            }
           }
-          .tint(.blue)
         }
       }
       .overlay {
-        if approvals.isEmpty && isLoading {
+        if approvals.isEmpty && !audio.isEnabled && audio.replyHistory.isEmpty && remote.approvalHistory.isEmpty && isLoading {
           LoadingCorpusView()
-        } else if approvals.isEmpty, let connectionError = remoteWorkspaceError {
+        } else if approvals.isEmpty && !audio.isEnabled && audio.replyHistory.isEmpty && remote.approvalHistory.isEmpty, let connectionError = remoteWorkspaceError {
           ContentUnavailableView(
             "Approvals Unavailable",
             systemImage: "desktopcomputer.trianglebadge.exclamationmark",
             description: Text(connectionError)
           )
-        } else if approvals.isEmpty {
+        } else if approvals.isEmpty && !audio.isEnabled && audio.replyHistory.isEmpty && remote.approvalHistory.isEmpty {
           ContentUnavailableView("No Approvals", systemImage: "checkmark.seal")
         }
       }

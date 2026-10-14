@@ -39,6 +39,20 @@ final class MobileVoiceTranscriber: ObservableObject {
   /// deactivates it; this class must not.
   private var managesAudioSession = true
 
+  /// Audio approvals request these while Settings is onscreen, before a background reply.
+  func preparePermissions() async -> Bool {
+    guard await requestSpeechAuthorization() == .authorized else {
+      errorMessage = "Allow Speech Recognition in Settings to understand approval replies."
+      return false
+    }
+    guard await AVAudioApplication.requestRecordPermission() else {
+      errorMessage = "Allow Microphone access in Settings to capture approval replies."
+      return false
+    }
+    errorMessage = nil
+    return true
+  }
+
   /// - Parameter managesAudioSession: Pass false inside a Push to Talk transmission,
   ///   after `channelManager(_:didActivate:)`. The session is then left untouched.
   func start(managesAudioSession: Bool = true) async {
@@ -64,10 +78,12 @@ final class MobileVoiceTranscriber: ObservableObject {
       return
     }
 
+    // Push to Talk already activated this session. Reset must use the new ownership policy;
+    // otherwise the first reply deactivates the system session using the default true value.
+    self.managesAudioSession = managesAudioSession
     reset(cancelRecognition: true)
     transcript = ""
     errorMessage = nil
-    self.managesAudioSession = managesAudioSession
 
     do {
       if managesAudioSession {
@@ -151,9 +167,7 @@ final class MobileVoiceTranscriber: ObservableObject {
 
   func finish() async -> String {
     let finishingID = recognitionID
-    if isRecording {
-      stop()
-    }
+    stop()
     guard let finishingID else { return transcript }
 
     // Give Speech a bounded window to turn the final buffered audio into its

@@ -181,6 +181,11 @@ celorga workflow migrate --dir ~/notes</code></pre>
 <h1 id="running-without-the-desktop-app">Running without the desktop app</h1>
 <p>The <a href="headless-server.html">headless server</a> reuses these workflow and run records. Assign <code>automationHostRef</code> with preview-first <code>celorga server assign --dir CORPUS --host-ref HOST</code>. Updated desktop schedulers skip a corpus owned by another host. Scheduled attempt creation locks each workflow separately and refuses an already dispatched occurrence. Independently synchronized copies require one explicitly chosen owner; they do not support automatic distributed failover.</p>
 </section>
+<section class="org2-headline level-1">
+<h1 id="headset-approval-replies-on-iphone">Headset approval replies on iPhone</h1>
+<p>Enable walkie-talkie approvals in iPhone Settings, grant Microphone and Speech Recognition access, and join the approvals channel. Celorga reads one exact pending run approval on a connected headset. A completely played prompt is required before a spoken yes or no can request a decision from the paired Mac. If playback or capture fails, nothing is decided.</p>
+<p>In <strong>Approvals → Reply and decision history</strong>, inspect the recognized words, their interpretation, and the Mac-confirmed result or failure. The latest 50 spoken attempts persist on the phone for the selected Mac, including unsuccessful attempts. Recorded decisions returned by the Mac include their actor and reason, so a canceled test can be distinguished from a spoken rejection. Older paired hosts continue to support the queue but do not supply canonical decision history.</p>
+</section>
 </main>
 </div>
 <footer class="celorga-footer"><div class="celorga-footer-incubator"><span>Incubated at</span><a href="https://scarf.sh" target="_blank" rel="noopener noreferrer"><img class="celorga-footer-scarf-logo" src="assets/scarf-logo.svg" alt="Scarf" /></a></div><p class="celorga-footer-tagline">Build your knowledge locally and put it to work.</p><img referrerpolicy="no-referrer-when-downgrade" src="https://static.scarf.sh/a.png?x-pxid=e39e0a38-773e-4446-b8b0-804f923e3dc3" alt="" /></footer>

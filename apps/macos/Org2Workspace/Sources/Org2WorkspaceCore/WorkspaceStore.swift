@@ -25283,8 +25283,24 @@ extension WorkspaceStore {
           }
         )
       },
-      approvalDecisionReceipt: decisionReceipt
+      approvalDecisionReceipt: decisionReceipt,
+      approvalHistory: Self.mobileRemoteApprovalHistory(from: agentRuns)
     )
+  }
+
+  nonisolated static func mobileRemoteApprovalHistory(from runs: [AgentRunItem]) -> [MobileRemoteApprovalHistoryItem] {
+    Array(runs.flatMap { run in
+      run.approvals.filter { $0.status != "pending" }.map { approval in
+        MobileRemoteApprovalHistoryItem(
+          runID: run.id, approvalID: approval.id, title: approval.title, status: approval.status,
+          decidedAt: approval.decidedAt, decidedBy: approval.decidedBy,
+          decisionNote: approval.decisionNote ?? approval.note
+        )
+      }
+    }.sorted {
+      if $0.decidedAt != $1.decidedAt { return ($0.decidedAt ?? "") > ($1.decidedAt ?? "") }
+      return $0.id < $1.id
+    }.prefix(100))
   }
 
   private func currentAgendaItems() -> [AgendaItem] {

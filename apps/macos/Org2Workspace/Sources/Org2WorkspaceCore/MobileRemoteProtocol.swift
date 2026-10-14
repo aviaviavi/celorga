@@ -733,20 +733,35 @@ public struct MobileRemoteWorkspaceSnapshot: Codable, Hashable, Sendable {
   public let approvals: [MobileRemoteApprovalItem]
   public let workflows: [MobileRemoteWorkflowItem]
   public let approvalDecisionReceipt: MobileRemoteApprovalDecisionReceipt?
+  public let approvalHistory: [MobileRemoteApprovalHistoryItem]?
 
   public init(
     updatedAt: Date = Date(),
     agenda: [MobileRemoteAgendaItem],
     approvals: [MobileRemoteApprovalItem],
     workflows: [MobileRemoteWorkflowItem],
-    approvalDecisionReceipt: MobileRemoteApprovalDecisionReceipt? = nil
+    approvalDecisionReceipt: MobileRemoteApprovalDecisionReceipt? = nil,
+    approvalHistory: [MobileRemoteApprovalHistoryItem]? = nil
   ) {
     self.updatedAt = updatedAt
     self.agenda = agenda
     self.approvals = approvals
     self.workflows = workflows
     self.approvalDecisionReceipt = approvalDecisionReceipt
+    self.approvalHistory = approvalHistory
   }
+}
+
+/// Read-only decisions from canonical run records, including cancellations by other actors.
+public struct MobileRemoteApprovalHistoryItem: Codable, Hashable, Sendable, Identifiable {
+  public var id: String { "\(runID):\(approvalID)" }
+  public let runID: String
+  public let approvalID: String
+  public let title: String
+  public let status: String
+  public let decidedAt: String?
+  public let decidedBy: String?
+  public let decisionNote: String?
 }
 
 /// What the host did with an exact decision, read back from the durable run after the
