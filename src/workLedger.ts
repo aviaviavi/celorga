@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { guardedWriteFile, readGuardedFile, type GuardedFileWriteOptions } from "./guardedFile.js";
-import { schemaMatches } from "./brandNames.js";
+import { isOrgRecordFileName, orgRecordPath, schemaMatches } from "./brandNames.js";
 
 export const ORG2_WORK_LEDGER_ACCOUNT_SCHEMA = "org2:work-ledger-account:v1" as const;
 export const WORK_LEDGER_ACCOUNT_STATES = ["active", "paused", "suppressed", "closed"] as const;
@@ -313,7 +313,7 @@ export function workLedgerAccountDirectory(root: string, ledger: string): string
 }
 
 export function workLedgerAccountPath(root: string, ledger: string, id: string): string {
-  return path.join(workLedgerAccountDirectory(root, ledger), `${safeSegment(id, "account id")}.org2`);
+  return orgRecordPath(workLedgerAccountDirectory(root, ledger), safeSegment(id, "account id"));
 }
 
 export function workLedgerMutationLockPath(root: string, ledger: string): string {
@@ -370,7 +370,7 @@ export function workLedgerAccountFiles(root: string): string[] {
     const accounts = path.join(notes, ledgerEntry.name, "accounts");
     if (!fs.existsSync(accounts)) continue;
     for (const accountEntry of fs.readdirSync(accounts, { withFileTypes: true })) {
-      if (!accountEntry.isFile() || !/\.org2$/i.test(accountEntry.name)) continue;
+      if (!accountEntry.isFile() || !isOrgRecordFileName(accountEntry.name)) continue;
       const file = path.join(accounts, accountEntry.name);
       const raw = fs.readFileSync(file, "utf8");
       if (/^#\+(?:CELORGA|ORG2)_KIND:\s*work-ledger-account\s*$/im.test(raw) || /#\+begin_src\s+json\s+:org2-work-ledger-account\b/i.test(raw)) files.push(file);
@@ -400,7 +400,7 @@ export function listWorkLedgerAccounts(root: string, ledger: string): WorkLedger
   const dir = workLedgerAccountDirectory(root, ledger);
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /\.org2$/i.test(entry.name))
+    .filter((entry) => entry.isFile() && isOrgRecordFileName(entry.name))
     .map((entry) => {
       const snapshot = readGuardedFile(path.join(dir, entry.name));
       const account = parseWorkLedgerAccount(snapshot.content);

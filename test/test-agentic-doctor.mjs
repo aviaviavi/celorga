@@ -114,7 +114,7 @@ try {
 
   let readableDrift = createAgentRun({ id: "readable-drift", goal: "Detect a direct readable-header edit" });
   saveAgentRun(root, readableDrift);
-  const readableDriftFile = path.join(root, ".org2", "runs", "readable-drift.org2");
+  const readableDriftFile = path.join(root, ".org2", "runs", "readable-drift.org");
   fs.writeFileSync(
     readableDriftFile,
     fs.readFileSync(readableDriftFile, "utf8").replace(":RUN_STATUS: queued", ":RUN_STATUS: running"),

@@ -9,7 +9,7 @@ import {
 import { parseHeadlineTitleForRoam } from "./headlineTitle.js";
 import { defaultRunApprovalIndexPath } from "./indexPaths.js";
 import { safeIdentifier } from "./safeIdentifier.js";
-import { brandProperty, schemaMatches, stateDir } from "./brandNames.js";
+import { brandProperty, isOrgRecordFileName, orgRecordPath, schemaMatches, stateDir } from "./brandNames.js";
 
 export const ORG2_AGENT_RUN_SCHEMA = "org2:agent-run:v1" as const;
 export const AGENT_RUN_TITLE_MAX_LENGTH = 120;
@@ -1184,7 +1184,7 @@ export function agentRunDirectory(corpusRoot: string): string {
 }
 
 export function agentRunPath(corpusRoot: string, id: string): string {
-  return path.join(agentRunDirectory(corpusRoot), `${safeIdentifier(id, { label: "run id" })}.org2`);
+  return orgRecordPath(agentRunDirectory(corpusRoot), safeIdentifier(id, { label: "run id" }));
 }
 
 export function saveAgentRun(
@@ -1314,7 +1314,7 @@ export function listAgentRunsWithApprovals(corpusRoot: string): AgentRun[] {
   const previousByFile = new Map((previous?.entries || []).map((entry) => [entry.file, entry]));
   let changed = previous === null;
   const entries = fs.readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".org2"))
+    .filter((entry) => entry.isFile() && isOrgRecordFileName(entry.name))
     .map((entry): AgentRunApprovalIndexEntry | null => {
       const file = path.join(dir, entry.name);
       let stat: fs.Stats;
@@ -1359,7 +1359,7 @@ function* iterateAgentRunSnapshots(corpusRoot: string): Generator<AgentRunSnapsh
   const dir = agentRunDirectory(corpusRoot);
   if (!fs.existsSync(dir)) return;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith(".org2")) continue;
+    if (!entry.isFile() || !isOrgRecordFileName(entry.name)) continue;
     const snapshot = readGuardedFile(path.join(dir, entry.name));
     const run = parseAgentRunOrg(snapshot.content);
     // Syncthing conflict copies are not authoritative, even when they carry

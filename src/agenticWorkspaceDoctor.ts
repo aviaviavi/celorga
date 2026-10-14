@@ -26,7 +26,7 @@ import {
   workLedgerMutationLockFiles,
   type WorkLedgerAccountSnapshot,
 } from "./workLedger.js";
-import { brandProperty } from "./brandNames.js";
+import { brandProperty, isOrgRecordFileName } from "./brandNames.js";
 
 export const ORG2_AGENTIC_DOCTOR_SCHEMA = "org2:agentic-doctor:v1" as const;
 
@@ -128,8 +128,8 @@ function finding(
 function loadRuns(root: string, findings: AgenticDoctorFinding[]): LoadedRuns {
   const dir = agentRunDirectory(root);
   const entries = fs.existsSync(dir) ? fs.readdirSync(dir).sort() : [];
-  const names = entries.filter((name) => /\.org2$/i.test(name));
-  for (const name of entries.filter((entry) => /\.org2\.lock$/i.test(entry))) {
+  const names = entries.filter((name) => isOrgRecordFileName(name));
+  for (const name of entries.filter((entry) => /\.org2?\.lock$/i.test(entry))) {
     const file = path.join(dir, name);
     let owner: Record<string, unknown> = {};
     try { owner = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>; } catch {}
@@ -177,7 +177,7 @@ function loadWorkflows(root: string, findings: AgenticDoctorFinding[]): LoadedWo
     [workflowDirectory(root), true],
   ] as const) {
     if (!fs.existsSync(dir)) continue;
-    for (const name of fs.readdirSync(dir).filter((item) => /\.org2$/i.test(item)).sort()) {
+    for (const name of fs.readdirSync(dir).filter((item) => isOrgRecordFileName(item)).sort()) {
       entries.push({ file: path.join(dir, name), visible });
     }
   }

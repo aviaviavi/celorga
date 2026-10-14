@@ -557,7 +557,7 @@ final class CorpusStore: ObservableObject {
       options: [.skipsPackageDescendants]
     ) else { return [] }
 
-    return urls.filter { $0.pathExtension.lowercased() == "org2" }.flatMap { url -> [ApprovalEntry] in
+    return urls.filter { ["org", "org2"].contains($0.pathExtension.lowercased()) }.flatMap { url -> [ApprovalEntry] in
       guard let raw = try? String(contentsOf: url, encoding: .utf8),
             let begin = raw.range(of: "#+begin_src json :org2-agent-run", options: .caseInsensitive),
             let end = raw.range(of: "#+end_src", options: .caseInsensitive, range: begin.upperBound..<raw.endIndex) else {

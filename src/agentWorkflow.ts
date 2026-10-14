@@ -10,7 +10,7 @@ import {
   type AgentRunPlanStep,
   type AgentRunRiskClass,
 } from "./agentRun.js";
-import { schemaMatches, stateDir } from "./brandNames.js";
+import { isOrgRecordFileName, orgRecordPath, schemaMatches, stateDir } from "./brandNames.js";
 
 export const ORG2_WORKFLOW_SCHEMA = "org2:workflow:v1" as const;
 export const WORKFLOW_SCHEDULE_TRIGGER_ID = "schedule" as const;
@@ -352,12 +352,12 @@ export function workflowExecutionPrompt(
 
 export function workflowDirectory(root: string): string { return path.join(path.resolve(root), "workflows"); }
 export function legacyWorkflowDirectory(root: string): string { return stateDir(path.resolve(root), "workflows"); }
-export function workflowPath(root: string, id: string): string { return path.join(workflowDirectory(root), `${safeIdentifier(id, { invalidMessage: (raw) => `invalid workflow id: ${raw}` })}.org2`); }
+export function workflowPath(root: string, id: string): string { return orgRecordPath(workflowDirectory(root), safeIdentifier(id, { invalidMessage: (raw) => `invalid workflow id: ${raw}` })); }
 
 export function workflowSourcePath(root: string, id: string): string {
   const primary = workflowPath(root, id);
   if (fs.existsSync(primary)) return primary;
-  const legacy = path.join(legacyWorkflowDirectory(root), `${safeIdentifier(id, { invalidMessage: (raw) => `invalid workflow id: ${raw}` })}.org2`);
+  const legacy = orgRecordPath(legacyWorkflowDirectory(root), safeIdentifier(id, { invalidMessage: (raw) => `invalid workflow id: ${raw}` }));
   if (fs.existsSync(legacy)) return legacy;
   return primary;
 }
@@ -505,7 +505,7 @@ export function listWorkflows(root: string): AgentWorkflow[] {
   // both locations contain the same id during migration.
   for (const dir of [legacyWorkflowDirectory(root), workflowDirectory(root)]) {
     if (!fs.existsSync(dir)) continue;
-    for (const name of fs.readdirSync(dir).filter((item) => /\.org2$/i.test(item))) {
+    for (const name of fs.readdirSync(dir).filter((item) => isOrgRecordFileName(item))) {
       try {
         const workflow = parseWorkflowOrg(fs.readFileSync(path.join(dir, name), "utf8"));
         byID.set(workflow.id, workflow);
@@ -525,7 +525,7 @@ export function deleteWorkflow(
   });
   const files = [
     workflowPath(root, safeID),
-    path.join(legacyWorkflowDirectory(root), `${safeID}.org2`),
+    orgRecordPath(legacyWorkflowDirectory(root), safeID),
   ].filter((file, index, candidates) =>
     candidates.indexOf(file) === index && fs.existsSync(file)
   );
@@ -576,7 +576,7 @@ export function migrateLegacyWorkflows(root: string): Array<{ id: string; from: 
   const legacy = legacyWorkflowDirectory(root);
   if (!fs.existsSync(legacy)) return [];
   const results: Array<{ id: string; from: string; to: string; skipped: boolean }> = [];
-  for (const name of fs.readdirSync(legacy).filter((item) => /\.org2$/i.test(item))) {
+  for (const name of fs.readdirSync(legacy).filter((item) => isOrgRecordFileName(item))) {
     const from = path.join(legacy, name);
     let workflow: AgentWorkflow;
     try { workflow = parseWorkflowOrg(fs.readFileSync(from, "utf8")); } catch { continue; }

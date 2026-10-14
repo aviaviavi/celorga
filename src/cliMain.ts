@@ -10510,7 +10510,7 @@ Flags:
       const outputPath = outputPathRaw ? resolveWorkspaceRelative(workspaceDir, outputPathRaw, "output.path") : "";
       const sources = readAiDraftSources(manifest, workspaceDir);
       const adapterResponse = await generateAiDraftResponse(manifest, sources);
-      const artifactText = renderAiGeneratedDraft(manifest, sources, outputPathRaw || "stdout.org2", adapterResponse);
+      const artifactText = renderAiGeneratedDraft(manifest, sources, outputPathRaw || "stdout.org", adapterResponse);
 
       if (outputTarget === "stdout" && !aiOut) {
         if (aiFormat === "json") {
@@ -10649,7 +10649,7 @@ Flags:
       };
 
       const slug = slugify(roamTitle) || "node";
-      const filePath = path.join(dir, `${slug}.org2`);
+      const filePath = path.join(dir, `${slug}.org`);
       const newId = roamIdForced || crypto.randomUUID();
 
       const content = `#+TITLE: ${roamTitle}\n\n:PROPERTIES:\n:ID: ${newId}\n:END:\n\n`;

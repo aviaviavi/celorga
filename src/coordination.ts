@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { guardedWriteFile, readGuardedFile, type GuardedFileWriteOptions } from "./guardedFile.js";
 import { safeIdentifier } from "./safeIdentifier.js";
-import { schemaMatches } from "./brandNames.js";
+import { orgRecordPath, schemaMatches } from "./brandNames.js";
 
 export const ORG2_GOAL_SCHEMA = "org2:goal:v1" as const;
 export const ORG2_AGENT_PROFILE_SCHEMA = "org2:agent-profile:v1" as const;
@@ -280,8 +280,8 @@ export function parseAgentProfileOrg(raw: string): AgentProfile {
 
 export function goalDirectory(root: string): string { return path.join(path.resolve(root), "goals"); }
 export function agentProfileDirectory(root: string): string { return path.join(path.resolve(root), "agent-profiles"); }
-export function goalPath(root: string, id: string): string { return path.join(goalDirectory(root), `${safeIdentifier(id, { label: "goal id" })}.org2`); }
-export function agentProfilePath(root: string, id: string): string { return path.join(agentProfileDirectory(root), `${safeIdentifier(id, { label: "agent profile id" })}.org2`); }
+export function goalPath(root: string, id: string): string { return orgRecordPath(goalDirectory(root), safeIdentifier(id, { label: "goal id" })); }
+export function agentProfilePath(root: string, id: string): string { return orgRecordPath(agentProfileDirectory(root), safeIdentifier(id, { label: "agent profile id" })); }
 
 export function saveGoal(root: string, goal: GoalRecord, options: GuardedFileWriteOptions = {}): string {
   return guardedWriteFile(goalPath(root, goal.id), renderGoalOrg(goal), options).file;

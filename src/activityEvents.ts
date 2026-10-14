@@ -42,7 +42,7 @@ import {
   type OpenClawChatThreadRecord,
   type OpenClawThreadState,
 } from "./openClawThreadState.js";
-import { schemaMatches, stateDir } from "./brandNames.js";
+import { isOrgRecordFileName, orgRecordPath, schemaMatches, stateDir } from "./brandNames.js";
 
 export const ACTIVITY_EVENT_SCHEMA = "org2:activity-event:v1" as const;
 export const ACTIVITY_WAIT_SCHEMA = "org2:activity-wait:v1" as const;
@@ -109,7 +109,7 @@ export class RunRecordCache {
     const directory = agentRunDirectory(this.corpusRoot);
     let names: string[] = [];
     try {
-      names = fs.readdirSync(directory).filter((name) => name.endsWith(".org2"));
+      names = fs.readdirSync(directory).filter((name) => isOrgRecordFileName(name));
     } catch {
       names = [];
     }
@@ -132,7 +132,7 @@ export class RunRecordCache {
   }
 
   load(id: string): AgentRun | undefined {
-    const file = path.join(agentRunDirectory(this.corpusRoot), `${id}.org2`);
+    const file = orgRecordPath(agentRunDirectory(this.corpusRoot), id);
     try {
       const stat = fs.statSync(file);
       const cached = this.entries.get(file);

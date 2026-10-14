@@ -49,7 +49,7 @@ try {
   assert.equal(listedGoals.status, 0, listedGoals.stderr || listedGoals.stdout);
   assert.equal(
     JSON.parse(listedGoals.stdout).goals[0].file,
-    path.join(root, "goals", `${revenueGoal.id}.org2`),
+    path.join(root, "goals", `${revenueGoal.id}.org`),
   );
 
   const supportAgent = createAgentProfile({
@@ -76,7 +76,7 @@ try {
   assert.equal(listedProfiles.status, 0, listedProfiles.stderr || listedProfiles.stdout);
   assert.equal(
     JSON.parse(listedProfiles.stdout).profiles[0].file,
-    path.join(root, "agent-profiles", `${supportAgent.id}.org2`),
+    path.join(root, "agent-profiles", `${supportAgent.id}.org`),
   );
   assert.deepEqual(resolveAgentProfile(root, "openclaw", "SCARF-SUPPORT"), {
     schema: "org2:agent-profile-resolution:v1",
@@ -129,7 +129,7 @@ try {
   ], { encoding: "utf8" });
   assert.equal(cliTitledRun.status, 0, cliTitledRun.stderr || cliTitledRun.stdout);
   assert.equal(JSON.parse(cliTitledRun.stdout).run.title, "Concise CLI title");
-  fs.unlinkSync(path.join(root, ".org2", "runs", "cli-titled-run.org2"));
+  fs.unlinkSync(path.join(root, ".org2", "runs", "cli-titled-run.org"));
 
   const guardedRun = createAgentRun({ id: "guarded-write", goal: "Preserve concurrent source changes" });
   const guardedFile = saveAgentRun(root, guardedRun, { expectedRevision: null });
@@ -179,7 +179,7 @@ try {
   assert.equal(titledDecision.status, 0, titledDecision.stderr || titledDecision.stdout);
   assert.equal(loadAgentRun(root, titledRun.id).title, titledRun.title);
   assert.match(loadAgentRunSnapshot(root, titledRun.id).raw, /^:RUN_TITLE: Prepare a concise owner review$/m);
-  fs.unlinkSync(path.join(root, ".org2", "runs", `${titledRun.id}.org2`));
+  fs.unlinkSync(path.join(root, ".org2", "runs", `${titledRun.id}.org`));
 
   const wrongRevision = spawnSync(process.execPath, [
     path.resolve("dist/cli.js"), "run", "comment", guardedRun.id,
@@ -432,8 +432,8 @@ try {
   assert.equal(reopenExternal.status, 0, reopenExternal.stderr || reopenExternal.stdout);
   assert.equal(loadAgentRun(root, "reopen-external-cli").status, "waiting-approval");
   assert.equal(loadAgentRun(root, "reopen-external-cli").events.at(-1).type, "external-completion-reopened");
-  fs.unlinkSync(path.join(root, ".org2", "runs", "external-cli.org2"));
-  fs.unlinkSync(path.join(root, ".org2", "runs", "reopen-external-cli.org2"));
+  fs.unlinkSync(path.join(root, ".org2", "runs", "external-cli.org"));
+  fs.unlinkSync(path.join(root, ".org2", "runs", "reopen-external-cli.org"));
   assert.throws(
     () => transitionAgentRun(transitionAgentRun(createAgentRun({ id: "missing-outcome", goal: "Explain the result" }), "running"), "completed"),
     /requires --summary/
@@ -831,7 +831,7 @@ try {
     ["model", "reasoningEffort"],
   );
   saveWorkflow(root, workflow);
-  assert.equal(workflowPath(root, workflow.id), path.join(root, "workflows", "board-briefing.org2"));
+  assert.equal(workflowPath(root, workflow.id), path.join(root, "workflows", "board-briefing.org"));
   assert.equal(fs.existsSync(workflowPath(root, workflow.id)), true);
   assert.equal(loadWorkflow(root, workflow.id).version, "1.0.0");
   const guardedWorkflow = workflowFromRun(run, { id: "guarded-workflow", now: "2026-07-14T11:00:00Z" });

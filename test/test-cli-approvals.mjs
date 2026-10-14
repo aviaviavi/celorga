@@ -441,9 +441,9 @@ const syncConflictCopy = path.join(
   tmp,
   ".org2",
   "runs",
-  "sync-conflict-run.sync-conflict-20260812-122403-JWVPXCO.org2",
+  "sync-conflict-run.sync-conflict-20260812-122403-JWVPXCO.org",
 );
-fs.copyFileSync(path.join(tmp, ".org2", "runs", "sync-conflict-run.org2"), syncConflictCopy);
+fs.copyFileSync(path.join(tmp, ".org2", "runs", "sync-conflict-run.org"), syncConflictCopy);
 cli([
   "run", "approval-decide", "sync-conflict-run", syncConflictPending.approvals.at(-1).id,
   "--decision", "approved", "--actor", "Avi", "--role", "owner", "--dir", tmp, "--json",

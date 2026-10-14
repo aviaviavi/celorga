@@ -164,3 +164,25 @@ export function legacyToolName(name: string): string {
 export function celorgaToolName(name: string): string {
   return name.startsWith(LEGACY_MCP_TOOL_PREFIX) ? MCP_TOOL_PREFIX + name.slice(LEGACY_MCP_TOOL_PREFIX.length) : name;
 }
+
+/** Extension for every Org document Celorga creates. */
+export const ORG_EXTENSION = ".org";
+/** Pre-rename extension. Still read everywhere, never used for new files. */
+export const LEGACY_ORG_EXTENSION = ".org2";
+
+/** True for `.org` and legacy `.org2` file names. */
+export function isOrgRecordFileName(name: string): boolean {
+  return /\.org2?$/i.test(name);
+}
+
+/**
+ * Path of the Org record `baseName` in `dir`. An existing `.org` file wins,
+ * then an existing legacy `.org2` file (so older records keep updating in
+ * place); otherwise a new record is always `.org`.
+ */
+export function orgRecordPath(dir: string, baseName: string): string {
+  const preferred = path.join(dir, `${baseName}${ORG_EXTENSION}`);
+  if (fs.existsSync(preferred)) return preferred;
+  const legacy = path.join(dir, `${baseName}${LEGACY_ORG_EXTENSION}`);
+  return fs.existsSync(legacy) ? legacy : preferred;
+}

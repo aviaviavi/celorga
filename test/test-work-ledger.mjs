@@ -43,7 +43,7 @@ try {
   assert.equal(created.status, 0, created.stderr || created.stdout);
   const createdResult = JSON.parse(created.stdout);
   assert.equal(createdResult.applied, true);
-  assert.match(createdResult.file, /notes\/account-outreach\/accounts\/acme\.org2$/);
+  assert.match(createdResult.file, /notes\/account-outreach\/accounts\/acme\.org$/);
   assert.match(createdResult.revision, /^sha256:[a-f0-9]{64}$/);
   assert.match(fs.readFileSync(createdResult.file, "utf8"), /:ORG2_ARTIFACT_ROLE: canonical/);
 

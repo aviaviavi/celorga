@@ -8677,7 +8677,7 @@ extension WorkspaceStore {
 
   public func openAgentRunRecord(_ run: AgentRunItem) {
     guard let corpusRoot else { return }
-    let relativePath = CelorgaNames.stateRelativePath("runs/\(run.id).org2", corpusRoot: corpusRoot)
+    let relativePath = CelorgaNames.runRecordRelativePath(runID: run.id, corpusRoot: corpusRoot)
     let recordURL = corpusRoot.appendingPathComponent(relativePath)
     guard FileManager.default.fileExists(atPath: recordURL.path) else {
       errorText = "The run record could not be found at \(relativePath)."
@@ -31916,7 +31916,7 @@ extension WorkspaceStore {
         continue
       }
       if relativePath.hasPrefix(".org2/runs/"),
-         URL(fileURLWithPath: path).pathExtension.lowercased() == "org2" {
+         ["org", "org2"].contains(URL(fileURLWithPath: path).pathExtension.lowercased()) {
         hasAgentRunStateChanges = true
         continue
       }
@@ -41789,7 +41789,7 @@ extension WorkspaceStore {
       statusText = "No corpus selected"
       return nil
     }
-    let relativePath = CelorgaNames.stateRelativePath("runs/\(run.id).org2", corpusRoot: corpusRoot)
+    let relativePath = CelorgaNames.runRecordRelativePath(runID: run.id, corpusRoot: corpusRoot)
     let recordURL = corpusRoot.appendingPathComponent(relativePath).standardizedFileURL
     if requiresExistingRecord, !FileManager.default.fileExists(atPath: recordURL.path) {
       errorText = "The run record could not be found at \(relativePath)."

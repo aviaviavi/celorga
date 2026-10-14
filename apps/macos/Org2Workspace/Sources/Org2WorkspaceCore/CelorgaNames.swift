@@ -201,6 +201,17 @@ public enum CelorgaNames {
     stateDirectoryName(corpusRoot: corpusRoot, fileManager: fileManager) + "/" + path
   }
 
+  /// The corpus-relative path of a durable run record. An existing `.org` record
+  /// wins, then a legacy `.org2` record; a run without a record maps to `.org`.
+  public static func runRecordRelativePath(
+    runID: String, corpusRoot: URL, fileManager: FileManager = .default
+  ) -> String {
+    let runs = stateDirectory(corpusRoot: corpusRoot, fileManager: fileManager)
+      .appendingPathComponent("runs", isDirectory: true)
+    let record = OrgDocumentDefaults.url(in: runs, baseName: runID, fileManager: fileManager)
+    return stateRelativePath("runs/" + record.lastPathComponent, corpusRoot: corpusRoot, fileManager: fileManager)
+  }
+
   /// Rewrites a corpus-relative path under `.celorga/` to the `.org2/` spelling
   /// so prefix checks written against the legacy layout match both.
   public static func legacyStateRelativePath(_ relativePath: String) -> String {

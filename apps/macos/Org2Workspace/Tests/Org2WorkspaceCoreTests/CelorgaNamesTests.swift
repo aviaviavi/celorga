@@ -131,6 +131,21 @@ final class CelorgaNamesTests: XCTestCase {
     XCTAssertEqual(CelorgaNames.stateRelativePath("runs/r.org2", corpusRoot: root), ".celorga/runs/r.org2")
   }
 
+  func testRunRecordPathsAreOrgUnlessALegacyRecordExists() throws {
+    let root = try temporaryDirectory("run-records")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let runs = root.appendingPathComponent(".org2/runs", isDirectory: true)
+    try FileManager.default.createDirectory(at: runs, withIntermediateDirectories: true)
+
+    XCTAssertEqual(CelorgaNames.runRecordRelativePath(runID: "new", corpusRoot: root), ".org2/runs/new.org")
+
+    try "".write(to: runs.appendingPathComponent("old.org2"), atomically: true, encoding: .utf8)
+    XCTAssertEqual(CelorgaNames.runRecordRelativePath(runID: "old", corpusRoot: root), ".org2/runs/old.org2")
+
+    try "".write(to: runs.appendingPathComponent("old.org"), atomically: true, encoding: .utf8)
+    XCTAssertEqual(CelorgaNames.runRecordRelativePath(runID: "old", corpusRoot: root), ".org2/runs/old.org")
+  }
+
   func testStateRelativePathsNormalizeToTheLegacyLayout() {
     XCTAssertEqual(CelorgaNames.legacyStateRelativePath(".celorga/runs/a.org2"), ".org2/runs/a.org2")
     XCTAssertEqual(CelorgaNames.legacyStateRelativePath(".org2/runs/a.org2"), ".org2/runs/a.org2")

@@ -7,7 +7,7 @@ import {
   type AgentIngestRecord,
   type AgentIngestConnectorMetadata,
 } from "./agentIngestConnectors.js";
-import { schemaMatches } from "./brandNames.js";
+import { orgRecordPath, schemaMatches } from "./brandNames.js";
 
 export const ORG2_SOURCE_IMPORT_SCHEMA = "org2:source-import:v1" as const;
 
@@ -256,7 +256,7 @@ function reconcileGeneratedFiles(options: {
     removed.push(rawFile);
     if (options.apply) fs.unlinkSync(rawFile);
 
-    const reviewFile = path.join(options.reviewRoot, `${path.basename(name, ".json")}.org2`);
+    const reviewFile = orgRecordPath(options.reviewRoot, path.basename(name, ".json"));
     if (options.expectedReview.has(reviewFile) || !fs.existsSync(reviewFile)) continue;
     const review = fs.readFileSync(reviewFile, "utf8");
     if (!/:(?:CELORGA|ORG2)_GENERATOR: org2-source-import/.test(review)) continue;
@@ -341,7 +341,7 @@ export function importSourceRecords(options: Omit<SourceImportOptions, "binary" 
   for (const [group, records] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
     const generatedAt = records.at(-1)?.source.timestamp || now.toISOString();
     const rawPath = path.join(rawRoot, `${group}.json`);
-    const reviewPath = path.join(reviewRoot, `${group}.org2`);
+    const reviewPath = orgRecordPath(reviewRoot, group);
     const raw = stableJson({
       schema: ORG2_SOURCE_IMPORT_SCHEMA,
       profile: options.profileId,

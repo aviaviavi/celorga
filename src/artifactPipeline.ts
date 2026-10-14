@@ -139,7 +139,7 @@ export const MEETING_TO_CONTROLLED_EXECUTION_WORKFLOW = {
     { id: "release", kind: "tool", title: "Publish or send the approved result" },
   ],
   outputs: [
-    { id: "briefing", path: "{{output}}/briefing.org2", role: "view" },
+    { id: "briefing", path: "{{output}}/briefing.org", role: "view" },
     { id: "publication", path: "{{output}}/publication.pdf", role: "export", mediaType: "application/pdf" },
   ],
   validations: ["citations", "artifact-freshness", "protected-zones", "export"],
