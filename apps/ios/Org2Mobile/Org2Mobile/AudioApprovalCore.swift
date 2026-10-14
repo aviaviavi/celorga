@@ -21,6 +21,10 @@ enum AudioApprovalFeature {
   /// replace it, so it cannot cut in while the person starts to answer. The Mac separately
   /// spaces pushes to one device (`AudioApprovalPromptPolicy.answerWindow`).
   static let answerGrace: TimeInterval = 20
+  /// Push to Talk can activate before Bluetooth has finished changing `currentRoute` from the
+  /// receiver to an already-selected headset. Keep the system session briefly so that route
+  /// change can arrive; never play during this grace unless the route becomes a headset.
+  static let headsetRouteSettleInterval: TimeInterval = 2
 
   static var isEnabled: Bool {
     UserDefaults.standard.bool(forKey: defaultsKey)
@@ -339,6 +343,7 @@ struct AudioApprovalSession: Sendable, Equatable {
   private(set) var pendingTransmitNotice: (shown: String, spoken: String)?
   private var clock = Date.distantPast
   private var scheduledTick: Date?
+  private var headsetRouteSettleUntil: Date?
 
   private let makeReceipt: @Sendable () -> String
 
@@ -467,29 +472,17 @@ struct AudioApprovalSession: Sendable, Equatable {
         return [.startCapture]
       }
       guard playback == .idle, capture == .idle else { return [] }
-      let snapshot = AudioRouteSnapshot(
-        route: route.route, inCall: route.inCall, mediaPlaying: route.mediaPlaying, pushToTalkSessionActive: true
-      )
-      if let queued = queuedSpeech {
-        queuedSpeech = nil
-        if case .hold(let reason) = planAudioPlayback(quiet: isQuiet(at: now), snapshot: snapshot) {
-          status = "Held (\(reason.rawValue)). Nothing was played on another output."
-          return [.releaseAudioSession]
-        }
-        playback = .speaking(queued.kind)
-        return [.speak(queued.text, queued.kind)]
+      if route.route != .headset {
+        let due = now.addingTimeInterval(AudioApprovalFeature.headsetRouteSettleInterval)
+        headsetRouteSettleUntil = due
+        status = "Connecting the headset…"
+        return [.scheduleTick(after: AudioApprovalFeature.headsetRouteSettleInterval)]
       }
-      guard let active, active.target != heardTarget else {
-        return [.releaseAudioSession]
-      }
-      if case .hold(let reason) = planAudioPlayback(quiet: isQuiet(at: now), snapshot: snapshot) {
-        status = "Held (\(reason.rawValue)). The prompt is kept; nothing was played on another output."
-        return [.releaseAudioSession]
-      }
-      return speakPrompt()
+      return beginPlayback(route: route, now: now)
 
     case .sessionDeactivated:
       sessionActive = false
+      headsetRouteSettleUntil = nil
       var effects: [AudioApprovalEffect] = []
       if case .speaking(let kind) = playback {
         playback = .idle
@@ -583,7 +576,12 @@ struct AudioApprovalSession: Sendable, Equatable {
       capture = .idle
       return terminal("Reply not captured: \(message) Nothing was decided.", spoken: "I couldn't hear your reply. Nothing was decided.")
 
-    case .tick:
+    case .tick(let now):
+      if let due = headsetRouteSettleUntil, now >= due {
+        headsetRouteSettleUntil = nil
+        status = "Held (no-headset). The prompt is kept; nothing was played on another output."
+        return [.releaseAudioSession]
+      }
       return []
 
     case .transcriptReady(let transcript, let now):
@@ -592,7 +590,15 @@ struct AudioApprovalSession: Sendable, Equatable {
       return handleReply(transcript, now: now)
 
     case .routeChanged(let route):
-      guard route.route != .headset else { return [] }
+      if route.route == .headset {
+        guard sessionActive, headsetRouteSettleUntil != nil,
+              playback == .idle, capture == .idle else { return [] }
+        return beginPlayback(route: route, now: clock)
+      }
+      // A Push to Talk activation commonly reports the old receiver route before Bluetooth
+      // finishes switching. Keep waiting for the bounded grace instead of releasing at the
+      // first intermediate route-change notification.
+      if sessionActive, headsetRouteSettleUntil != nil { return [] }
       let wasBusy = playback != .idle || capture != .idle || heardTarget != nil
       var effects = abandonTransientAudio()
       guard wasBusy || active != nil else { return effects }
@@ -776,6 +782,32 @@ struct AudioApprovalSession: Sendable, Equatable {
     return [.speak(AudioApprovalSpeech.prompt(for: active), .prompt)]
   }
 
+  /// Re-evaluates every safety gate after Push to Talk has activated and Bluetooth has settled.
+  private mutating func beginPlayback(route: AudioRouteSnapshot, now: Date) -> [AudioApprovalEffect] {
+    headsetRouteSettleUntil = nil
+    let snapshot = AudioRouteSnapshot(
+      route: route.route, inCall: route.inCall, mediaPlaying: route.mediaPlaying,
+      pushToTalkSessionActive: true
+    )
+    if let queued = queuedSpeech {
+      queuedSpeech = nil
+      if case .hold(let reason) = planAudioPlayback(quiet: isQuiet(at: now), snapshot: snapshot) {
+        status = "Held (\(reason.rawValue)). Nothing was played on another output."
+        return [.releaseAudioSession]
+      }
+      playback = .speaking(queued.kind)
+      return [.speak(queued.text, queued.kind)]
+    }
+    guard let active, active.target != heardTarget else {
+      return [.releaseAudioSession]
+    }
+    if case .hold(let reason) = planAudioPlayback(quiet: isQuiet(at: now), snapshot: snapshot) {
+      status = "Held (\(reason.rawValue)). The prompt is kept; nothing was played on another output."
+      return [.releaseAudioSession]
+    }
+    return speakPrompt()
+  }
+
   private mutating func queueSpeech(_ text: String, _ kind: AudioSpeechKind) -> [AudioApprovalEffect] {
     if sessionActive, playback == .idle, capture == .idle {
       playback = .speaking(kind)
@@ -786,6 +818,7 @@ struct AudioApprovalSession: Sendable, Equatable {
   }
 
   private mutating func abandonTransientAudio() -> [AudioApprovalEffect] {
+    headsetRouteSettleUntil = nil
     var effects: [AudioApprovalEffect] = []
     if playback != .idle {
       playback = .idle

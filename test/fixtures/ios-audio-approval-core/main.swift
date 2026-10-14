@@ -157,6 +157,34 @@ do {
   expect(decisions(session.handle(.transcriptReady("yes", now: t0))).isEmpty, "a cancelled reply decides nothing")
 }
 
+// 8b. Push to Talk may activate before an already-selected Bluetooth route settles.
+do {
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  let activating = session.handle(.sessionActivated(speaker, now: t0))
+  expect(
+    activating == [.scheduleTick(after: AudioApprovalFeature.headsetRouteSettleInterval)],
+    "an intermediate receiver route gets a bounded Bluetooth-settling grace"
+  )
+  expect(session.status == "Connecting the headset…", "the route transition is visible in Settings")
+  let settled = session.handle(.routeChanged(headset))
+  expect(spoken(settled).first?.contains("Approval request") == true, "the prompt starts when Bluetooth becomes the active route")
+  let staleTick = session.handle(.tick(now: t0.addingTimeInterval(AudioApprovalFeature.headsetRouteSettleInterval)))
+  expect(!staleTick.contains(.releaseAudioSession), "the old settling timer cannot stop headset playback")
+}
+do {
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  _ = session.handle(.sessionActivated(speaker, now: t0))
+  expect(session.handle(.routeChanged(speaker)).isEmpty, "intermediate non-headset route changes keep waiting")
+  let timedOut = session.handle(.tick(now: t0.addingTimeInterval(AudioApprovalFeature.headsetRouteSettleInterval)))
+  expect(timedOut == [.releaseAudioSession], "a missing headset still releases the session after the bounded grace")
+  expect(session.status.contains("Held (no-headset)"), "a real missing headset remains explicit")
+  expect(session.active?.target == targetA, "a route timeout keeps the prompt for replay")
+}
+
 // 9. A stale push plays nothing.
 do {
   var session = joinedSession()
