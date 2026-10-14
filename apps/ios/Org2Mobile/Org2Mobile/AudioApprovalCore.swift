@@ -24,7 +24,7 @@ enum AudioApprovalFeature {
   /// Push to Talk can activate before Bluetooth has finished changing `currentRoute` from the
   /// receiver to an already-selected headset. Keep the system session briefly so that route
   /// change can arrive; never play during this grace unless the route becomes a headset.
-  static let headsetRouteSettleInterval: TimeInterval = 2
+  static let headsetRouteSettleInterval: TimeInterval = 5
 
   static var isEnabled: Bool {
     UserDefaults.standard.bool(forKey: defaultsKey)

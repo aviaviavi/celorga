@@ -22,6 +22,7 @@ const iosStore = read(`${ios}/MobileRemoteStore.swift`);
 const iosModels = read(`${ios}/MobileRemoteModels.swift`);
 const iosViews = read(`${ios}/MobileRemoteViews.swift`);
 const app = read(`${ios}/Org2MobileApp.swift`);
+const pushToTalk = read(`${ios}/AudioApprovalPushToTalk.swift`);
 const infoPlist = read(`${ios}/Info.plist`);
 const entitlements = read(`${ios}/Org2Mobile.entitlements`);
 const broker = read("src/audioApprovalBroker.ts");
@@ -89,6 +90,10 @@ assert.match(macStore, /no longer pending\. Nothing was changed\./, "Mac refuses
 assert.match(macStore, /approval\.receipt == receipt/, "only the same receipt replays");
 assert.match(iosStore, /fingerprint: fingerprint,\s*receipt: receipt/);
 assert.match(core, /"\\\(runID\)\|\\\(approvalID\)\|\\\(fingerprint\)"/, "iOS prompt key");
+assert.match(pushToTalk, /mode:\s*\.voiceChat/, "Push to Talk keeps a duplex voice route");
+assert.match(pushToTalk, /options:\s*\[\.allowBluetooth\]/, "Push to Talk enables Bluetooth HFP");
+assert.doesNotMatch(pushToTalk, /allowBluetoothA2DP/, "Push to Talk does not compete with output-only A2DP");
+assert.match(pushToTalk, /setPreferredInput\(headset\)/, "Push to Talk selects the connected HFP input once activated");
 assert.match(macCoordinator, /var key: String \{ "\\\(runID\)\|\\\(approvalID\)\|\\\(fingerprint\)" \}/, "Mac prompt key matches");
 
 // 7. Push to Talk transport: token registration, APNs topic, identity-only payload, snooze endpoint.

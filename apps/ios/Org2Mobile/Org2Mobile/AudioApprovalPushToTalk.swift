@@ -91,14 +91,24 @@ final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, P
   }
 
   /// Category only. Push to Talk activates and deactivates the session itself; the app never
-  /// calls `setActive`. Nothing forces the built-in speaker: without a headset output stays on the
-  /// receiver, which the playback gate also refuses. Bluetooth HFP carries the headset microphone.
+  /// calls `setActive`. Approval prompts and replies use one duplex Bluetooth HFP route instead of
+  /// allowing iOS to alternate between output-only A2DP and HFP. Without a headset, output stays
+  /// on the receiver, which the playback gate refuses.
   static func configureAudioSessionCategory() {
     try? AVAudioSession.sharedInstance().setCategory(
       .playAndRecord,
-      mode: .default,
-      options: [.allowBluetooth, .allowBluetoothA2DP]
+      mode: .voiceChat,
+      options: [.allowBluetooth]
     )
+  }
+
+  /// With a play-and-record session, selecting a Bluetooth HFP input also selects its matching
+  /// private output. Do this once when Push to Talk activates; route changes remain system-owned.
+  private static func preferConnectedBluetoothHeadset(on audioSession: AVAudioSession) {
+    let outputs = audioSession.currentRoute.outputs.map(\.portType)
+    if outputs.contains(.bluetoothHFP) { return }
+    guard let headset = audioSession.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) else { return }
+    try? audioSession.setPreferredInput(headset)
   }
 
   /// Marks locally generated spoken detail as an active remote response so the
@@ -174,6 +184,7 @@ final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, P
   }
 
   func channelManager(_ channelManager: PTChannelManager, didActivate audioSession: AVAudioSession) {
+    Self.preferConnectedBluetoothHeadset(on: audioSession)
     post(.audioSessionActivated)
   }
 

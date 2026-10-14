@@ -184,6 +184,22 @@ do {
   expect(session.status.contains("Held (no-headset)"), "a real missing headset remains explicit")
   expect(session.active?.target == targetA, "a route timeout keeps the prompt for replay")
 }
+do {
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  _ = session.handle(.sessionActivated(speaker, now: t0))
+  let oldDeadline = session.handle(.tick(now: t0.addingTimeInterval(2.5)))
+  expect(
+    !oldDeadline.contains(.releaseAudioSession),
+    "a connected Bluetooth headset gets longer than the old two-second route transition"
+  )
+  let settled = session.handle(.routeChanged(headset))
+  expect(
+    spoken(settled).first?.contains("Approval request") == true,
+    "a slower Bluetooth HFP route can still begin private playback"
+  )
+}
 
 // 8c. If iOS stops audible speech without a finish/cancel callback, playback must not keep
 // the Push to Talk receive session forever and block both Talk and ordinary dictation.
