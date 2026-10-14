@@ -43,6 +43,47 @@ enum WorkspaceProjectContext {
   }
 }
 
+enum AIChatNewThreadProjectPicker {
+  /// The composer offers a project picker until the chat's first message.
+  static func isVisible(
+    hasSelectedThread: Bool,
+    messageCount: Int,
+    isLoadingTranscript: Bool,
+    projectCount: Int
+  ) -> Bool {
+    hasSelectedThread && !isLoadingTranscript && messageCount == 0 && projectCount > 0
+  }
+
+  static func title(projects: [WorkspaceProjectNote], threadID: UUID?) -> String {
+    guard let threadID else { return "No project" }
+    let titles = projects.filter { $0.contains(threadID) }.map(\.title)
+    switch titles.count {
+    case 0: return "No project"
+    case 1: return titles[0]
+    default: return "\(titles[0]) +\(titles.count - 1)"
+    }
+  }
+}
+
+enum WorkspaceProjectSidebarExpansion {
+  /// Projects to expand so the selected chat is visible after the project list
+  /// changes. A project that just gained the selected chat (for example from
+  /// its "New chat" button) stays as the user left it.
+  static func projectsRevealing(
+    selectedThreadID: UUID?,
+    previous: [WorkspaceProjectNote],
+    current: [WorkspaceProjectNote]
+  ) -> Set<String> {
+    guard let selectedThreadID else { return [] }
+    let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    return Set(current.compactMap { project in
+      guard project.contains(selectedThreadID) else { return nil }
+      if let earlier = previousByID[project.id], !earlier.contains(selectedThreadID) { return nil }
+      return project.id
+    })
+  }
+}
+
 enum WorkspaceProjectThreadVisibility {
   static func activeSummaries(
     for project: WorkspaceProjectNote,
@@ -185,11 +226,12 @@ struct WorkspaceProjectSidebar<ThreadRow: View>: View {
       }
     }
     .task(id: store.corpusRoot?.path) { expandedProjects = []; await store.refreshProjectsIfIdle() }
-    .onChange(of: store.projectNotes) {
-      guard let selected = store.selectedAIChatThreadID else { return }
-      for project in store.projectNotes where project.contains(selected) {
-        expandedProjects.insert(project.id)
-      }
+    .onChange(of: store.projectNotes) { previous, current in
+      expandedProjects.formUnion(WorkspaceProjectSidebarExpansion.projectsRevealing(
+        selectedThreadID: store.selectedAIChatThreadID,
+        previous: previous,
+        current: current
+      ))
     }
   }
 
@@ -255,7 +297,6 @@ struct WorkspaceProjectSidebar<ThreadRow: View>: View {
       Button { store.openProjectNote(project) } label: { Image(systemName: "doc.text") }
         .buttonStyle(.plain).help("Open project note")
       Button {
-        expandedProjects.insert(project.id)
         Task { await store.createChatInProject(project) }
       } label: { Image(systemName: "plus") }
         .buttonStyle(.plain).help("New chat in \(project.title)")

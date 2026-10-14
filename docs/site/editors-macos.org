@@ -320,8 +320,10 @@ option opens a linked chat with your selected destination to shape those details
 into a concise brief using the normal reviewed editing tools.
 Projects expand in the sidebar to show their linked chats without filtering the
 main AI chat list. The document button opens the project note; the plus button
-creates a linked chat. The action summary includes TODOs in the note and tasks
+creates a linked chat and opens it without expanding the project. The action summary includes TODOs in the note and tasks
 linked elsewhere. Use a chat's Projects menu to add or remove membership.
+Until a new chat's first message is sent, its composer also shows a project
+picker beside the assistant, so the first turn already gets the project brief.
 A chat can belong to several projects.
 Right-click a project and choose Choose color to use the full picker, or select a quick color. Refresh projects reloads note edits.
 

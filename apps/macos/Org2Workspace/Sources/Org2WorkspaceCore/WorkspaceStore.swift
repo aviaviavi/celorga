@@ -32686,6 +32686,17 @@ extension WorkspaceStore {
     return aiChatThreads.first(where: { $0.id == selectedAIChatThreadID })
   }
 
+  /// A brand-new chat shows a project picker in the composer before its first
+  /// message is sent.
+  var showsNewThreadProjectPicker: Bool {
+    AIChatNewThreadProjectPicker.isVisible(
+      hasSelectedThread: selectedAIChatThread != nil,
+      messageCount: aiChatMessages.count,
+      isLoadingTranscript: isLoadingAIChatTranscript,
+      projectCount: projectNotes.count
+    )
+  }
+
   public var settledAIChatThreads: [AIChatThread] {
     archivedAIChatThreads
   }

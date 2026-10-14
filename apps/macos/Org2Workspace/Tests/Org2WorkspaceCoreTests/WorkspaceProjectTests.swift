@@ -111,6 +111,75 @@ final class WorkspaceProjectTests: XCTestCase {
     )
   }
 
+  func testNewThreadProjectPickerShowsOnlyBeforeTheFirstMessage() {
+    XCTAssertTrue(AIChatNewThreadProjectPicker.isVisible(
+      hasSelectedThread: true, messageCount: 0, isLoadingTranscript: false, projectCount: 2
+    ))
+    XCTAssertFalse(AIChatNewThreadProjectPicker.isVisible(
+      hasSelectedThread: true, messageCount: 1, isLoadingTranscript: false, projectCount: 2
+    ))
+    XCTAssertFalse(AIChatNewThreadProjectPicker.isVisible(
+      hasSelectedThread: true, messageCount: 0, isLoadingTranscript: true, projectCount: 2
+    ))
+    XCTAssertFalse(AIChatNewThreadProjectPicker.isVisible(
+      hasSelectedThread: true, messageCount: 0, isLoadingTranscript: false, projectCount: 0
+    ))
+    XCTAssertFalse(AIChatNewThreadProjectPicker.isVisible(
+      hasSelectedThread: false, messageCount: 0, isLoadingTranscript: false, projectCount: 2
+    ))
+
+    let threadID = UUID()
+    func note(_ title: String, _ threads: [UUID]) -> WorkspaceProjectNote {
+      WorkspaceProjectNote(
+        id: title, title: title, color: "blue", file: "/local/\(title).org", relativePath: "\(title).org",
+        revision: "sha256:fixture", threadIDs: threads.map { $0.uuidString.lowercased() },
+        brief: "", briefTruncated: false
+      )
+    }
+    XCTAssertEqual(AIChatNewThreadProjectPicker.title(projects: [note("Launch", [])], threadID: threadID), "No project")
+    XCTAssertEqual(AIChatNewThreadProjectPicker.title(
+      projects: [note("Launch", [threadID]), note("Ops", [])], threadID: threadID
+    ), "Launch")
+    XCTAssertEqual(AIChatNewThreadProjectPicker.title(
+      projects: [note("Launch", [threadID]), note("Ops", [threadID])], threadID: threadID
+    ), "Launch +1")
+  }
+
+  func testNewChatInProjectDoesNotExpandTheProject() {
+    let existingID = UUID()
+    let newID = UUID()
+    func note(_ id: String, _ threads: [UUID]) -> WorkspaceProjectNote {
+      WorkspaceProjectNote(
+        id: id, title: id, color: "blue", file: "/local/\(id).org", relativePath: "\(id).org",
+        revision: "sha256:\(threads.count)", threadIDs: threads.map { $0.uuidString.lowercased() },
+        brief: "", briefTruncated: false
+      )
+    }
+    // "New chat" adds the selected chat to a project the user left collapsed.
+    XCTAssertEqual(WorkspaceProjectSidebarExpansion.projectsRevealing(
+      selectedThreadID: newID,
+      previous: [note("launch", [existingID])],
+      current: [note("launch", [existingID, newID])]
+    ), [])
+    // Loading projects still reveals the project holding the selected chat.
+    XCTAssertEqual(WorkspaceProjectSidebarExpansion.projectsRevealing(
+      selectedThreadID: existingID,
+      previous: [],
+      current: [note("launch", [existingID]), note("other", [])]
+    ), ["launch"])
+    // A refresh of an unchanged membership keeps revealing it.
+    XCTAssertEqual(WorkspaceProjectSidebarExpansion.projectsRevealing(
+      selectedThreadID: existingID,
+      previous: [note("launch", [existingID])],
+      current: [note("launch", [existingID, newID])]
+    ), ["launch"])
+    XCTAssertEqual(WorkspaceProjectSidebarExpansion.projectsRevealing(
+      selectedThreadID: nil,
+      previous: [],
+      current: [note("launch", [existingID])]
+    ), [])
+  }
+
   func testProjectSidebarPresentationNamespacesRepeatedThreadRows() {
     let sharedThreadID = UUID()
     let first = project(threadID: sharedThreadID)

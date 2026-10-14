@@ -3338,6 +3338,9 @@ struct AIChatComposerView: View {
       } else if !store.selectedAIChatIsSharedRoom {
         assistantPicker(iconOnly: true)
       }
+      if store.showsNewThreadProjectPicker {
+        newThreadProjectPicker(iconOnly: !showsDetailedConfiguration)
+      }
       composerStatus(compact: !showsDetailedConfiguration)
       Spacer(minLength: 0)
       if showsDetailedConfiguration {
@@ -3601,6 +3604,50 @@ struct AIChatComposerView: View {
     .disabled(!canChangeAssistant)
     .task { await store.refreshAgentProfiles() }
     .help("Choose the agent identity, instructions, and runtime")
+  }
+
+  /// Adds a brand-new chat to projects before its first message, so the
+  /// first turn already receives the project brief.
+  private func newThreadProjectPicker(iconOnly: Bool) -> some View {
+    let threadID = store.selectedAIChatThreadID
+    let title = AIChatNewThreadProjectPicker.title(projects: store.projectNotes, threadID: threadID)
+    return Menu {
+      Section("Project") {
+        ForEach(store.projectNotes) { project in
+          Button {
+            guard let threadID else { return }
+            Task { await store.updateProject(project, threadID: threadID) }
+          } label: {
+            let isMember = threadID.map(project.contains) ?? false
+            Label(project.title, systemImage: isMember ? "checkmark" : "folder")
+          }
+        }
+      }
+    } label: {
+      HStack(spacing: 4) {
+        Image(systemName: "folder")
+        if !iconOnly {
+          Text(title)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: 160, alignment: .leading)
+        }
+        Image(systemName: "chevron.up.chevron.down")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      }
+      .font(.caption.weight(.medium))
+      .foregroundStyle(.secondary)
+      .padding(.horizontal, 5)
+      .padding(.vertical, 4)
+      .contentShape(Rectangle())
+    }
+    .menuStyle(.borderlessButton)
+    .menuIndicator(.hidden)
+    .fixedSize()
+    .accessibilityIdentifier("ai-chat-new-thread-project-picker")
+    .accessibilityLabel("Project: \(title)")
+    .help("Add this new chat to a project before the first message")
   }
 
   static func roomAgentTurnLimitOptions(including current: Int) -> [Int] {
