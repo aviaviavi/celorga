@@ -650,7 +650,7 @@ public enum WorkspaceThemeDocumentStyle {
     let muted = [
       ".message-header", ".message-placeholder", ".attachment-name", ".queued-actions", ".expansion",
       ".reasoning-text", ".activity-detail", ".show-earlier", ".more-files", "#live", ".live-detail",
-      ".live-elapsed", ".live-text-toggle", ".live-activity-toggle", "#status",
+      ".live-elapsed", ".live-text-toggle", ".live-activity-toggle", "#status", ".start-work-source",
     ].map { "\(r) \($0)" }.joined(separator: ", ")
     return """
     \(r) body { color: \(c(.text)); }

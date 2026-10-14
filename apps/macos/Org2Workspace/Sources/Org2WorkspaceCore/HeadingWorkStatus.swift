@@ -69,6 +69,12 @@ struct HeadingWorkLink: Equatable, Sendable {
   var goalRef: String? = nil
 }
 
+struct StartWorkPromptSummary: Equatable, Sendable {
+  let title: String
+  let source: String?
+  let runID: String?
+}
+
 enum HeadingWorkStatus {
   static let terminalTodoKeywords: Set<String> = ["DONE", "CANCELED", "CANCELLED"]
   static let openTodoKeywords: Set<String> = ["TODO", "NEXT", "IN_PROGRESS", "IN-PROGRESS", "WAITING", "HOLD", "STARTED"]
@@ -199,6 +205,27 @@ enum HeadingWorkStatus {
     return (key, value)
   }
 
+  /// The first line of every Start work prompt. The transcript recognizes it
+  /// to show the sent prompt as a compact card.
+  static let startWorkPromptLead = "Start work on this TODO from my corpus."
+
+  /// The task, source, and run named by a Start work prompt in `text`, or nil
+  /// when `text` is not one.
+  static func startWorkPromptSummary(in text: String) -> StartWorkPromptSummary? {
+    guard text.contains(startWorkPromptLead) else { return nil }
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map {
+      $0.trimmingCharacters(in: .whitespaces)
+    }
+    guard let lead = lines.firstIndex(of: startWorkPromptLead) else { return nil }
+    func value(_ prefix: String) -> String? {
+      lines[lead...].prefix(6).first(where: { $0.hasPrefix(prefix) })
+        .map { String($0.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces) }
+        .flatMap { $0.isEmpty ? nil : $0 }
+    }
+    guard let title = value("Task:") else { return nil }
+    return StartWorkPromptSummary(title: title, source: value("Source:"), runID: value("Durable run:"))
+  }
+
   /// The prompt sent to the chat destination when work starts on a heading.
   static func startWorkPrompt(
     title: String,
@@ -207,7 +234,7 @@ enum HeadingWorkStatus {
     keepsCLIInstructions: Bool
   ) -> String {
     var lines = [
-      "Start work on this TODO from my corpus.",
+      startWorkPromptLead,
       "",
       "Task: \(title)",
       "Source: \(reference)",

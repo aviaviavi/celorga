@@ -105,7 +105,7 @@ a { text-decoration-thickness: 0.08em; text-underline-offset: 0.15em; }
 <ol>
 <li><p>creates and starts a durable <code>celorga run</code> that cites the heading,</p></li>
 <li><p>adds <code>:CELORGA_RUN_ID:</code> to the heading (and an <code>:ID:</code> if it has none) and moves a <code>TODO</code> to in progress,</p></li>
-<li><p>sends the chosen thread the task, the source reference, and the run ID.</p></li>
+<li><p>sends the chosen thread the task, the source reference, and the run ID. The thread shows that message as a compact <em>Start work</em> card with the task and its source; <strong>Show prompt</strong> reveals the exact text the agent received.</p></li>
 </ol>
 <p>The heading then carries a live badge: <em>Working</em> while the agent replies, <em>Your turn</em> when it has replied and the run is still open, <em>Needs you</em> when the run is blocked or waiting for approval, <em>Failed</em>, or <em>Done</em>. Agenda rows show the same badge. Click it to return to the conversation. Starting work on a heading whose run is still open reopens that thread instead of creating a second run. Agents that can use the Celorga CLI are asked to record an outcome under the heading and close the run with <code>celorga run complete</code>.</p>
 </section>

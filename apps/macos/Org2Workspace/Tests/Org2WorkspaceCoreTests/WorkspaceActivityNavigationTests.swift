@@ -257,6 +257,30 @@ final class WorkspaceActivityNavigationTests: XCTestCase {
     XCTAssertFalse(HeadingWorkStatus.startWorkPrompt(title: "Ship it", reference: "x", runID: "run-9", keepsCLIInstructions: false).contains("celorga run"))
   }
 
+  func testStartWorkMessageShowsAsCompactCardWithTheFullPromptFolded() {
+    let prompt = "Use selected page “Ship it” at /corpus/notes/a.org:3 as context.\n\n"
+      + HeadingWorkStatus.startWorkPrompt(
+        title: "Ship it", reference: "/corpus/notes/a.org:3", runID: "run-9", keepsCLIInstructions: true
+      )
+    XCTAssertEqual(
+      HeadingWorkStatus.startWorkPromptSummary(in: prompt),
+      StartWorkPromptSummary(title: "Ship it", source: "/corpus/notes/a.org:3", runID: "run-9")
+    )
+    XCTAssertNil(HeadingWorkStatus.startWorkPromptSummary(in: "Task: Ship it\nSource: notes/a.org:3"))
+
+    let card = AIChatTranscriptHTML.StartWork(
+      AIChatMessage(role: .user, content: prompt),
+      corpusRoot: URL(fileURLWithPath: "/corpus")
+    )
+    XCTAssertEqual(card?.title, "Ship it")
+    XCTAssertEqual(card?.source, "notes/a.org:3")
+    XCTAssertNil(AIChatTranscriptHTML.StartWork(AIChatMessage(role: .assistant, content: prompt), corpusRoot: nil))
+
+    XCTAssertTrue(AIChatTranscriptHTML.script.contains("e.startWork ? startWorkCard(e, messageBody) : messageBody"))
+    XCTAssertTrue(AIChatTranscriptHTML.script.contains("'Show prompt'"))
+    XCTAssertTrue(AIChatTranscriptHTML.style.contains(".start-work-card"))
+  }
+
   func testStoreDerivesHeadingBadgesFromLoadedRuns() async throws {
     let (defaults, suiteName) = try makeDefaults()
     defer { defaults.removePersistentDomain(forName: suiteName) }

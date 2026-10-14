@@ -303,7 +303,8 @@ struct AIChatTranscriptDocument: View {
           }
           return AIChatTranscriptHTML.Trace(trace, reasoningHTML: reasoningHTML)
         },
-        changeSummary: message.changeSummary.map(AIChatTranscriptHTML.ChangeSummary.init)
+        changeSummary: message.changeSummary.map(AIChatTranscriptHTML.ChangeSummary.init),
+        startWork: AIChatTranscriptHTML.StartWork(message, corpusRoot: store.corpusRoot)
       )
     }
     AIChatTranscriptWebView(
@@ -806,6 +807,26 @@ enum AIChatTranscriptHTML {
     let isTruncated: Bool
     let responseTrace: Trace?
     let changeSummary: ChangeSummary?
+    /// A Start work prompt, shown as a compact card with the prompt folded.
+    var startWork: StartWork? = nil
+  }
+  struct StartWork: Codable, Equatable {
+    let title: String
+    let source: String?
+
+    /// The card for a user message that is a Start work prompt. Sources inside
+    /// the corpus show as corpus-relative paths.
+    init?(_ message: AIChatMessage, corpusRoot: URL?) {
+      guard message.role == .user,
+            let summary = HeadingWorkStatus.startWorkPromptSummary(in: message.content)
+      else { return nil }
+      title = summary.title
+      let rootPrefix = corpusRoot.map { $0.standardizedFileURL.path + "/" }
+      source = summary.source.map { source in
+        guard let rootPrefix, source.hasPrefix(rootPrefix) else { return source }
+        return String(source.dropFirst(rootPrefix.count))
+      }
+    }
   }
   struct Payload: Codable, Equatable {
     let thread: String
@@ -823,6 +844,13 @@ enum AIChatTranscriptHTML {
   }
 
   static let style = AIChatDocumentHTML.style + """
+  .start-work-card { display:grid; gap:3px; min-width:220px; }
+  .start-work-head { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 8px; }
+  .start-work-label { font-size:10px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--org2-accent, light-dark(#1d64c4,#7db4ff)); }
+  .start-work-head strong { font-weight:600; }
+  .start-work-source { font:11px ui-monospace, SFMono-Regular, Menlo, monospace; color:light-dark(#777,#aaa); overflow-wrap:anywhere; }
+  .start-work-toggle { justify-self:start; margin:3px 0 0 -6px; padding:2px 6px; font-size:11px; font-weight:500; color:var(--org2-link, light-dark(#1d64c4,#7db4ff)); }
+  .start-work-prompt { margin-top:6px; padding-top:8px; border-top:1px solid light-dark(#dddcd7,#444642); font-size:12px; }
   [hidden] { display:none!important; }
   html { overflow-y:auto; overflow-x:hidden; }
   body { padding:16px!important; }
@@ -1039,6 +1067,29 @@ enum AIChatTranscriptHTML {
       }
       return body;
     };
+    // Start work prompts are long and the same every time. Show the task, and
+    // fold the exact prompt behind a toggle that survives re-renders.
+    const shownStartWorkPrompts=new Set();
+    const startWorkCard = (e, prompt) => {
+      const box=document.createElement('div'); box.className='start-work-card';
+      const head=document.createElement('div'); head.className='start-work-head';
+      const label=document.createElement('span'); label.className='start-work-label'; label.textContent='▶ Start work';
+      const title=document.createElement('strong'); title.textContent=e.startWork.title;
+      head.append(label,title); box.append(head);
+      if(e.startWork.source) {
+        const source=document.createElement('div'); source.className='start-work-source'; source.textContent=e.startWork.source; box.append(source);
+      }
+      prompt.classList.add('start-work-prompt'); prompt.hidden=!shownStartWorkPrompts.has(e.id);
+      const toggle=document.createElement('button'); toggle.className='start-work-toggle';
+      const sync=()=>{ toggle.textContent=prompt.hidden?'Show prompt':'Hide prompt'; toggle.setAttribute('aria-expanded',String(!prompt.hidden)); };
+      toggle.onclick=()=>{
+        prompt.hidden=!prompt.hidden;
+        if(prompt.hidden) shownStartWorkPrompts.delete(e.id); else shownStartWorkPrompts.add(e.id);
+        sync();
+      };
+      sync(); box.append(toggle,prompt);
+      return box;
+    };
     const plainMessageBody = text => {
       const body=document.createElement('main');
       body.className='org2-document plain-message'; body.textContent=text||'';
@@ -1075,7 +1126,7 @@ enum AIChatTranscriptHTML {
       header.append(time,iconButton(e.copied?'check':'copy',e.copied?'Copied':'Copy message','copy',e.id,e.copied));
       if(!e.queued && !e.preparing && e.role!=='system') header.append(iconButton('reply','Reply to this message','reply',e.id));
       card.append(header);
-      if(e.contexts.length) {
+      if(e.contexts.length && !e.startWork) {
         const pills=document.createElement('div'); pills.className='context-pills';
         for(const context of e.contexts) { const pill=document.createElement('span'); const reply=context.kind==='reply to message'; pill.className='context-pill'+(reply?' reply-pill':''); pill.textContent=(reply?'↩ ':context.isAutomatic?'✦ ':'')+context.title; pills.append(pill); }
         card.append(pills);
@@ -1090,9 +1141,9 @@ enum AIChatTranscriptHTML {
       } else {
         const messageBody=typeof e.plainText==='string' ? plainMessageBody(e.plainText) : renderedOrgBody(e.html,'main');
         window.__chatHighlightMentions?.(document, messageBody, mentionTokens);
-        card.append(messageBody);
+        card.append(e.startWork ? startWorkCard(e, messageBody) : messageBody);
       }
-      if(!e.preparing && e.isTruncated) { const expand=button('⌄  Show Full Message','expand',e.id); expand.className='expansion'; card.append(expand); }
+      if(!e.preparing && e.isTruncated && !e.startWork) { const expand=button('⌄  Show Full Message','expand',e.id); expand.className='expansion'; card.append(expand); }
       if(e.attachments.length) {
         const attachments=document.createElement('div'); attachments.className='attachments';
         for(const attachment of e.attachments) {

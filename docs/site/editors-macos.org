@@ -55,7 +55,7 @@ Every open TODO heading in the rendered document shows *▶ Start work…* on ho
 
 1. creates and starts a durable =celorga run= that cites the heading,
 2. adds =:CELORGA_RUN_ID:= to the heading (and an =:ID:= if it has none) and moves a =TODO= to in progress,
-3. sends the chosen thread the task, the source reference, and the run ID.
+3. sends the chosen thread the task, the source reference, and the run ID. The thread shows that message as a compact /Start work/ card with the task and its source; *Show prompt* reveals the exact text the agent received.
 
 The heading then carries a live badge: /Working/ while the agent replies, /Your turn/ when it has replied and the run is still open, /Needs you/ when the run is blocked or waiting for approval, /Failed/, or /Done/. Agenda rows show the same badge. Click it to return to the conversation. Starting work on a heading whose run is still open reopens that thread instead of creating a second run. Agents that can use the Celorga CLI are asked to record an outcome under the heading and close the run with =celorga run complete=.
 
