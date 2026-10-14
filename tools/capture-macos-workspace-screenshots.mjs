@@ -134,13 +134,93 @@ function run(command, args, options = {}) {
   return result.stdout?.trim() ?? "";
 }
 
+// Homepage hero: Start work on a TODO, frame by frame. Every frame is the real
+// app rendered by the screenshot renderer; site/assets/hero-demo.js crossfades
+// them and moves a pointer between the controls. The agent's activity and
+// reply are the only scripted content.
+const startWorkHeading = "Review launch readiness brief";
+const startWorkFile = "notes/projects/beacon-launch.org2";
+const startWorkActivities = [
+  { title: "Read", detail: "notes/projects/beacon-launch.org2" },
+  { title: "Read", detail: "meetings/2026-06-15-0900-beta-review.org2" },
+  { title: "Read", detail: "views/launch-readiness-data.org2" },
+];
+const startWorkReply = `* Beacon is ready for a narrow private beta
+
+Two checks stand between the brief and the weekly review:
+
+- *Offline import is unverified.* The [[id:77777777-7777-4777-8777-777777777777][Beta review]] left the CSV import check open, due Jun 18.
+- *Seven blockers remain open,* three of them in docs. See [[file:../../views/launch-readiness-data.org2][launch readiness]].
+
+Onboarding copy is approved, and activation reached 79% after guided import shipped. Want me to add this summary under the task?`;
+const startWorkFrames = [
+  { name: "before", stage: "before" },
+  { name: "hover", stage: "before", hover: true },
+  { name: "sheet", stage: "before", hover: true, sheet: true },
+  { name: "working", stage: "working", activities: startWorkActivities.slice(0, 2).concat([{ ...startWorkActivities[2], status: "running" }]) },
+  { name: "streaming", stage: "working", activities: startWorkActivities, partial: startWorkReply.split("\n\n").slice(0, 3).join("\n\n") },
+  { name: "done", stage: "done", activities: startWorkActivities, reply: startWorkReply },
+].map((frame, index) => ({
+  mode: "start-work",
+  target: "notes/projects/beacon-launch",
+  width: 1240,
+  height: 800,
+  scale: 2,
+  settleMs: 2500,
+  format: "webp",
+  fileName: `home-start-work-${index + 1}-${frame.name}.webp`,
+  startWork: frame,
+}));
+scenarios.push(...startWorkFrames);
+
+// Each Start work frame starts from a clean copy of the demo corpus. Frames
+// after the click get the run and heading link that Start work creates, using
+// the same CLI calls as the app.
+function prepareStartWorkCorpus(frame) {
+  rmSync(renderCorpusRoot, { recursive: true, force: true });
+  cpSync(corpusRoot, renderCorpusRoot, { recursive: true });
+  if (frame.stage === "before") return;
+  const notePath = join(renderCorpusRoot, startWorkFile);
+  const lines = readFileSync(notePath, "utf8").split("\n");
+  const headingIndex = lines.findIndex((line) => line.endsWith(` ${startWorkHeading}`));
+  const cli = (args) => run("node", [join(repoRoot, "dist", "cli.js"), ...args, "--dir", renderCorpusRoot, "--json"], { capture: true });
+  const created = JSON.parse(cli([
+    "run", "create",
+    "--title", `Work: ${startWorkHeading}`,
+    "--goal", startWorkHeading,
+    "--context", `file:${startWorkFile}:${headingIndex + 1}`,
+    "--owner", "Celorga",
+    "--assignee", "OpenClaw",
+  ]));
+  const runID = created.run?.id ?? created.id;
+  cli(["run", "start", runID, "--actor", "Celorga"]);
+  lines[headingIndex] = lines[headingIndex].replace(/^(\*+) TODO /, "$1 IN_PROGRESS ");
+  const drawerEnd = lines.findIndex((line, index) => index > headingIndex && line.trim() === ":END:");
+  lines.splice(drawerEnd, 0, `:ORG2_RUN_ID: ${runID}`);
+  writeFileSync(notePath, lines.join("\n"));
+}
+
+function startWorkEnvironment(frame) {
+  if (!frame) return {};
+  return {
+    ORG2_WORKSPACE_SCREENSHOT_START_WORK_STAGE: frame.stage,
+    ORG2_WORKSPACE_SCREENSHOT_START_WORK_HEADING: startWorkHeading,
+    ORG2_WORKSPACE_SCREENSHOT_START_WORK_DESTINATION: "builtin.openclaw",
+    ...(frame.hover ? { ORG2_WORKSPACE_SCREENSHOT_START_WORK_HOVER: startWorkHeading } : {}),
+    ...(frame.sheet ? { ORG2_WORKSPACE_SCREENSHOT_START_WORK_SHEET: startWorkHeading } : {}),
+    ...(frame.activities ? { ORG2_WORKSPACE_SCREENSHOT_START_WORK_ACTIVITIES: JSON.stringify(frame.activities) } : {}),
+    ...(frame.partial ? { ORG2_WORKSPACE_SCREENSHOT_START_WORK_PARTIAL_REPLY: frame.partial } : {}),
+    ...(frame.reply ? { ORG2_WORKSPACE_SCREENSHOT_START_WORK_REPLY: frame.reply } : {}),
+  };
+}
+
 function captureScenario(scenario, theme) {
   const outputPath = join(screenshotDir, scenario.fileName);
   const scale = scenario.scale ?? 1;
   // Cropped homepage shots render the full window first, then keep only the
   // region named in points so the published image stays readable at page size.
-  const renderPath = scenario.crop
-    ? join(tmpdir(), `celorga-screenshot-${process.pid}-${scenario.fileName}`)
+  const renderPath = scenario.crop || scenario.format
+    ? join(tmpdir(), `celorga-screenshot-${process.pid}-${scenario.fileName}.png`)
     : outputPath;
   run("swift", ["run", "Org2WorkspaceScreenshotRenderer", "--out", renderPath], {
     cwd: packageDir,
@@ -157,8 +237,13 @@ function captureScenario(scenario, theme) {
       ORG2_WORKSPACE_SCREENSHOT_SCALE: String(scale),
       ORG2_WORKSPACE_SCREENSHOT_THEME: theme,
       ...(scenario.settleMs ? { ORG2_WORKSPACE_SCREENSHOT_SETTLE_MS: String(scenario.settleMs) } : {}),
+      ...startWorkEnvironment(scenario.startWork),
     },
   });
+  if (scenario.format === "webp") {
+    run("cwebp", ["-quiet", "-q", "86", renderPath, "-o", outputPath], { capture: true });
+    rmSync(renderPath, { force: true });
+  }
   if (scenario.crop) {
     const { x, y, width, height } = scenario.crop;
     run("sips", [
@@ -260,6 +345,7 @@ function main() {
   const theme = process.argv.find((arg) => arg.startsWith("--theme="))?.slice("--theme=".length) || defaultTheme;
   for (const scenario of selected) {
     if (scenario.mode === "agenda") prepareAgendaDemo();
+    if (scenario.startWork) prepareStartWorkCorpus(scenario.startWork);
     captureScenario(scenario, theme);
     if (scenario.mode === "agenda") {
       // Other scenarios continue to use their established demo records.

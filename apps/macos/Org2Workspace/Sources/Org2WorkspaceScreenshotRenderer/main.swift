@@ -239,6 +239,7 @@ struct Org2WorkspaceScreenshotRenderer {
     window.layoutIfNeeded()
     hostingView.layoutSubtreeIfNeeded()
     await waitForVisibleContent(in: hostingView, store: store)
+    let startWorkSheet = await prepareStartWorkCapture(in: hostingView, window: window, store: store)
     hostingView.displayIfNeeded()
 
     if verifiesCodeCopy {
@@ -276,7 +277,9 @@ struct Org2WorkspaceScreenshotRenderer {
     }
     hostingView.cacheDisplay(in: hostingView.bounds, to: bitmap)
 
-    if let webView = firstWebView(in: hostingView) {
+    // Scenes can show more than one web view (for example AI Chat beside a
+    // document), and cached view drawing leaves each of them blank.
+    for webView in visibleWebViews(in: hostingView) {
       let configuration = WKSnapshotConfiguration()
       configuration.rect = webView.bounds
       if let webSnapshot = try? await webView.takeSnapshot(configuration: configuration),
@@ -288,6 +291,9 @@ struct Org2WorkspaceScreenshotRenderer {
          ) {
         bitmap = composedBitmap
       }
+    }
+    if let sheet = startWorkSheet, let composedBitmap = composeSheet(base: bitmap, sheet: sheet, size: bounds.size) {
+      bitmap = composedBitmap
     }
     let expectedPixelWidth = max(1, Int(width * scale))
     let expectedPixelHeight = max(1, Int(height * scale))
@@ -313,6 +319,112 @@ struct Org2WorkspaceScreenshotRenderer {
       withIntermediateDirectories: true
     )
     try png.write(to: outputURL)
+  }
+
+  /// Start work captures for the homepage. `ORG2_WORKSPACE_SCREENSHOT_START_WORK_HOVER`
+  /// shows the rendered heading's own hover button for the named TODO, and
+  /// `ORG2_WORKSPACE_SCREENSHOT_START_WORK_SHEET` opens the real Start Work
+  /// sheet for it. A sheet is its own window, so it is returned for
+  /// compositing over the main window.
+  @MainActor
+  private static func prepareStartWorkCapture(
+    in hostingView: NSView,
+    window: NSWindow,
+    store: WorkspaceStore
+  ) async -> NSBitmapImageRep? {
+    let hover = CelorgaNames.environment("ORG2_WORKSPACE_SCREENSHOT_START_WORK_HOVER")
+    let sheetHeading = CelorgaNames.environment("ORG2_WORKSPACE_SCREENSHOT_START_WORK_SHEET")
+    guard let heading = hover ?? sheetHeading, !heading.isEmpty else { return nil }
+    var line: Int?
+    for webView in visibleWebViews(in: hostingView) {
+      let script = """
+        (() => {
+          const title = \(jsonString(heading));
+          const headline = [...document.querySelectorAll('details.org2-headline[data-org2-start-line]')]
+            .find(node => node.querySelector(':scope > .org2-headline-summary')?.textContent.includes(title));
+          if (!headline) return 0;
+          const line = Number(headline.dataset.org2StartLine);
+          // The pointer is over this heading: show its hover button, hovered.
+          // (The document's CSP blocks new style elements; CSSOM styles apply.)
+          // Document updates reinstall these buttons, so restyle after each one.
+          const hover = () => {
+            const button = document.querySelector(`details.org2-headline[data-org2-start-line="${line}"] > .org2-headline-summary > .org2-heading-start-work`);
+            if (!button) return;
+            // Offscreen windows do not advance CSS transitions.
+            button.style.setProperty('transition', 'none', 'important');
+            button.style.setProperty('opacity', '1', 'important');
+            button.style.setProperty('color', 'var(--org2-accent)');
+            button.style.setProperty('background', 'color-mix(in srgb, var(--org2-accent) 9%, transparent)');
+          };
+          const install = window.__org2InstallStartWork;
+          if (install && !install.__docsHover) {
+            window.__org2InstallStartWork = (enabled) => { install(enabled); hover(); };
+            window.__org2InstallStartWork.__docsHover = true;
+          }
+          hover();
+          return line;
+        })()
+        """
+      // Cached surfaces can keep more than one document web view alive.
+      if let found = try? await webView.evaluateJavaScript(script) as? Int, found > 0 {
+        line = line ?? found
+      }
+    }
+    try? await Task.sleep(for: .milliseconds(300))
+    guard sheetHeading != nil, let line else { return nil }
+    store.startWork(onHeadingAt: line)
+    for _ in 0..<50 {
+      if window.attachedSheet != nil || store.pendingStartWorkRequest == nil { break }
+      try? await Task.sleep(for: .milliseconds(100))
+    }
+    try? await Task.sleep(for: .milliseconds(800))
+    guard let sheetView = window.attachedSheet?.contentView else { return nil }
+    sheetView.layoutSubtreeIfNeeded()
+    guard let bitmap = sheetView.bitmapImageRepForCachingDisplay(in: sheetView.bounds) else { return nil }
+    sheetView.cacheDisplay(in: sheetView.bounds, to: bitmap)
+    return bitmap
+  }
+
+  private static func jsonString(_ value: String) -> String {
+    let data = (try? JSONSerialization.data(withJSONObject: [value])) ?? Data("[\"\"]".utf8)
+    return String(String(decoding: data, as: UTF8.self).dropFirst().dropLast())
+  }
+
+  /// Draws a captured sheet where AppKit presents it: centered at the top of
+  /// the window, below the tab bar, with the system sheet shadow.
+  @MainActor
+  private static func composeSheet(base: NSBitmapImageRep, sheet: NSBitmapImageRep, size: NSSize) -> NSBitmapImageRep? {
+    drawScaled(pixelWidth: base.pixelsWide, pixelHeight: base.pixelsHigh, size: size) {
+      let baseImage = NSImage(size: size)
+      baseImage.addRepresentation(base)
+      baseImage.draw(in: NSRect(origin: .zero, size: size))
+      let sheetSize = sheet.size
+      let frame = NSRect(
+        x: (size.width - sheetSize.width) / 2,
+        y: size.height - 52 - sheetSize.height,
+        width: sheetSize.width,
+        height: sheetSize.height
+      )
+      let path = NSBezierPath(roundedRect: frame, xRadius: 12, yRadius: 12)
+      NSGraphicsContext.saveGraphicsState()
+      let shadow = NSShadow()
+      shadow.shadowColor = NSColor.black.withAlphaComponent(0.28)
+      shadow.shadowBlurRadius = 28
+      shadow.shadowOffset = NSSize(width: 0, height: -10)
+      shadow.set()
+      NSColor.windowBackgroundColor.setFill()
+      path.fill()
+      NSGraphicsContext.restoreGraphicsState()
+      NSGraphicsContext.saveGraphicsState()
+      path.addClip()
+      let sheetImage = NSImage(size: sheetSize)
+      sheetImage.addRepresentation(sheet)
+      sheetImage.draw(in: frame)
+      NSGraphicsContext.restoreGraphicsState()
+      NSColor.black.withAlphaComponent(0.12).setStroke()
+      path.lineWidth = 0.5
+      path.stroke()
+    }
   }
 
   @MainActor

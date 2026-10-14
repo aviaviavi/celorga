@@ -4289,12 +4289,124 @@ extension WorkspaceStore {
         // the Files list pane and shows the document beside the sidebar.
         openSidebarFile(file)
       }
+    case "start-work":
+      applyScreenshotStartWork(fileTarget: target)
     default:
       openHome()
     }
 
     if let selectedLocation {
       await loadEntrySource(for: selectedLocation)
+    }
+  }
+
+  /// Documentation captures of the Start work flow: the note in the detail
+  /// pane and AI Chat in the surface pane, at one stage of the flow
+  /// (`ORG2_WORKSPACE_SCREENSHOT_START_WORK_STAGE`: `before`, `working`, or
+  /// `done`). The thread, its heading resource, the context pill, and the
+  /// prompt come from the same code `startWork` uses. Nothing is sent and no
+  /// run is created here; the capture script records the run and links the
+  /// heading in its disposable corpus first.
+  private func applyScreenshotStartWork(fileTarget: String?) {
+    func env(_ name: String) -> String? {
+      CelorgaNames.environment(name)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+    }
+    guard let fileTarget, !fileTarget.isEmpty,
+          let file = filteredCorpusFiles.first(where: { $0.relativePath.lowercased().contains(fileTarget) })
+    else {
+      openHome()
+      return
+    }
+    openSidebarFile(file)
+    isWorkspaceSurfacePaneClosed = false
+    selectedSurface = .aiChat
+    // The chat that was open before work started: a fresh, empty thread.
+    createAIChatThread()
+
+    let stage = env("ORG2_WORKSPACE_SCREENSHOT_START_WORK_STAGE") ?? "before"
+    guard stage != "before",
+          let headingTitle = env("ORG2_WORKSPACE_SCREENSHOT_START_WORK_HEADING"),
+          let text = try? String(contentsOfFile: file.path, encoding: .utf8)
+    else { return }
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+    guard let link = HeadingWorkStatus.links(in: text, baseLine: 1).first(where: { link in
+      lines.indices.contains(link.line - 1) && lines[link.line - 1].contains(headingTitle)
+    }), let idValue = link.idValue,
+      let destination = enabledAIChatDestinations.first(where: {
+        $0.id == env("ORG2_WORKSPACE_SCREENSHOT_START_WORK_DESTINATION")
+      }) ?? enabledAIChatDestinations.first
+    else { return }
+
+    let path = URL(fileURLWithPath: file.path).standardizedFileURL.path
+    let resource = AIChatResourceReference(
+      key: "id:\(idValue)", kind: .heading, title: headingTitle, file: path, line: link.line, idValue: idValue
+    )
+    let thread = createAIChatThread(
+      title: "Work: \(headingTitle)",
+      statusText: "",
+      resource: resource,
+      runtime: destination.runtime,
+      destinationID: destination.id,
+      defersPersistence: true,
+      selectsThread: false
+    )
+    let pointer = aiChatContextPointer(for: WorkspaceLocation.aiChatThreadRecord(AIChatThreadRecord(
+      title: headingTitle, file: path, line: link.line, zone: "entry", modifiedAt: nil, idValue: idValue
+    )))
+    let prompt = injectedAIChatContext(pointer) + HeadingWorkStatus.startWorkPrompt(
+      title: headingTitle,
+      reference: pointer.reference,
+      runID: link.runID ?? "run",
+      keepsCLIInstructions: !destination.adapter.isDirectProvider
+    )
+    let startedAt = Date().addingTimeInterval(-42)
+    let activities = Self.screenshotActivities(env("ORG2_WORKSPACE_SCREENSHOT_START_WORK_ACTIVITIES"))
+    var messages = [AIChatMessage(role: .user, content: prompt, createdAt: startedAt)]
+    if stage == "done", let reply = env("ORG2_WORKSPACE_SCREENSHOT_START_WORK_REPLY") {
+      messages.append(AIChatMessage(
+        role: .assistant,
+        content: reply,
+        createdAt: startedAt.addingTimeInterval(40),
+        responseTrace: AIChatResponseTrace(activities: activities),
+        authorRuntime: destination.runtime,
+        authorDestinationID: destination.id
+      ))
+    }
+    if let index = aiChatThreads.firstIndex(where: { $0.id == thread.id }) {
+      aiChatThreads[index] = aiChatThreads[index].replacingMessages(messages)
+    }
+    selectAIChatThread(thread.id, persistsSelection: false)
+    aiChatMessages = messages
+
+    guard stage == "working" else { return }
+    // A live turn, as the transcript shows it while the agent streams.
+    aiChatSendingThreadIDs.insert(thread.id)
+    isSendingAIChatMessage = true
+    aiChatRequestStartedAt = startedAt
+    aiChatLiveState.gatewayStateByThreadID[thread.id] = .connected
+    aiChatLiveState.runActivitiesByThreadID[thread.id] = activities
+    if let partial = env("ORG2_WORKSPACE_SCREENSHOT_START_WORK_PARTIAL_REPLY") {
+      aiChatLiveState.replaceStreamingReply(partial, for: thread.id, coalesced: false)
+    }
+    aiChatLiveState.noteEvent(for: thread.id, coalesced: false)
+    aiChatLiveState.flushPendingStreamUpdates()
+  }
+
+  /// Activities for a Start work capture, from a JSON array of
+  /// `{"title", "detail", "status"}` objects.
+  private static func screenshotActivities(_ json: String?) -> [AIChatRunActivity] {
+    guard let data = json?.data(using: .utf8),
+          let items = (try? JSONSerialization.jsonObject(with: data)) as? [[String: String]]
+    else { return [] }
+    return items.enumerated().map { index, item in
+      AIChatRunActivity(
+        id: "docs-\(index)",
+        runID: "docs",
+        kind: .tool,
+        title: item["title"] ?? "",
+        detail: item["detail"],
+        status: AIChatRunActivity.Status(rawValue: item["status"] ?? "") ?? .succeeded
+      )
     }
   }
 

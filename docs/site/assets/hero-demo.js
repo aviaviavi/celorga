@@ -1,93 +1,83 @@
-// Replays the homepage hero: a TODO in a note starts agent work in a new AI
-// thread. The markup's default state is the finished scene, so readers who
-// prefer reduced motion (or have scripts off) still see the whole story.
+// Replays the homepage hero from real Celorga frames: Start work on a TODO
+// opens a new agent thread beside the note. The markup shows the finished
+// frame, so readers who prefer reduced motion (or have scripts off) still see
+// the outcome, and only animating readers download the other frames.
 (() => {
   const root = document.querySelector("[data-hero-demo]");
   if (!root) return;
   const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
   if (motion.matches) return;
 
-  const win = root.querySelector(".chd-window");
-  const cursor = root.querySelector(".chd-cursor");
-  const steps = Object.fromEntries(
-    [...root.querySelectorAll(".chd-step")].map((node) => [node.dataset.step, node])
+  const frames = Object.fromEntries(
+    [...root.querySelectorAll("img[data-frame]")].map((img) => [img.dataset.frame, img])
   );
-  const states = ["is-hover", "is-sheet", "is-press", "is-started", "is-done", "is-cursor", "is-click", "is-fading"];
+  const pointer = root.querySelector(".celorga-hero-demo-pointer");
+  // Control positions in the 1240x800 capture, as fractions of the frame.
+  const spots = {
+    rest: [0.56, 0.93],
+    heading: [0.76, 0.49],
+    startWork: [0.912, 0.49],
+    sheetStart: [0.636, 0.47],
+  };
   let timers = [];
   let running = false;
   let visible = false;
+  let loaded = null;
 
   const at = (ms, fn) => timers.push(setTimeout(fn, ms));
-  const on = (...names) => root.classList.add(...names);
-  const off = (...names) => root.classList.remove(...names);
-  const show = (name) => steps[name]?.classList.add("is-on");
-
-  // Moves the cursor tip to a point inside `selector`, in window coordinates.
-  const point = (selector, fx = 0.5, fy = 0.55) => {
-    const box = win.getBoundingClientRect();
-    const target = root.querySelector(selector)?.getBoundingClientRect();
-    if (!target) return;
-    const x = target.left - box.left + target.width * fx;
-    const y = target.top - box.top + target.height * fy;
-    cursor.style.transform = `translate(${x}px, ${y}px)`;
+  const show = (name) => {
+    for (const [key, img] of Object.entries(frames)) img.classList.toggle("is-on", key === name);
   };
-  const click = (offset) => {
-    at(offset, () => on("is-click"));
-    at(offset + 160, () => off("is-click"));
+  const move = ([x, y]) => {
+    pointer.style.left = `${x * 100}%`;
+    pointer.style.top = `${y * 100}%`;
   };
+  const click = (ms) => {
+    at(ms, () => root.classList.add("is-click"));
+    at(ms + 140, () => root.classList.remove("is-click"));
+  };
+  const load = () => loaded ??= Promise.all(Object.values(frames).map((img) => {
+    if (img.dataset.src && !img.src) img.src = img.dataset.src;
+    return img.decode().catch(() => {});
+  }));
 
   const reset = () => {
     timers.forEach(clearTimeout);
     timers = [];
-    off(...states);
-    Object.values(steps).forEach((node) => node.classList.remove("is-on"));
-    const box = win.getBoundingClientRect();
-    cursor.style.transition = "none";
-    cursor.style.transform = `translate(${box.width * 0.36}px, ${box.height * 0.92}px)`;
-    void cursor.offsetWidth;
-    cursor.style.transition = "";
+    root.classList.remove("is-pointer", "is-click");
+    pointer.style.transition = "none";
+    move(spots.rest);
+    void pointer.offsetWidth;
+    pointer.style.transition = "";
   };
 
   const play = () => {
     reset();
-    root.classList.add("chd-live");
-    at(500, () => on("is-cursor"));
-    at(800, () => point(".chd-target > span:nth-of-type(3)", 0.4));
-    at(1700, () => on("is-hover"));
-    at(2300, () => point(".chd-start", 0.45));
-    click(3200);
-    at(3350, () => on("is-sheet"));
-    at(4100, () => point(".chd-sheet-go", 0.5));
-    click(5100);
-    at(5150, () => on("is-press"));
-    at(5450, () => {
-      off("is-sheet", "is-press", "is-hover", "is-cursor");
-      on("is-started");
-    });
-    at(6000, () => show("user"));
-    at(6900, () => show("read1"));
-    at(7500, () => show("read2"));
-    at(8100, () => show("write"));
-    at(8800, () => show("reply0"));
-    at(9200, () => show("reply1"));
-    at(9800, () => show("reply2"));
-    at(10500, () => show("reply3"));
-    at(11200, () => show("reply4"));
-    at(12100, () => { on("is-done"); show("review"); });
-    at(17500, () => on("is-fading"));
-    at(18100, () => { if (running) play(); });
+    show("before");
+    at(400, () => root.classList.add("is-pointer"));
+    at(600, () => move(spots.heading));
+    at(1500, () => show("hover"));
+    at(2100, () => move(spots.startWork));
+    click(3000);
+    at(3150, () => show("sheet"));
+    at(3800, () => move(spots.sheetStart));
+    click(4700);
+    at(4850, () => { show("working"); root.classList.remove("is-pointer"); });
+    at(7000, () => show("streaming"));
+    at(9200, () => show("done"));
+    at(15000, () => { if (running) play(); });
   };
 
   const start = () => {
     if (running || !visible || document.hidden) return;
     running = true;
-    play();
+    load().then(() => { if (running) play(); });
   };
   const stop = () => {
     if (!running) return;
     running = false;
     reset();
-    root.classList.remove("chd-live");
+    show("done");
   };
 
   new IntersectionObserver((entries) => {
