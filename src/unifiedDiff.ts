@@ -20,8 +20,8 @@ export function buildUnifiedDiff(
     path.join(os.tmpdir(), options.temporaryDirectoryPrefix),
   );
   try {
-    const beforePath = path.join(temporaryDirectory, "before.org2");
-    const afterPath = path.join(temporaryDirectory, "after.org2");
+    const beforePath = path.join(temporaryDirectory, "before.org");
+    const afterPath = path.join(temporaryDirectory, "after.org");
     fs.writeFileSync(beforePath, before, "utf8");
     fs.writeFileSync(afterPath, after, "utf8");
 

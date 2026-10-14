@@ -243,7 +243,7 @@ export function compilePublishedBeamerPdf(
     const fatal = rendered.diagnostics.find((diagnostic) => diagnostic.severity === "error");
     if (fatal) throw new Error(`Beamer publishing failed: ${fatal.message}`);
     const compiled = compileBeamerPdf(rendered.tex, {
-      sourcePath: path.join(temporaryDirectory, "publication.org2"),
+      sourcePath: path.join(temporaryDirectory, "publication.org"),
       engine: options.engine,
       passes: options.passes ?? 1,
     });
