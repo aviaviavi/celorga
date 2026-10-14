@@ -70,7 +70,7 @@ try {
   const file = workflowPath(root, workflow.id);
   // Syncthing conflicts preserve evidence; they must never become live bindings
   // or shadow the canonical schedule merely because they sort after its filename.
-  const conflict = file.replace(/\.org2$/, ".sync-conflict-20261009-184637-DEVICE.org2");
+  const conflict = file.replace(/(\.org2?)$/, ".sync-conflict-20261009-184637-DEVICE$1");
   fs.writeFileSync(conflict, renderWorkflowOrg({ ...workflow, version: "0.0.1", state: "paused" }));
   assert.equal(listWorkflows(root).length, 1);
   assert.equal(listWorkflows(root)[0].version, workflow.version);
