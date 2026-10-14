@@ -4482,8 +4482,16 @@ html {
    flow by crossfading frames and moving a pointer between the controls. */
 #content .celorga-hero-demo {
   position: relative;
-  aspect-ratio: 1240 / 800;
+  aspect-ratio: 883 / 734;
   overflow: hidden;
+}
+
+/* The stage zooms toward the active control; frames and pointer move with it. */
+#content .celorga-hero-demo-stage {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  transition: transform 1.1s cubic-bezier(0.45, 0, 0.2, 1);
 }
 
 #content .celorga-home-hero-shot .celorga-hero-demo img {
@@ -4503,7 +4511,7 @@ html {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 1;
+  z-index: 1000;
   width: clamp(12px, 1.6%, 20px);
   height: auto;
   opacity: 0;

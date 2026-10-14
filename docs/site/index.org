@@ -42,14 +42,16 @@
   </nav>
   <p class="celorga-home-hero-note">Free and open source · No account · Bring your own agents and subscriptions</p>
   <figure class="celorga-home-hero-shot">
-    <div class="celorga-hero-demo" data-hero-demo role="img" aria-label="Celorga on macOS with AI Chat beside the note beacon-launch.org2. Start work on the TODO Review launch readiness brief opens a new OpenClaw thread. The agent reads the cited notes, replies with a summary, and the heading moves to IN_PROGRESS with a Your turn badge.">
-      <img data-src="assets/screenshots/home-start-work-1-before.webp" width="2480" height="1600" alt="" data-frame="before" />
-      <img data-src="assets/screenshots/home-start-work-2-hover.webp" width="2480" height="1600" alt="" data-frame="hover" />
-      <img data-src="assets/screenshots/home-start-work-3-sheet.webp" width="2480" height="1600" alt="" data-frame="sheet" />
-      <img data-src="assets/screenshots/home-start-work-4-working.webp" width="2480" height="1600" alt="" data-frame="working" />
-      <img data-src="assets/screenshots/home-start-work-5-streaming.webp" width="2480" height="1600" alt="" data-frame="streaming" />
-      <img class="is-on" src="assets/screenshots/home-start-work-6-done.webp" width="2480" height="1600" alt="" loading="eager" data-frame="done" />
-      <svg class="celorga-hero-demo-pointer" viewBox="0 0 16 22" aria-hidden="true"><path d="M1 1v17l4.6-4.3 3 6.8 3-1.3-3-6.6H15z" fill="#111" stroke="#fff" stroke-width="1.3" stroke-linejoin="round"/></svg>
+    <div class="celorga-hero-demo" data-hero-demo role="img" aria-label="Celorga on macOS with AI Chat beside the note beacon-launch.org2. Start work on the TODO Review launch readiness brief opens a new OpenClaw thread with a compact Start work card. The agent reads the cited notes, replies with a summary, and the heading moves to IN_PROGRESS with a Your turn badge.">
+      <div class="celorga-hero-demo-stage">
+        <img data-src="assets/screenshots/home-start-work-1-before.webp" width="1766" height="1468" alt="" data-frame="before" />
+        <img data-src="assets/screenshots/home-start-work-2-hover.webp" width="1766" height="1468" alt="" data-frame="hover" />
+        <img data-src="assets/screenshots/home-start-work-3-sheet.webp" width="1766" height="1468" alt="" data-frame="sheet" />
+        <img data-src="assets/screenshots/home-start-work-4-working.webp" width="1766" height="1468" alt="" data-frame="working" />
+        <img data-src="assets/screenshots/home-start-work-5-streaming.webp" width="1766" height="1468" alt="" data-frame="streaming" />
+        <img class="is-on" src="assets/screenshots/home-start-work-6-done.webp" width="1766" height="1468" alt="" loading="eager" data-frame="done" />
+        <svg class="celorga-hero-demo-pointer" viewBox="0 0 16 22" aria-hidden="true"><path d="M1 1v17l4.6-4.3 3 6.8 3-1.3-3-6.6H15z" fill="#111" stroke="#fff" stroke-width="1.3" stroke-linejoin="round"/></svg>
+      </div>
     </div>
     <figcaption>Choose <em>Start work</em> on any TODO. An agent picks it up in a new thread with the task as context, and the heading shows when it's your turn.</figcaption>
   </figure>

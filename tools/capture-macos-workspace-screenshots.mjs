@@ -145,28 +145,29 @@ const startWorkActivities = [
   { title: "Read", detail: "meetings/2026-06-15-0900-beta-review.org2" },
   { title: "Read", detail: "views/launch-readiness-data.org2" },
 ];
-const startWorkReply = `* Beacon is ready for a narrow private beta
+const startWorkReply = `* Ready for a private beta
 
-Two checks stand between the brief and the weekly review:
+- *Offline import is unverified.* The [[id:77777777-7777-4777-8777-777777777777][Beta review]] left the CSV check open, due Jun 18.
+- *Seven blockers remain open,* three in docs. See [[file:../../views/launch-readiness-data.org2][launch readiness]].
 
-- *Offline import is unverified.* The [[id:77777777-7777-4777-8777-777777777777][Beta review]] left the CSV import check open, due Jun 18.
-- *Seven blockers remain open,* three of them in docs. See [[file:../../views/launch-readiness-data.org2][launch readiness]].
-
-Onboarding copy is approved, and activation reached 79% after guided import shipped. Want me to add this summary under the task?`;
+Want me to add this summary under the task?`;
 const startWorkFrames = [
   { name: "before", stage: "before" },
   { name: "hover", stage: "before", hover: true },
   { name: "sheet", stage: "before", hover: true, sheet: true },
   { name: "working", stage: "working", activities: startWorkActivities.slice(0, 2).concat([{ ...startWorkActivities[2], status: "running" }]) },
-  { name: "streaming", stage: "working", activities: startWorkActivities, partial: startWorkReply.split("\n\n").slice(0, 3).join("\n\n") },
+  { name: "streaming", stage: "working", activities: startWorkActivities, partial: startWorkReply.split("\n\n").slice(0, 2).join("\n\n") },
   { name: "done", stage: "done", activities: startWorkActivities, reply: startWorkReply },
 ].map((frame, index) => ({
   mode: "start-work",
   target: "notes/projects/beacon-launch",
-  width: 1240,
-  height: 800,
+  width: 1180,
+  height: 770,
   scale: 2,
   settleMs: 2500,
+  // Keep the two panes the hero is about; the sidebar and tab bar make the
+  // text too small at page width.
+  crop: { x: 297, y: 36, width: 883, height: 734 },
   format: "webp",
   fileName: `home-start-work-${index + 1}-${frame.name}.webp`,
   startWork: frame,
@@ -240,19 +241,18 @@ function captureScenario(scenario, theme) {
       ...startWorkEnvironment(scenario.startWork),
     },
   });
-  if (scenario.format === "webp") {
-    run("cwebp", ["-quiet", "-q", "86", renderPath, "-o", outputPath], { capture: true });
-    rmSync(renderPath, { force: true });
-  }
   if (scenario.crop) {
     const { x, y, width, height } = scenario.crop;
     run("sips", [
       "--cropOffset", String(Math.round(y * scale)), String(Math.round(x * scale)),
       "-c", String(Math.round(height * scale)), String(Math.round(width * scale)),
-      renderPath, "--out", outputPath,
+      renderPath, "--out", scenario.format ? renderPath : outputPath,
     ], { capture: true });
-    rmSync(renderPath, { force: true });
   }
+  if (scenario.format === "webp") {
+    run("cwebp", ["-quiet", "-q", "86", renderPath, "-o", outputPath], { capture: true });
+  }
+  if (renderPath !== outputPath) rmSync(renderPath, { force: true });
   console.log(`Rendered ${outputPath}`);
 }
 
