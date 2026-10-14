@@ -109,4 +109,63 @@ final class AIChatSharedRoomSteeringTests: XCTestCase {
     steers = await recorder.steers
     XCTAssertEqual(steers.count, 2)
   }
+
+  @MainActor
+  func testUnmentionedSteerReachesTheRunningAgentWhenItIsNotTheRoomDefault() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-room-steer-default-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let suiteName = "AIChatSharedRoomSteeringDefault.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let gate = AIChatRoomSteerGate()
+    let recorder = AIChatRoomSteerRecorder()
+    let store = WorkspaceStore(
+      defaults: defaults,
+      aiChatTranscriptURL: root.appendingPathComponent("chat.json"),
+      aiChatSendHandler: { _, _, _, _ in "OpenClaw answer" },
+      codexSendHandlerForTesting: { _, _, _ in
+        await gate.wait()
+        return "Codex answer"
+      },
+      legacyDefaultsDomains: []
+    )
+    store.setCorpusRoot(root, persistsDefault: false)
+    store.aiChatSteerHandlerForTesting = { runtime, _, content, _ in
+      await recorder.record(runtime: runtime, content: content)
+    }
+    store.createAIChatSharedRoom()
+    let threadID = try XCTUnwrap(store.selectedAIChatThreadID)
+    store.setSelectedAIChatRoomDefaultDestination(AIChatDestinationConfiguration.openClawID)
+    XCTAssertEqual(store.selectedAIChatRoomDefaultDestinationID, AIChatDestinationConfiguration.openClawID)
+
+    let firstTurn = Task { @MainActor in
+      await store.sendAIChatMessage(text: "@codex Start a long task")
+    }
+    for _ in 0..<200 where store.aiChatActiveDestinationID(for: threadID)
+      != AIChatDestinationConfiguration.localCodexID {
+      try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    XCTAssertTrue(store.isAIChatThreadRunning(threadID))
+
+    // The room default is OpenClaw, but Codex is mid-turn: un-mentioned
+    // guidance steers Codex rather than queueing a turn for OpenClaw.
+    store.sendComposedAIChatMessage(text: "Use the staging config", delivery: .steer)
+    for _ in 0..<200 where store.aiChatMessages.last?.deliveryStatus != .sent {
+      try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    let steered = try XCTUnwrap(store.aiChatMessages.last)
+    XCTAssertEqual(steered.deliveryKind, .steer)
+    XCTAssertEqual(steered.deliveryStatus, .sent)
+    XCTAssertEqual(steered.targetDestinationID, AIChatDestinationConfiguration.localCodexID)
+    let steers = await recorder.steers
+    XCTAssertEqual(steers, ["codex:Use the staging config"])
+
+    await gate.open()
+    await firstTurn.value
+    for _ in 0..<300 where store.isAIChatThreadRunning(threadID) {
+      try await Task.sleep(nanoseconds: 10_000_000)
+    }
+  }
 }

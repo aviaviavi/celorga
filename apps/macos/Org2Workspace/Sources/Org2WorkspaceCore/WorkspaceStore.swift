@@ -26175,16 +26175,29 @@ extension WorkspaceStore {
     // An explicit steer (for example from iOS right after the turn started)
     // can arrive before the runtime reports its live session. Keep it a steer
     // and let delivery wait for the session instead of silently queueing it.
-    // In a shared room, guidance can only steer the agent whose turn is
-    // running, and only when the message addresses exactly that agent
-    // (explicitly or as the room's default). Anything else is queued.
+    // In a shared room, guidance steers the agent whose turn is running: an
+    // un-mentioned message goes to that agent (not the room's default), and a
+    // message naming exactly that agent does too. Anything else is queued.
     repairOrphanedAIChatSends(in: threadID)
     let steeringThread = aiChatThreads.first(where: { $0.id == threadID })
     let roomSteerTargets = delivery == .steer && steeringThread?.isSharedRoom == true
-      ? steeringThread.map { aiChatRoomTargets(for: text, in: $0, audience: audience) }
+      ? steeringThread.map { thread in
+          let routing = AIChatDestinationRouting(
+            text,
+            destinations: enabledAIChatDestinations,
+            allDestinationIDs: thread.roomDestinationIDs
+          )
+          let explicit = routing.destinationIDs.isEmpty
+            ? (audience?.runtimes.map(AIChatDestinationConfiguration.defaultID(for:)) ?? [])
+            : routing.destinationIDs
+          return (explicitDestinationIDs: explicit, normalizedText: routing.normalizedText)
+        }
       : nil
     let roomSteerDestinationID = roomSteerTargets.flatMap { targets in
-      targets.destinationIDs.count == 1 ? targets.destinationIDs[0] : nil
+      Self.sharedRoomSteerDestinationID(
+        explicitDestinationIDs: targets.explicitDestinationIDs,
+        runningDestinationID: activeSharedRoomDestinationByThreadID[threadID]
+      )
     }
     let shouldTrySteering = delivery == .steer
       && isAIChatThreadRunning(threadID)
@@ -26248,6 +26261,22 @@ extension WorkspaceStore {
       return .enqueued(threadID: acceptedThreadID, shouldDrain: true)
     }
     return result
+  }
+
+  /// The agent a shared-room steer reaches. Guidance without an @mention goes
+  /// to the agent whose turn is running, not to the room's default agent, so
+  /// "steer" works whichever participant is mid-turn. A message naming exactly
+  /// one agent steers that agent only if it is the one running; anything else
+  /// is queued.
+  nonisolated static func sharedRoomSteerDestinationID(
+    explicitDestinationIDs: [String],
+    runningDestinationID: String?
+  ) -> String? {
+    switch explicitDestinationIDs.count {
+    case 0: return runningDestinationID
+    case 1: return explicitDestinationIDs[0]
+    default: return nil
+    }
   }
 
   /// Whether this thread's runtime can take live guidance at all, regardless of

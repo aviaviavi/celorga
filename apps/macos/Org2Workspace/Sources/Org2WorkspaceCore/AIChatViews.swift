@@ -3515,9 +3515,9 @@ struct AIChatComposerView: View {
     {
       Menu {
         Button {
-          _ = sendIfPossible(delivery: .steer)
+          performPrimaryAction(delivery: .followUp)
         } label: {
-          Label("Steer Now", systemImage: "arrow.turn.up.right")
+          Label("Queue as Follow-up", systemImage: "clock")
         }
         .disabled(!canSend)
       } label: {
@@ -3527,7 +3527,7 @@ struct AIChatComposerView: View {
       .menuStyle(.borderlessButton)
       .menuIndicator(.hidden)
       .fixedSize()
-      .help("Steer the current turn now (⌘Return)")
+      .help("Queue behind the current turn instead of steering it (⌘Return)")
     }
   }
 
@@ -3972,14 +3972,14 @@ struct AIChatComposerView: View {
     if store.isRecordingAIChatVoiceNote {
       return "Finish & Send"
     }
+    if isRunning {
+      return "Steer"
+    }
     if store.selectedAIChatIsSharedRoom,
        store.selectedAIChatRoomTargetDestinationIDs(
          for: AIChatContextPresentation(localDraft).userText
        ).isEmpty {
       return "Post"
-    }
-    if isRunning {
-      return "Queue"
     }
     return "Send"
   }
@@ -3988,14 +3988,14 @@ struct AIChatComposerView: View {
     if store.isRecordingAIChatVoiceNote {
       return "arrow.up.circle.fill"
     }
+    if isRunning {
+      return "arrow.turn.up.right"
+    }
     if store.selectedAIChatIsSharedRoom,
        store.selectedAIChatRoomTargetDestinationIDs(
          for: AIChatContextPresentation(localDraft).userText
        ).isEmpty {
       return "text.bubble.fill"
-    }
-    if isRunning {
-      return "clock"
     }
     return "paperplane.fill"
   }
@@ -4005,7 +4005,7 @@ struct AIChatComposerView: View {
       return "Finish dictating and send the transcript"
     }
     if isRunning {
-      return "Queue behind the current turn. Press Command-Return to steer now."
+      return "Steer the current turn now. Press Command-Return to queue behind it instead."
     }
     return "Send message"
   }
@@ -4037,12 +4037,7 @@ struct AIChatComposerView: View {
   }
 
   private func handleReturn(_ delivery: AIChatMessageDeliveryPreference) -> Bool {
-    performPrimaryAction(
-      delivery: AIChatComposerKeyCommand.resolvedDelivery(
-        requested: delivery,
-        isRunning: isRunning
-      )
-    )
+    performPrimaryAction(delivery: delivery)
     return true
   }
 
@@ -4056,7 +4051,12 @@ struct AIChatComposerView: View {
       }
       return
     }
-    _ = sendIfPossible(delivery: delivery)
+    _ = sendIfPossible(delivery: AIChatComposerKeyCommand.resolvedDelivery(
+      requested: delivery,
+      isRunning: isRunning,
+      isSlashCommand: AIChatContextPresentation(localDraft).userText
+        .trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/")
+    ))
   }
 
   private func handleSuggestionCommand(_ command: AIChatComposerSuggestionKeyCommand) -> Bool {
@@ -4665,7 +4665,8 @@ enum AIChatComposerKeyCommand {
     return isReturnKey(keyCode) && relevantModifiers.isEmpty
   }
 
-  static func isSteerCommand(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Bool {
+  /// Command-Return: queue behind the running turn instead of steering it.
+  static func isQueueCommand(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Bool {
     let relevantModifiers = modifiers.intersection([.command, .option, .control, .shift])
     return isReturnKey(keyCode)
       && (relevantModifiers == [.command] || relevantModifiers == [.command, .shift])
@@ -4676,12 +4677,17 @@ enum AIChatComposerKeyCommand {
     return isReturnKey(keyCode) && relevantModifiers == [.shift]
   }
 
+  /// Messages sent while a turn is running steer it by default; Command-Return
+  /// queues a follow-up instead. Slash commands keep their own handling, and
+  /// a runtime that cannot steer still queues.
   static func resolvedDelivery(
     requested: AIChatMessageDeliveryPreference,
-    isRunning: Bool
+    isRunning: Bool,
+    isSlashCommand: Bool = false
   ) -> AIChatMessageDeliveryPreference {
-    if requested == .steer && !isRunning {
-      return .automatic
+    guard isRunning else { return .automatic }
+    if requested == .automatic && !isSlashCommand {
+      return .steer
     }
     return requested
   }
@@ -4954,8 +4960,8 @@ struct AIChatComposerTextView: NSViewRepresentable {
       ), onSuggestionCommand?(command) == true {
         return
       }
-      if AIChatComposerKeyCommand.isSteerCommand(keyCode: event.keyCode, modifiers: event.modifierFlags),
-         onReturn?(.steer) == true {
+      if AIChatComposerKeyCommand.isQueueCommand(keyCode: event.keyCode, modifiers: event.modifierFlags),
+         onReturn?(.followUp) == true {
         return
       }
       if AIChatComposerKeyCommand.isSendCommand(keyCode: event.keyCode, modifiers: event.modifierFlags),

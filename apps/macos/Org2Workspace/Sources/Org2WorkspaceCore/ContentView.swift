@@ -5093,7 +5093,7 @@ private struct KeyboardShortcutsView: View {
             ShortcutHelpItem(keys: "⌘N", action: "New AI thread"),
             ShortcutHelpItem(keys: "Return", action: "Send; queue while a turn is running"),
             ShortcutHelpItem(keys: "⇧Return", action: "Insert newline"),
-            ShortcutHelpItem(keys: "⌘Return", action: "Steer running turn; send when idle"),
+            ShortcutHelpItem(keys: "⌘Return", action: "Queue behind running turn; send when idle"),
             ShortcutHelpItem(keys: "⌘⇧Return", action: "Same as ⌘Return"),
             ShortcutHelpItem(keys: "↑ / ↓", action: "Navigate visible suggestions"),
             ShortcutHelpItem(keys: "Tab / Return", action: "Accept selected suggestion when shown")

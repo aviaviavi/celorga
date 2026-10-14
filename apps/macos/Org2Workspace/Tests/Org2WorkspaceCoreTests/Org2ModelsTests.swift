@@ -6105,19 +6105,19 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertEqual(compactLongHeight, 150)
   }
 
-  func testOpenClawComposerReturnSendsCommandReturnSteersAndShiftReturnAddsNewline() {
+  func testComposerReturnSteersRunningTurnCommandReturnQueuesAndShiftReturnAddsNewline() {
     XCTAssertTrue(AIChatComposerKeyCommand.isSendCommand(keyCode: 36, modifiers: []))
     XCTAssertTrue(AIChatComposerKeyCommand.isSendCommand(keyCode: 76, modifiers: []))
     XCTAssertFalse(AIChatComposerKeyCommand.isSendCommand(keyCode: 36, modifiers: [.command]))
     XCTAssertFalse(AIChatComposerKeyCommand.isSendCommand(keyCode: 36, modifiers: [.command, .shift]))
     XCTAssertFalse(AIChatComposerKeyCommand.isSendCommand(keyCode: 49, modifiers: [.command]))
 
-    XCTAssertTrue(AIChatComposerKeyCommand.isSteerCommand(keyCode: 36, modifiers: [.command]))
-    XCTAssertTrue(AIChatComposerKeyCommand.isSteerCommand(keyCode: 76, modifiers: [.command]))
-    XCTAssertTrue(AIChatComposerKeyCommand.isSteerCommand(keyCode: 36, modifiers: [.command, .shift]))
-    XCTAssertTrue(AIChatComposerKeyCommand.isSteerCommand(keyCode: 76, modifiers: [.command, .shift]))
-    XCTAssertFalse(AIChatComposerKeyCommand.isSteerCommand(keyCode: 36, modifiers: []))
-    XCTAssertFalse(AIChatComposerKeyCommand.isSteerCommand(keyCode: 36, modifiers: [.shift]))
+    XCTAssertTrue(AIChatComposerKeyCommand.isQueueCommand(keyCode: 36, modifiers: [.command]))
+    XCTAssertTrue(AIChatComposerKeyCommand.isQueueCommand(keyCode: 76, modifiers: [.command]))
+    XCTAssertTrue(AIChatComposerKeyCommand.isQueueCommand(keyCode: 36, modifiers: [.command, .shift]))
+    XCTAssertTrue(AIChatComposerKeyCommand.isQueueCommand(keyCode: 76, modifiers: [.command, .shift]))
+    XCTAssertFalse(AIChatComposerKeyCommand.isQueueCommand(keyCode: 36, modifiers: []))
+    XCTAssertFalse(AIChatComposerKeyCommand.isQueueCommand(keyCode: 36, modifiers: [.shift]))
 
     XCTAssertTrue(AIChatComposerKeyCommand.isNewlineCommand(keyCode: 36, modifiers: [.shift]))
     XCTAssertTrue(AIChatComposerKeyCommand.isNewlineCommand(keyCode: 76, modifiers: [.shift]))
@@ -6132,6 +6132,41 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertEqual(
       AIChatComposerKeyCommand.resolvedDelivery(requested: .steer, isRunning: false),
       .automatic
+    )
+    // Steering is the default while a turn runs; Command-Return queues.
+    XCTAssertEqual(
+      AIChatComposerKeyCommand.resolvedDelivery(requested: .automatic, isRunning: true),
+      .steer
+    )
+    XCTAssertEqual(
+      AIChatComposerKeyCommand.resolvedDelivery(requested: .followUp, isRunning: true),
+      .followUp
+    )
+    XCTAssertEqual(
+      AIChatComposerKeyCommand.resolvedDelivery(requested: .followUp, isRunning: false),
+      .automatic
+    )
+    XCTAssertEqual(
+      AIChatComposerKeyCommand.resolvedDelivery(requested: .automatic, isRunning: true, isSlashCommand: true),
+      .automatic
+    )
+  }
+
+  func testSharedRoomSteerReachesTheRunningAgentWithoutAMention() {
+    // An un-mentioned steer goes to the running agent, not the room default.
+    XCTAssertEqual(
+      WorkspaceStore.sharedRoomSteerDestinationID(explicitDestinationIDs: [], runningDestinationID: "codex"),
+      "codex"
+    )
+    XCTAssertEqual(
+      WorkspaceStore.sharedRoomSteerDestinationID(explicitDestinationIDs: ["codex"], runningDestinationID: "codex"),
+      "codex"
+    )
+    XCTAssertNil(
+      WorkspaceStore.sharedRoomSteerDestinationID(explicitDestinationIDs: ["codex", "opencode"], runningDestinationID: "codex")
+    )
+    XCTAssertNil(
+      WorkspaceStore.sharedRoomSteerDestinationID(explicitDestinationIDs: [], runningDestinationID: nil)
     )
   }
 
