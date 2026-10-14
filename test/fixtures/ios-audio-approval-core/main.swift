@@ -185,6 +185,23 @@ do {
   expect(session.active?.target == targetA, "a route timeout keeps the prompt for replay")
 }
 
+// 8c. If iOS stops audible speech without a finish/cancel callback, playback must not keep
+// the Push to Talk receive session forever and block both Talk and ordinary dictation.
+do {
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  let started = session.handle(.sessionActivated(headset, now: t0))
+  expect(spoken(started).first?.contains("Approval request") == true, "the stalled prompt starts normally")
+  let stalled = session.handle(.playbackStalled)
+  expect(
+    stalled.contains(.stopSpeaking) && stalled.contains(.releaseAudioSession),
+    "a prompt with no speech progress releases the system audio session"
+  )
+  expect(session.playback == .idle, "a stalled prompt no longer leaves Settings stuck on playing")
+  expect(session.heardTarget == nil, "a stalled prompt is not answerable until replayed")
+}
+
 // 9. A stale push plays nothing.
 do {
   var session = joinedSession()

@@ -6,10 +6,29 @@ import Foundation
 /// Speech completion callback. Delegate calls arrive on AVFoundation threads.
 final class AudioApprovalSpeechDelegate: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
   private let finished: @MainActor @Sendable (_ completed: Bool) -> Void
+  private let progressed: @MainActor @Sendable () -> Void
 
-  init(finished: @escaping @MainActor @Sendable (_ completed: Bool) -> Void) {
+  init(
+    finished: @escaping @MainActor @Sendable (_ completed: Bool) -> Void,
+    progressed: @escaping @MainActor @Sendable () -> Void
+  ) {
     self.finished = finished
+    self.progressed = progressed
     super.init()
+  }
+
+  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
+    let progressed = self.progressed
+    Task { @MainActor in progressed() }
+  }
+
+  func speechSynthesizer(
+    _ synthesizer: AVSpeechSynthesizer,
+    willSpeakRangeOfSpeechString characterRange: NSRange,
+    utterance: AVSpeechUtterance
+  ) {
+    let progressed = self.progressed
+    Task { @MainActor in progressed() }
   }
 
   func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
@@ -52,6 +71,7 @@ final class AudioApprovalController: ObservableObject {
   private var bridge: AudioApprovalPushToTalkBridge?
   private var session = AudioApprovalSession()
   private var speechDelegate: AudioApprovalSpeechDelegate?
+  private var speechWatchdog: Task<Void, Never>?
   private let synthesizer = AVSpeechSynthesizer()
   private let callObserver = CXCallObserver()
   private let transcriber = MobileVoiceTranscriber()
@@ -230,6 +250,7 @@ final class AudioApprovalController: ObservableObject {
     case .speak(let text, let kind):
       speak(text, kind: kind)
     case .stopSpeaking:
+      cancelSpeechWatchdog()
       if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
     case .startCapture:
       Task {
@@ -276,13 +297,39 @@ final class AudioApprovalController: ObservableObject {
       // Report an incomplete playback: a prompt that was not heard cannot be answered.
       send(.playbackFinished(completed: false, now: Date()))
     case .play:
-      let delegate = AudioApprovalSpeechDelegate { [weak self] completed in
-        self?.send(.playbackFinished(completed: completed, now: Date()))
-      }
+      let delegate = AudioApprovalSpeechDelegate(
+        finished: { [weak self] completed in
+          self?.cancelSpeechWatchdog()
+          self?.send(.playbackFinished(completed: completed, now: Date()))
+        },
+        progressed: { [weak self] in self?.armSpeechWatchdog() }
+      )
       speechDelegate = delegate
       synthesizer.delegate = delegate
+      armSpeechWatchdog()
       synthesizer.speak(AVSpeechUtterance(string: text))
     }
+  }
+
+  /// AVSpeechSynthesizer can stop producing audible output under a Push to Talk session without
+  /// delivering either completion callback. Progress continually resets this watchdog; a genuine
+  /// stall clears the remote participant so Talk and ordinary dictation become available again.
+  private func armSpeechWatchdog() {
+    speechWatchdog?.cancel()
+    speechWatchdog = Task { [weak self] in
+      do {
+        try await Task.sleep(for: .seconds(8))
+      } catch {
+        return
+      }
+      guard !Task.isCancelled else { return }
+      self?.send(.playbackStalled)
+    }
+  }
+
+  private func cancelSpeechWatchdog() {
+    speechWatchdog?.cancel()
+    speechWatchdog = nil
   }
 
   private func sendDecision(_ candidate: AudioApprovalCandidate, decision: String, note: String?, receipt: String) {

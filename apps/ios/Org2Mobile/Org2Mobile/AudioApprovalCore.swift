@@ -259,6 +259,8 @@ enum AudioApprovalEvent: Sendable, Equatable {
   case playRequested(now: Date)
   case sessionActivated(AudioRouteSnapshot, now: Date)
   case sessionDeactivated
+  /// The speech synthesizer stopped making progress without reporting finish or cancellation.
+  case playbackStalled
   case playbackFinished(completed: Bool, now: Date)
   case transmitBegan(initiated: Bool, now: Date)
   /// `interrupted` is true when the system ended the transmission, for example for an incoming push.
@@ -496,6 +498,15 @@ struct AudioApprovalSession: Sendable, Equatable {
         effects += terminal("Audio ended during your reply. Nothing was decided.")
       }
       return effects
+
+    case .playbackStalled:
+      guard case .speaking(let kind) = playback else { return [] }
+      playback = .idle
+      if kind == .prompt { clearHeard() }
+      status = kind == .prompt
+        ? "Audio playback stopped unexpectedly. Replay the prompt before answering."
+        : "Audio playback stopped unexpectedly. The audio session was released."
+      return [.stopSpeaking, .releaseAudioSession]
 
     case .playbackFinished(let completed, let now):
       guard case .speaking(let kind) = playback else { return [] }
