@@ -146,6 +146,9 @@ assert.match(transcriber, /self\.managesAudioSession = managesAudioSession\s+res
 assert.match(controller, /synthesizer\.write\(AVSpeechUtterance/, "speech is rendered to audio buffers");
 assert.match(controller, /completionCallbackType: \.dataPlayedBack/, "receive mode waits for audible playback completion");
 assert.doesNotMatch(controller, /synthesizer\.speak\(/, "the background speech path uses the PTT-owned player");
+assert.match(controller, /beginBackgroundTask\(withName: "Finish audio approval reply"/);
+assert.match(controller, /endReplyBackgroundTask\(\)/);
+assert.match(controller, /hostReceipt\.receipt == receipt/);
 assert.match(settings, /Heard:/);
 assert.match(settings, /Interpreted as:/);
 assert.match(settings, /Recorded decisions on the Mac/);

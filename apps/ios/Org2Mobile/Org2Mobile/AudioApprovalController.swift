@@ -2,6 +2,7 @@ import AVFoundation
 import CallKit
 import Combine
 import Foundation
+import UIKit
 
 /// AVFoundation delivers synthesis buffers off the main actor. A buffer is transferred once
 /// to the playback queue and is immutable thereafter.
@@ -59,6 +60,7 @@ final class AudioApprovalController: ObservableObject {
   private var approvalsSubscription: AnyCancellable?
   private var pushToken: Data?
   private var pushToTalkSessionActive = false
+  private var replyBackgroundTask: UIBackgroundTaskIdentifier = .invalid
 
   init() {
     let stored = UserDefaults.standard.object(forKey: AudioApprovalFeature.quietUntilDefaultsKey) as? Date
@@ -121,6 +123,7 @@ final class AudioApprovalController: ObservableObject {
   }
 
   func leave() {
+    endReplyBackgroundTask()
     bridge?.leave()
     channelJoined = false
     send(.enrollmentChanged(joined: false))
@@ -205,6 +208,7 @@ final class AudioApprovalController: ObservableObject {
     case .transmitBegan(let initiated):
       send(.transmitBegan(initiated: initiated, now: Date()))
     case .transmitEnded(let initiated, let interrupted):
+      if initiated { beginReplyBackgroundTask() }
       send(.transmitEnded(initiated: initiated, interrupted: interrupted))
     case .incomingPush(let target):
       send(.pushReceived(target, now: Date()))
@@ -219,6 +223,7 @@ final class AudioApprovalController: ObservableObject {
       pushToTalkSessionActive = false
       send(.sessionDeactivated)
     case .failed(let message):
+      endReplyBackgroundTask()
       phase = message
     }
   }
@@ -264,6 +269,7 @@ final class AudioApprovalController: ObservableObject {
         }
       }
     case .finishCapture:
+      beginReplyBackgroundTask()
       Task {
         let transcript = await transcriber.finish()
         send(.transcriptReady(transcript, now: Date()))
@@ -362,6 +368,9 @@ final class AudioApprovalController: ObservableObject {
         }
       }
       if !player.isPlaying { player.play() }
+      // Audible playback now has the framework's runtime assertion. Until this point the
+      // reply's short background task covers final transcription, transport, and receipt.
+      endReplyBackgroundTask()
     } catch {
       stopSpeech()
       send(.playbackFinished(completed: false, now: Date()))
@@ -387,12 +396,35 @@ final class AudioApprovalController: ObservableObject {
     speechEngine = nil
   }
 
+  private func beginReplyBackgroundTask() {
+    guard replyBackgroundTask == .invalid else { return }
+    replyBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Finish audio approval reply") { [weak self] in
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        self.endReplyBackgroundTask()
+        if let target = self.session.deciding {
+          self.send(.decisionFailed(target, "Background time expired before the Mac confirmed this reply."))
+        } else if self.session.capture != .idle {
+          self.transcriber.cancel()
+          self.send(.captureFailed("Background time expired."))
+        }
+      }
+    }
+  }
+
+  private func endReplyBackgroundTask() {
+    guard replyBackgroundTask != .invalid else { return }
+    UIApplication.shared.endBackgroundTask(replyBackgroundTask)
+    replyBackgroundTask = .invalid
+  }
+
   private func loadReplyHistory(hostID: UUID?) {
     let key = "celorga.audioApprovals.replyHistory.\(hostID?.uuidString ?? "local")"
     guard key != historyKey else { return }
     // A host switch invalidates the current prompt and its in-flight answer.
     if historyKey != nil {
       stopSpeech()
+      endReplyBackgroundTask()
       transcriber.cancel()
       session = AudioApprovalSession()
       _ = session.handle(.enrollmentChanged(joined: channelJoined))
@@ -427,6 +459,7 @@ final class AudioApprovalController: ObservableObject {
         return
       }
       guard !Task.isCancelled else { return }
+      self?.endReplyBackgroundTask()
       self?.send(.playbackStalled)
     }
   }
@@ -437,6 +470,7 @@ final class AudioApprovalController: ObservableObject {
   }
 
   private func sendDecision(_ candidate: AudioApprovalCandidate, decision: String, note: String?, receipt: String) {
+    beginReplyBackgroundTask()
     guard let target = candidate.target else { return }
     guard let remote, let entry = remote.workspaceApprovals.first(where: { $0.id == candidate.id }) else {
       send(.decisionFailed(target, "The approval is no longer listed by the Mac."))

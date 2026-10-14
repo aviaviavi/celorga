@@ -740,11 +740,11 @@ struct AudioApprovalSession: Sendable, Equatable {
       guard deciding == target else { return [] }
       deciding = nil
       clearHeard()
-      let text = "Not applied. \(message) Nothing was changed."
+      let text = "Not confirmed. \(message) Check the request’s status before retrying."
       lastAcknowledgement = text
-      status = "Decision not applied."
+      status = "Decision not confirmed."
       updateReply(outcome: text)
-      return queueSpeech("Not applied. Nothing was changed.", .acknowledgement)
+      return queueSpeech("Not confirmed. Check the request’s status in Approvals.", .acknowledgement)
     }
   }
 

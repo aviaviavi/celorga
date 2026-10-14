@@ -348,7 +348,7 @@ do {
   _ = session.handle(.transmitEnded(initiated: true, interrupted: false))
   _ = session.handle(.transcriptReady("yes", now: t0.addingTimeInterval(6)))
   let rejected = session.handle(.decisionFailed(targetA, "The approval changed on the Mac."))
-  expect(spoken(rejected) == ["Not applied. Nothing was changed."], "a server rejection is spoken")
+  expect(spoken(rejected) == ["Not confirmed. Check the request’s status in Approvals."], "a server rejection is spoken")
 }
 
 // 12. The reply window expires.
@@ -443,6 +443,7 @@ do {
   expect(session.replyHistory.first?.outcome == "Sending to the Mac…", "local recognition is not host acceptance")
   _ = session.handle(.decisionFailed(targetA, "Mac unreachable"))
   expect(session.replyHistory.first?.outcome.contains("Mac unreachable") == true, "failed submission remains inspectable")
+  expect(session.replyHistory.first?.outcome.contains("Nothing was changed") == false, "a missing host receipt must not claim the Mac made no change")
   let restored = try! JSONDecoder().decode([AudioApprovalReplyRecord].self, from: JSONEncoder().encode(session.replyHistory))
   expect(restored == session.replyHistory, "reply history persists across app launches")
 }
