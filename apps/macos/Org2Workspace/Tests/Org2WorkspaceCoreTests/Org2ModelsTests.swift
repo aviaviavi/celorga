@@ -7223,6 +7223,7 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertNil(store.errorText)
   }
 
+  @MainActor
   func testDictationFallsBackWhenConfiguredTranscriberFails() async {
     let fellBack = await WorkspaceStore.transcribeAIChatDictation(
       primary: {
