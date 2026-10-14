@@ -309,6 +309,7 @@ final class WorkspaceDocumentMutationLaneTests: XCTestCase {
     // durable .org2 machine-state/chat commands are intentionally out of scope.
     for functionName in [
       "refileRenderedEntry",
+      "archiveRenderedEntry",
       "performSyncAndStageSource",
       "refreshSelectedDataNotebook",
       "linkifyCurrentFile",

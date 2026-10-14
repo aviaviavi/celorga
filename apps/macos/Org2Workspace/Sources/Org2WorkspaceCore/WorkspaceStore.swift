@@ -1591,6 +1591,11 @@ private struct RefileMutationPayload: Decodable {
   let changed: Bool
 }
 
+private struct ArchiveMutationPayload: Decodable {
+  let wrote: Bool
+  let archivePath: String
+}
+
 private struct RoamLinkifyPayload: Decodable {
   let changedFileCount: Int
   let replacementCount: Int
@@ -11555,6 +11560,8 @@ extension WorkspaceStore {
       requestStartWork(on: location, origin: "document_menu")
     case .refile:
       presentRenderedEntryRefile(block)
+    case .archive:
+      Task { await archiveRenderedEntry(block) }
     case .schedule(let target):
       guard let location = renderedHeadingLocation(for: block) else { return }
       Task { await applyPlanningShortcut(kind: .scheduled, target: target, to: location) }
@@ -12159,6 +12166,55 @@ extension WorkspaceStore {
     } catch {
       errorText = error.localizedDescription
       statusText = "Refile failed"
+    }
+  }
+
+  /// The archive file `celorga archive` uses by default for an Org file.
+  nonisolated static func renderedEntryArchiveFile(for sourceFile: String) -> String {
+    "\(sourceFile)_archive"
+  }
+
+  private func archiveRenderedEntry(_ block: OrgEditableBlock) async {
+    guard let source = selectedEntrySource, source.isEditable else {
+      statusText = "This entry is read-only"
+      return
+    }
+    let archiveFile = Self.renderedEntryArchiveFile(for: source.file)
+    do {
+      guard let context = captureDocumentCorpusContext(forFile: source.file) else {
+        throw WorkspaceDocumentMutationError.outsideCorpus(
+          file: source.file,
+          root: corpusRoot?.path ?? "(none)"
+        )
+      }
+      let cli = self.cli
+      let payload: ArchiveMutationPayload = try await performDocumentMutation(
+        context: context,
+        files: [source.file, archiveFile]
+      ) { _ in
+        try await cli.runJSON([
+          "archive",
+          "--file", source.file,
+          "--pos", "\(block.startLine)",
+          "--archive-file", archiveFile,
+          "--format", "json",
+          "--apply",
+        ])
+      }
+      guard isCurrentDocumentCorpusContext(context) else { return }
+      invalidateCanonicalDocumentCache(for: source.file)
+      invalidateCanonicalDocumentCache(for: archiveFile)
+      if let selectedLocation, selectedEntrySource?.file == source.file {
+        scheduleEntrySourceLoad(for: selectedLocation)
+      }
+      scheduleAgendaRefresh(preserveSelection: true)
+      Task { await refreshCorpusFiles() }
+      statusText = payload.wrote
+        ? "Archived entry to \(relativePath(archiveFile))"
+        : "Entry was not archived"
+    } catch {
+      errorText = error.localizedDescription
+      statusText = "Archive failed"
     }
   }
 

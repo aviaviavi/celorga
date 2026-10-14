@@ -478,6 +478,7 @@ enum OrgHTMLRenderedEntryAction: Sendable {
   case askAI
   case startWork
   case refile
+  case archive
   case schedule(PlanningDateTarget)
   case todo(TodoEditStatus?)
   case deadline(PlanningDateTarget)
@@ -521,6 +522,7 @@ private enum EntryContextMenuTag: Int {
   case delete
   case startWork
   case viewDecrypted
+  case archive
 
   var action: OrgHTMLRenderedEntryAction? {
     switch self {
@@ -553,6 +555,7 @@ private enum EntryContextMenuTag: Int {
     case .delete: .delete
     case .startWork: .startWork
     case .viewDecrypted: .viewDecrypted
+    case .archive: .archive
     }
   }
 
@@ -560,7 +563,7 @@ private enum EntryContextMenuTag: Int {
     switch self {
     case .entryView, .askAI, .copy, .copyReference, .viewDecrypted:
       false
-    case .edit, .refile, .startWork,
+    case .edit, .refile, .archive, .startWork,
          .scheduleToday, .scheduleTomorrow, .scheduleNextMonday, .scheduleNextMonth,
          .todo, .todoInProgress, .todoDone, .todoCanceled, .todoToggle,
          .deadlineToday, .deadlineTomorrow, .deadlineNextMonday, .deadlineNextMonth,
@@ -1117,6 +1120,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       menu.addItem(contextMenuItem("Start Work with AI…", symbol: "play.circle", tag: .startWork))
       menu.addItem(.separator())
       menu.addItem(contextMenuItem("Move / Refile…", symbol: "arrowshape.turn.up.right", tag: .refile))
+      menu.addItem(contextMenuItem("Archive Entry", symbol: "archivebox", tag: .archive))
 
       menu.addItem(submenuItem(
         "Schedule",

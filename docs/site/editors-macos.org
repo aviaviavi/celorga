@@ -74,6 +74,8 @@ While editing, type =@= to link a corpus file or insert a date. The editor offer
 
 Type =/image= at the start of a line or after a space to embed an image while you write. Choosing the command opens a file picker. An image from outside the corpus is copied into the corpus's =attachments/= folder, so it renders on every Mac the corpus syncs to; an image already in the corpus is linked where it is. Celorga inserts a =[[file:…]]= link relative to the current note. Paths such as =/Users/…= and words such as =and/or= never open the command panel.
 
+Right-click a heading in the rendered view for entry actions, including *Move / Refile…* and *Archive Entry*. *Archive Entry* moves the heading and its subtree to the note's =_archive= file (=notes.org= archives to =notes.org_archive=), the same as =celorga archive=, and records where it came from in =ARCHIVE_*= properties.
+
 Checked list items, such as =- [X] Ship the fix=, are shown struck through and muted in the source editor and the rendered view. Nested items keep their own state.
 
 An image link without a description, such as =[[file:attachments/chart.png]]= or =[[/Users/me/Desktop/shot.png]]=, renders as the image in the rendered view, including when text surrounds it. A link with a description inside a sentence stays a text link. Relative paths resolve from the note's folder first, then from the corpus root. Notes can show images anywhere on this Mac through an explicit absolute or =~/= path, but such an image appears only on Macs that have that file; use =/image= to keep it with the corpus. AI chat replies show only images inside the corpus.

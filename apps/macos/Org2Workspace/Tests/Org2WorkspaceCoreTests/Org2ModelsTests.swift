@@ -23395,6 +23395,7 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertTrue(titles.contains("Edit Entry"))
     XCTAssertTrue(titles.contains("Ask AI"))
     XCTAssertTrue(titles.contains("Move / Refile…"))
+    XCTAssertTrue(titles.contains("Archive Entry"))
     XCTAssertTrue(titles.contains("Schedule"))
     XCTAssertTrue(titles.contains("Todo Status"))
     XCTAssertTrue(titles.contains("Encrypt / Decrypt"))
@@ -23526,6 +23527,53 @@ final class Org2ModelsTests: XCTestCase {
     try await waitForCondition { mutatedLines.last != nil }
 
     XCTAssertEqual(mutatedLines.last, 4)
+  }
+
+  @MainActor
+  func testRenderedEntryArchiveActionMovesTheRightClickedSubtree() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-rendered-archive-action-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let text = """
+    #+TITLE: Context menu
+
+    * TODO Keep
+    * DONE Finished
+    ** Detail
+    * TODO After
+    """
+    let note = root.appendingPathComponent("context-menu.org")
+    try text.write(to: note, atomically: true, encoding: .utf8)
+    let source = EntrySource(
+      file: note.path,
+      startLine: 1,
+      endLineExclusive: 7,
+      text: text,
+      isSubtree: false
+    )
+    let store = try WorkspaceStore(cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()))
+    store.setCorpusRoot(root)
+    store.selectedEntrySource = source
+    store.selectedRenderedBlocks = OrgEntryRenderer.parseEditable(text, baseLine: 1)
+
+    store.performRenderedEntryAction(.archive, at: 4)
+    let archive = URL(fileURLWithPath: WorkspaceStore.renderedEntryArchiveFile(for: note.path))
+    try await waitForCondition(timeout: 20) {
+      FileManager.default.fileExists(atPath: archive.path)
+        && store.statusText.hasPrefix("Archived entry")
+    }
+
+    let remaining = try String(contentsOf: note, encoding: .utf8)
+    XCTAssertTrue(remaining.contains("* TODO Keep"))
+    XCTAssertTrue(remaining.contains("* TODO After"))
+    XCTAssertFalse(remaining.contains("Finished"))
+    XCTAssertFalse(remaining.contains("** Detail"))
+    let archived = try String(contentsOf: archive, encoding: .utf8)
+    XCTAssertTrue(archived.contains("* DONE Finished"))
+    XCTAssertTrue(archived.contains("** Detail"))
+    XCTAssertTrue(archived.contains(":ARCHIVE_SOURCE:"))
+    XCTAssertEqual(archive.lastPathComponent, "context-menu.org_archive")
   }
 
   @MainActor
