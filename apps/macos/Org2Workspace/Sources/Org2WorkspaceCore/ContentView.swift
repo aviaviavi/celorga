@@ -4637,45 +4637,59 @@ private struct QuickOpenView: View {
         }
       }
 
-      List {
-        ForEach(store.quickOpenItems) { item in
-          switch item {
-          case .file(let file):
-            CorpusFileRow(file: file)
-              .overlay(alignment: .trailing) {
-                if store.isRecentCorpusFile(file) {
-                  Image(systemName: "clock.arrow.circlepath")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .help("Recently opened")
-                    .accessibilityLabel("Recently opened")
+      ScrollViewReader { proxy in
+        List {
+          ForEach(store.quickOpenItems) { item in
+            switch item {
+            case .file(let file):
+              CorpusFileRow(file: file)
+                .overlay(alignment: .trailing) {
+                  if store.isRecentCorpusFile(file) {
+                    Image(systemName: "clock.arrow.circlepath")
+                      .font(.caption)
+                      .foregroundStyle(.tertiary)
+                      .help("Recently opened")
+                      .accessibilityLabel("Recently opened")
+                  }
                 }
-              }
-              .contentShape(Rectangle())
-              .onTapGesture {
-                open(item)
-              }
-              .modifier(ReadableListSelectionModifier(isSelected: store.selectedQuickOpenFileID == item.id))
-              .listRowBackground(Color.clear)
-              .contextMenu {
-                CorpusFileContextMenu(file: file) {
-                  store.isQuickOpenPresented = false
-                  dismiss()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                  open(item)
                 }
-              }
-          case .chatThread(let thread):
-            QuickOpenChatThreadRow(thread: thread)
-              .contentShape(Rectangle())
-              .onTapGesture {
-                open(item)
-              }
-              .modifier(ReadableListSelectionModifier(isSelected: store.selectedQuickOpenFileID == item.id))
-              .listRowBackground(Color.clear)
+                .modifier(ReadableListSelectionModifier(isSelected: store.selectedQuickOpenFileID == item.id))
+                .listRowBackground(Color.clear)
+                .contextMenu {
+                  CorpusFileContextMenu(file: file) {
+                    store.isQuickOpenPresented = false
+                    dismiss()
+                  }
+                }
+            case .chatThread(let thread):
+              QuickOpenChatThreadRow(thread: thread)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                  open(item)
+                }
+                .modifier(ReadableListSelectionModifier(isSelected: store.selectedQuickOpenFileID == item.id))
+                .listRowBackground(Color.clear)
+            }
           }
         }
+        .listStyle(.plain)
+        .frame(minHeight: 320)
+        // A List keeps its previous top row anchored when results change, which
+        // can leave a new result list scrolled to the middle. Start each result
+        // list at the top and keep keyboard selection visible.
+        .onAppear { scrollToTop(proxy) }
+        .onChange(of: store.quickOpenItems.map(\.id)) { previous, current in
+          if QuickOpenScrollPolicy.resetsToTop(previousIDs: previous, currentIDs: current) {
+            scrollToTop(proxy)
+          }
+        }
+        .onChange(of: store.selectedQuickOpenFileID) { _, selected in
+          if let selected { proxy.scrollTo(selected) } else { scrollToTop(proxy) }
+        }
       }
-      .listStyle(.plain)
-      .frame(minHeight: 320)
 
       Text("Return opens  ·  ⌘Return opens in a new tab  ·  Recent files are listed first")
         .font(.caption)
@@ -4692,6 +4706,11 @@ private struct QuickOpenView: View {
       queryFocused = true
       store.resetQuickOpenSelection()
     }
+  }
+
+  private func scrollToTop(_ proxy: ScrollViewProxy) {
+    guard let first = store.quickOpenItems.first?.id else { return }
+    proxy.scrollTo(first, anchor: .top)
   }
 
   private func openSelectedOrFirst() -> Bool {

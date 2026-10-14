@@ -1384,6 +1384,14 @@ public enum WorkspaceQuickOpenItem: Identifiable, Hashable, Sendable {
   }
 }
 
+enum QuickOpenScrollPolicy {
+  /// A new result list starts at its first result. Unchanged results keep the
+  /// user's scroll position.
+  static func resetsToTop(previousIDs: [String], currentIDs: [String]) -> Bool {
+    !currentIDs.isEmpty && previousIDs != currentIDs
+  }
+}
+
 struct QuickOpenIndexedFile: Sendable {
   let file: CorpusFile
   let normalizedRelativePath: String

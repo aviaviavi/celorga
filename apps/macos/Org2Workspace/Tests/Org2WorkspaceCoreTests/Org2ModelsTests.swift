@@ -10433,6 +10433,20 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertEqual(nestedFile.name, "alice.org2")
   }
 
+  func testQuickOpenStartsNewResultListsAtTheTop() {
+    // Typing replaces the results; the List would otherwise keep the old top
+    // row anchored and show the new results from the middle.
+    XCTAssertTrue(QuickOpenScrollPolicy.resetsToTop(
+      previousIDs: ["file:a", "file:b", "file:c"],
+      currentIDs: ["file:c", "file:d"]
+    ))
+    XCTAssertFalse(QuickOpenScrollPolicy.resetsToTop(
+      previousIDs: ["file:a", "file:b"],
+      currentIDs: ["file:a", "file:b"]
+    ))
+    XCTAssertFalse(QuickOpenScrollPolicy.resetsToTop(previousIDs: ["file:a"], currentIDs: []))
+  }
+
   @MainActor
   func testQuickOpenSelectionMovesThroughFilteredFiles() async throws {
     let store = try WorkspaceStore(cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()))
