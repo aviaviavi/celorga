@@ -84,6 +84,24 @@ final class OpenCodeClientTests: XCTestCase {
     XCTAssertEqual(permissions["edit"], "deny")
     XCTAssertEqual(permissions["bash"], "deny")
     XCTAssertEqual(permissions["external_directory"], "deny")
+    XCTAssertEqual(object["permission"] as? [String: String], permissions)
+  }
+
+  func testInlineConfigurationGivesSubagentsTheTurnSandbox() throws {
+    // Subagents (explore, general) do not inherit agent-level permissions. A
+    // subagent "ask" in a headless run is never answered and hangs the turn.
+    let configuration = try OpenCodeClient.inlineConfiguration(
+      systemPrompt: "Use the Org2 rules.",
+      sandboxAccess: .fullAccess
+    )
+    let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(configuration.utf8)) as? [String: Any])
+    let global = try XCTUnwrap(object["permission"] as? [String: String])
+    XCTAssertEqual(global["external_directory"], "allow")
+    XCTAssertEqual(global["bash"], "allow")
+    XCTAssertEqual(global["edit"], "allow")
+    let agents = try XCTUnwrap(object["agent"] as? [String: Any])
+    let agent = try XCTUnwrap(agents["openorg"] as? [String: Any])
+    XCTAssertEqual(agent["permission"] as? [String: String], global)
   }
 
   func testManagedRemoteRejectsCommandInjectionHost() {

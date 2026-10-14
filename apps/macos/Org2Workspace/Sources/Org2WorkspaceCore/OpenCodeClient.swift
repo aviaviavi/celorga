@@ -247,8 +247,13 @@ public actor OpenCodeClient {
         "external_directory": "allow"
       ]
     }
+    // The top-level block applies the same sandbox to subagents such as
+    // `explore` and `general`. Agent-level permissions are not inherited, and
+    // a headless `opencode run` never answers a subagent's "ask" prompt, so a
+    // subagent reading outside the session directory would hang the turn.
     let configuration: [String: Any] = [
       "$schema": "https://opencode.ai/config.json",
+      "permission": permissions,
       "agent": [
         "openorg": [
           "description": "Celorga workspace agent",
