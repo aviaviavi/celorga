@@ -10124,6 +10124,16 @@ private struct SourcesView: View {
               .foregroundStyle(.secondary)
               .fixedSize(horizontal: false, vertical: true)
 
+            if !store.ownsScheduledSourceSync {
+              Label(
+                "Scheduled syncs run on \(store.corpusAutomationHostRef ?? "desktop"), the host that owns this corpus’s automations. Run Now syncs on this Mac.",
+                systemImage: "server.rack"
+              )
+              .font(.callout)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+            }
+
             ForEach(store.sourceProfiles) { profile in
               SourceProfileCard(
                 profile: profile,

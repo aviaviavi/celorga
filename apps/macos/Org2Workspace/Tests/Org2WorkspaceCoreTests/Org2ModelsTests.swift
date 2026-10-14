@@ -6181,6 +6181,15 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertNil(AIChatComposerKeyCommand.suggestionCommand(keyCode: 49, modifiers: []))
   }
 
+  func testScheduledSourceSyncRunsOnlyOnTheCorpusSchedulerOwner() {
+    // org2.json/celorga.json `automationHostRef` owns scheduled source syncs.
+    XCTAssertTrue(WorkspaceStore.ownsCorpusSchedules(ownerHostRef: nil, hostRef: "desktop"))
+    XCTAssertTrue(WorkspaceStore.ownsCorpusSchedules(ownerHostRef: "desktop", hostRef: "desktop"))
+    XCTAssertFalse(WorkspaceStore.ownsCorpusSchedules(ownerHostRef: "press-trial", hostRef: "desktop"))
+    XCTAssertTrue(WorkspaceStore.ownsCorpusSchedules(ownerHostRef: "press-trial", hostRef: "press-trial"))
+    XCTAssertFalse(WorkspaceStore.ownsCorpusSchedules(ownerHostRef: nil, hostRef: "press-trial"))
+  }
+
   func testAIChatComposerCompletionMovesInsertionPointToEnd() {
     XCTAssertEqual(
       AIChatComposerSelection.updatedRange(

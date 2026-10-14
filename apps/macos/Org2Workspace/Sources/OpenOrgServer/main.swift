@@ -139,6 +139,7 @@ struct OpenOrgServer {
         throw NSError(domain: "OpenOrgServer", code: 1, userInfo: [NSLocalizedDescriptionKey: remote.statusText])
       }
       store.setAutomationSchedulerActive(config.schedulesEnabled)
+      store.setSourceAutoSyncActive(config.schedulesEnabled)
       emit(["event": "ready", "hostRef": config.hostRef, "endpoint": remote.endpoint ?? ""])
 
       for try await line in HeadlessControlInput.lines(descriptor: STDIN_FILENO) {
@@ -191,14 +192,17 @@ struct OpenOrgServer {
           // turns or hand-offs (clients route them to another online host)
           // and start no scheduled automations.
           store.setAutomationSchedulerActive(false)
+          store.setSourceAutoSyncActive(false)
           store.beginAIChatDrain()
           result = ["draining": true, "runningThreads": store.aiChatRunningTurnCountOnCurrentHost]
         case "resume":
           store.endAIChatDrain()
           store.setAutomationSchedulerActive(config.schedulesEnabled)
+          store.setSourceAutoSyncActive(config.schedulesEnabled)
           result = ["draining": false, "runningThreads": store.aiChatRunningTurnCountOnCurrentHost]
         case "stop":
           store.setAutomationSchedulerActive(false)
+          store.setSourceAutoSyncActive(false)
           remote.setEnabled(false)
           store.setWorkspaceRealtimeRefreshActive(false)
           let saved = await store.prepareForTermination()
@@ -211,6 +215,7 @@ struct OpenOrgServer {
       }
       // Losing the supervisor closes stdin. Persist interruption state before exit.
       store.setAutomationSchedulerActive(false)
+      store.setSourceAutoSyncActive(false)
       remote.setEnabled(false)
       _ = await store.prepareForTermination()
     } catch {

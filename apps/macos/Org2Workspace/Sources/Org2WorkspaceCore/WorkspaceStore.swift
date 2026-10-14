@@ -6202,8 +6202,22 @@ extension WorkspaceStore {
     }
   }
 
+  /// Scheduled source syncs run only on the corpus scheduler owner
+  /// (`automationHostRef`), like scheduled automations, so a desktop and a
+  /// headless server sharing a corpus do not both sync the same source.
+  /// Run Now still syncs on whichever host it is clicked.
+  nonisolated static func ownsCorpusSchedules(ownerHostRef: String?, hostRef: String) -> Bool {
+    (ownerHostRef ?? "desktop") == hostRef
+  }
+
+  var ownsScheduledSourceSync: Bool {
+    Self.ownsCorpusSchedules(ownerHostRef: corpusAutomationHostRef, hostRef: automationHostRef)
+  }
+
   private func checkDueSourceSchedules(refreshProfiles: Bool, now: Date = Date()) async {
     guard corpusRoot != nil else { return }
+    refreshCorpusAutomationHostRef()
+    guard ownsScheduledSourceSync else { return }
     if refreshProfiles || sourceProfiles.isEmpty {
       await refreshSourceConnections()
     }
