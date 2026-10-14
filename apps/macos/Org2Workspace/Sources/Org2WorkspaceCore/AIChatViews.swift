@@ -1229,10 +1229,22 @@ private struct AIChatMediaCorpusRootKey: EnvironmentKey {
   static let defaultValue: URL? = nil
 }
 
+private struct AIChatRecognizedMentionsKey: EnvironmentKey {
+  static let defaultValue: [String] = []
+}
+
 extension EnvironmentValues {
   var aiChatMediaCorpusRoot: URL? {
     get { self[AIChatMediaCorpusRootKey.self] }
     set { self[AIChatMediaCorpusRootKey.self] = newValue }
+  }
+
+  /// Lowercased mention tokens (without `@`) that address a configured agent.
+  /// Chat message documents highlight these so a real mention reads differently
+  /// from literal `@` text.
+  var aiChatRecognizedMentions: [String] {
+    get { self[AIChatRecognizedMentionsKey.self] }
+    set { self[AIChatRecognizedMentionsKey.self] = newValue }
   }
 }
 
@@ -3165,6 +3177,9 @@ struct AIChatComposerView: View {
 
           AIChatComposerTextView(
             text: visibleDraftBinding,
+            recognizedMentions: AIChatDestinationRouting.recognizedMentionTokens(
+              destinations: store.aiChatDestinations
+            ),
             focusOnAppear: focusOnAppear,
             moveCursorToEndRequest: moveComposerCursorToEndRequest,
             onReturn: handleReturn,
@@ -4776,6 +4791,7 @@ enum AIChatSlashCommandSelection {
 
 struct AIChatComposerTextView: NSViewRepresentable {
   @Binding var text: String
+  var recognizedMentions: [String] = []
   let focusOnAppear: Bool
   let moveCursorToEndRequest: Int
   let onReturn: (AIChatMessageDeliveryPreference) -> Bool
@@ -4826,6 +4842,8 @@ struct AIChatComposerTextView: NSViewRepresentable {
     context.coordinator.textSynchronization = AIChatComposerTextSynchronization(
       initialModelText: text
     )
+    context.coordinator.recognizedMentions = Set(recognizedMentions)
+    context.coordinator.highlightMentions(in: textView)
 
     if focusOnAppear {
       DispatchQueue.main.async {
@@ -4879,6 +4897,11 @@ struct AIChatComposerTextView: NSViewRepresentable {
       window.makeFirstResponder(textView)
     }
     context.coordinator.lastMoveCursorToEndRequest = moveCursorToEndRequest
+    let mentions = Set(recognizedMentions)
+    if textChanged || mentions != context.coordinator.recognizedMentions {
+      context.coordinator.recognizedMentions = mentions
+      context.coordinator.highlightMentions(in: textView)
+    }
   }
 
   final class Coordinator: NSObject, NSTextViewDelegate {
@@ -4886,6 +4909,30 @@ struct AIChatComposerTextView: NSViewRepresentable {
     var lastMoveCursorToEndRequest = 0
     var textSynchronization = AIChatComposerTextSynchronization()
     var isApplyingModelText = false
+    var recognizedMentions: Set<String> = []
+
+    /// Marks recognized agent mentions with display-only attributes, so the
+    /// draft stays plain text and undo, copy, and send are unaffected.
+    @MainActor
+    func highlightMentions(in textView: NSTextView) {
+      guard let layoutManager = textView.layoutManager else { return }
+      let fullRange = NSRange(location: 0, length: (textView.string as NSString).length)
+      layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
+      layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: fullRange)
+      let ranges = AIChatDestinationRouting.recognizedMentionRanges(
+        in: textView.string,
+        recognizedTokens: recognizedMentions
+      )
+      for range in ranges {
+        layoutManager.addTemporaryAttributes(
+          [
+            .foregroundColor: WorkspaceThemeCenter.shared.liveColor(.link),
+            .backgroundColor: WorkspaceThemeCenter.shared.liveColor(.link, alpha: 0.14),
+          ],
+          forCharacterRange: range
+        )
+      }
+    }
 
     init(parent: AIChatComposerTextView) {
       self.parent = parent
@@ -4897,6 +4944,7 @@ struct AIChatComposerTextView: NSViewRepresentable {
       else { return }
       let nativeText = textView.string
       textSynchronization.nativeTextDidChange(nativeText)
+      highlightMentions(in: textView)
       parent.text = nativeText
     }
   }

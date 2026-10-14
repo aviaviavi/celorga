@@ -315,7 +315,8 @@ struct AIChatTranscriptDocument: View {
         search: searchMessageID?.uuidString.lowercased(), searchGeneration: searchGeneration,
         initialPosition: store.aiChatScrollPosition(isAssistantPanel: compact) ?? 1,
         compact: compact,
-        live: liveInput.map(livePayload)
+        live: liveInput.map(livePayload),
+        mentions: AIChatDestinationRouting.recognizedMentionTokens(destinations: store.aiChatDestinations)
       ), attachments: messages.flatMap(\.attachments),
       sourcePath: sourcePath, corpusRoot: store.corpusRoot,
       linkResolver: linkResolver, openFileReference: openFileReference,
@@ -817,6 +818,8 @@ enum AIChatTranscriptHTML {
     var initialPosition: Double
     let compact: Bool
     let live: Live?
+    /// Lowercased agent mention tokens (without `@`) to highlight.
+    var mentions: [String] = []
   }
 
   static let style = AIChatDocumentHTML.style + """
@@ -1020,6 +1023,7 @@ enum AIChatTranscriptHTML {
       return leftKeys.length===rightKeys.length
         && leftKeys.every((key,index)=>key===rightKeys[index] && sameValue(left[key],right[key]));
     };
+    let mentionTokens=[];
     const renderedOrgBody = (html, tagName='div') => {
       const doc=new DOMParser().parseFromString(html,'text/html');
       const css=doc.querySelector('style');
@@ -1084,7 +1088,9 @@ enum AIChatTranscriptHTML {
         for(let i=0;i<2;i++) { const line=document.createElement('span'); line.className='message-placeholder-line'; lines.append(line); }
         placeholder.append(pulse,lines); card.append(placeholder);
       } else {
-        card.append(typeof e.plainText==='string' ? plainMessageBody(e.plainText) : renderedOrgBody(e.html,'main'));
+        const messageBody=typeof e.plainText==='string' ? plainMessageBody(e.plainText) : renderedOrgBody(e.html,'main');
+        window.__chatHighlightMentions?.(document, messageBody, mentionTokens);
+        card.append(messageBody);
       }
       if(!e.preparing && e.isTruncated) { const expand=button('⌄  Show Full Message','expand',e.id); expand.className='expansion'; card.append(expand); }
       if(e.attachments.length) {
@@ -1269,6 +1275,9 @@ enum AIChatTranscriptHTML {
     window.__transcriptUpdate = data => {
       const changedThread=current?.thread!==data.thread;
       if(!changedThread && selected()) { pending=data; return; }
+      const nextMentions=data.mentions||[];
+      const mentionsChanged=!sameValue(mentionTokens,nextMentions);
+      mentionTokens=nextMentions;
       if(changedThread) getSelection().removeAllRanges();
       const oldTop=scrollY, first=[...document.querySelectorAll('article')].find(x=>x.getBoundingClientRect().bottom>0);
       const anchor=first?{id:first.id,top:first.getBoundingClientRect().top}:null;
@@ -1279,7 +1288,7 @@ enum AIChatTranscriptHTML {
       for(const child of [...root.children]) if(!wanted.has(child.id)) child.remove();
       data.entries.forEach((e,i)=>{
         let a=document.getElementById('message-'+e.id);
-        if(!a || !sameValue(a._entry,e)) { const next=makeMessage(e); if(a) a.replaceWith(next); a=next; }
+        if(!a || mentionsChanged || !sameValue(a._entry,e)) { const next=makeMessage(e); if(a) a.replaceWith(next); a=next; }
         if(root.children[i]!==a) root.insertBefore(a,root.children[i]||null);
         a.classList.toggle('match',data.search===e.id);
       });
@@ -1341,7 +1350,7 @@ struct AIChatTranscriptWebView: NSViewRepresentable {
     config.setURLSchemeHandler(context.coordinator.resources, forURLScheme: OrgHTMLLocalResourceSchemeHandler.scheme)
     config.setURLSchemeHandler(context.coordinator.frames, forURLScheme: AIChatSandboxFrames.scheme)
     for name in ["transcript", "chatCopyCode"] { config.userContentController.add(context.coordinator, name: name) }
-    config.userContentController.addUserScript(WKUserScript(source: AIChatSandboxFrames.script + "\n" + AIChatTranscriptHTML.script + "\n" + OrgHTMLRichCopy.installationScript,
+    config.userContentController.addUserScript(WKUserScript(source: AIChatSandboxFrames.script + "\n" + AIChatMentionHighlight.script + "\n" + AIChatTranscriptHTML.script + "\n" + OrgHTMLRichCopy.installationScript,
       injectionTime: .atDocumentEnd, forMainFrameOnly: true))
     let view=WKWebView(frame: .zero, configuration: config)
     view.navigationDelegate=context.coordinator

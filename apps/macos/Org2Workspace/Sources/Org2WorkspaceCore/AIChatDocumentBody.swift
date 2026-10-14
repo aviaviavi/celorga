@@ -10,6 +10,7 @@ struct AIChatDocumentBody: View {
   @Environment(\.openOrgFileReference) private var openFileReference
   @Environment(\.openWorkspaceWebLink) private var openWebLink
   @Environment(\.orgRoamLinkResolver) private var linkResolver
+  @Environment(\.aiChatRecognizedMentions) private var recognizedMentions
   @State private var html: String?
   @State private var renderedText: String?
   @State private var height: CGFloat = 24
@@ -23,6 +24,7 @@ struct AIChatDocumentBody: View {
       sourcePath: sourcePath,
       corpusRoot: corpusRoot,
       linkResolver: linkResolver,
+      recognizedMentions: recognizedMentions,
       height: $height,
       openFileReference: openFileReference,
       openWebLink: openWebLink
@@ -107,6 +109,53 @@ enum AIChatChartInteraction {
   }
 }
 
+/// Marks `@mention` tokens that address a configured agent so they read as
+/// recognized references rather than literal text. Swift decides which tokens
+/// are recognized (`AIChatDestinationRouting.recognizedMentionTokens`); the page
+/// only wraps them. Mentions inside code, verbatim, links, and preformatted text
+/// stay literal, matching how agent hand-offs ignore them.
+enum AIChatMentionHighlight {
+  static let className = "chat-mention"
+
+  static let style = """
+  .chat-mention { color:var(--org2-link, light-dark(#1d64c4,#7db4ff)); background:color-mix(in srgb, var(--org2-link, light-dark(#1d64c4,#7db4ff)) 13%, transparent); border-radius:4px; padding:0 2px; font-weight:600; }
+  """
+
+  static let script = #"""
+  (() => {
+    const pattern = /(^|[^A-Za-z0-9_])@([A-Za-z0-9][A-Za-z0-9_-]*)(?![A-Za-z0-9_-])/g;
+    const literal = 'code, pre, kbd, samp, a, .chat-mention, .chat-code';
+    window.__chatHighlightMentions = (doc, root, tokens) => {
+      if (!root || !Array.isArray(tokens) || !tokens.length) return;
+      const recognized = new Set(tokens.map(t => String(t).toLowerCase()));
+      const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: node => node.nodeValue.includes('@') && !node.parentElement?.closest(literal)
+          ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+      });
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      for (const node of nodes) {
+        const text = node.nodeValue, parts = [];
+        let last = 0;
+        for (const match of text.matchAll(pattern)) {
+          if (!recognized.has(match[2].toLowerCase())) continue;
+          const start = match.index + match[1].length, end = start + match[2].length + 1;
+          if (start > last) parts.push(doc.createTextNode(text.slice(last, start)));
+          const span = doc.createElement('span');
+          span.className = 'chat-mention';
+          span.textContent = text.slice(start, end);
+          parts.push(span);
+          last = end;
+        }
+        if (!parts.length) continue;
+        if (last < text.length) parts.push(doc.createTextNode(text.slice(last)));
+        node.replaceWith(...parts);
+      }
+    };
+  })();
+  """#
+}
+
 enum AIChatDocumentHTML {
   static func plain(_ text: String) -> String {
     let escaped = text.replacingOccurrences(of: "&", with: "&amp;")
@@ -124,6 +173,7 @@ enum AIChatDocumentHTML {
   main.org2-document > :last-child { margin-bottom:0; }
   .org2-document-header { display:none; }
   .chat-plain { white-space:pre-wrap; }
+  \(AIChatMentionHighlight.style)
   li > p:first-child { margin-top:0; }
   li > p:last-child { margin-bottom:0; }
   pre { white-space:pre; overflow-x:auto; }
@@ -152,7 +202,9 @@ enum AIChatDocumentHTML {
       const height = Math.ceil(root.getBoundingClientRect().height);
       window.webkit.messageHandlers.chatHeight.postMessage(Math.max(24, height));
     });
-    window.__chatUpdate = html => {
+    let mentions = [];
+    window.__chatUpdate = (html, recognized) => {
+      if (Array.isArray(recognized)) mentions = recognized;
       if (selected()) { pending = html; return; }
       const next = new DOMParser().parseFromString(html, 'text/html');
       const styles = next.querySelectorAll('style');
@@ -192,6 +244,7 @@ enum AIChatDocumentHTML {
         });
         wrapper.append(button);
       }
+      window.__chatHighlightMentions?.(next, next.body, mentions);
       document.body.replaceChildren(...next.body.childNodes);
       // Charts share the document renderer's interaction script (installed by the host).
       if (window.__org2InstallCharts) window.__org2InstallCharts(document);
@@ -213,6 +266,7 @@ struct AIChatDocumentWebView: NSViewRepresentable {
   let sourcePath: String
   let corpusRoot: URL?
   let linkResolver: OrgRoamLinkResolver
+  var recognizedMentions: [String] = []
   @Binding var height: CGFloat
   let openFileReference: (AIChatFileReference) -> Void
   var openWebLink = OpenWorkspaceWebLinkAction()
@@ -225,7 +279,7 @@ struct AIChatDocumentWebView: NSViewRepresentable {
     configuration.userContentController.add(context.coordinator, name: "chatHeight")
     configuration.userContentController.add(context.coordinator, name: "chatCopyCode")
     configuration.userContentController.addUserScript(WKUserScript(
-      source: AIChatSandboxFrames.script + "\n" + AIChatDocumentHTML.updateScript + "\n" + OrgHTMLRichCopy.installationScript,
+      source: AIChatSandboxFrames.script + "\n" + AIChatMentionHighlight.script + "\n" + AIChatDocumentHTML.updateScript + "\n" + OrgHTMLRichCopy.installationScript,
       injectionTime: .atDocumentEnd, forMainFrameOnly: true
     ))
     configuration.setURLSchemeHandler(context.coordinator.resources, forURLScheme: OrgHTMLLocalResourceSchemeHandler.scheme)
@@ -246,9 +300,11 @@ struct AIChatDocumentWebView: NSViewRepresentable {
     coordinator.linkResolver = linkResolver
     coordinator.sourcePath = sourcePath
     coordinator.corpusRoot = corpusRoot
+    let mentionsChanged = coordinator.recognizedMentions != recognizedMentions
+    coordinator.recognizedMentions = recognizedMentions
     coordinator.resources.configure(source: EntrySource(file: sourcePath, startLine: 1,
       endLineExclusive: 1, text: "", isSubtree: false), corpusRoot: corpusRoot)
-    guard coordinator.html != html else { return }
+    guard coordinator.html != html || mentionsChanged else { return }
     coordinator.html = html
     if !coordinator.loaded {
       if !coordinator.loading {
@@ -282,7 +338,7 @@ struct AIChatDocumentWebView: NSViewRepresentable {
     var sourcePath = ""
     var corpusRoot: URL?
     var linkTask: Task<Void, Never>?
-
+    var recognizedMentions: [String] = []
 
     var installedChartScript: String?
 
@@ -293,7 +349,12 @@ struct AIChatDocumentWebView: NSViewRepresentable {
         view.evaluateJavaScript(chartScript)
       }
       let rewritten = OrgHTMLLocalResourceSchemeHandler.rewritingLocalImageSources(in: html)
-      view.callAsyncJavaScript("window.__chatUpdate(html)", arguments: ["html": rewritten], in: nil, in: .page)
+      view.callAsyncJavaScript(
+        "window.__chatUpdate(html, mentions)",
+        arguments: ["html": rewritten, "mentions": recognizedMentions],
+        in: nil,
+        in: .page
+      )
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

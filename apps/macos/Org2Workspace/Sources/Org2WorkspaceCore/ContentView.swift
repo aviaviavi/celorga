@@ -11293,6 +11293,10 @@ private struct AIChatView: View {
       chatColumn
     }
     .environment(\.aiChatMediaCorpusRoot, store.corpusRoot)
+    .environment(
+      \.aiChatRecognizedMentions,
+      AIChatDestinationRouting.recognizedMentionTokens(destinations: store.aiChatDestinations)
+    )
     .task {
       await store.refreshAIChatCommands()
     }

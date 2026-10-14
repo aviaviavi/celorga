@@ -781,6 +781,49 @@ final class AIChatSharedRoomTests: XCTestCase {
     XCTAssertEqual(scopedAll.normalizedText, "@codex @codex-remote compare")
   }
 
+  func testRecognizedMentionsMatchRoutingAndIgnoreUnknownAgents() {
+    let remote = AIChatDestinationConfiguration(
+      id: "remote",
+      name: "Codex Remote",
+      mention: "codex-remote",
+      adapter: .codexRemote,
+      endpoint: "wss://codex.example.test/ws"
+    )
+    var destinations = AIChatDestinationConfiguration.defaults + [remote]
+    // A renamed built-in still answers to its short alias.
+    destinations[1].mention = "claw"
+
+    let tokens = AIChatDestinationRouting.recognizedMentionTokens(destinations: destinations)
+    XCTAssertEqual(Set(tokens), ["codex", "claw", "openclaw", "codex-remote", "all", "both"])
+    XCTAssertFalse(tokens.contains("claude"), "Disabled agents are not highlighted")
+    XCTAssertEqual(
+      AIChatDestinationRouting("@openclaw check", destinations: destinations).destinationIDs,
+      [AIChatDestinationConfiguration.openClawID]
+    )
+
+    let text = "@Codex-Remote and @claw, ask @claude or email me@codex.dev @codexy @ALL"
+    let ranges = AIChatDestinationRouting.recognizedMentionRanges(in: text, recognizedTokens: Set(tokens))
+    let source = text as NSString
+    XCTAssertEqual(ranges.map { source.substring(with: $0) }, ["@Codex-Remote", "@claw", "@ALL"])
+    XCTAssertTrue(
+      AIChatDestinationRouting.recognizedMentionRanges(in: "@codex", recognizedTokens: []).isEmpty
+    )
+    XCTAssertTrue(
+      AIChatDestinationRouting.recognizedMentionTokens(
+        destinations: destinations.map { var copy = $0; copy.isEnabled = false; return copy }
+      ).isEmpty
+    )
+  }
+
+  func testChatPagesInstallMentionHighlighting() {
+    XCTAssertTrue(AIChatDocumentHTML.style.contains(".\(AIChatMentionHighlight.className)"))
+    XCTAssertTrue(AIChatTranscriptHTML.style.contains(".\(AIChatMentionHighlight.className)"))
+    XCTAssertTrue(AIChatMentionHighlight.script.contains("window.__chatHighlightMentions"))
+    XCTAssertTrue(AIChatMentionHighlight.script.contains("code, pre"))
+    XCTAssertTrue(AIChatTranscriptHTML.script.contains("__chatHighlightMentions?.(document, messageBody, mentionTokens)"))
+    XCTAssertTrue(AIChatDocumentHTML.updateScript.contains("__chatHighlightMentions?.(next, next.body, mentions)"))
+  }
+
   func testTranscriptGroupsEachHarnessIntoOneRound() {
     let roundID = UUID()
     let trigger = AIChatMessage(

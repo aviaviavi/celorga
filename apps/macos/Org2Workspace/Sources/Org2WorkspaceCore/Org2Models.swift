@@ -3384,7 +3384,6 @@ public struct AIChatDestinationRouting: Equatable, Sendable {
     allDestinationIDs: [String]? = nil
   ) {
     let enabled = destinations.filter(\.isEnabled)
-    let byMention = Dictionary(uniqueKeysWithValues: enabled.map { ($0.mention.lowercased(), $0) })
     let source = rawText as NSString
     let matches = Self.mentionPattern.matches(
       in: rawText,
@@ -3397,20 +3396,9 @@ public struct AIChatDestinationRouting: Equatable, Sendable {
     for match in matches {
       guard match.numberOfRanges > 1 else { continue }
       let mention = source.substring(with: match.range(at: 1)).lowercased()
-      if mention == "all" || mention == "both" {
+      if Self.expandsToAll(mention) {
         expandsAll = true
-      } else if let destination = byMention[mention], !selected.contains(destination.id) {
-        selected.append(destination.id)
-      } else if mention == "codex",
-                let destination = enabled.first(where: { $0.id == AIChatDestinationConfiguration.localCodexID }),
-                !selected.contains(destination.id) {
-        selected.append(destination.id)
-      } else if mention == "openclaw",
-                let destination = enabled.first(where: { $0.id == AIChatDestinationConfiguration.openClawID }),
-                !selected.contains(destination.id) {
-        selected.append(destination.id)
-      } else if mention == "claude",
-                let destination = enabled.first(where: { $0.id == AIChatDestinationConfiguration.localClaudeID }),
+      } else if let destination = Self.destination(forMention: mention, enabled: enabled),
                 !selected.contains(destination.id) {
         selected.append(destination.id)
       }
@@ -3427,26 +3415,11 @@ public struct AIChatDestinationRouting: Equatable, Sendable {
       guard match.numberOfRanges > 1 else { continue }
       let mention = source.substring(with: match.range(at: 1)).lowercased()
       let replacement: String
-      if mention == "all" || mention == "both" {
+      if Self.expandsToAll(mention) {
         replacement = selected.compactMap { id in
           enabled.first(where: { $0.id == id })?.mentionText
         }.joined(separator: " ")
-      } else if let destination = byMention[mention] {
-        replacement = destination.mentionText
-      } else if mention == "codex",
-                let destination = enabled.first(where: { $0.id == AIChatDestinationConfiguration.localCodexID }) {
-        replacement = destination.mentionText
-      } else if mention == "openclaw",
-                let destination = enabled.first(where: { $0.id == AIChatDestinationConfiguration.openClawID }) {
-        replacement = destination.mentionText
-      } else if mention == "claude",
-                let destination = enabled.first(where: { $0.id == AIChatDestinationConfiguration.localClaudeID }) {
-        replacement = destination.mentionText
-      } else if mention == "pi",
-                let destination = enabled.first(where: { $0.id == AIChatDestinationConfiguration.localPiID }) {
-        replacement = destination.mentionText
-      } else if mention == "opencode",
-                let destination = enabled.first(where: { $0.id == AIChatDestinationConfiguration.localOpenCodeID }) {
+      } else if let destination = Self.destination(forMention: mention, enabled: enabled) {
         replacement = destination.mentionText
       } else {
         continue
@@ -3460,6 +3433,66 @@ public struct AIChatDestinationRouting: Equatable, Sendable {
     summary = names.isEmpty
       ? "Posts to thread · no agents invoked"
       : "Invokes \(names.joined(separator: " + "))"
+  }
+
+  /// Built-in short names that address a default destination even after its
+  /// mention has been renamed.
+  private static let builtinMentionAliases: [String: String] = [
+    "codex": AIChatDestinationConfiguration.localCodexID,
+    "openclaw": AIChatDestinationConfiguration.openClawID,
+    "claude": AIChatDestinationConfiguration.localClaudeID,
+    "pi": AIChatDestinationConfiguration.localPiID,
+    "opencode": AIChatDestinationConfiguration.localOpenCodeID,
+  ]
+
+  private static func expandsToAll(_ mention: String) -> Bool {
+    mention == "all" || mention == "both"
+  }
+
+  /// The enabled destination a lowercased mention token (without `@`)
+  /// addresses: its own mention first, then a built-in alias.
+  static func destination(
+    forMention mention: String,
+    enabled: [AIChatDestinationConfiguration]
+  ) -> AIChatDestinationConfiguration? {
+    if let destination = enabled.first(where: { $0.mention.lowercased() == mention }) {
+      return destination
+    }
+    guard let aliasID = builtinMentionAliases[mention] else { return nil }
+    return enabled.first(where: { $0.id == aliasID })
+  }
+
+  /// Lowercased mention tokens (without `@`) that route to an enabled agent,
+  /// including `all` and `both`. Chat surfaces highlight exactly these.
+  public static func recognizedMentionTokens(
+    destinations: [AIChatDestinationConfiguration]
+  ) -> [String] {
+    let enabled = destinations.filter(\.isEnabled)
+    guard !enabled.isEmpty else { return [] }
+    var tokens = enabled.map { $0.mention.lowercased() }
+    for (alias, id) in builtinMentionAliases.sorted(by: { $0.key < $1.key })
+    where enabled.contains(where: { $0.id == id }) {
+      tokens.append(alias)
+    }
+    tokens.append(contentsOf: ["all", "both"])
+    var seen = Set<String>()
+    return tokens.filter { seen.insert($0).inserted }
+  }
+
+  /// UTF-16 ranges of `@mention` tokens in `text` that address a recognized
+  /// agent, including the `@`.
+  public static func recognizedMentionRanges(
+    in text: String,
+    recognizedTokens: Set<String>
+  ) -> [NSRange] {
+    guard !recognizedTokens.isEmpty, text.contains("@") else { return [] }
+    let source = text as NSString
+    return mentionPattern.matches(in: text, range: NSRange(location: 0, length: source.length))
+      .filter { match in
+        match.numberOfRanges > 1
+          && recognizedTokens.contains(source.substring(with: match.range(at: 1)).lowercased())
+      }
+      .map(\.range)
   }
 
   private static let mentionPattern = try! NSRegularExpression(
