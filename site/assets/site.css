@@ -3152,6 +3152,12 @@ body > .celorga-footer .celorga-footer-tagline {
   margin-top: clamp(2rem, 4vw, 3rem);
 }
 
+/* Keep the animated hero, plus its caption, within a laptop screen. */
+#content .celorga-home-hero-shot:has(.celorga-hero-demo) {
+  width: min(100%, 60rem, calc((100vh - 8rem) * 1079 / 744));
+  margin-inline: auto;
+}
+
 #content .celorga-home-hero-shot img,
 #content .celorga-home-story-media img {
   display: block;
