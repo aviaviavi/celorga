@@ -41,10 +41,75 @@
     <a class="celorga-hero-cli" href="getting-started.html#prefer-an-editor-start-there-instead" aria-label="Install the Celorga CLI with npm"><code>npm i -g celorga</code><span>CLI + MCP server</span></a>
   </nav>
   <p class="celorga-home-hero-note">Free and open source · No account · Bring your own agents and subscriptions</p>
-  <figure class="celorga-home-hero-shot">
-    <img src="assets/screenshots/home-agents-room.png" alt="A shared Celorga conversation where one AI agent summarizes a note that only it can decrypt, and a second agent uses that summary to update a data notebook" loading="eager" />
-    <figcaption>OpenClaw reads a note only it can decrypt and hands Codex a redacted summary. Codex builds on it, and the change waits for your approval.</figcaption>
+  <figure class="celorga-home-hero-shot celorga-hero-demo-figure">
+    <div class="chd" data-hero-demo role="img" aria-label="A Celorga note with a TODO on the left and AI Chat on the right. Choosing Start work on the TODO opens a new agent thread that reads the cited notes, drafts a summary for review, and marks the task as your turn.">
+      <div class="chd-window" aria-hidden="true">
+        <div class="chd-titlebar">
+          <span class="chd-lights"><i></i><i></i><i></i></span>
+          <span class="chd-tab chd-tab-active"><svg viewBox="0 0 24 24"><use href="#glyph-file"></use></svg>beacon-launch.org</span>
+          <span class="chd-tab chd-tab-thread"><b>✦</b>Summarize beta feedback</span>
+        </div>
+        <div class="chd-panes">
+          <section class="chd-doc">
+            <header class="chd-doc-header">
+              <svg viewBox="0 0 24 24"><use href="#glyph-file"></use></svg>
+              <span><strong>beacon-launch.org</strong><small>notes/projects</small></span>
+            </header>
+            <div class="chd-doc-body">
+              <h3 class="chd-title"><i>*</i>Beacon Launch</h3>
+              <div class="chd-heading chd-heading-done"><span class="chd-fold">▾</span><i>*</i><span class="chd-kw chd-kw-done">DONE</span><span>Draft the launch readiness brief</span></div>
+              <p class="chd-planning"><b>CLOSED</b> [2026-06-12 Fri]</p>
+              <div class="chd-heading chd-target"><span class="chd-fold">▾</span><i>*</i><span class="chd-kw">TODO</span><span>Summarize beta feedback</span><span class="chd-start">▶ Start work…</span><span class="chd-badge chd-badge-working">Working</span><span class="chd-badge chd-badge-turn">Your turn</span></div>
+              <p class="chd-planning"><b>SCHEDULED</b> &lt;2026-06-15 Mon&gt;</p>
+              <p class="chd-text">Pull the strongest themes from the <u>Beta review</u> meeting and the five <u>beta interviews</u>. Under 200 words, and cite every source.</p>
+              <div class="chd-heading"><span class="chd-fold">▾</span><i>*</i><span class="chd-kw">TODO</span><span>Book the launch webinar</span></div>
+              <p class="chd-planning"><b>DEADLINE</b> &lt;2026-06-19 Fri&gt;</p>
+            </div>
+          </section>
+          <section class="chd-chat">
+            <div class="chd-chat-empty"><b>✦</b><span>Start work on any TODO,<br />or ask about your notes.</span></div>
+            <div class="chd-thread">
+              <header class="chd-thread-header"><strong>Summarize beta feedback</strong><small>Claude Code · new thread</small><span class="chd-run">run</span></header>
+              <div class="chd-msg chd-msg-user chd-step" data-step="user">
+                <span class="chd-pill">↩ beacon-launch.org › Summarize beta feedback</span>
+                <p>Start work on this task. Cite the notes you use and save a draft for review.</p>
+              </div>
+              <ul class="chd-activity">
+                <li class="chd-step" data-step="read1">Read <code>meetings/beta-review.org</code></li>
+                <li class="chd-step" data-step="read2">Searched 5 interviews for “onboarding”</li>
+                <li class="chd-step" data-step="write">Wrote <code>views/beta-feedback.org</code></li>
+              </ul>
+              <div class="chd-msg chd-msg-agent">
+                <header class="chd-step" data-step="reply0"><strong>Claude Code</strong></header>
+                <h4 class="chd-step" data-step="reply1"><i>*</i>Beta feedback in three themes</h4>
+                <ul>
+                  <li class="chd-step" data-step="reply2"><b>Setup is fast:</b> 4 of 5 teams were live in under five minutes. <u>Beta review</u></li>
+                  <li class="chd-step" data-step="reply3"><b>Offline import builds trust:</b> every security reviewer asked for it. <u>Interview 3</u></li>
+                  <li class="chd-step" data-step="reply4"><b>Citations sell it:</b> teams forward answers because each links its source.</li>
+                </ul>
+              </div>
+              <div class="chd-review chd-step" data-step="review"><span>●</span><div><b>Draft ready for your review</b><small>views/beta-feedback.org</small></div><em>Review</em></div>
+            </div>
+            <div class="chd-composer">Message Claude Code, or @mention another agent or file…</div>
+          </section>
+        </div>
+        <div class="chd-sheet">
+          <strong>Start Work</strong>
+          <small>Summarize beta feedback</small>
+          <dl>
+            <dt>Thread</dt><dd>New thread</dd>
+            <dt>Agent</dt><dd>Research</dd>
+            <dt>Harness</dt><dd>Claude Code</dd>
+            <dt>Model</dt><dd>Harness default</dd>
+          </dl>
+          <div class="chd-sheet-actions"><span>Cancel</span><span class="chd-sheet-go">Start Work</span></div>
+        </div>
+        <svg class="chd-cursor" viewBox="0 0 16 22"><path d="M1 1v17l4.6-4.3 3 6.8 3-1.3-3-6.6H15z" fill="#111" stroke="#fff" stroke-width="1.3" stroke-linejoin="round"/></svg>
+      </div>
+    </div>
+    <figcaption>Choose <em>Start work</em> on any TODO. An agent picks it up in its own thread, cites the notes behind the task, and hands the result back for your review.</figcaption>
   </figure>
+  <script defer src="assets/hero-demo.js"></script>
 </section>
 
 <section class="celorga-home-harnesses" id="home-harnesses" aria-labelledby="home-harnesses-title">
