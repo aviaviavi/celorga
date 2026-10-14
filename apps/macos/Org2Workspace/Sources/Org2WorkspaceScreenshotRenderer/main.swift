@@ -239,6 +239,7 @@ struct Org2WorkspaceScreenshotRenderer {
     window.layoutIfNeeded()
     hostingView.layoutSubtreeIfNeeded()
     await waitForVisibleContent(in: hostingView, store: store)
+    await collapsePropertyDrawersIfRequested(in: hostingView)
     let startWorkSheet = await prepareStartWorkCapture(in: hostingView, window: window, store: store)
     hostingView.displayIfNeeded()
 
@@ -279,6 +280,7 @@ struct Org2WorkspaceScreenshotRenderer {
 
     // Scenes can show more than one web view (for example AI Chat beside a
     // document), and cached view drawing leaves each of them blank.
+    await collapsePropertyDrawersIfRequested(in: hostingView)
     for webView in visibleWebViews(in: hostingView) {
       let configuration = WKSnapshotConfiguration()
       configuration.rect = webView.bounds
@@ -326,6 +328,30 @@ struct Org2WorkspaceScreenshotRenderer {
   /// `ORG2_WORKSPACE_SCREENSHOT_START_WORK_SHEET` opens the real Start Work
   /// sheet for it. A sheet is its own window, so it is returned for
   /// compositing over the main window.
+  /// `ORG2_WORKSPACE_SCREENSHOT_COLLAPSE_PROPERTIES` clicks each open
+  /// Properties drawer's summary, as a reader folding them would. The app does
+  /// not persist fold state, so this runs again just before the snapshot in
+  /// case the document re-rendered.
+  @MainActor
+  private static func collapsePropertyDrawersIfRequested(in hostingView: NSView) async {
+    guard CelorgaNames.environment("ORG2_WORKSPACE_SCREENSHOT_COLLAPSE_PROPERTIES") != nil else { return }
+    var collapsed = 0
+    for webView in visibleWebViews(in: hostingView) {
+      let count = try? await webView.evaluateJavaScript("""
+        (() => {
+          const open = [...document.querySelectorAll('details.org2-properties-drawer[open] > summary')];
+          open.forEach(summary => summary.click());
+          return open.length;
+        })()
+        """) as? Int
+      collapsed += count ?? 0
+    }
+    if collapsed > 0 {
+      try? await Task.sleep(for: .milliseconds(250))
+      hostingView.layoutSubtreeIfNeeded()
+    }
+  }
+
   @MainActor
   private static func prepareStartWorkCapture(
     in hostingView: NSView,

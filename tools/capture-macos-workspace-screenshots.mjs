@@ -161,13 +161,13 @@ const startWorkFrames = [
 ].map((frame, index) => ({
   mode: "start-work",
   target: "notes/projects/beacon-launch",
-  width: 1180,
-  height: 770,
+  width: 1440,
+  height: 780,
   scale: 2,
   settleMs: 2500,
   // Keep the two panes the hero is about; the sidebar and tab bar make the
   // text too small at page width.
-  crop: { x: 297, y: 36, width: 883, height: 734 },
+  crop: { x: 361, y: 36, width: 1079, height: 744 },
   format: "webp",
   fileName: `home-start-work-${index + 1}-${frame.name}.webp`,
   startWork: frame,
@@ -207,6 +207,8 @@ function startWorkEnvironment(frame) {
     ORG2_WORKSPACE_SCREENSHOT_START_WORK_STAGE: frame.stage,
     ORG2_WORKSPACE_SCREENSHOT_START_WORK_HEADING: startWorkHeading,
     ORG2_WORKSPACE_SCREENSHOT_START_WORK_DESTINATION: "builtin.openclaw",
+    // Fold the heading's Properties drawer so the task's notes stay in view.
+    ORG2_WORKSPACE_SCREENSHOT_COLLAPSE_PROPERTIES: "1",
     ...(frame.hover ? { ORG2_WORKSPACE_SCREENSHOT_START_WORK_HOVER: startWorkHeading } : {}),
     ...(frame.sheet ? { ORG2_WORKSPACE_SCREENSHOT_START_WORK_SHEET: startWorkHeading } : {}),
     ...(frame.activities ? { ORG2_WORKSPACE_SCREENSHOT_START_WORK_ACTIVITIES: JSON.stringify(frame.activities) } : {}),

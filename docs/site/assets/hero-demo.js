@@ -15,18 +15,18 @@
     [...root.querySelectorAll("img[data-frame]")].map((img) => [img.dataset.frame, img])
   );
   const pointer = root.querySelector(".celorga-hero-demo-pointer");
-  // Control positions in the 883x734 capture, as fractions of the frame.
+  // Control positions in the 1079x744 capture, as fractions of the frame.
   const spots = {
-    rest: [0.34, 0.92],
-    heading: [0.74, 0.484],
-    startWork: [0.905, 0.484],
-    sheetStart: [0.523, 0.462],
+    rest: [0.28, 0.93],
+    heading: [0.667, 0.481],
+    startWork: [0.82, 0.483],
+    sheetStart: [0.489, 0.456],
   };
   // Where the camera looks, and how close.
   const views = {
     all: [[0.5, 0.5], 1],
     heading: [[0.72, 0.48], 1.3],
-    sheet: [[0.33, 0.27], 1.3],
+    sheet: [[0.33, 0.25], 1.3],
     chat: [[0.2, 0.3], 1.35],
   };
   let timers = [];
