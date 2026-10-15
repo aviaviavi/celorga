@@ -4,29 +4,23 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>OpenOrg</title>
         <item>
-            <title>0.9.0</title>
-            <pubDate>Thu, 08 Oct 2026 23:13:17 -0700</pubDate>
+            <title>0.9.1</title>
+            <pubDate>Wed, 14 Oct 2026 19:30:34 -0700</pubDate>
             <link>https://celorga.io/downloads.html</link>
-            <sparkle:version>0.9.0</sparkle:version>
-            <sparkle:shortVersionString>0.9.0</sparkle:shortVersionString>
+            <sparkle:version>0.9.1</sparkle:version>
+            <sparkle:shortVersionString>0.9.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# Celorga 0.9.0
+            <description sparkle:format="markdown"><![CDATA[## Fixes
 
-OpenOrg and Org2 are now Celorga: one name for the app, CLI, and workspace runtime.
+Fixes a launch crash on Macs other than the machine used to build Celorga (#589). The Mac app now bundles all workspace resources and resolves them from its own application bundle.
 
-- Renamed app, website, CLI, and agent-facing instructions to Celorga. Install the CLI with `npm i -g celorga`; `org2` remains supported.
-- Added compatibility for Celorga configuration, state, properties, tools, editor commands, and plugin names while preserving existing Org2 workspaces. No automatic corpus migration is performed.
-- Improved shared AI conversations, agent hand-offs, and single-agent message delivery across hosts.
-- Fixed server drain/restart recovery and excluded Skill Workshop background reviews from Agent Work runs.
-- Renamed the Vim integration directory to `editors/vim-celorga`; existing Vim users should update their runtime path.
-
-Apple Silicon and Intel Mac installers require macOS 14 or later and are Developer ID signed and Apple notarized. The iPhone build is distributed through TestFlight as version 0.9.0, build 46.
+Includes regression coverage for resource lookup and release packaging.
 ]]></description>
-            <enclosure url="https://org2.gateway.scarf.sh/downloads/0.9.0/Celorga.dmg" length="241449921" type="application/octet-stream" sparkle:edSignature="QXpxCFo7LXEaFcw7Ym6Sq+C27Ymznode0rLUEr6hm4cVpG2ybBQBqwgFLVW5NG2Un1UnnCZ5rnFWz/kXPiVBAA=="></enclosure>
+            <enclosure url="https://org2.gateway.scarf.sh/downloads/0.9.1/Celorga.dmg" length="242111906" type="application/octet-stream" sparkle:edSignature="DZ5t6NvJgM6EgAJiHd+jDnRX3ZEkoTH0NPyivr+u+WQu4t3zF7gm9M/tEhWETlpzqOvwK/SZ8sdK7hzpshI/Bw=="></enclosure>
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: rv7PcIR31n+4b8K7WxelGlGuhABkLl6vc/5afYuq6LN8MqfuhpynIMdCQO5cBusezy3bqR08hXjBFTcU1gZIAQ==
-length: 2196
+edSignature: 43Bxp3+y0ql/SO6IOI/BML5r3QyvG+cI2ybEb13WnFDKTOG9tTc5XMGyZfsWLRRFJwpLc1lqYtwuynQFKvFUAQ==
+length: 1503
 -->

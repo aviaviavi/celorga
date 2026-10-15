@@ -4,28 +4,22 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>OpenOrg</title>
         <item>
-            <title>0.9.0</title>
-            <pubDate>Thu, 08 Oct 2026 23:13:28 -0700</pubDate>
+            <title>0.9.1</title>
+            <pubDate>Wed, 14 Oct 2026 19:19:54 -0700</pubDate>
             <link>https://celorga.io/downloads.html</link>
-            <sparkle:version>0.9.0</sparkle:version>
-            <sparkle:shortVersionString>0.9.0</sparkle:shortVersionString>
+            <sparkle:version>0.9.1</sparkle:version>
+            <sparkle:shortVersionString>0.9.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Celorga 0.9.0
+            <description sparkle:format="markdown"><![CDATA[## Fixes
 
-OpenOrg and Org2 are now Celorga: one name for the app, CLI, and workspace runtime.
+Fixes a launch crash on Macs other than the machine used to build Celorga (#589). The Mac app now bundles all workspace resources and resolves them from its own application bundle.
 
-- Renamed app, website, CLI, and agent-facing instructions to Celorga. Install the CLI with `npm i -g celorga`; `org2` remains supported.
-- Added compatibility for Celorga configuration, state, properties, tools, editor commands, and plugin names while preserving existing Org2 workspaces. No automatic corpus migration is performed.
-- Improved shared AI conversations, agent hand-offs, and single-agent message delivery across hosts.
-- Fixed server drain/restart recovery and excluded Skill Workshop background reviews from Agent Work runs.
-- Renamed the Vim integration directory to `editors/vim-celorga`; existing Vim users should update their runtime path.
-
-Apple Silicon and Intel Mac installers require macOS 14 or later and are Developer ID signed and Apple notarized. The iPhone build is distributed through TestFlight as version 0.9.0, build 46.
+Includes regression coverage for resource lookup and release packaging.
 ]]></description>
-            <enclosure url="https://org2.gateway.scarf.sh/downloads/0.9.0/Celorga-Intel.dmg" length="243661461" type="application/octet-stream" sparkle:edSignature="Xz5IjB5Mgu+BvLcJKU+HEA2JyScgJqnjjb1+Klt0glmrNDKkmkaUz+RSZ9xpeuJtGTRlbj7gridJ1vZj5oycAw=="></enclosure>
+            <enclosure url="https://org2.gateway.scarf.sh/downloads/0.9.1/Celorga-Intel.dmg" length="244310152" type="application/octet-stream" sparkle:edSignature="f+rhi6BD+TVp0AF79/3Cj/VBTjMFvbuKuDpOcREThH4Bq8a9a4j2vqcIcTXu/Ooi5BwMNwfmXApIHF3Xe4c+Cg=="></enclosure>
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: MAQeGNJ7rxlNLqR43lCdoeuJAi/sJu2ASnBvDUe5w4Lnt1Cowu4q4/8ibXQlPtpzJufo5Uj0XeObV8tzUptpBQ==
-length: 2123
+edSignature: kSQfxW0j7nco/0Jm0B7Eqtnpambgs6kjSb+Vl8X2G4ItKnYIqTvtsY5JcYbFg+G1IzWmm8utFYGJQxyNdcubCw==
+length: 1430
 -->
