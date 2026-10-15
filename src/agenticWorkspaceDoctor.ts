@@ -3,6 +3,7 @@ import path from "node:path";
 import type { HeadlineNode, InlineNode, Node } from "./ast.js";
 import {
   AGENT_RUN_APPROVAL_BLOCK_REASON,
+  AGENT_RUN_SCHEDULE_SLOT_STATUSES,
   agentRunBlockReasonLooksLikeApprovalBoundary,
   agentRunSourceConsistency,
   agentRunApprovalDecisionKeys,
@@ -521,7 +522,10 @@ function auditRuns(
     if (run.attempt && run.logicalWorkId) {
       const attemptNumberKey = `${run.logicalWorkId}#${run.attempt.number}`;
       attemptsByNumber.set(attemptNumberKey, [...(attemptsByNumber.get(attemptNumberKey) || []), run]);
-      if (!terminal) activeAttemptsByLogicalWork.set(run.logicalWorkId, [...(activeAttemptsByLogicalWork.get(run.logicalWorkId) || []), run]);
+      // A blocked attempt is parked on a person and, by default, intentionally
+      // lets the next scheduled attempt start, so only slot-holding attempts
+      // count as overlap.
+      if (AGENT_RUN_SCHEDULE_SLOT_STATUSES.has(run.status)) activeAttemptsByLogicalWork.set(run.logicalWorkId, [...(activeAttemptsByLogicalWork.get(run.logicalWorkId) || []), run]);
     }
     const cronKey = openClawCronSeries(run);
     if (cronKey && !run.workflowId && !run.logicalWorkId && !run.attempt) {
@@ -559,7 +563,7 @@ function auditRuns(
       rule: "overlapping-active-attempts",
       severity: "warning",
       category: "workflow",
-      message: `${attempts.length} attempts for one logical work item are simultaneously nonterminal.`,
+      message: `${attempts.length} attempts for one logical work item simultaneously hold its execution slot.`,
       suggestion: "Confirm overlap is intentional; recurring reconciliation workflows should normally coalesce or lease one active attempt.",
       key: logicalWorkId,
       related: { runIds: attempts.map((run) => run.id), statuses: attempts.map((run) => run.status) },

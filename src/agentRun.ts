@@ -85,6 +85,22 @@ export const AGENT_RUN_VALIDATION_STATUSES = [
 ] as const;
 
 export type AgentRunStatus = (typeof AGENT_RUN_STATUSES)[number];
+
+/**
+ * Attempt statuses that hold a recurring schedule's single execution slot.
+ *
+ * A `blocked` attempt is parked on a person and no longer executes, so by
+ * default it does not suppress later scheduled occurrences: the next attempt
+ * starts while the blocked record stays open for review. A schedule trigger
+ * can opt back in with `whenBlocked: "wait"`. `waiting-approval` still holds
+ * the slot because a fresh attempt could request, and once approved perform,
+ * the same gated side effect twice.
+ */
+export const AGENT_RUN_SCHEDULE_SLOT_STATUSES: ReadonlySet<AgentRunStatus> = new Set<AgentRunStatus>([
+  "queued",
+  "running",
+  "waiting-approval",
+]);
 export type AgentRunRiskClass = (typeof AGENT_RUN_RISK_CLASSES)[number];
 export type AgentRunStepKind = (typeof AGENT_RUN_STEP_KINDS)[number];
 export type AgentRunStepStatus = (typeof AGENT_RUN_STEP_STATUSES)[number];

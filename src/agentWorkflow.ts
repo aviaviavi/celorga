@@ -4,6 +4,7 @@ import path from "node:path";
 import { guardedDeleteFile, guardedWriteFile, readGuardedFile, type GuardedFileWriteOptions } from "./guardedFile.js";
 import { safeIdentifier } from "./safeIdentifier.js";
 import {
+  AGENT_RUN_SCHEDULE_SLOT_STATUSES,
   createAgentRun,
   type AgentRun,
   type AgentRunApproval,
@@ -17,6 +18,9 @@ export const WORKFLOW_SCHEDULE_TRIGGER_ID = "schedule" as const;
 export const LEGACY_WORKFLOW_SCHEDULE_TRIGGER_IDS = ["openorg-schedule", "openclaw-schedule"] as const;
 export const WORKFLOW_EVENT_TRIGGER_TYPES = ["capture", "meeting-import"] as const;
 export const WORKFLOW_TRIGGER_TYPES = ["manual", "schedule", "file-change", ...WORKFLOW_EVENT_TRIGGER_TYPES] as const;
+/** How a schedule treats an earlier attempt that is blocked on a person. */
+export const WORKFLOW_SCHEDULE_WHEN_BLOCKED = ["continue", "wait"] as const;
+export type WorkflowScheduleWhenBlocked = typeof WORKFLOW_SCHEDULE_WHEN_BLOCKED[number];
 
 export type AgentWorkflowState = "draft" | "active" | "paused";
 export type WorkflowEventTriggerType = typeof WORKFLOW_EVENT_TRIGGER_TYPES[number];
@@ -59,6 +63,25 @@ export interface WorkflowTrigger {
   lastRunAt?: string;
   lastAttemptAt?: string;
   gate?: WorkflowTriggerGate;
+  /**
+   * Schedule triggers only. `continue` (the default when absent) lets the next
+   * occurrence start while an earlier attempt is blocked; `wait` holds the
+   * schedule until the blocked attempt is resumed, completed, or canceled.
+   */
+  whenBlocked?: WorkflowScheduleWhenBlocked;
+}
+
+/**
+ * Whether an existing attempt prevents a schedule trigger from starting a new
+ * one. Queued, running, and approval-waiting attempts always do; a blocked
+ * attempt does only when the trigger declares `whenBlocked: "wait"`.
+ */
+export function workflowAttemptHoldsScheduleSlot(
+  run: Pick<AgentRun, "status">,
+  trigger?: Pick<WorkflowTrigger, "whenBlocked">,
+): boolean {
+  if (AGENT_RUN_SCHEDULE_SLOT_STATUSES.has(run.status)) return true;
+  return run.status === "blocked" && trigger?.whenBlocked === "wait";
 }
 
 export interface AgentWorkflow {
@@ -267,6 +290,10 @@ export function validateWorkflow(workflow: AgentWorkflow): WorkflowValidationRes
     }
     if (trigger.type === "schedule" && trigger.timezone && !validTimeZone(trigger.timezone)) {
       issues.push({ path: `triggers[${index}].timezone`, message: "must be local or a valid IANA timezone" });
+    }
+    if (trigger.whenBlocked !== undefined) {
+      if (trigger.type !== "schedule") issues.push({ path: `triggers[${index}].whenBlocked`, message: "applies only to schedule triggers" });
+      else if (!WORKFLOW_SCHEDULE_WHEN_BLOCKED.includes(trigger.whenBlocked)) issues.push({ path: `triggers[${index}].whenBlocked`, message: "must be continue or wait" });
     }
     if (trigger.type === "file-change" && !trigger.path) issues.push({ path: `triggers[${index}].path`, message: "is required for file-change triggers" });
     if (trigger.gate && !(trigger.gate.events?.length || trigger.gate.paths?.length)) {
