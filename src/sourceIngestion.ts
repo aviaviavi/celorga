@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import type { Org2ExternalSourceConfig } from "./config.js";
+import type { Org2ExternalSourceConfig, Org2ExternalSourceType } from "./config.js";
 import {
   renderIngestReviewArtifact,
   type AgentIngestRecord,
@@ -38,7 +38,7 @@ export type SourceImportFile = {
 export type SourceImportResult = {
   schema: typeof ORG2_SOURCE_IMPORT_SCHEMA;
   profile: string;
-  sourceType: "slack" | "notion" | "email";
+  sourceType: Org2ExternalSourceType;
   apply: boolean;
   since?: string;
   inputCount: number;
@@ -213,6 +213,9 @@ function groupKey(record: AgentIngestRecord): string {
   if (record.source.kind === "email") {
     return `${safeSlug(record.source.mailbox || "inbox")}--${date.slice(0, 7)}`;
   }
+  if (record.source.kind === "calendar") {
+    return `${safeSlug(record.source.label || "calendar")}--${date.slice(0, 7)}`;
+  }
   return `${safeSlug(record.source.workspace || "notion")}--${date.slice(0, 7)}`;
 }
 
@@ -229,7 +232,7 @@ function writeIfChanged(file: string, contents: string, apply: boolean): boolean
   return changed;
 }
 
-function managedRawFile(file: string, profileId: string, sourceType: "slack" | "notion" | "email"): boolean {
+function managedRawFile(file: string, profileId: string, sourceType: Org2ExternalSourceType): boolean {
   try {
     const value = object(JSON.parse(fs.readFileSync(file, "utf8")));
     return schemaMatches(value.schema, ORG2_SOURCE_IMPORT_SCHEMA) && value.profile === profileId && value.sourceType === sourceType;
@@ -244,7 +247,7 @@ function reconcileGeneratedFiles(options: {
   expectedRaw: Set<string>;
   expectedReview: Set<string>;
   profileId: string;
-  sourceType: "slack" | "notion" | "email";
+  sourceType: Org2ExternalSourceType;
   apply: boolean;
 }): string[] {
   const removed: string[] = [];
@@ -268,6 +271,7 @@ function reconcileGeneratedFiles(options: {
 
 export function importCrawlerArchive(options: SourceImportOptions): SourceImportResult {
   if (options.profile.type === "email") throw new Error("email sources are fetched over IMAP; use importSourceRecords");
+  if (options.profile.type === "google-calendar") throw new Error("Google Calendar sources are fetched from the Calendar API; use importSourceRecords");
   const now = options.now || new Date();
   const configuredLimit = options.profile.ingestion?.maxItems;
   const limit = Math.max(1, Math.min(options.limit || configuredLimit || 5_000, 50_000));
@@ -277,7 +281,7 @@ export function importCrawlerArchive(options: SourceImportOptions): SourceImport
 }
 
 /** Reads records already staged by earlier imports of an incremental source. */
-function stagedRecords(rawRoot: string, profileId: string, sourceType: "slack" | "notion" | "email"): AgentIngestRecord[] {
+function stagedRecords(rawRoot: string, profileId: string, sourceType: Org2ExternalSourceType): AgentIngestRecord[] {
   if (!fs.existsSync(rawRoot)) return [];
   const records: AgentIngestRecord[] = [];
   for (const name of fs.readdirSync(rawRoot)) {

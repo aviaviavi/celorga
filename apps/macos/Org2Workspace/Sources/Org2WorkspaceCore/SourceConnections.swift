@@ -145,6 +145,8 @@ public struct WorkspaceSourceProfileStatus: Codable, Identifiable, Equatable, Se
   public var ready: Bool
   /// Email profiles: the IMAP account summary.
   public var email: WorkspaceEmailSourceSummary?
+  /// Google Calendar profiles: calendars and window.
+  public var googleCalendar: WorkspaceGoogleCalendarSourceSummary?
   /// Email profiles: whether the CLI can find a password without OpenOrg's Keychain.
   public var credentialAvailable: Bool?
   public var setupError: String?
@@ -169,6 +171,11 @@ public struct WorkspaceSourceProfileStatus: Codable, Identifiable, Equatable, Se
       return url.standardizedFileURL.path
     }
   }
+}
+
+public struct WorkspaceGoogleCalendarSourceSummary: Codable, Equatable, Sendable {
+  public var calendars: [String]
+  public var lookaheadDays: Int
 }
 
 public struct WorkspaceEmailSourceSummary: Codable, Equatable, Sendable {

@@ -106,6 +106,11 @@ struct OpenOrgServer {
           "openclaw-device-identity.key"
         )
       )
+      // A paired Mac signs in to sources and sends their credentials here;
+      // they stay in this private state directory, never in the corpus.
+      store.sourceCredentialStore = SourceCredentialsFileStore(
+        fileURL: stateDirectory.appendingPathComponent("source-credentials-\(config.hostRef).json")
+      )
       // Headless hosts have a separate preferences domain from the desktop app.
       // Carry this policy in their machine-local configuration so iOS turns do
       // not silently fall back to the workspace-write default.
@@ -169,6 +174,7 @@ struct OpenOrgServer {
                     },
                     "sharedThreads": store.localDocumentPublications.filter { $0.chatThreadID != nil }.count,
                     "pushConfigured": remote.pushProviderConfigured,
+                    "sourceCredentials": store.storedSourceCredentialProfileIDs(),
                     "devices": remote.pairedDevices.map { ["id": $0.id.uuidString, "name": $0.name] }]
         case "pair":
           remote.generatePairingCode()

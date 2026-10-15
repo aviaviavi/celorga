@@ -68,20 +68,37 @@ public struct WorkspaceSourceField: Identifiable, Equatable, Sendable {
   }
 }
 
+/// How a source's secret is obtained.
+public enum WorkspaceSourceSignIn: Equatable, Sendable {
+  /// Google OAuth in the browser with this scope; the stored secret is a
+  /// refresh credential (`org2:google-oauth-credential:v1` JSON).
+  case google(scope: String)
+}
+
 /// The secret a source type authenticates with. It is stored in macOS
-/// Keychain and passed to the sync process as an environment variable only.
+/// Keychain (and, when a server is paired, that server's private credential
+/// store) and passed to the sync process as an environment variable only.
 public struct WorkspaceSourceSecret: Equatable, Sendable {
   public var label: String
   public var environmentVariable: String
   public var help: String
   /// Crawler modes that cannot run without it; `nil` means always required.
   public var requiredForSyncSources: Set<String>?
+  /// Set when the secret comes from a browser sign-in instead of being pasted.
+  public var signIn: WorkspaceSourceSignIn?
 
-  public init(label: String, environmentVariable: String, help: String, requiredForSyncSources: Set<String>? = nil) {
+  public init(
+    label: String,
+    environmentVariable: String,
+    help: String,
+    requiredForSyncSources: Set<String>? = nil,
+    signIn: WorkspaceSourceSignIn? = nil
+  ) {
     self.label = label
     self.environmentVariable = environmentVariable
     self.help = help
     self.requiredForSyncSources = requiredForSyncSources
+    self.signIn = signIn
   }
 }
 
@@ -116,7 +133,9 @@ public struct WorkspaceSourceType: Identifiable, Equatable, Sendable {
       "- \(field.label)\(field.isRequired ? " (required)" : "")\(field.help.map { ": \($0)" } ?? "")"
     }.joined(separator: "\n")
     let secretLine = secret.map {
-      "It authenticates with a \($0.label.lowercased()). Never put it in celorga.json, a file, or a command line; ask me to save it with the source's “Add \($0.label)” button in Celorga's Sources view (macOS Keychain) instead."
+      $0.signIn != nil
+        ? "It authenticates by signing in with Google. Never put it in celorga.json, a file, or a command line, and never ask me for a token; ask me to use the source's “Sign in with Google” button in Celorga's Sources view instead, which also sends the credential to the connected server."
+        : "It authenticates with a \($0.label.lowercased()). Never put it in celorga.json, a file, or a command line; ask me to save it with the source's “Add \($0.label)” button in Celorga's Sources view (macOS Keychain) instead."
     } ?? "It needs no stored credential."
     return """
     Help me set up a \(displayName) source for this corpus. \(summary)
@@ -130,8 +149,10 @@ public struct WorkspaceSourceType: Identifiable, Equatable, Sendable {
 }
 
 public enum WorkspaceSourceCatalog {
+  public static let googleCalendarScope = "https://www.googleapis.com/auth/calendar.events.readonly"
+
   /// Every `externalSources` type the Org2 runtime syncs (`EXTERNAL_SOURCE_TYPES` in src/sourceRuntime.ts).
-  public static let types: [WorkspaceSourceType] = [slack, notion, email]
+  public static let types: [WorkspaceSourceType] = [slack, notion, email, googleCalendar]
 
   public static func type(_ id: String) -> WorkspaceSourceType? {
     types.first { $0.id == id.lowercased() }
@@ -285,6 +306,51 @@ public enum WorkspaceSourceCatalog {
   )
 }
 
+extension WorkspaceSourceCatalog {
+  public static let googleCalendar = WorkspaceSourceType(
+    id: "google-calendar",
+    displayName: "Google Calendar",
+    systemImage: "calendar",
+    summary: "Celorga reads your upcoming Google Calendar events (read-only) so it can offer to record meetings as they start and fill in their attendees. Sign in on this Mac; the connected server keeps the calendar synced.",
+    defaultProfileID: "calendar",
+    fields: [
+      WorkspaceSourceField(
+        id: "calendars",
+        label: "Calendars",
+        prompt: "primary, team@example.com",
+        help: "Calendar IDs to read; primary is your main calendar.",
+        kind: .list,
+        target: .path(["googleCalendar", "calendars"]),
+        defaultValue: "primary"
+      ),
+      WorkspaceSourceField(
+        id: "lookaheadDays",
+        label: "Days ahead",
+        prompt: "14",
+        help: "How many days of upcoming events to keep synced (1–90).",
+        kind: .integer,
+        target: .path(["googleCalendar", "lookaheadDays"]),
+        defaultValue: "14"
+      ),
+      WorkspaceSourceField(
+        id: "since",
+        label: "Look back",
+        prompt: "1d",
+        help: "How far back to keep events, such as 1d.",
+        target: .path(["ingestion", "since"]),
+        defaultValue: "1d"
+      ),
+    ],
+    secret: WorkspaceSourceSecret(
+      label: "Google Sign-In",
+      environmentVariable: "ORG2_GOOGLE_CALENDAR_CREDENTIAL",
+      help: "Sign in with Google to grant read-only calendar access. Celorga keeps the sign-in in macOS Keychain, sends it to your connected server so the server can sync, and never writes it to the corpus.",
+      signIn: .google(scope: googleCalendarScope)
+    ),
+    defaultSyncArgs: []
+  )
+}
+
 extension WorkspaceSourceProfileStatus {
   public var sourceType: WorkspaceSourceType? { WorkspaceSourceCatalog.type(type) }
 
@@ -307,6 +373,12 @@ extension WorkspaceSourceProfileStatus {
         account["smtp"] = .object(["host": .string(smtp.host), "port": .integer(Int64(smtp.port))])
       }
       config["email"] = .object(account)
+    }
+    if let googleCalendar {
+      config["googleCalendar"] = .object([
+        "calendars": .array(googleCalendar.calendars.map(JSONValue.string)),
+        "lookaheadDays": .integer(Int64(googleCalendar.lookaheadDays)),
+      ])
     }
     return .object(config)
   }
@@ -407,13 +479,13 @@ public struct WorkspaceSourceDraft: Identifiable, Equatable, Sendable {
       case .path(let path):
         let value: JSONValue?
         if !isVisible(field) || text.isEmpty {
-          value = isEditing && !path.contains("email") ? .null : nil
+          value = isEditing && !Self.wholeObjectKeys.contains(path[0]) ? .null : nil
         } else {
           switch field.kind {
           case .integer: value = .integer(Int64(text) ?? 0)
           case .list:
             let items = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-            value = items.isEmpty ? (isEditing && !path.contains("email") ? .null : nil) : .array(items.map(JSONValue.string))
+            value = items.isEmpty ? (isEditing && !Self.wholeObjectKeys.contains(path[0]) ? .null : nil) : .array(items.map(JSONValue.string))
           case .text, .choice: value = .string(text)
           }
         }
@@ -433,6 +505,10 @@ public struct WorkspaceSourceDraft: Identifiable, Equatable, Sendable {
     if isEditing { arguments.append("--update") }
     return arguments + ["--dir", corpusRoot, "--apply", "--json"]
   }
+
+  /// Nested settings the form always sends as a whole object, so a cleared
+  /// field is omitted rather than sent as `null`.
+  static let wholeObjectKeys: Set<String> = ["email", "googleCalendar"]
 
   private func trimmed(_ fieldID: String) -> String {
     value(fieldID).trimmingCharacters(in: .whitespacesAndNewlines)

@@ -12,7 +12,7 @@ final class SourceCatalogTests: XCTestCase {
 
   func testCatalogCoversEveryRuntimeSourceTypeWithAFormAndSecret() {
     // Mirrors EXTERNAL_SOURCE_TYPES in src/sourceRuntime.ts.
-    XCTAssertEqual(WorkspaceSourceCatalog.types.map(\.id), ["slack", "notion", "email"])
+    XCTAssertEqual(WorkspaceSourceCatalog.types.map(\.id), ["slack", "notion", "email", "google-calendar"])
     for type in WorkspaceSourceCatalog.types {
       XCTAssertFalse(type.fields.isEmpty, type.id)
       XCTAssertNotNil(type.field("since"), "\(type.id) offers the shared initial window")

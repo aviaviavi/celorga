@@ -216,6 +216,7 @@ public enum OpenOrgServerError: LocalizedError, Equatable, Sendable {
   case malformedResponse
   case server(String, statusCode: Int)
   case unsupported
+  case sourcesUnsupported
   case threadNotOnServer(String)
   case keychain(OSStatus)
 
@@ -235,6 +236,8 @@ public enum OpenOrgServerError: LocalizedError, Equatable, Sendable {
       message
     case .unsupported:
       "This Celorga server cannot host thread links yet. Update and restart it, then try again."
+    case .sourcesUnsupported:
+      "This Celorga server cannot receive source sign-ins or run source syncs yet. Update and restart it, then try again."
     case .threadNotOnServer(let server):
       "\(server) doesn’t have this thread yet. Wait for the corpus to sync to the server, then try again."
     case .keychain(let status):
@@ -681,6 +684,66 @@ public final class OpenOrgServerConnection {
       persistShares()
     }
     return share
+  }
+
+  // MARK: Source credentials and syncs
+
+  /// Whether the paired server can hold source credentials and run syncs.
+  /// `nil` means its status has not been read yet.
+  public var supportsSourceCredentials: Bool? {
+    serverStatus.map { $0.supportsSourceCredentials == true }
+  }
+
+  /// Sends one source's credential to the server, which keeps it outside the corpus.
+  public func uploadSourceCredential(profileID: String, credential: String) async throws {
+    guard isPaired else { throw OpenOrgServerError.notPaired }
+    if serverStatus == nil { await refreshStatus() }
+    if supportsSourceCredentials == false { throw OpenOrgServerError.sourcesUnsupported }
+    let body = try MobileRemoteProtocol.encoder().encode(MobileRemoteSourceCredentialRequest(credential: credential))
+    let _: MobileRemoteSourceCredentialResponse = try await authorizedSend(
+      method: "PUT",
+      path: "/v1/sources/\(Self.pathComponent(profileID))/credential",
+      body: body,
+      timeout: 15
+    )
+  }
+
+  public func deleteSourceCredential(profileID: String) async throws {
+    guard isPaired else { throw OpenOrgServerError.notPaired }
+    let _: MobileRemoteSourceCredentialResponse = try await authorizedSend(
+      method: "DELETE",
+      path: "/v1/sources/\(Self.pathComponent(profileID))/credential",
+      body: nil,
+      timeout: 15
+    )
+  }
+
+  public func sourceCredentialProfileIDs() async throws -> [String] {
+    let list: MobileRemoteSourceCredentialList = try await authorizedSend(
+      method: "GET",
+      path: "/v1/sources/credentials",
+      body: nil,
+      timeout: 8
+    )
+    return list.profileIDs
+  }
+
+  /// Asks the server to sync and stage one source now. Results reach this
+  /// Mac through the corpus's normal file sync.
+  public func syncSource(profileID: String) async throws -> MobileRemoteSourceSyncResponse {
+    guard isPaired else { throw OpenOrgServerError.notPaired }
+    if serverStatus == nil { await refreshStatus() }
+    if supportsSourceCredentials == false { throw OpenOrgServerError.sourcesUnsupported }
+    return try await authorizedSend(
+      method: "POST",
+      path: "/v1/sources/\(Self.pathComponent(profileID))/sync",
+      body: nil,
+      timeout: 35 * 60
+    )
+  }
+
+  private static func pathComponent(_ value: String) -> String {
+    value.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._"))) ?? value
   }
 
   // MARK: Requests

@@ -10091,7 +10091,7 @@ private struct SourcesView: View {
     VStack(spacing: 0) {
       HeaderBar(
         title: "Sources",
-        subtitle: "Slack, Notion, and email staged as reviewable Org files",
+        subtitle: "Slack, Notion, email, and Google Calendar staged as reviewable Org files",
         surface: .sources
       ) {
         if store.isLoadingSources {
@@ -10110,7 +10110,7 @@ private struct SourcesView: View {
         Spacer()
         EmptyStateView(
           title: "No Sources Configured",
-          detail: "Add a Slack workspace, Notion workspace, or email account. Settings go in this corpus’s celorga.json; tokens and passwords stay in macOS Keychain.",
+          detail: "Add a Slack workspace, Notion workspace, email account, or Google Calendar. Settings go in this corpus’s celorga.json; tokens, passwords, and sign-ins stay in macOS Keychain and your connected server’s private store.",
           action: "Add Source…"
         ) {
           store.presentNewSource(type: WorkspaceSourceCatalog.types[0])
@@ -10124,7 +10124,15 @@ private struct SourcesView: View {
               .foregroundStyle(.secondary)
               .fixedSize(horizontal: false, vertical: true)
 
-            if !store.ownsScheduledSourceSync {
+            if store.connectedServerRunsSourceSyncs {
+              Label(
+                "\(store.openOrgServer.serverName) syncs these sources: scheduled syncs and Run Now run there. Tokens, passwords, and sign-ins you save on this Mac are sent to it.",
+                systemImage: "server.rack"
+              )
+              .font(.callout)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+            } else if !store.ownsScheduledSourceSync {
               Label(
                 "Scheduled syncs run on \(store.corpusAutomationHostRef ?? "desktop"), the host that owns this corpus’s automations. Run Now syncs on this Mac.",
                 systemImage: "server.rack"
@@ -10157,6 +10165,7 @@ private struct SourcesView: View {
       if store.sourceProfiles.isEmpty {
         await store.refreshSourceConnections()
       }
+      await store.refreshServerSourceCredentials()
     }
     .sheet(isPresented: $store.isSourceCredentialPresented) {
       SourceCredentialSheet()
@@ -10187,7 +10196,7 @@ private struct AddSourceMenu: View {
     } label: {
       Label("Add Source", systemImage: "plus")
     }
-    .help("Add a Slack, Notion, or email source")
+    .help("Add a Slack, Notion, email, or Google Calendar source")
   }
 }
 
@@ -10244,7 +10253,12 @@ private struct SourceEditorSheet: View {
             fieldRow(field)
           }
         }
-        if let secret = type?.secret {
+        if let secret = type?.secret, secret.signIn != nil {
+          Text(draft.isEditing ? secret.help : "\(secret.help) After adding the source, choose Sign in with Google on its card.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        } else if let secret = type?.secret {
           SecureField(
             draft.isEditing ? "\(secret.label) (leave empty to keep)" : secret.label,
             text: $draft.secret
@@ -10316,6 +10330,7 @@ private struct SourceProfileCard: View {
   private var isRunning: Bool { store.activeSourceOperationIDs.contains(profile.id) }
   private var needsToken: Bool {
     profile.usesStoredCredential && profile.credentialAvailable != true && !store.sourceHasStoredCredential(profile)
+      && !(store.connectedServerRunsSourceSyncs && store.serverHasSourceCredential(profile) == true)
   }
   private var canSync: Bool { profile.ready && !needsToken }
   private var notice: WorkspaceSourceNotice? {
@@ -10526,19 +10541,63 @@ private struct SourceProfileCard: View {
         }
 
         if let secret = profile.sourceType?.secret {
-          Button(store.sourceHasStoredCredential(profile) ? "Replace \(secret.label)" : "Add \(secret.label)") {
-            store.presentSourceCredential(for: profile)
+          if secret.signIn != nil {
+            Button(store.sourceHasStoredCredential(profile) ? "Sign In Again…" : "Sign in with Google…") {
+              Task { await store.signInToGoogle(for: profile) }
+            }
+            .disabled(isRunning)
+            .help("Sign in on this Mac; the sign-in is sent to your connected server so it can sync.")
+          } else {
+            Button(store.sourceHasStoredCredential(profile) ? "Replace \(secret.label)" : "Add \(secret.label)") {
+              store.presentSourceCredential(for: profile)
+            }
           }
           if store.sourceHasStoredCredential(profile) {
-            Button("Remove \(secret.label)", role: .destructive) {
+            if store.openOrgServer.isPaired {
+              Button("Send to Server") {
+                Task { await store.sendSourceCredentialToServer(profile) }
+              }
+              .disabled(isRunning)
+              .help("Send this source’s \(secret.label.lowercased()) to \(store.openOrgServer.serverName) so it can sync there.")
+            }
+            Button(secret.signIn != nil ? "Sign Out" : "Remove \(secret.label)", role: .destructive) {
               store.deleteSourceCredential(profile)
             }
           }
         }
       }
+
+      if profile.sourceType?.secret != nil, store.openOrgServer.isPaired,
+         let onServer = store.serverHasSourceCredential(profile) {
+        Label(
+          onServer
+            ? "\(store.openOrgServer.serverName) has this source’s credential."
+            : "\(store.openOrgServer.serverName) doesn’t have this source’s credential yet.",
+          systemImage: onServer ? "checkmark.circle" : "exclamationmark.circle"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
+      if profile.type == "google-calendar" {
+        CalendarPromptToggle()
+      }
     }
     .controlSize(.small)
     .buttonStyle(WorkspaceActionButtonStyle())
+  }
+}
+
+private struct CalendarPromptToggle: View {
+  @Environment(WorkspaceStore.self) private var store
+  @State private var isOn = true
+
+  var body: some View {
+    Toggle("Offer to record meetings as they start", isOn: $isOn)
+      .toggleStyle(.checkbox)
+      .onAppear { isOn = store.calendarRecordingPromptsEnabled }
+      .onChange(of: isOn) { _, value in store.setCalendarRecordingPromptsEnabled(value) }
+      .help("When a synced meeting with other attendees or a call link starts, Celorga offers to record it with its title, time, and attendees filled in.")
   }
 }
 

@@ -343,6 +343,52 @@ public final class MobileRemoteCoordinator: ObservableObject {
     }
   }
 
+  /// External-source credentials and syncs on a headless host. A paired Mac
+  /// signs in (it can show a browser and Keychain prompts) and hands the
+  /// credential here, so this host can run the source's scheduled syncs.
+  /// Responses never echo credential values.
+  func handleSourceRequest(
+    _ request: MobileRemoteHTTPRequest,
+    path: String,
+    store: WorkspaceStore
+  ) async -> MobileRemoteHTTPResponse? {
+    if request.method == "GET", path == "/v1/sources/credentials" {
+      return .json(MobileRemoteSourceCredentialList(profileIDs: store.storedSourceCredentialProfileIDs()))
+    }
+    let components = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+    guard components.count == 4, components[0] == "v1", components[1] == "sources",
+          let profileID = components[2].removingPercentEncoding,
+          SourceCredentialsFileStore.isValidProfileID(profileID)
+    else { return nil }
+    switch (request.method, components[3]) {
+    case ("PUT", "credential"):
+      guard let payload = try? request.decode(MobileRemoteSourceCredentialRequest.self),
+            !payload.credential.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            payload.credential.utf8.count <= 64 * 1024
+      else {
+        return .error("The source credential could not be read.", statusCode: 400)
+      }
+      do {
+        try store.storeSourceCredentialFromPairedClient(payload.credential, profileID: profileID)
+        return .json(MobileRemoteSourceCredentialResponse(profileID: profileID, stored: true))
+      } catch {
+        return .error(error.localizedDescription, statusCode: 500)
+      }
+    case ("DELETE", "credential"):
+      do {
+        try store.deleteSourceCredentialFromPairedClient(profileID: profileID)
+        return .json(MobileRemoteSourceCredentialResponse(profileID: profileID, stored: false))
+      } catch {
+        return .error(error.localizedDescription, statusCode: 500)
+      }
+    case ("POST", "sync"):
+      let result = await store.runSourceSyncForPairedClient(profileID: profileID)
+      return .json(result)
+    default:
+      return nil
+    }
+  }
+
   private func handleRequest(_ request: MobileRemoteHTTPRequest) async -> MobileRemoteHTTPResponse {
     let path = request.path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? request.path
     if request.method == "POST", path == "/v1/pair" {
@@ -467,6 +513,12 @@ public final class MobileRemoteCoordinator: ObservableObject {
       }
       revoke(device)
       return .json(MobileRemoteMutationResponse(accepted: true))
+    }
+
+    if path == "/v1/sources/credentials" || path.hasPrefix("/v1/sources/") {
+      if let response = await handleSourceRequest(request, path: path, store: store) {
+        return response
+      }
     }
 
     if request.method == "GET", path == "/v1/threads" {

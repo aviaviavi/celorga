@@ -346,6 +346,31 @@ celorga source sync mail --ingest --apply --dir ~/notes --json
 
 The password comes from =CELORGA_EMAIL_PASSWORD= (or the variable named by =bind --password-env=), a machine-local =bind --password-command= that prints it, or Celorga's Keychain, which passes it to one sync process. It is never written to =celorga.json=, bindings, raw captures, or packets. =security= is =tls= (default, port 993) or =starttls= (port 143); certificates are verified, and unencrypted =none= is accepted only for a loopback test server. Sync opens each mailbox read-only (=EXAMINE=) and fetches with =BODY.PEEK=, so it never marks mail as read or changes flags. The first sync covers =ingestion.since= (default 14 days); later syncs fetch only messages above a machine-local UIDVALIDITY/UID cursor, and a changed UIDVALIDITY restarts from the window. Messages are decoded (MIME encoded words, quoted-printable, base64, charsets; text/plain preferred over HTML converted to text), bounded to =maxMessageBytes= (default 512 KB) and 20,000 characters of text, and staged as raw JSON plus review-required packets grouped by mailbox and month. Email packets accumulate: new mail merges into the staged month instead of replacing earlier messages. =import= previews without advancing the cursor; =sync --apply= (with or without =--ingest=) fetches and stages in one locked operation. =doctor= logs in and reports each mailbox's message count; =status= reports the cursor per mailbox.
 
+*** Google Calendar sources
+
+=type: "google-calendar"= profiles read upcoming events from the Google Calendar API without a crawler binary, so the Mac app can offer to record meetings as they start and fill in their attendees. The declaration stays non-secret:
+
+#+begin_src json
+{
+  "externalSources": {
+    "calendar": {
+      "type": "google-calendar",
+      "googleCalendar": { "calendars": ["primary"], "lookaheadDays": 14 },
+      "ingestion": { "since": "1d" },
+      "schedule": { "kind": "interval", "everyMinutes": 15 }
+    }
+  }
+}
+#+end_src
+
+Sign in from the Mac app: *Add Source* → Google Calendar, then *Sign in with Google…* on the source's card. The app asks for read-only access (=calendar.events.readonly=), keeps the refresh credential in Keychain, and sends it to the paired Celorga server (see below). Sync reads the credential from =CELORGA_GOOGLE_CALENDAR_CREDENTIAL= (JSON with =clientId=, optional =clientSecret=, and =refreshToken=), refreshes a short-lived access token, and fetches each calendar's expanded events from =ingestion.since= back (default =1d=) to =lookaheadDays= ahead (default 14, at most 90). =CELORGA_GOOGLE_CALENDAR_ACCESS_TOKEN= may supply an access token directly for testing. Cancelled events are dropped. Each event becomes a raw record whose =rawPayload= is an =org2:calendar-event:v1= object (title, start, end, call link, organizer, attendees with responses, and the signed-in account's own response), staged with review-required packets grouped by calendar and month. Calendar packets are a snapshot of the window, so events that left the window or were cancelled disappear on the next sync. The access token and refresh credential are never written to =celorga.json=, raw captures, or packets. Builds without a bundled Google OAuth client ask once for a Desktop app OAuth client JSON from a Google Cloud project with the Calendar API enabled and keep it in Keychain.
+
+When a synced meeting with other attendees or a call link is about to start (one minute before, until ten minutes after its start), the Mac app shows a small floating prompt: *Record* or *Join & Record*. Declined, all-day, and solo events are skipped, and each occurrence is offered once. Starting a recording from the prompt, or with *Record Meeting* while a synced meeting is in progress and its title is kept, adds =:calendar_event_id:=, =:scheduled_start:=, =:scheduled_end:=, =:calendar_link:=, =:meeting_url:=, and =:ATTENDEES:= to the meeting note, plus an =Attendees= section. Each attendee links to a person note when exactly one node's title or =ROAM_ALIASES= matches the attendee's name or email; add an email as an alias to link reliably. The toggle *Offer to record meetings as they start* on the source's card turns prompts off.
+
+*** Source syncs on a connected server
+
+When this Mac is paired with a Celorga server (Settings → Sharing) and that server owns the corpus schedules (=celorga server assign=), the server performs source syncs for every source type. Tokens, passwords, and Google sign-ins saved in the Sources view are also sent to the server over the paired relay (=PUT /v1/sources/PROFILE/credential=), which stores them in a mode-0600 file in its private state directory. Run Now asks the server to sync (=POST /v1/sources/PROFILE/sync=) and the staged files arrive through the corpus's normal file sync. Each source card shows whether the server holds its credential and offers *Send to Server* to retry; removing a credential on the Mac removes the server's copy. Servers built before this feature report that they cannot accept source credentials, and the Mac keeps syncing locally.
+
 ** Command conventions and stability
 
 Audit summary for CLI consistency: most commands already use =--dir= for corpus roots, =--recursive= for traversal, =--format= for alternate output, and =--apply= for mutating writes. The lowest-risk cleanup is to make JSON output easier and consistent across commands.

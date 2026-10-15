@@ -27,6 +27,8 @@ public struct MeetingArtifactPaths: Sendable {
   public let audioURL: URL
   public let systemAudioURL: URL
   public let transcriptURL: URL
+  /// The synced calendar event this recording belongs to, when known.
+  public var calendar: MeetingCalendarContext? = nil
 }
 
 public struct MeetingTranscriptResult: Sendable {
@@ -303,6 +305,8 @@ public enum MeetingArtifactWriter {
     let previewBlock = preview.isEmpty
       ? "- Transcript text is pending. See the transcript artifact for status.\n"
       : transcriptPreview(preview)
+    let calendarLines = paths.calendar.map(calendarPropertyLines) ?? ""
+    let attendeesSection = paths.calendar.map(attendeesSection) ?? ""
 
     return """
     #+TITLE: Meeting: \(paths.title)
@@ -318,9 +322,9 @@ public enum MeetingArtifactWriter {
     :transcript_artifact: \(transcriptPath)
     :transcription_engine: \(transcript.engine)
     :transcription_status: \(transcript.status.rawValue)
-    \(errorLine):source: org2-workspace
+    \(errorLine)\(calendarLines):source: org2-workspace
     :END:
-
+    \(attendeesSection)
     ** Summary
     - Pending OpenClaw processing.
 
@@ -335,6 +339,27 @@ public enum MeetingArtifactWriter {
 
     \(previewBlock)
     """
+  }
+
+  static func calendarPropertyLines(_ context: MeetingCalendarContext) -> String {
+    let event = context.event
+    var lines = [
+      ":calendar_event_id: \(propertyValue(event.eventId))",
+      ":calendar_id: \(propertyValue(event.calendarId))",
+      ":calendar_source: \(propertyValue(event.sourceProfileID))",
+      ":scheduled_start: \(isoTimestamp(event.start))",
+      ":scheduled_end: \(isoTimestamp(event.end))",
+    ]
+    if let link = event.htmlLink { lines.append(":calendar_link: \(propertyValue(link))") }
+    if let url = event.meetingUrl { lines.append(":meeting_url: \(propertyValue(url))") }
+    let names = context.attendees.map { propertyValue($0.label.replacingOccurrences(of: ",", with: " ")) }
+    if !names.isEmpty { lines.append(":ATTENDEES: \(names.joined(separator: ", "))") }
+    return lines.joined(separator: "\n") + "\n"
+  }
+
+  static func attendeesSection(_ context: MeetingCalendarContext) -> String {
+    guard !context.attendees.isEmpty else { return "" }
+    return "\n** Attendees\n" + context.attendees.map(\.orgListItem).joined(separator: "\n") + "\n"
   }
 
   public static func buildTranscriptArtifact(

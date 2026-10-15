@@ -3128,6 +3128,21 @@ public final class WorkspaceStore {
   @ObservationIgnored let chatThreadPublicationRenderer: AIChatThreadPublicationRenderer
   /// This Mac's pairing with a headless OpenOrg server, used to host links there.
   public let openOrgServer: OpenOrgServerConnection
+  /// Where this host keeps external-source secrets: the login Keychain on the
+  /// desktop, a private file on a headless server (set by the server worker).
+  @ObservationIgnored public var sourceCredentialStore: any SourceCredentialStoring =
+    NSClassFromString("XCTestCase") == nil ? SourceCredentialsKeychainStore() : SourceCredentialsMemoryStore()
+  /// Source profiles whose credential the paired server reports holding;
+  /// `nil` until checked.
+  public private(set) var serverSourceCredentialProfileIDs: Set<String>?
+  /// Synced calendar events the meeting prompt and manual recordings use.
+  public private(set) var calendarMeetingEvents: [CalendarMeetingEvent] = []
+  /// The meeting currently offered for recording, if any.
+  public private(set) var calendarRecordingPrompt: CalendarMeetingEvent?
+  @ObservationIgnored private var calendarRecordingPromptTask: Task<Void, Never>?
+  @ObservationIgnored private var pendingMeetingCalendarEvent: CalendarMeetingEvent?
+  /// Presents and dismisses the floating recording prompt; set by the desktop app.
+  @ObservationIgnored public var calendarRecordingPromptPresenter: ((CalendarMeetingEvent?) -> Void)?
   public private(set) var currentDocumentGoogleDrivePublications: [GoogleDrivePublicationBinding] = []
   public var exportNotice: Org2ExportNotice?
   public var editorSaveConflict: Org2EditorSaveConflict?
@@ -5831,7 +5846,43 @@ extension WorkspaceStore {
   }
 
   public func syncAndStageSource(_ profile: WorkspaceSourceProfileStatus) async {
+    if connectedServerRunsSourceSyncs {
+      await syncSourceOnConnectedServer(profile)
+      return
+    }
     _ = await performSyncAndStageSource(profile, trigger: .manual)
+  }
+
+  /// Run Now when the paired server owns this corpus's schedules: the server
+  /// syncs with its own copy of the credential and the staged files reach
+  /// this Mac through the corpus sync.
+  private func syncSourceOnConnectedServer(_ profile: WorkspaceSourceProfileStatus) async {
+    guard !activeSourceOperationIDs.contains(profile.id) else { return }
+    activeSourceOperationIDs.insert(profile.id)
+    defer { activeSourceOperationIDs.remove(profile.id) }
+    let serverName = openOrgServer.serverName
+    setSourceOperationMessage("Syncing on \(serverName)…", profileID: profile.id)
+    do {
+      if profile.usesStoredCredential, sourceHasStoredCredential(profile),
+         serverSourceCredentialProfileIDs?.contains(profile.id) != true {
+        // First Run Now after pairing: make sure the server has the credential.
+        await refreshServerSourceCredentials()
+        if serverSourceCredentialProfileIDs?.contains(profile.id) != true {
+          await shareSourceCredentialWithServer(profileID: profile.id, savedMessage: nil)
+        }
+      }
+      let result = try await openOrgServer.syncSource(profileID: profile.id)
+      let detail = result.message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      setSourceOperationMessage(
+        result.ok
+          ? "\(serverName): \(detail.isEmpty ? "Sync finished." : detail)"
+          : "\(serverName) could not sync: \(detail.isEmpty ? "unknown error" : detail)",
+        profileID: profile.id,
+        failed: !result.ok
+      )
+    } catch {
+      setSourceOperationMessage("Could not reach \(serverName) to sync: \(error.localizedDescription)", profileID: profile.id, failed: true)
+    }
   }
 
   @discardableResult
@@ -6068,7 +6119,7 @@ extension WorkspaceStore {
   }
 
   public func sourceHasStoredCredential(_ profile: WorkspaceSourceProfileStatus) -> Bool {
-    SourceCredentialsKeychain.containsToken(profileID: profile.id)
+    sourceCredentialStore.containsCredential(profileID: profile.id)
   }
 
   public func savePresentedSourceCredential() {
@@ -6079,10 +6130,11 @@ extension WorkspaceStore {
       return
     }
     do {
-      try SourceCredentialsKeychain.saveToken(token, profileID: profileID)
+      try sourceCredentialStore.saveCredential(token, profileID: profileID)
       setSourceOperationMessage("Credential saved securely in Keychain.", profileID: profileID)
       sourceCredentialDraft = ""
       isSourceCredentialPresented = false
+      Task { await shareSourceCredentialWithServer(profileID: profileID, savedMessage: "Credential saved securely in Keychain.") }
     } catch {
       setSourceOperationMessage(error.localizedDescription, profileID: profileID, failed: true)
     }
@@ -6090,19 +6142,232 @@ extension WorkspaceStore {
 
   public func deleteSourceCredential(_ profile: WorkspaceSourceProfileStatus) {
     do {
-      try SourceCredentialsKeychain.deleteToken(profileID: profile.id)
+      try sourceCredentialStore.deleteCredential(profileID: profile.id)
       setSourceOperationMessage("Stored credential removed.", profileID: profile.id)
     } catch {
       setSourceOperationMessage(error.localizedDescription, profileID: profile.id, failed: true)
+      return
+    }
+    guard openOrgServer.isPaired, serverSourceCredentialProfileIDs?.contains(profile.id) != false else { return }
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      do {
+        try await self.openOrgServer.deleteSourceCredential(profileID: profile.id)
+        self.serverSourceCredentialProfileIDs?.remove(profile.id)
+        self.setSourceOperationMessage("Stored credential removed here and on \(self.openOrgServer.serverName).", profileID: profile.id)
+      } catch {
+        self.setSourceOperationMessage(
+          "Stored credential removed on this Mac, but \(self.openOrgServer.serverName) could not be updated: \(error.localizedDescription)",
+          profileID: profile.id,
+          failed: true
+        )
+      }
     }
   }
 
   private func sourceEnvironment(for profile: WorkspaceSourceProfileStatus) -> [String: String] {
     // Passed only to this sync's process; never written to the corpus.
     guard let secret = profile.sourceType?.secret,
-          let token = SourceCredentialsKeychain.readToken(profileID: profile.id)
+          let token = sourceCredentialStore.credential(profileID: profile.id)
     else { return [:] }
     return [secret.environmentVariable: token]
+  }
+
+  // MARK: Source credentials on the connected server
+
+  /// Whether this Mac should hand source credentials and Run Now to the
+  /// paired server: it is paired and that server owns the corpus schedules.
+  public var connectedServerRunsSourceSyncs: Bool {
+    guard openOrgServer.isPaired,
+          let serverRef = openOrgServer.pairing?.hostRef,
+          serverRef != automationHostRef
+    else { return false }
+    return corpusAutomationHostRef == serverRef
+  }
+
+  public func serverHasSourceCredential(_ profile: WorkspaceSourceProfileStatus) -> Bool? {
+    serverSourceCredentialProfileIDs.map { $0.contains(profile.id) }
+  }
+
+  public func refreshServerSourceCredentials() async {
+    guard openOrgServer.isPaired else {
+      serverSourceCredentialProfileIDs = nil
+      return
+    }
+    if let ids = try? await openOrgServer.sourceCredentialProfileIDs() {
+      serverSourceCredentialProfileIDs = Set(ids)
+    }
+  }
+
+  /// Sends the stored credential for one source to the paired server.
+  public func sendSourceCredentialToServer(_ profile: WorkspaceSourceProfileStatus) async {
+    await shareSourceCredentialWithServer(profileID: profile.id, savedMessage: nil, force: true)
+  }
+
+  /// After a credential is saved on this Mac, the paired server gets a copy
+  /// so it can sync on its own. Failures leave the Mac's copy in place and
+  /// say how to retry.
+  private func shareSourceCredentialWithServer(profileID: String, savedMessage: String?, force: Bool = false) async {
+    guard openOrgServer.isPaired else { return }
+    let serverName = openOrgServer.serverName
+    let credentialStore = sourceCredentialStore
+    let credential = await Task.detached(priority: .userInitiated) {
+      credentialStore.credential(profileID: profileID)
+    }.value
+    guard let credential else {
+      if force { setSourceOperationMessage("There is no credential on this Mac to send.", profileID: profileID, failed: true) }
+      return
+    }
+    let prefix = savedMessage.map { "\($0) " } ?? ""
+    do {
+      try await openOrgServer.uploadSourceCredential(profileID: profileID, credential: credential)
+      if serverSourceCredentialProfileIDs == nil { serverSourceCredentialProfileIDs = [] }
+      serverSourceCredentialProfileIDs?.insert(profileID)
+      setSourceOperationMessage("\(prefix)Sent to \(serverName), which can now sync this source.", profileID: profileID)
+    } catch {
+      setSourceOperationMessage(
+        "\(prefix)Could not send it to \(serverName): \(error.localizedDescription) Use Send to Server to try again.",
+        profileID: profileID,
+        failed: true
+      )
+    }
+  }
+
+  /// Server side of `PUT /v1/sources/ID/credential`.
+  public func storeSourceCredentialFromPairedClient(_ credential: String, profileID: String) throws {
+    try sourceCredentialStore.saveCredential(credential, profileID: profileID)
+    setSourceOperationMessage("Credential received from a paired Mac.", profileID: profileID)
+  }
+
+  /// Server side of `DELETE /v1/sources/ID/credential`.
+  public func deleteSourceCredentialFromPairedClient(profileID: String) throws {
+    try sourceCredentialStore.deleteCredential(profileID: profileID)
+  }
+
+  public func storedSourceCredentialProfileIDs() -> [String] {
+    sourceCredentialStore.storedProfileIDs()
+  }
+
+  /// Server side of `POST /v1/sources/ID/sync`: runs the same sync as Run
+  /// Now. Long syncs keep running after the response, which returns once the
+  /// sync finishes or after a bounded wait.
+  public func runSourceSyncForPairedClient(
+    profileID: String,
+    responseWait: Duration = .seconds(90)
+  ) async -> MobileRemoteSourceSyncResponse {
+    if !sourceProfiles.contains(where: { $0.id == profileID }) {
+      await refreshSourceConnections()
+    }
+    guard let profile = sourceProfiles.first(where: { $0.id == profileID }) else {
+      return MobileRemoteSourceSyncResponse(profileID: profileID, ok: false, message: "This server's corpus has no source named \(profileID) yet. Wait for celorga.json to sync, then try again.")
+    }
+    if activeSourceOperationIDs.contains(profileID) {
+      return MobileRemoteSourceSyncResponse(profileID: profileID, ok: true, message: "A sync of this source is already running on the server.")
+    }
+    if let missing = missingCredentialMessage(for: profile) {
+      return MobileRemoteSourceSyncResponse(profileID: profileID, ok: false, message: missing)
+    }
+    let sync = Task { @MainActor [weak self] () -> Bool in
+      guard let self else { return false }
+      return await self.performSyncAndStageSource(profile, trigger: .manual)
+    }
+    let finished = await withTaskGroup(of: Bool?.self) { group -> Bool? in
+      group.addTask { await sync.value }
+      group.addTask {
+        try? await Task.sleep(for: responseWait)
+        return nil
+      }
+      let first = await group.next() ?? nil
+      group.cancelAll()
+      return first
+    }
+    guard let succeeded = finished else {
+      return MobileRemoteSourceSyncResponse(profileID: profileID, ok: true, message: "Still syncing on the server; results arrive with the corpus sync.")
+    }
+    return MobileRemoteSourceSyncResponse(
+      profileID: profileID,
+      ok: succeeded && !sourceOperationFailureIDs.contains(profileID),
+      message: sourceOperationMessages[profileID]
+    )
+  }
+
+  /// Why a source cannot sync on this host yet, when it needs a stored credential.
+  private func missingCredentialMessage(for profile: WorkspaceSourceProfileStatus) -> String? {
+    guard profile.usesStoredCredential,
+          profile.credentialAvailable != true,
+          !sourceHasStoredCredential(profile),
+          let secret = profile.sourceType?.secret
+    else { return nil }
+    if aiChatHostIdentity.kind == .server {
+      return secret.signIn != nil
+        ? "Waiting for \(secret.label.lowercased()): sign in from Celorga on your Mac, which sends it to this server."
+        : "Waiting for a \(secret.label.lowercased()): add it in Celorga's Sources view on your Mac, which sends it to this server."
+    }
+    return "Waiting for a \(secret.label.lowercased()) in Keychain."
+  }
+
+  // MARK: Google sign-in for sources
+
+  private static let googleSourceOAuthClientAccount = "__google-oauth-client__"
+
+  /// Signs in with Google for a Google-backed source, stores the refresh
+  /// credential like any other source secret, and sends it to the paired
+  /// server so the server can sync.
+  public func signInToGoogle(for profile: WorkspaceSourceProfileStatus) async {
+    guard case .google(let scope)? = profile.sourceType?.secret?.signIn else { return }
+    guard !activeSourceOperationIDs.contains(profile.id) else { return }
+    activeSourceOperationIDs.insert(profile.id)
+    defer { activeSourceOperationIDs.remove(profile.id) }
+    setSourceOperationMessage("Finish signing in to Google in your browser…", profileID: profile.id)
+    do {
+      guard let client = try googleSourceOAuthClient() else {
+        setSourceOperationMessage(nil, profileID: profile.id)
+        return
+      }
+      let credential = try await GoogleDriveOAuthClient().authorize(
+        clientID: client.clientID,
+        clientSecret: client.clientSecret,
+        scope: scope,
+        openAuthorizationURL: { url in
+          await MainActor.run { NSWorkspace.shared.open(url) }
+        }
+      )
+      let encoded = try GoogleSourceOAuthCredential(credential).encodedString()
+      try sourceCredentialStore.saveCredential(encoded, profileID: profile.id)
+      let saved = "Signed in to Google."
+      setSourceOperationMessage(openOrgServer.isPaired ? saved : "\(saved) Run Now to sync on this Mac, or pair a Celorga server to sync there.", profileID: profile.id)
+      await shareSourceCredentialWithServer(profileID: profile.id, savedMessage: saved)
+    } catch {
+      setSourceOperationMessage(error.localizedDescription, profileID: profile.id, failed: true)
+    }
+  }
+
+  /// The Google OAuth Desktop client for source sign-in: the build's managed
+  /// client, one imported earlier, or one the user imports now. Returns nil
+  /// when the user cancels the import.
+  private func googleSourceOAuthClient() throws -> GoogleDriveOAuthDesktopClient? {
+    if let managed = GoogleDriveOAuthConfiguration.managedClientPair(), managed.clientSecret != nil {
+      return managed
+    }
+    if let saved = SourceCredentialsKeychain.readToken(profileID: Self.googleSourceOAuthClientAccount),
+       let client = try? GoogleDriveOAuthDesktopClient.decodeGoogleClientJSON(Data(saved.utf8)) {
+      return client
+    }
+    let alert = NSAlert()
+    alert.messageText = "Choose a Google OAuth client"
+    alert.informativeText = "This build of Celorga has no built-in Google sign-in client. In Google Cloud Console, enable the Google Calendar API, create an OAuth client of type “Desktop app”, download its JSON file, and choose it next. Celorga keeps it in Keychain."
+    alert.addButton(withTitle: "Choose Client JSON…")
+    alert.addButton(withTitle: "Cancel")
+    guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.json]
+    panel.allowsMultipleSelection = false
+    panel.message = "Choose the Desktop app OAuth client JSON downloaded from Google Cloud Console."
+    guard panel.runModal() == .OK, let url = panel.url else { return nil }
+    let data = try Data(contentsOf: url)
+    let client = try GoogleDriveOAuthDesktopClient.decodeGoogleClientJSON(data)
+    try SourceCredentialsKeychain.saveToken(String(decoding: data, as: UTF8.self), profileID: Self.googleSourceOAuthClientAccount)
+    return client
   }
 
   public func presentNewSource(type: WorkspaceSourceType) {
@@ -6128,14 +6393,19 @@ extension WorkspaceStore {
       let profileID = draft.profileID.trimmingCharacters(in: .whitespacesAndNewlines)
       _ = try await cli.run(arguments)
       let secret = draft.secret.trimmingCharacters(in: .whitespacesAndNewlines)
-      if !secret.isEmpty {
-        try SourceCredentialsKeychain.saveToken(secret, profileID: profileID)
+      if !secret.isEmpty, draft.sourceType?.secret?.signIn == nil {
+        try sourceCredentialStore.saveCredential(secret, profileID: profileID)
       }
       await refreshSourceConnections()
-      setSourceOperationMessage(
-        draft.isEditing ? "Source updated." : "\(draft.sourceType?.displayName ?? "Source") source added. Use Check Setup to verify the connection.",
-        profileID: profileID
-      )
+      let message = draft.isEditing
+        ? "Source updated."
+        : draft.sourceType?.secret?.signIn != nil
+          ? "\(draft.sourceType?.displayName ?? "Source") source added. Sign in with Google to start syncing."
+          : "\(draft.sourceType?.displayName ?? "Source") source added. Use Check Setup to verify the connection."
+      setSourceOperationMessage(message, profileID: profileID)
+      if !secret.isEmpty, draft.sourceType?.secret?.signIn == nil {
+        await shareSourceCredentialWithServer(profileID: profileID, savedMessage: message)
+      }
       return nil
     } catch {
       return error.localizedDescription
@@ -6363,8 +6633,8 @@ extension WorkspaceStore {
         )
         continue
       }
-      if profile.type == "notion" && !sourceHasStoredCredential(profile) {
-        let message = "Automatic sync is waiting for a Notion token in Keychain."
+      if let missing = missingCredentialMessage(for: profile) {
+        let message = "Automatic sync: \(missing)"
         setSourceOperationMessage(message, profileID: profile.id, failed: true)
         recordSourceScheduleResult(
           profile,
@@ -10901,14 +11171,111 @@ extension WorkspaceStore {
 
     let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
     field.placeholderString = "Meeting title"
-    field.stringValue = meetingTitleDraft
+    // A meeting in progress on a synced calendar fills in the title, and
+    // keeping it records the event and its attendees with the meeting.
+    let currentEvent = CalendarRecordingPromptPolicy.currentMeeting(in: calendarMeetingEvents, now: Date())
+    field.stringValue = meetingTitleDraft.isEmpty ? (currentEvent?.title ?? "") : meetingTitleDraft
+    if let currentEvent {
+      alert.informativeText += " Calendar: \(currentEvent.title), \(currentEvent.otherAttendees.count) attendee\(currentEvent.otherAttendees.count == 1 ? "" : "s")."
+    }
     alert.accessoryView = field
 
     let response = alert.runModal()
     guard response == .alertFirstButtonReturn else { return }
 
     meetingTitleDraft = field.stringValue
-    Task { await startMeetingRecording(title: field.stringValue) }
+    let event = currentEvent.flatMap { event in
+      field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) == event.title ? event : nil
+    }
+    Task { await startMeetingRecording(title: field.stringValue, calendarEvent: event) }
+  }
+
+  // MARK: Calendar recording prompts
+
+  private static let calendarPromptsEnabledKey = "Org2Workspace.calendarRecordingPrompts.enabled.v1"
+  private static let calendarPromptedKeysKey = "Org2Workspace.calendarRecordingPrompts.prompted.v1"
+  public static let calendarPromptCheckIntervalNanoseconds: UInt64 = 20_000_000_000
+
+  public var calendarRecordingPromptsEnabled: Bool {
+    defaults.object(forKey: Self.calendarPromptsEnabledKey) as? Bool ?? true
+  }
+
+  public func setCalendarRecordingPromptsEnabled(_ enabled: Bool) {
+    defaults.set(enabled, forKey: Self.calendarPromptsEnabledKey)
+    if !enabled { dismissCalendarRecordingPrompt() }
+  }
+
+  /// Desktop only: watches synced calendar events and offers to record each
+  /// meeting as it starts. Headless servers never prompt.
+  public func setCalendarRecordingPromptsActive(
+    _ isActive: Bool,
+    checkIntervalNanoseconds: UInt64 = WorkspaceStore.calendarPromptCheckIntervalNanoseconds
+  ) {
+    calendarRecordingPromptTask?.cancel()
+    calendarRecordingPromptTask = nil
+    guard isActive else { return }
+    calendarRecordingPromptTask = Task { @MainActor [weak self] in
+      while !Task.isCancelled {
+        await self?.checkCalendarRecordingPrompt()
+        do { try await Task.sleep(nanoseconds: checkIntervalNanoseconds) } catch { return }
+      }
+    }
+  }
+
+  func reloadCalendarMeetingEvents() async {
+    guard let corpusRoot else {
+      calendarMeetingEvents = []
+      return
+    }
+    let zones = sourceProfiles.filter { $0.type == "google-calendar" }.map(\.rawZone)
+    let events = await Task.detached(priority: .utility) {
+      CalendarMeetingEventLoader.load(corpusRoot: corpusRoot, extraRawZones: zones)
+    }.value
+    guard self.corpusRoot == corpusRoot else { return }
+    if events != calendarMeetingEvents { calendarMeetingEvents = events }
+  }
+
+  func checkCalendarRecordingPrompt(now: Date = Date()) async {
+    await reloadCalendarMeetingEvents()
+    if let prompt = calendarRecordingPrompt,
+       !CalendarRecordingPromptPolicy.isInPromptWindow(prompt, now: now) || isRecordingMeeting {
+      dismissCalendarRecordingPrompt()
+    }
+    guard calendarRecordingPromptsEnabled, !isRecordingMeeting, calendarRecordingPrompt == nil else { return }
+    var prompted = promptedCalendarEventKeys(now: now)
+    guard let event = CalendarRecordingPromptPolicy.candidate(
+      in: calendarMeetingEvents,
+      now: now,
+      alreadyPrompted: Set(prompted.keys)
+    ) else { return }
+    prompted[event.promptKey] = now.timeIntervalSince1970
+    defaults.set(prompted, forKey: Self.calendarPromptedKeysKey)
+    calendarRecordingPrompt = event
+    calendarRecordingPromptPresenter?(event)
+  }
+
+  /// Offered occurrences from the last two days, so each is offered once.
+  private func promptedCalendarEventKeys(now: Date) -> [String: Double] {
+    let stored = defaults.dictionary(forKey: Self.calendarPromptedKeysKey) as? [String: Double] ?? [:]
+    let cutoff = now.addingTimeInterval(-2 * 24 * 60 * 60).timeIntervalSince1970
+    return stored.filter { $0.value >= cutoff }
+  }
+
+  public func dismissCalendarRecordingPrompt() {
+    guard calendarRecordingPrompt != nil else { return }
+    calendarRecordingPrompt = nil
+    calendarRecordingPromptPresenter?(nil)
+  }
+
+  /// Starts recording the offered meeting with its title, time, link, and
+  /// attendees; optionally opens its video call first.
+  public func recordCalendarMeeting(_ event: CalendarMeetingEvent, joinCall: Bool = false) async {
+    dismissCalendarRecordingPrompt()
+    if joinCall, let raw = event.meetingUrl, let url = URL(string: raw),
+       ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+      NSWorkspace.shared.open(url)
+    }
+    await startMeetingRecording(title: event.title, calendarEvent: event)
   }
 
   nonisolated private static func meetingArtifactsDirectory(corpusRoot: URL) -> URL {
@@ -11008,7 +11375,7 @@ extension WorkspaceStore {
     }
   }
 
-  public func startMeetingRecording(title rawTitle: String) async {
+  public func startMeetingRecording(title rawTitle: String, calendarEvent: CalendarMeetingEvent? = nil) async {
     guard let corpusRoot else {
       statusText = "No corpus selected"
       return
@@ -11020,11 +11387,14 @@ extension WorkspaceStore {
 
     do {
       let startedAt = Date()
-      let paths = try await prepareMeetingArtifactPaths(
+      var paths = try await prepareMeetingArtifactPaths(
         corpusRoot: corpusRoot,
         title: rawTitle,
         recordedAt: startedAt
       )
+      if let calendarEvent {
+        paths.calendar = MeetingCalendarContext(event: calendarEvent)
+      }
       // The recorder creates its audio file before either capture stream has
       // fully started. Exclude that path immediately so a concurrent meeting
       // refresh cannot mistake the live file for an interrupted recording.
@@ -11053,6 +11423,7 @@ extension WorkspaceStore {
         systemAudioStartError: systemAudioStartError
       )
       isRecordingMeeting = true
+      dismissCalendarRecordingPrompt()
       isMeetingRecordingPaused = false
       startMeetingInputMetering()
       selectedSurface = .meetings
@@ -11246,8 +11617,16 @@ extension WorkspaceStore {
         systemAudioURL: systemAudioURL,
         systemAudioCaptureError: systemAudioCaptureError
       )
+      var paths = recording.paths
+      if let context = paths.calendar {
+        // Link attendees to person notes using the corpus as it is now.
+        paths.calendar = MeetingCalendarContext(
+          event: context.event,
+          attendees: MeetingAttendeeResolver.attendees(for: context.event, resolver: orgRoamLinkResolver)
+        )
+      }
       let bundle = try await writeMeetingArtifacts(
-        paths: recording.paths,
+        paths: paths,
         corpusRoot: corpusRoot,
         duration: duration,
         transcript: transcript,

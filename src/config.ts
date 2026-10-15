@@ -61,8 +61,10 @@ export type Org2MetabaseDataSourceConfig = {
 
 export type Org2DataSourceConfig = Org2ClickHouseDataSourceConfig | Org2MetabaseDataSourceConfig;
 
+export type Org2ExternalSourceType = "slack" | "notion" | "email" | "google-calendar";
+
 export type Org2ExternalSourceConfig = {
-  type: "slack" | "notion" | "email";
+  type: Org2ExternalSourceType;
   /** Non-secret IMAP account settings for `type: "email"`. Passwords stay machine-local. */
   email?: {
     host: string;
@@ -73,6 +75,13 @@ export type Org2ExternalSourceConfig = {
     maxMessageBytes?: number;
     /** The account's SMTP submission server, recorded for reference and future sending. */
     smtp?: { host: string; port?: number; security?: "tls" | "starttls" | "none" };
+  };
+  /** Non-secret settings for `type: "google-calendar"`. The OAuth credential stays machine-local. */
+  googleCalendar?: {
+    /** Calendar IDs to read; defaults to ["primary"]. */
+    calendars?: string[];
+    /** How many days ahead to keep synced; defaults to 14. */
+    lookaheadDays?: number;
   };
   enabled?: boolean;
   scopes?: string[];

@@ -36,6 +36,10 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
   public let supportsThreadSharing: Bool?
   /// The host serves `GET /v1/threads/ID/outputs`.
   public let supportsThreadOutputs: Bool?
+  /// The host accepts external-source credentials from a paired client
+  /// (`PUT|DELETE /v1/sources/ID/credential`) and runs source syncs on
+  /// request (`POST /v1/sources/ID/sync`).
+  public let supportsSourceCredentials: Bool?
 
   public init(
     protocolVersion: Int = MobileRemoteProtocol.version,
@@ -50,8 +54,10 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
     pushNotificationsConfigured: Bool? = nil,
     supportsClientThreadIDs: Bool? = true,
     supportsThreadSharing: Bool? = true,
-    supportsThreadOutputs: Bool? = true
+    supportsThreadOutputs: Bool? = true,
+    supportsSourceCredentials: Bool? = true
   ) {
+    self.supportsSourceCredentials = supportsSourceCredentials
     self.supportsThreadOutputs = supportsThreadOutputs
     self.supportsClientThreadIDs = supportsClientThreadIDs
     self.supportsThreadSharing = supportsThreadSharing
@@ -1120,5 +1126,47 @@ public struct MobileRemoteHTTPResponse: Hashable, Sendable {
 
   public static func error(_ message: String, statusCode: Int) -> MobileRemoteHTTPResponse {
     .json(MobileRemoteErrorEnvelope(error: message), statusCode: statusCode)
+  }
+}
+
+/// A source credential a paired Mac hands to a headless host. The value is
+/// the same secret the Mac keeps in Keychain (a token, password, or Google
+/// refresh credential); the host stores it outside the corpus.
+public struct MobileRemoteSourceCredentialRequest: Codable, Hashable, Sendable {
+  public let credential: String
+
+  public init(credential: String) {
+    self.credential = credential
+  }
+}
+
+public struct MobileRemoteSourceCredentialResponse: Codable, Hashable, Sendable {
+  public let profileID: String
+  public let stored: Bool
+
+  public init(profileID: String, stored: Bool) {
+    self.profileID = profileID
+    self.stored = stored
+  }
+}
+
+/// Which source profiles a host holds credentials for (never the values).
+public struct MobileRemoteSourceCredentialList: Codable, Hashable, Sendable {
+  public let profileIDs: [String]
+
+  public init(profileIDs: [String]) {
+    self.profileIDs = profileIDs
+  }
+}
+
+public struct MobileRemoteSourceSyncResponse: Codable, Hashable, Sendable {
+  public let profileID: String
+  public let ok: Bool
+  public let message: String?
+
+  public init(profileID: String, ok: Bool, message: String?) {
+    self.profileID = profileID
+    self.ok = ok
+    self.message = message
   }
 }

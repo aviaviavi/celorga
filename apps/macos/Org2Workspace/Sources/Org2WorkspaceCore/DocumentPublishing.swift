@@ -820,6 +820,7 @@ public enum GoogleDriveOAuthError: LocalizedError, Sendable {
   case invalidTokenResponse
   case missingRefreshToken
   case scopeNotGranted
+  case requestedScopeNotGranted
 
   public var errorDescription: String? {
     switch self {
@@ -832,13 +833,13 @@ public enum GoogleDriveOAuthError: LocalizedError, Sendable {
     case .callbackServer(let detail):
       "Celorga could not start the temporary Google authorization callback: \(detail)"
     case .callbackTimedOut:
-      "Google Drive authorization timed out. Try connecting again."
+      "Google authorization timed out. Try connecting again."
     case .invalidCallback:
       "Google returned an invalid authorization response."
     case .stateMismatch:
       "Google authorization could not be verified. Try connecting again."
     case .authorizationDenied(let detail):
-      detail.isEmpty ? "Google Drive authorization was cancelled." : "Google Drive authorization failed: \(detail)"
+      detail.isEmpty ? "Google authorization was cancelled." : "Google authorization failed: \(detail)"
     case .tokenRequestFailed(let status, let detail):
       if let detail, !detail.isEmpty {
         "Google token exchange failed (HTTP \(status)): \(detail)"
@@ -851,6 +852,8 @@ public enum GoogleDriveOAuthError: LocalizedError, Sendable {
       "Google did not return a refresh credential. Connect the account again."
     case .scopeNotGranted:
       "Google Drive access was not granted. Connect again and approve Drive file access."
+    case .requestedScopeNotGranted:
+      "Google did not grant the requested access. Sign in again and approve every requested permission."
     }
   }
 }
@@ -907,6 +910,7 @@ public struct GoogleDriveOAuthClient: Sendable {
   public func authorize(
     clientID: String,
     clientSecret: String? = nil,
+    scope requestedScope: String = GoogleDriveOAuthClient.driveFileScope,
     openAuthorizationURL: @escaping OpenAuthorizationURL
   ) async throws -> GoogleDriveOAuthCredential {
     guard let normalizedClientID = GoogleDriveOAuthConfiguration.normalizedClientID(clientID) else {
@@ -924,7 +928,8 @@ public struct GoogleDriveOAuthClient: Sendable {
       clientID: normalizedClientID,
       redirectURL: redirectURL,
       codeChallenge: codeChallenge,
-      state: state
+      state: state,
+      scope: requestedScope
     )
     guard await openAuthorizationURL(authorizationURL) else {
       throw GoogleDriveOAuthError.browserOpenFailed
@@ -949,9 +954,11 @@ public struct GoogleDriveOAuthClient: Sendable {
     guard let refreshToken = response.refreshToken, !refreshToken.isEmpty else {
       throw GoogleDriveOAuthError.missingRefreshToken
     }
-    let scope = response.scope ?? Self.driveFileScope
-    guard Self.grantsDriveFileScope(scope) else {
-      throw GoogleDriveOAuthError.scopeNotGranted
+    let scope = response.scope ?? requestedScope
+    guard Self.grants(requestedScope, in: scope) else {
+      throw requestedScope == Self.driveFileScope
+        ? GoogleDriveOAuthError.scopeNotGranted
+        : GoogleDriveOAuthError.requestedScopeNotGranted
     }
     return GoogleDriveOAuthCredential(
       clientID: normalizedClientID,
@@ -1000,14 +1007,15 @@ public struct GoogleDriveOAuthClient: Sendable {
     clientID: String,
     redirectURL: URL,
     codeChallenge: String,
-    state: String
+    state: String,
+    scope: String = driveFileScope
   ) throws -> URL {
     var components = URLComponents(url: authorizationEndpoint, resolvingAgainstBaseURL: false)
     components?.queryItems = [
       URLQueryItem(name: "client_id", value: clientID),
       URLQueryItem(name: "redirect_uri", value: redirectURL.absoluteString),
       URLQueryItem(name: "response_type", value: "code"),
-      URLQueryItem(name: "scope", value: driveFileScope),
+      URLQueryItem(name: "scope", value: scope),
       URLQueryItem(name: "code_challenge", value: codeChallenge),
       URLQueryItem(name: "code_challenge_method", value: "S256"),
       URLQueryItem(name: "state", value: state),
@@ -1041,7 +1049,12 @@ public struct GoogleDriveOAuthClient: Sendable {
   }
 
   private static func grantsDriveFileScope(_ scope: String) -> Bool {
-    scope.split(whereSeparator: { $0.isWhitespace }).contains(Substring(driveFileScope))
+    grants(driveFileScope, in: scope)
+  }
+
+  static func grants(_ requested: String, in granted: String) -> Bool {
+    let grantedScopes = Set(granted.split(whereSeparator: { $0.isWhitespace }))
+    return requested.split(whereSeparator: { $0.isWhitespace }).allSatisfy(grantedScopes.contains)
   }
 
   private func tokenResponse(fields: [String: String]) async throws -> GoogleDriveOAuthTokenResponse {

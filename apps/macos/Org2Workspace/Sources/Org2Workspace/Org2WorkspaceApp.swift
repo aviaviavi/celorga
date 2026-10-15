@@ -78,6 +78,8 @@ struct Org2WorkspaceApp: App {
           await store.bootstrap()
           mobileRemote.startIfConfigured()
           store.setSourceAutoSyncActive(true)
+          CalendarRecordingPromptPanel.install(on: store)
+          store.setCalendarRecordingPromptsActive(true)
           store.setAutomationSchedulerActive(true)
           store.setAIChatLivePresenceActive(true)
         }

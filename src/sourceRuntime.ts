@@ -17,6 +17,13 @@ import {
   resolveEmailPassword,
 } from "./emailSource.js";
 import { schemaMatches } from "./brandNames.js";
+import {
+  GOOGLE_CALENDAR_CREDENTIAL_ENV,
+  fetchGoogleCalendarRecords,
+  googleCalendarAccessToken,
+  googleCalendarCredentialAvailable,
+  googleCalendarSourceSettings,
+} from "./googleCalendarSource.js";
 
 export type SourceBinding = {
   binary?: string;
@@ -35,7 +42,7 @@ type SourceBindingsEnvelope = {
 
 type SourceStatus = {
   id: string;
-  type: "slack" | "notion" | "email";
+  type: Org2ExternalSourceConfig["type"];
   enabled: boolean;
   scopes: string[];
   workspaceId?: string;
@@ -60,6 +67,8 @@ type SourceStatus = {
   ready: boolean;
   /** Email: IMAP account summary and where the password will come from. */
   email?: { host: string; port: number; security: string; username: string; mailboxes: string[]; smtp?: { host: string; port: number } };
+  /** Google Calendar: calendars and window. */
+  googleCalendar?: { calendars: string[]; lookaheadDays: number };
   credentialAvailable?: boolean;
   setupError?: string;
 };
@@ -225,10 +234,10 @@ function normalizedSchedule(id: string, profile: Org2ExternalSourceConfig): Sour
   throw new Error(`external source ${id} schedule kind must be interval or daily`);
 }
 
-export const EXTERNAL_SOURCE_TYPES = ["slack", "notion", "email"] as const;
+export const EXTERNAL_SOURCE_TYPES = ["slack", "notion", "email", "google-calendar"] as const;
 
 const EXTERNAL_SOURCE_KEYS = new Set([
-  "type", "email", "enabled", "scopes", "workspaceId", "rawZone", "media", "syncArgs", "ingestion", "schedule",
+  "type", "email", "googleCalendar", "enabled", "scopes", "workspaceId", "rawZone", "media", "syncArgs", "ingestion", "schedule",
 ]);
 const SECRET_KEY_PATTERN = /token|password|passwd|secret|api[-_]?key|credential|cookie/i;
 const SECRET_VALUE_PATTERN = /^(?:xox[abposr]-|xapp-|secret_|ntn_)/;
@@ -302,6 +311,8 @@ export function validateExternalSourceProfile(id: string, value: unknown): Org2E
   if (typed.schedule !== undefined) normalizedSchedule(id, typed);
   if (typed.type === "email") emailSourceSettings(id, typed);
   else if (typed.email !== undefined) throw new Error(`external source ${id} email settings apply only to type email`);
+  if (typed.type === "google-calendar") googleCalendarSourceSettings(id, typed);
+  else if (typed.googleCalendar !== undefined) throw new Error(`external source ${id} googleCalendar settings apply only to type google-calendar`);
   return typed;
 }
 
@@ -342,7 +353,10 @@ supported type (${EXTERNAL_SOURCE_TYPES.join(", ")}) and refuses credential-like
 outside the corpus under ORG2_INDEX_HOME (or ~/.org2/index). Slack and Notion sync delegates to
 slacrawl/notcrawl. Email profiles read IMAP directly (read-only EXAMINE and BODY.PEEK, so mail is not
 marked read) and keep a machine-local UID cursor; the password comes from ORG2_EMAIL_PASSWORD, a
---password-env or --password-command binding, or the Celorga app's Keychain, and never enters the corpus.`;
+--password-env or --password-command binding, or the Celorga app's Keychain, and never enters the corpus.
+Google Calendar profiles read the Calendar API directly and stage a snapshot of the configured window
+(ingestion.since back, googleCalendar.lookaheadDays ahead). Sign in from the Celorga app's Sources view;
+the app sends the credential to the connected server, which syncs with ${GOOGLE_CALENDAR_CREDENTIAL_ENV}.`;
 }
 
 function optionValue(args: string[], index: number, option: string): string {
@@ -531,6 +545,7 @@ function statuses(root: string, profiles: Record<string, Org2ExternalSourceConfi
   return Object.entries(profiles).sort(([a], [b]) => a.localeCompare(b)).map(([id, profile]) => {
     const binding = bindings[id] || {};
     if (profile.type === "email") return emailStatus(id, profile, binding, bindingFile);
+    if (profile.type === "google-calendar") return googleCalendarStatus(id, profile, bindingFile);
     const binary = binaryFor(profile, binding);
     const configPath = configFor(profile, binding);
     const binaryAvailable = commandAvailable(binary);
@@ -599,6 +614,62 @@ function emailStatus(id: string, profile: Org2ExternalSourceConfig, binding: Sou
   };
 }
 
+function googleCalendarStatus(id: string, profile: Org2ExternalSourceConfig, bindingFile: string): SourceStatus {
+  let googleCalendar: SourceStatus["googleCalendar"];
+  let setupError: string | undefined;
+  try {
+    const settings = googleCalendarSourceSettings(id, profile);
+    googleCalendar = { calendars: settings.calendars, lookaheadDays: settings.lookaheadDays };
+  } catch (error) {
+    setupError = error instanceof Error ? error.message : String(error);
+  }
+  return {
+    id,
+    type: "google-calendar",
+    enabled: profile.enabled !== false,
+    scopes: profile.scopes || [],
+    rawZone: profile.rawZone || `raw/connectors/google-calendar/${id}`,
+    reviewZone: profile.ingestion?.reviewZone || `views/connectors/google-calendar/${id}`,
+    ...(profile.ingestion?.since ? { ingestionSince: profile.ingestion.since } : {}),
+    ingestionLimit: profile.ingestion?.maxItems || 5_000,
+    syncArgs: [],
+    media: profile.media || "metadata-only",
+    ...(profile.schedule ? { schedule: normalizedSchedule(id, profile) } : {}),
+    bindingPath: bindingFile,
+    binary: "celorga (built-in Google Calendar)",
+    binaryAvailable: true,
+    configAvailable: !setupError,
+    // The credential arrives from the Celorga app (Keychain or the server's store) at sync time.
+    ready: profile.enabled !== false && !setupError,
+    ...(googleCalendar ? { googleCalendar } : {}),
+    credentialAvailable: googleCalendarCredentialAvailable(),
+    ...(setupError ? { setupError } : {}),
+  };
+}
+
+async function importGoogleCalendarProfile(options: {
+  root: string;
+  id: string;
+  profile: Org2ExternalSourceConfig;
+  limit?: number;
+  timeoutMs: number;
+  apply: boolean;
+}) {
+  const settings = googleCalendarSourceSettings(options.id, options.profile);
+  const timeoutMs = Math.min(options.timeoutMs, 120_000);
+  const accessToken = await googleCalendarAccessToken(process.env, timeoutMs);
+  const fetched = await fetchGoogleCalendarRecords({ settings, accessToken, timeoutMs });
+  const imported = importSourceRecords({
+    root: options.root,
+    profileId: options.id,
+    profile: options.profile,
+    since: settings.lookback,
+    limit: options.limit,
+    apply: options.apply,
+  }, fetched.records);
+  return { imported, calendars: fetched.calendars, window: fetched.window };
+}
+
 function emailPassword(id: string, binding: SourceBinding): string {
   const resolved = resolveEmailPassword(binding);
   if (!resolved.password) throw new Error(`email source ${id} has no password: ${resolved.source}`);
@@ -646,6 +717,26 @@ async function importEmailProfile(options: {
   return { imported, mailboxes: fetched.mailboxes };
 }
 
+function googleCalendarStatePath(root: string, id: string): string {
+  return path.join(org2CorpusIndexDir(root), `source-google-calendar-${id.replace(/[^A-Za-z0-9_.-]/gu, "_")}-state.json`);
+}
+
+/** Machine-local record of this host's last successful Google Calendar sync. */
+function readGoogleCalendarLastSync(root: string, id: string): string | null {
+  try {
+    const value = JSON.parse(fs.readFileSync(googleCalendarStatePath(root, id), "utf8")) as { syncedAt?: unknown };
+    return typeof value.syncedAt === "string" ? value.syncedAt : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeGoogleCalendarLastSync(root: string, id: string, details: Record<string, unknown>): void {
+  const file = googleCalendarStatePath(root, id);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  writeJSONAtomic(file, { schema: "org2:google-calendar-source-state:v1", profile: id, syncedAt: new Date().toISOString(), ...details });
+}
+
 function emit(value: unknown, json: boolean): void {
   if (json) process.stdout.write(JSON.stringify(value, null, 2) + "\n");
   else if (Array.isArray(value)) {
@@ -689,6 +780,16 @@ export async function runSourceCommand(args: string[]): Promise<boolean> {
       const bindingsForDoctor = readBindings(root).bindings;
       const checked = [];
       for (const item of result) {
+        if (item.type !== "google-calendar") continue;
+        if (!item.enabled || !item.ready) { checked.push({ ...item, doctorOk: false }); continue; }
+        try {
+          await googleCalendarAccessToken(process.env, Math.min(parsed.timeoutMs, 60_000));
+          checked.push({ ...item, doctorOk: true });
+        } catch (error) {
+          checked.push({ ...item, doctorOk: false, doctorError: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      for (const item of result) {
         if (item.type !== "email") continue;
         if (!item.enabled || !item.ready) { checked.push({ ...item, doctorOk: false }); continue; }
         try {
@@ -699,7 +800,7 @@ export async function runSourceCommand(args: string[]): Promise<boolean> {
           checked.push({ ...item, doctorOk: false, doctorError: error instanceof Error ? error.message : String(error) });
         }
       }
-      checked.push(...result.filter((item) => item.type !== "email").map((item) => {
+      checked.push(...result.filter((item) => item.type !== "email" && item.type !== "google-calendar").map((item) => {
         if (!item.enabled || !item.ready) return { ...item, doctorOk: false };
         const child = spawnSync(item.binary, ["--config", item.configPath!, "doctor", "--json"], {
           encoding: "utf8",
@@ -727,6 +828,29 @@ export async function runSourceCommand(args: string[]): Promise<boolean> {
   if (action === "status") {
     const result = [];
     for (const item of select(statuses(root, profiles))) {
+      if (item.type === "google-calendar") {
+        if (!item.googleCalendar) {
+          result.push({ id: item.id, type: item.type, ok: false, error: item.setupError || "Google Calendar settings are incomplete" });
+          continue;
+        }
+        const latest = readGoogleCalendarLastSync(root, item.id);
+        result.push({
+          id: item.id,
+          type: item.type,
+          ok: true,
+          status: 0,
+          crawlerStatus: {
+            app_id: "org2-google-calendar",
+            state: latest ? "synced" : "never-synced",
+            summary: `${item.googleCalendar.calendars.join(", ")} · next ${item.googleCalendar.lookaheadDays} days`,
+            database_path: googleCalendarStatePath(root, item.id),
+            database_bytes: 0,
+            last_sync_at: latest,
+            counts: [],
+          },
+        });
+        continue;
+      }
       if (item.type === "email") {
         if (!item.email) {
           result.push({ id: item.id, type: "email", ok: false, error: item.setupError || "email settings are incomplete" });
@@ -888,7 +1012,9 @@ export async function runSourceCommand(args: string[]): Promise<boolean> {
       config.externalSources = { ...(config.externalSources || {}), [id]: profile };
       writeJSONAtomic(configFile, config);
     }
-    const credential = profile.type === "email"
+    const credential = profile.type === "google-calendar"
+      ? `Sign in with Google from the Celorga app's Sources view (it sends the credential to the connected server), or set ${GOOGLE_CALENDAR_CREDENTIAL_ENV}`
+      : profile.type === "email"
       ? `Provide the password with ${DEFAULT_EMAIL_PASSWORD_ENV}, celorga source bind ${id} --password-command CMD --apply, or the Celorga app's Sources view`
       : `Provide the crawler token through its environment (${profile.type === "slack" ? "SLACK_BOT_TOKEN" : "NOTION_TOKEN"}) or the Celorga app's Sources view, and bind a non-default crawler with celorga source bind ${id} --binary PATH --config PATH --apply`;
     emit({
@@ -948,6 +1074,18 @@ export async function runSourceCommand(args: string[]): Promise<boolean> {
     const importBindings = readBindings(root).bindings;
     const results = [];
     for (const status of requested) {
+      if (status.type !== "google-calendar") continue;
+      if (!status.ready) { results.push({ id: status.id, ok: false, skipped: true, error: status.setupError || "Google Calendar settings are incomplete" }); continue; }
+      try {
+        const { imported, calendars } = await importGoogleCalendarProfile({
+          root, id: status.id, profile: profiles[status.id]!, limit: parsed.limit, timeoutMs: parsed.timeoutMs, apply: parsed.apply,
+        });
+        results.push({ id: status.id, ok: true, imported, calendars });
+      } catch (error) {
+        results.push({ id: status.id, ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    for (const status of requested) {
       if (status.type !== "email") continue;
       if (!status.ready) { results.push({ id: status.id, ok: false, skipped: true, error: status.setupError || "email settings are incomplete" }); continue; }
       try {
@@ -960,7 +1098,7 @@ export async function runSourceCommand(args: string[]): Promise<boolean> {
         results.push({ id: status.id, ok: false, error: error instanceof Error ? error.message : String(error) });
       }
     }
-    results.push(...requested.filter((status) => status.type !== "email").map((status) => {
+    results.push(...requested.filter((status) => status.type !== "email" && status.type !== "google-calendar").map((status) => {
       if (!status.ready) return { id: status.id, ok: false, skipped: true, error: "source binding is not ready; run celorga source doctor" };
       try {
         const imported = importCrawlerArchive({
@@ -990,6 +1128,33 @@ export async function runSourceCommand(args: string[]): Promise<boolean> {
     const bindings = readBindings(root).bindings;
     const results = [];
     for (const status of requested) {
+      if (status.type === "google-calendar") {
+        if (!status.ready) {
+          results.push({ id: status.id, ok: false, skipped: true, error: status.setupError || "Google Calendar settings are incomplete" });
+          continue;
+        }
+        const lockDir = path.join(org2CorpusIndexDir(root), `source-${status.id}.lock`);
+        fs.mkdirSync(path.dirname(lockDir), { recursive: true });
+        const syncLock = acquireSourceSyncLock(lockDir, status.id, root, parsed.timeoutMs);
+        if (!syncLock) {
+          results.push({ id: status.id, ok: true, skipped: true, reason: "sync-in-progress", message: "Sync already in progress on this machine." });
+          continue;
+        }
+        try {
+          // Like email, there is no separate archive: sync fetches the window
+          // and stages it (with --apply) in one step.
+          const { imported, calendars, window } = await importGoogleCalendarProfile({
+            root, id: status.id, profile: profiles[status.id]!, limit: parsed.limit, timeoutMs: parsed.timeoutMs, apply: parsed.apply,
+          });
+          if (parsed.apply) writeGoogleCalendarLastSync(root, status.id, { calendars, window });
+          results.push({ id: status.id, ok: true, status: 0, imported, calendars, window, ...(syncLock.recoveredStaleLock ? { recoveredStaleLock: true } : {}) });
+        } catch (error) {
+          results.push({ id: status.id, ok: false, error: error instanceof Error ? error.message : String(error) });
+        } finally {
+          releaseSourceSyncLock(lockDir, syncLock.owner);
+        }
+        continue;
+      }
       if (status.type === "email") {
         if (!status.ready) {
           results.push({ id: status.id, ok: false, skipped: true, error: status.setupError || "email settings are incomplete" });
