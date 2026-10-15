@@ -78,13 +78,37 @@ struct NotificationRoutingRegression {
     expect(!ledger.isSeeded, "Reset forgets the baseline")
     expect(ledger.reconcile(latestReplies: [Reply(threadID: groceries, messageID: UUID())]).isEmpty, "Re-enabling notifications does not replay")
 
+    // Re-pairing or switching hosts resets the ledger. A foreground APNs push
+    // or an opened thread can record one reply before the next thread list
+    // arrives; that must not make every other thread's old reply look new.
+    ledger.reset()
+    let history = (0..<200).map { _ in Reply(threadID: UUID(), messageID: UUID()) }
+    ledger.record([history[0]])
+    expect(!ledger.isSeeded, "Recording a single reply is not a thread-list baseline")
+    expect(ledger.reconcile(latestReplies: history).isEmpty, "Old replies never replay after a reset")
+    expect(ledger.isSeeded, "The first thread list seeds the ledger")
+    let fresh = Reply(threadID: history[7].threadID, messageID: UUID())
+    var afterReset = history
+    afterReset[7] = fresh
+    expect(ledger.reconcile(latestReplies: afterReset) == [fresh], "New replies alert after the baseline")
+
+    // A ledger written by an earlier build, possibly after such a reset, is
+    // never trusted as a baseline. Its replies stay seen, but the first list
+    // after updating is silent.
+    ledger.reset()
+    ledger.record([history[0]])
+    defaults.removeObject(forKey: MobileReplyNotificationLedger.seededKey)
+    expect(!ledger.isSeeded, "A ledger without the seeded marker is not a baseline")
+    expect(ledger.reconcile(latestReplies: history).isEmpty, "An earlier build's ledger does not replay")
+    expect(ledger.hasSeen(history[0]), "An earlier build's replies stay seen")
+
     ledger.reset()
     let legacyReply = Reply(threadID: groceries, messageID: UUID())
     defaults.set(
       try JSONEncoder().encode([groceries.uuidString: legacyReply.messageID.uuidString]),
       forKey: MobileReplyNotificationLedger.legacyKey
     )
-    expect(ledger.isSeeded, "Legacy baseline counts as seeded")
+    expect(!ledger.isSeeded, "Legacy baseline is not trusted as seeded")
     expect(ledger.reconcile(latestReplies: [legacyReply]).isEmpty, "Legacy baseline migrates without replay")
     expect(defaults.data(forKey: MobileReplyNotificationLedger.legacyKey) == nil, "Legacy baseline is replaced")
     expect(ledger.hasSeen(legacyReply), "Migrated reply stays seen")

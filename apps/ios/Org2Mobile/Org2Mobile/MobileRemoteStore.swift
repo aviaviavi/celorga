@@ -809,7 +809,13 @@ final class MobileRemoteStore: ObservableObject {
       let reply = MobileReplyNotificationLedger.Reply(threadID: thread.id, messageID: messageID)
       return unseen.contains(reply) && !alreadyShown.contains(reply)
     }
-    for thread in candidates {
+    // A 4-second poll rarely sees more than one new reply. A larger batch
+    // means the baseline was lost, so announce only the newest few rather
+    // than flooding the phone with old replies; the rest stay recorded.
+    let announced = candidates
+      .sorted { $0.updatedAt > $1.updatedAt }
+      .prefix(MobileReplyNotificationLedger.maximumPolledAlertsPerRefresh)
+    for thread in announced {
       await scheduleReplyNotification(for: thread)
     }
   }

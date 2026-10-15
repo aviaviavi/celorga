@@ -85,15 +85,23 @@ struct MobileReplyNotificationLedger {
 
   static let key = "Org2Mobile.remote.replyNotificationLedger.v2"
   static let legacyKey = "Org2Mobile.remote.replyNotificationBaseline.v1"
+  /// Set only by `reconcile`, when a complete thread list becomes the baseline.
+  static let seededKey = "Org2Mobile.remote.replyNotificationLedger.seeded.v1"
   static let recentRepliesPerThread = 32
   static let threadLimit = 1_000
+  static let maximumPolledAlertsPerRefresh = 3
 
   let defaults: UserDefaults
 
-  /// False until the first thread list has been recorded. The first list only
-  /// establishes what already exists and never produces alerts.
+  /// False until a complete thread list has been reconciled. The first list
+  /// only establishes what already exists and never produces alerts.
+  ///
+  /// Recording individual replies (an APNs banner, an opened thread) does not
+  /// seed the ledger: after a reset, a ledger holding one reply would make
+  /// every other thread's old reply look new. Ledgers written by earlier
+  /// builds have no marker, so they baseline silently once.
   var isSeeded: Bool {
-    defaults.data(forKey: Self.key) != nil || defaults.data(forKey: Self.legacyKey) != nil
+    defaults.bool(forKey: Self.seededKey)
   }
 
   func hasSeen(_ reply: Reply) -> Bool {
@@ -109,6 +117,7 @@ struct MobileReplyNotificationLedger {
       known[$0.threadID.uuidString]?.messageIDs.contains($0.messageID) != true
     }
     record(latestReplies, now: now)
+    defaults.set(true, forKey: Self.seededKey)
     return wasSeeded ? unseen : []
   }
 
@@ -139,6 +148,7 @@ struct MobileReplyNotificationLedger {
   func reset() {
     defaults.removeObject(forKey: Self.key)
     defaults.removeObject(forKey: Self.legacyKey)
+    defaults.removeObject(forKey: Self.seededKey)
   }
 
   private func entries() -> [String: Entry] {
