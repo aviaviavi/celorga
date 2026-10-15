@@ -57,7 +57,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "build:server": "npm run build && swift build --package-path apps/macos/Org2Workspace --product OpenOrgServer",
+    "build:server": "npm run build && swift build -c release --package-path apps/macos/Org2Workspace --product OpenOrgServer",
+    "build:server:debug": "npm run build && swift build --package-path apps/macos/Org2Workspace --product OpenOrgServer",
     "test:server": "node test/test-server.mjs && node test/test-server-restart.mjs",
     "test:bundled-agent": "npm run build && node test/test-bundled-agent.mjs",
     "build:macos-app": "node tools/build-macos-app.mjs --configuration debug --local-fast",

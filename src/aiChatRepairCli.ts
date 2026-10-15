@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { defaultNativeServerExecutable } from "./nativeServerExecutable.js";
 
 /** Use the same native transcript engine as the Celorga app, without launching an app or model. */
 export async function runAIChatRepair(options: {
@@ -15,7 +16,7 @@ export async function runAIChatRepair(options: {
   if (options.interval !== undefined && !options.watch) throw new Error("--interval requires --watch");
   if (options.watch && options.expectedRevision) throw new Error("--if-revision is only supported for a single repair");
   const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const executable = path.resolve(options.executable || path.join(packageRoot, "apps/macos/Org2Workspace/.build/debug/OpenOrgServer"));
+  const executable = path.resolve(options.executable || defaultNativeServerExecutable(packageRoot));
   try { fs.accessSync(executable, fs.constants.X_OK); }
   catch { throw new Error("Native chat repair worker unavailable. On macOS, run npm run build:server in the checkout, or pass --executable PATH to a built OpenOrgServer."); }
   const args = ["--repair-transcript", path.resolve(options.corpusRoot)];

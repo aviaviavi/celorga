@@ -11,6 +11,7 @@ import { assignAutomationHost } from "./automationHost.js";
 import { corpusIdentityStatus } from "./corpusIdentity.js";
 import { guardedWriteFile, readGuardedFile } from "./guardedFile.js";
 import { mcpAccessTokenHash, startMcpHttpServer, type McpHttpServerHandle } from "./mcpHttp.js";
+import { defaultNativeServerExecutable } from "./nativeServerExecutable.js";
 import { safeIdentifier } from "./safeIdentifier.js";
 import { schemaMatches } from "./brandNames.js";
 
@@ -475,7 +476,7 @@ export async function runServerCommand(args: string[]): Promise<void> {
       schema: "org2:server-config:v1", hostRef: values["host-ref"], name: values.name || `Celorga on ${values["host-ref"]}`,
       corpusRoot: fs.realpathSync(path.resolve(values.dir)), bindHost: values.bind, port: relayPort,
       repoRoot: packageRoot, nodePath: process.execPath,
-      executable: path.resolve(values.executable || path.join(packageRoot, "apps/macos/Org2Workspace/.build/debug/OpenOrgServer")),
+      executable: path.resolve(values.executable || defaultNativeServerExecutable(packageRoot)),
       schedulesEnabled: true,
       chatRepairIntervalSeconds: chatRepairInterval(values["chat-repair-interval"]),
       localAgentFilesystemAccess: localAgentFilesystemAccess(values["filesystem-access"]),

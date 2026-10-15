@@ -14,6 +14,8 @@ npm ci
 npm run build:server
 #+end_src
 
+=build:server= produces an optimized release worker, and =server init= points at it by default. Use =npm run build:server:debug= only when debugging the worker itself. A debug worker is several times slower at chat-list and workspace requests on large corpora. An existing configuration keeps its recorded =executable= path, so if it names =.build/debug/OpenOrgServer=, re-run =init= or edit that path to switch it.
+
 Initialize a machine-local configuration. The corpus must already have a valid =celorga.json= identity; use =celorga corpus init --help= when creating a new test corpus. Obtain this machine's address with =tailscale ip -4=.
 
 #+begin_src sh
