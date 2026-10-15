@@ -4,9 +4,11 @@ import XCTest
 
 private actor AIChatRoomSteerGate {
   private var isOpen = false
+  private(set) var isEntered = false
   private var continuations: [CheckedContinuation<Void, Never>] = []
 
   func wait() async {
+    isEntered = true
     if isOpen { return }
     await withCheckedContinuation { continuations.append($0) }
   }
@@ -59,10 +61,16 @@ final class AIChatSharedRoomSteeringTests: XCTestCase {
     let firstTurn = Task { @MainActor in
       await store.sendAIChatMessage(text: "@codex Start a long task")
     }
-    for _ in 0..<200 where store.aiChatActiveDestinationID(for: threadID)
-      != AIChatDestinationConfiguration.localCodexID {
+    // Wait for the Codex handler itself. `aiChatActiveDestinationID` already
+    // reports Codex from the queued message before the drain records the
+    // running agent, and a steer sent in that window is queued instead.
+    for _ in 0..<500 {
+      if await gate.isEntered { break }
       try await Task.sleep(nanoseconds: 10_000_000)
     }
+    let codexTurnStarted = await gate.isEntered
+    XCTAssertTrue(codexTurnStarted)
+    XCTAssertEqual(store.aiChatActiveDestinationID(for: threadID), AIChatDestinationConfiguration.localCodexID)
     XCTAssertTrue(store.isAIChatThreadRunning(threadID))
 
     // Un-mentioned guidance goes to the room's default agent (Codex), which is
@@ -143,10 +151,16 @@ final class AIChatSharedRoomSteeringTests: XCTestCase {
     let firstTurn = Task { @MainActor in
       await store.sendAIChatMessage(text: "@codex Start a long task")
     }
-    for _ in 0..<200 where store.aiChatActiveDestinationID(for: threadID)
-      != AIChatDestinationConfiguration.localCodexID {
+    // Wait for the Codex handler itself. `aiChatActiveDestinationID` already
+    // reports Codex from the queued message before the drain records the
+    // running agent, and a steer sent in that window is queued instead.
+    for _ in 0..<500 {
+      if await gate.isEntered { break }
       try await Task.sleep(nanoseconds: 10_000_000)
     }
+    let codexTurnStarted = await gate.isEntered
+    XCTAssertTrue(codexTurnStarted)
+    XCTAssertEqual(store.aiChatActiveDestinationID(for: threadID), AIChatDestinationConfiguration.localCodexID)
     XCTAssertTrue(store.isAIChatThreadRunning(threadID))
 
     // The room default is OpenClaw, but Codex is mid-turn: un-mentioned

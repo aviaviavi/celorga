@@ -393,9 +393,16 @@ final class WorkspaceListSelectionTests: XCTestCase {
       ),
       encoding: .utf8
     )
+    // Requests share one reconciliation through a gate; the gate itself must
+    // still reconcile synced disk state.
+    XCTAssertTrue(coordinatorSource.contains("""
+      private func refreshSyncedAIChatTranscriptForRequest(store: WorkspaceStore) async {
+        await syncedTranscriptRequestGate.run {
+          _ = await store.refreshSyncedAIChatTranscript()
+    """))
     XCTAssertGreaterThanOrEqual(
       coordinatorSource.components(
-        separatedBy: "_ = await store.refreshSyncedAIChatTranscript()"
+        separatedBy: "await refreshSyncedAIChatTranscriptForRequest(store: store)"
       ).count - 1,
       2,
       "Thread lists and individual thread requests must reconcile synced disk state before responding"

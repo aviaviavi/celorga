@@ -2156,13 +2156,12 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     return true
   }
 
-#if DEBUG
+  // Not DEBUG-only: the release-mode performance gate compiles every test.
   static func collectGarbageForTesting(
     legacyURL: URL, shouldYield: () -> Bool
   ) -> Bool {
     garbageCollect(legacyURL: legacyURL, shouldYield: shouldYield)
   }
-#endif
 
   private struct RecoveryManifestFile {
     let url: URL
