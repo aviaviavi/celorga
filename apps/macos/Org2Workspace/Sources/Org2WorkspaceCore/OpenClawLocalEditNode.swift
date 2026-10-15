@@ -99,6 +99,13 @@ public actor OpenClawLocalEditNode {
     let socket = try makeSocket()
     self.socket = socket
     socket.resume()
+    // Every exit cancels this attempt's task. A failed handshake (for example
+    // while pairing is required) otherwise left the closed socket's descriptor
+    // open, and the retry loop leaked one per attempt for the life of the host.
+    defer {
+      socket.cancel(with: .goingAway, reason: nil)
+      if self.socket === socket { self.socket = nil }
+    }
     let nonce = try await awaitChallenge(on: socket)
     let identity = try OpenClawDeviceIdentity.loadOrCreate()
     try await connect(on: socket, nonce: nonce, identity: identity)
