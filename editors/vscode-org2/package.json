@@ -2,7 +2,7 @@
   "name": "org2-vscode",
   "displayName": "Celorga",
   "description": "Celorga for VS Code (requires the celorga CLI): syntax, folding, agenda, roam, TODO/planning, export",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "publisher": "AviPress",
   "main": "./extension.js",
   "activationEvents": [

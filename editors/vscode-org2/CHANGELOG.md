@@ -4,6 +4,14 @@ All notable changes to the Celorga VS Code extension (formerly Org2) are documen
 
 ## Unreleased
 
+## 0.9.1 - 2026-10-15
+
+## Fixes
+
+Fixes a launch crash on Macs other than the machine used to build Celorga (#589). The Mac app now bundles all workspace resources and resolves them from its own application bundle.
+
+Includes regression coverage for resource lookup and release packaging.
+
 ## 0.9.0 - 2026-10-09
 
 # Celorga 0.9.0
