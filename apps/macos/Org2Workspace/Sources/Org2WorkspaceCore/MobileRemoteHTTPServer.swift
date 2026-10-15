@@ -233,6 +233,7 @@ final class MobileRemoteHTTPConnection: @unchecked Sendable {
     case 200: "OK"
     case 201: "Created"
     case 202: "Accepted"
+    case 304: "Not Modified"
     case 400: "Bad Request"
     case 401: "Unauthorized"
     case 404: "Not Found"

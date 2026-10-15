@@ -3498,6 +3498,10 @@ public final class WorkspaceStore {
   private var isWorkspaceRealtimeRefreshActive = false
   public private(set) var dirtyWorkspaceSurfaces: Set<WorkspaceSurface> = []
   private var workspaceSurfaceDirtyGenerations: [WorkspaceSurface: UInt64] = [:]
+  private var mobileRemoteWorkspaceRefreshTask: Task<Void, Never>?
+  private var mobileRemoteWorkspaceLastRefresh: (key: [UInt64], at: Date)?
+  /// Bounds staleness from a missed file event and from date-relative agenda rows.
+  static let mobileRemoteWorkspaceRefreshBackstop: TimeInterval = 30
   private var corpusFileEventSerial = 0
   private var recentCorpusFileEvents: [(serial: Int, path: String)] = []
   private var pendingG = false
@@ -23015,6 +23019,18 @@ extension WorkspaceStore {
     guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else {
       return nil
     }
+    return aiChatActiveDestinationID(for: thread)
+  }
+
+  /// The same answer for a thread the caller already holds. Callers iterating
+  /// every thread use this; looking each one up by ID scanned (and copied)
+  /// the whole thread array per thread, quadratic on a long chat history.
+  public func aiChatActiveDestinationID(for thread: AIChatThread) -> String? {
+    let threadID = thread.id
+    if isAIChatRuntimeStateVisible(for: threadID),
+       let activeDestinationID = activeSharedRoomDestinationByThreadID[threadID] {
+      return activeDestinationID
+    }
     guard thread.isSharedRoom else { return thread.destinationID }
     return aiChatMessages(for: threadID)
       .first(where: {
@@ -25126,11 +25142,56 @@ extension WorkspaceStore {
 
   public func mobileRemoteWorkspaceSnapshot(refreshesCanonicalState: Bool = true) async -> MobileRemoteWorkspaceSnapshot {
     if refreshesCanonicalState {
-      await refreshAgenda(updatesStatus: false)
-      await refreshApprovals(updatesStatus: false)
-      await refreshAgentWorkflows(updatesStatus: false)
+      await refreshMobileRemoteWorkspaceCanonicalStateIfNeeded()
     }
     return currentMobileRemoteWorkspaceSnapshot()
+  }
+
+  /// Identifies the canonical inputs of the Mobile Remote workspace snapshot.
+  /// The corpus watcher bumps these generations for every relevant file event.
+  private var mobileRemoteWorkspaceCanonicalKey: [UInt64] {
+    [
+      corpusSessionGeneration,
+      workspaceSurfaceDirtyGenerations[.agenda, default: 0],
+      workspaceSurfaceDirtyGenerations[.approvals, default: 0],
+    ]
+  }
+
+  /// Re-reads agenda, approvals, and workflows for a phone request only when
+  /// the corpus changed since the last request, or after a short backstop
+  /// interval. On a large corpus a full re-read takes seconds, and the phone
+  /// asks for this snapshot repeatedly. Concurrent requests share one read.
+  private func refreshMobileRemoteWorkspaceCanonicalStateIfNeeded() async {
+    if let inFlight = mobileRemoteWorkspaceRefreshTask {
+      await inFlight.value
+      return
+    }
+    let key = mobileRemoteWorkspaceCanonicalKey
+    // Without a corpus watcher (tests, or a watcher that failed to start) no
+    // event would invalidate the result, so every request re-reads.
+    if !corpusFileWatchers.isEmpty,
+       let last = mobileRemoteWorkspaceLastRefresh,
+       last.key == key,
+       Date().timeIntervalSince(last.at) < Self.mobileRemoteWorkspaceRefreshBackstop {
+      return
+    }
+    let task = Task { @MainActor [weak self] in
+      guard let self else { return }
+      await self.refreshAgenda(updatesStatus: false)
+      await self.refreshApprovals(updatesStatus: false)
+      await self.refreshAgentWorkflows(updatesStatus: false)
+    }
+    mobileRemoteWorkspaceRefreshTask = task
+    await task.value
+    mobileRemoteWorkspaceRefreshTask = nil
+    // The key captured before the read: an event during the read changes the
+    // live key, so the next request reads again.
+    mobileRemoteWorkspaceLastRefresh = (key, Date())
+  }
+
+  /// Forces the next phone workspace request to re-read canonical state.
+  public func invalidateMobileRemoteWorkspaceSnapshot() {
+    mobileRemoteWorkspaceLastRefresh = nil
   }
 
   public func setMobileRemoteAgendaStatus(itemID: String, status rawStatus: String) async throws -> MobileRemoteWorkspaceSnapshot {
@@ -43312,6 +43373,13 @@ extension WorkspaceStore {
     return destinationID.flatMap { aiChatDestination(id: $0)?.harnessHostName }
   }
 
+  /// `aiChatHarnessHostName(for:)` for a thread the caller already holds.
+  public func aiChatHarnessHostName(for thread: AIChatThread) -> String? {
+    let destinationID = aiChatRemoteLiveTurn(for: thread.id)?.turn.destinationID
+      ?? aiChatActiveDestinationID(for: thread)
+    return destinationID.flatMap { aiChatDestination(id: $0)?.harnessHostName }
+  }
+
   /// A readable name for the host running or last running this conversation.
   public func aiChatExecutionHostName(for threadID: UUID) -> String? {
     if let harnessHost = aiChatHarnessHostName(for: threadID) { return harnessHost }
@@ -43386,7 +43454,7 @@ extension WorkspaceStore {
     let turns = aiChatThreads.compactMap { thread -> AIChatLiveTurnRecord? in
       guard isAIChatThreadRunningOnCurrentHost(thread.id) else { return nil }
       let snapshot = aiChatLivePresentationSnapshot(for: thread.id)
-      let destinationID = aiChatActiveDestinationID(for: thread.id)
+      let destinationID = aiChatActiveDestinationID(for: thread)
       let activities = aiChatRunActivities(for: thread.id)
         .suffix(AIChatLiveHostDirectory.maximumActivities)
         .map { activity in

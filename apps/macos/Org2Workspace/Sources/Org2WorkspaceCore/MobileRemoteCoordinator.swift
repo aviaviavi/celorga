@@ -44,6 +44,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
   private let pushCredentialStore: MobileRemotePushCredentialStore
   private let pushSender: MobileRemotePushSender
   private let backgroundWork = MobileRemoteBackgroundWork()
+  private let syncedTranscriptRequestGate = MobileRemoteRequestRefreshGate(reuseInterval: 1.5)
   private weak var store: WorkspaceStore?
   private var server: MobileRemoteHTTPServer?
   private var failedPairingAttempts = 0
@@ -324,6 +325,25 @@ public final class MobileRemoteCoordinator: ObservableObject {
   }
 
   func handle(_ request: MobileRemoteHTTPRequest) async -> MobileRemoteHTTPResponse {
+    let response = await handleRequest(request)
+    guard request.method == "GET" else { return response }
+    return await backgroundWork.conditionalResponse(
+      response,
+      ifNoneMatch: request.headers["if-none-match"]
+    )
+  }
+
+  /// Phone requests reconcile synced chat storage at the request boundary.
+  /// Concurrent requests share one reconciliation, and back-to-back polls
+  /// reuse a reconciliation that finished moments ago; the corpus watcher
+  /// still applies new commits between requests.
+  private func refreshSyncedAIChatTranscriptForRequest(store: WorkspaceStore) async {
+    await syncedTranscriptRequestGate.run {
+      _ = await store.refreshSyncedAIChatTranscript()
+    }
+  }
+
+  private func handleRequest(_ request: MobileRemoteHTTPRequest) async -> MobileRemoteHTTPResponse {
     let path = request.path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? request.path
     if request.method == "POST", path == "/v1/pair" {
       return handlePair(request)
@@ -453,7 +473,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
       // A headless host may receive newer immutable chat commits from another
       // Mac between filesystem callbacks. Reconcile at the request boundary so
       // iOS never receives an avoidably stale thread list.
-      _ = await store.refreshSyncedAIChatTranscript()
+      await refreshSyncedAIChatTranscriptForRequest(store: store)
       let threads = store.aiChatThreads
       return await backgroundWork.threadListResponse(
         threads: threads,
@@ -518,6 +538,8 @@ public final class MobileRemoteCoordinator: ObservableObject {
        workspaceComponents[0] == "v1",
        workspaceComponents[1] == "workspace",
        let itemID = workspaceComponents[3].removingPercentEncoding {
+      // Whatever the outcome, the next snapshot request re-reads canonical state.
+      defer { store.invalidateMobileRemoteWorkspaceSnapshot() }
       do {
         if request.method == "POST",
            workspaceComponents[2] == "agenda",
@@ -642,7 +664,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
     if components.count >= 3,
        components[0] == "v1",
        components[1] == "threads" {
-      _ = await store.refreshSyncedAIChatTranscript()
+      await refreshSyncedAIChatTranscriptForRequest(store: store)
     }
     if components.count >= 4,
        components[0] == "v1",
@@ -1127,7 +1149,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
       }
       // A remote harness (for example OpenCode over SSH) runs on its own
       // machine, not on the OpenOrg host that drove the turn.
-      if let harnessHost = store.aiChatHarnessHostName(for: thread.id) {
+      if let harnessHost = store.aiChatHarnessHostName(for: thread) {
         executionHostNames[thread.id] = harnessHost
       }
     }

@@ -343,7 +343,7 @@ final class MobileRemoteStore: ObservableObject {
     do {
       let client = try pairedClient()
       async let statusRequest = client.get("/v1/status", as: MobileRemoteServerStatus.self)
-      async let threadsRequest = client.get("/v1/threads", as: MobileRemoteThreadList.self)
+      async let threadsRequest = client.get("/v1/threads", timeout: 30, as: MobileRemoteThreadList.self)
       let (nextStatus, nextThreads) = try await (statusRequest, threadsRequest)
       guard nextStatus.protocolVersion == MobileRemoteWire.version else {
         throw MobileRemoteClientError.incompatibleProtocol
@@ -1226,7 +1226,9 @@ final class MobileRemoteStore: ObservableObject {
           attachments: attachments,
           delivery: delivery
         ),
-        timeout: attachments.isEmpty ? 15 : 45,
+        // A busy host can take a while to accept a send; giving up early
+        // reported failures for messages the host then delivered anyway.
+        timeout: attachments.isEmpty ? 45 : 90,
         as: MobileRemoteMutationResponse.self
       )
       let destinationThreadID = response.threadID ?? threadID

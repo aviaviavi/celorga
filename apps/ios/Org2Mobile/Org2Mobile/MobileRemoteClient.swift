@@ -100,6 +100,12 @@ struct MobileRemoteClient: Sendable {
       headers.append("Content-Length: 0")
     }
 
+    let cacheKey = method == "GET" ? MobileRemoteResponseCache.key(endpoint: endpoint, accessToken: accessToken, path: path) : nil
+    let cached = cacheKey.flatMap { MobileRemoteResponseCache.shared.entry(for: $0) }
+    if let cached {
+      headers.append("If-None-Match: \(cached.entityTag)")
+    }
+
     var requestData = Data("\(method) \(path) HTTP/1.1\r\n\(headers.joined(separator: "\r\n"))\r\n\r\n".utf8)
     if let body {
       requestData.append(body)
@@ -111,6 +117,17 @@ struct MobileRemoteClient: Sendable {
       timeout: timeout
     ).run()
 
+    if response.statusCode == 304, let cached {
+      // Identical to the copy already held; the host skipped resending it.
+      return try MobileRemoteWire.decoder().decode(type, from: cached.body)
+    }
+    if let cacheKey {
+      if response.statusCode == 200, let entityTag = response.entityTag {
+        MobileRemoteResponseCache.shared.store(entityTag: entityTag, body: response.body, for: cacheKey)
+      } else {
+        MobileRemoteResponseCache.shared.remove(cacheKey)
+      }
+    }
     guard (200..<300).contains(response.statusCode) else {
       let envelope = try? MobileRemoteWire.decoder().decode(MobileRemoteErrorEnvelope.self, from: response.body)
       throw MobileRemoteClientError.server(envelope?.error ?? "The host rejected this request.")
@@ -162,7 +179,69 @@ struct MobileRemoteClient: Sendable {
 
 private struct MobileRemoteRawResponse: Sendable {
   let statusCode: Int
+  let entityTag: String?
   let body: Data
+}
+
+/// Recent GET bodies with their entity tags. Polls send If-None-Match, and a
+/// host that has nothing new answers 304 instead of resending the thread list
+/// or an open thread. Bounded so a long session cannot grow it without limit.
+final class MobileRemoteResponseCache: @unchecked Sendable {
+  static let shared = MobileRemoteResponseCache()
+  static let maximumEntries = 24
+  static let maximumBodyBytes = 4_000_000
+
+  struct Entry {
+    let entityTag: String
+    let body: Data
+    var lastUsed: UInt64
+  }
+
+  private let lock = NSLock()
+  private var entries: [String: Entry] = [:]
+  private var clock: UInt64 = 0
+
+  static func key(endpoint: URL, accessToken: String?, path: String) -> String {
+    // The token distinguishes pairings with the same host; it never leaves memory.
+    "\(endpoint.absoluteString)|\(accessToken ?? "")|\(path)"
+  }
+
+  func entry(for key: String) -> Entry? {
+    lock.lock()
+    defer { lock.unlock() }
+    guard var entry = entries[key] else { return nil }
+    clock &+= 1
+    entry.lastUsed = clock
+    entries[key] = entry
+    return entry
+  }
+
+  func store(entityTag: String, body: Data, for key: String) {
+    guard body.count <= Self.maximumBodyBytes else {
+      remove(key)
+      return
+    }
+    lock.lock()
+    defer { lock.unlock() }
+    clock &+= 1
+    entries[key] = Entry(entityTag: entityTag, body: body, lastUsed: clock)
+    while entries.count > Self.maximumEntries,
+          let oldest = entries.min(by: { $0.value.lastUsed < $1.value.lastUsed })?.key {
+      entries.removeValue(forKey: oldest)
+    }
+  }
+
+  func remove(_ key: String) {
+    lock.lock()
+    entries.removeValue(forKey: key)
+    lock.unlock()
+  }
+
+  func removeAll() {
+    lock.lock()
+    entries.removeAll()
+    lock.unlock()
+  }
 }
 
 private final class MobileRemoteHTTPExchange: @unchecked Sendable {
@@ -266,11 +345,15 @@ private final class MobileRemoteHTTPExchange: @unchecked Sendable {
     let statusParts = lines.first?.split(separator: " ") ?? []
     guard statusParts.count >= 2, let statusCode = Int(statusParts[1]) else { return nil }
     var contentLength: Int?
+    var entityTag: String?
     for line in lines.dropFirst() {
       guard let separator = line.firstIndex(of: ":") else { continue }
       let key = String(line[..<separator]).trimmingCharacters(in: .whitespaces).lowercased()
+      let value = String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces)
       if key == "content-length" {
-        contentLength = Int(String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces))
+        contentLength = Int(value)
+      } else if key == "etag", !value.isEmpty {
+        entityTag = value
       }
     }
     guard let contentLength, contentLength >= 0 else { return nil }
@@ -278,6 +361,7 @@ private final class MobileRemoteHTTPExchange: @unchecked Sendable {
     guard data.count >= bodyStart + contentLength else { return nil }
     return MobileRemoteRawResponse(
       statusCode: statusCode,
+      entityTag: entityTag,
       body: data.subdata(in: bodyStart..<(bodyStart + contentLength))
     )
   }
