@@ -56,6 +56,10 @@ assert.match(settings, /Toggle\("Walkie-talkie approvals"/);
 assert.match(settings, /Snooze 30 minutes/);
 assert.match(settings, /Quiet until I turn it off/);
 assert.match(app, /audioApprovals\.attach\(remote: mobileRemote\)/);
+assert.match(app, /init\(\) \{[\s\S]*audioApprovals\.attach\(remote: mobileRemote\)[\s\S]*StateObject\(wrappedValue: audioApprovals\)/,
+  "the Push to Talk controller is attached during app initialization, including background launches");
+assert.doesNotMatch(app, /\.task\s*\{\s*audioApprovals\.attach/,
+  "background Push to Talk launch cannot depend on a SwiftUI view task");
 
 // 3. Headset only. No speaker fallback or override anywhere in the slice.
 for (const [name, source] of Object.entries({ core, ptt, controller })) {
@@ -75,6 +79,12 @@ assert.match(transcriber, /if managesAudioSession \{\s*let audioSession = AVAudi
 assert.match(ptt, /\.playAndRecord/);
 assert.match(core, /if capture == \.awaitingSession \{\s*capture = \.capturing/, "capture starts only after didActivate");
 assert.match(ptt, /state\.markInterrupted\(\)\s*channelManager\.stopTransmitting/, "a push mid-reply ends the transmission as interrupted");
+assert.match(ptt, /channelManager\?\.activeChannelUUID == AudioApprovalChannel\.channelUUID/,
+  "startup restores the framework-owned joined channel before accepting pushes");
+assert.match(ptt, /if channelManager\.activeChannelUUID == channelUUID \{\s*state\.isEnrolled = true/,
+  "a restoration callback race cannot make an incoming background push leave the channel");
+assert.match(controller, /case \.managerReady\(let failure, let restored\):[\s\S]{0,400}send\(\.enrollmentChanged\(joined: true\)\)/,
+  "restored framework enrollment reaches the approval state machine");
 
 // 5. Only user-initiated transmissions authorize a reply.
 assert.match(ptt, /source == \.userRequest \|\| source == \.handsfreeButton/);

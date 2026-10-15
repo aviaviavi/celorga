@@ -4,7 +4,8 @@ import PushToTalk
 
 /// Plain events the Push to Talk framework produces, forwarded to the main actor.
 enum AudioApprovalChannelEvent: Sendable {
-  case managerReady(failure: String?)
+  /// `restored` is true when iOS restored the previously joined channel during launch.
+  case managerReady(failure: String?, restored: Bool)
   case joined
   case left
   case transmitBegan(initiated: Bool)
@@ -74,7 +75,9 @@ final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, P
     PTChannelManager.channelManager(delegate: self, restorationDelegate: self) { [weak self] channelManager, error in
       guard let self else { return }
       self.manager = channelManager
-      self.post(.managerReady(failure: error?.localizedDescription))
+      let restored = channelManager?.activeChannelUUID == AudioApprovalChannel.channelUUID
+      self.state.isEnrolled = restored
+      self.post(.managerReady(failure: error?.localizedDescription, restored: restored))
     }
   }
 
@@ -170,6 +173,11 @@ final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, P
   /// framework activates a session; unenrolled devices leave the channel.
   func incomingPushResult(channelManager: PTChannelManager, channelUUID: UUID, pushPayload: [String: Any]) -> PTPushResult {
     let target = Self.target(from: pushPayload)
+    // On a background launch, restoration can establish the active channel before the
+    // didJoinChannel callback reaches this delegate. The manager is the authoritative state.
+    if channelManager.activeChannelUUID == channelUUID {
+      state.isEnrolled = true
+    }
     guard state.isEnrolled else { return PTPushResult.leaveChannel }
     if state.isTransmitting {
       // Half duplex: Apple requires ending the local transmission before reporting a remote

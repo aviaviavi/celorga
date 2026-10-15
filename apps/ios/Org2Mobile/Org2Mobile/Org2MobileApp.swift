@@ -133,8 +133,19 @@ final class Org2MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifi
 struct Org2MobileApp: App {
   @UIApplicationDelegateAdaptor(Org2MobileAppDelegate.self) private var appDelegate
   @StateObject private var store = CorpusStore()
-  @StateObject private var mobileRemote = MobileRemoteStore()
-  @StateObject private var audioApprovals = AudioApprovalController()
+  @StateObject private var mobileRemote: MobileRemoteStore
+  @StateObject private var audioApprovals: AudioApprovalController
+
+  init() {
+    // A Push to Talk notification may launch Celorga directly into the background, where a
+    // SwiftUI view task is not guaranteed to run. Build and attach the channel manager as part
+    // of app initialization so iOS can restore the joined channel before delivering the push.
+    let mobileRemote = MobileRemoteStore()
+    let audioApprovals = AudioApprovalController()
+    audioApprovals.attach(remote: mobileRemote)
+    _mobileRemote = StateObject(wrappedValue: mobileRemote)
+    _audioApprovals = StateObject(wrappedValue: audioApprovals)
+  }
 
   var body: some Scene {
     WindowGroup {
@@ -142,7 +153,6 @@ struct Org2MobileApp: App {
         .environmentObject(store)
         .environmentObject(mobileRemote)
         .environmentObject(audioApprovals)
-        .task { audioApprovals.attach(remote: mobileRemote) }
     }
   }
 }

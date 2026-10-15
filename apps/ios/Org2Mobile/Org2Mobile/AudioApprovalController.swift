@@ -194,9 +194,15 @@ final class AudioApprovalController: ObservableObject {
 
   private func handle(_ event: AudioApprovalChannelEvent) {
     switch event {
-    case .managerReady(let failure):
+    case .managerReady(let failure, let restored):
       pushToTalkAvailable = failure == nil
-      phase = failure.map { "Push to Talk unavailable: \($0)" } ?? "Ready. Join the approvals channel to allow prompts."
+      if restored {
+        channelJoined = true
+        send(.enrollmentChanged(joined: true))
+        Task { await registerWithMac(enabled: true) }
+      } else {
+        phase = failure.map { "Push to Talk unavailable: \($0)" } ?? "Ready. Join the approvals channel to allow prompts."
+      }
     case .joined:
       channelJoined = true
       send(.enrollmentChanged(joined: true))
