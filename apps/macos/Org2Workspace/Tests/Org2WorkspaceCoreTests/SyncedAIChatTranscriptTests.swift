@@ -261,6 +261,48 @@ final class SyncedAIChatTranscriptTests: XCTestCase {
     XCTAssertEqual(store.aiChatThreads.first(where: { $0.id == quiet.id })?.title, "Renamed")
   }
 
+  /// The phone's thread list asks for every room's active destination. That
+  /// question must not load an unloaded room's messages from disk.
+  @MainActor
+  func testActiveDestinationOfUnloadedRoomDoesNotHydrateIt() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let transcriptURL = root.appendingPathComponent("chat.json")
+    let selected = AIChatThread(title: "Selected", runtime: .codex, sessionKey: "selected")
+      .replacingMessages([AIChatMessage(role: .user, content: "Hi")])
+    let room = AIChatThread(
+      title: "Settled room",
+      runtime: .codex,
+      sessionKey: "room",
+      isArchived: true,
+      settledAt: Date(timeIntervalSinceNow: -3_600),
+      isSharedRoom: true
+    ).replacingMessages([AIChatMessage(role: .user, content: "Old room message")])
+    try AIChatTranscriptStore.shared.flush(AIChatTranscriptSnapshot(
+      threads: [selected, room],
+      selectedThreadID: selected.id,
+      settlementSettings: AIChatThreadSettlementSettings()
+    ), legacyURL: transcriptURL)
+    AIChatTranscriptStore.shared.waitUntilIdleForTesting()
+
+    let store = try WorkspaceStore(
+      cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()),
+      aiChatTranscriptURL: transcriptURL
+    )
+    await store.waitForAIChatTranscriptLoadForTesting()
+    XCTAssertTrue(store.unloadedAIChatThreadIDsForTesting.contains(room.id))
+
+    var loadedIDs: [UUID] = []
+    store.aiChatThreadHydrationDidLoadForTesting = { loadedIDs.append($0) }
+    let roomThread = try XCTUnwrap(store.aiChatThreads.first(where: { $0.id == room.id }))
+    XCTAssertNil(store.aiChatActiveDestinationID(for: roomThread))
+    XCTAssertNil(store.aiChatActiveDestinationID(for: room.id))
+    try await Task.sleep(nanoseconds: 500_000_000)
+    XCTAssertFalse(loadedIDs.contains(room.id), "Asking for the active destination must not load the room")
+    XCTAssertTrue(store.unloadedAIChatThreadIDsForTesting.contains(room.id))
+  }
+
   func testSyncedRefreshSkipRequiresTheSameStorageAndStillProtectedThreads() {
     let held = UUID()
     let state = SyncedAIChatAppliedState(

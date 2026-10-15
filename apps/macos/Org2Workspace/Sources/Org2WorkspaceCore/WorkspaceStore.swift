@@ -23037,6 +23037,11 @@ extension WorkspaceStore {
       return activeDestinationID
     }
     guard thread.isSharedRoom else { return thread.destinationID }
+    // An unloaded room has no send in flight on this host. Reading its
+    // messages would load it from disk as a side effect; the thread list asks
+    // about every room on every phone poll, and those loads evicted other
+    // threads and re-sorted the whole history each time.
+    guard !unloadedAIChatThreadIDs.contains(threadID) else { return nil }
     return aiChatMessages(for: threadID)
       .first(where: {
         $0.role == .user
