@@ -831,6 +831,44 @@ final class AIChatTranscriptStoreTests: XCTestCase {
     XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.transcriptURL.path))
   }
 
+  func testGarbageCollectionReadsEachRecentManifestLineageOnce() throws {
+    let fixture = try makeRecoveryFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    for index in 0..<6 {
+      let thread = fixture.thread.replacingMessages([
+        AIChatMessage(role: .assistant, content: "lineage revision \(index)")
+      ])
+      try AIChatTranscriptStore.shared.flush(
+        AIChatTranscriptSnapshot(
+          threads: [thread],
+          selectedThreadID: thread.id,
+          settlementSettings: AIChatThreadSettlementSettings()
+        ),
+        legacyURL: fixture.transcriptURL
+      )
+    }
+    AIChatTranscriptStore.shared.waitUntilIdleForTesting()
+    let storeURL = AIChatTranscriptStore.storeDirectory(for: fixture.transcriptURL)
+    let manifestsBefore = try fileCount(storeURL.appendingPathComponent("manifests"))
+
+    XCTAssertTrue(AIChatTranscriptStore.collectGarbageForTesting(
+      legacyURL: fixture.transcriptURL, shouldYield: { false }
+    ))
+    let decodesAfterFirstScan = AIChatTranscriptStore.manifestLineageDecodeCountForTesting
+    XCTAssertTrue(AIChatTranscriptStore.collectGarbageForTesting(
+      legacyURL: fixture.transcriptURL, shouldYield: { false }
+    ))
+    XCTAssertEqual(
+      AIChatTranscriptStore.manifestLineageDecodeCountForTesting,
+      decodesAfterFirstScan,
+      "An unchanged manifest is not decoded again on the next collection"
+    )
+    // Recent manifests stay inside the grace interval; nothing loadable is lost.
+    XCTAssertEqual(try fileCount(storeURL.appendingPathComponent("manifests")), manifestsBefore)
+    let loaded = try XCTUnwrap(AIChatTranscriptStore.shared.loadIfAvailable(legacyURL: fixture.transcriptURL))
+    XCTAssertEqual(loaded.snapshot.threads.first?.messages.last?.content, "lineage revision 5")
+  }
+
   func testPreemptedGarbageCollectionNeverDeletesFromPartialScan() throws {
     let fixture = try makeRecoveryFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }

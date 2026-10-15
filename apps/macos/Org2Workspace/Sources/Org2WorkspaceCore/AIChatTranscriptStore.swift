@@ -2243,18 +2243,57 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     )) ?? []).filter {
       $0.lastPathComponent.hasPrefix("manifest") && $0.pathExtension == "json"
     }
-    let candidates = urls.compactMap { url -> RecoveryManifestFile? in
-      guard !shouldYield() else { return nil }
+    let recentURLs = urls.compactMap { url -> (url: URL, key: ManifestLineageKey)? in
       guard let values = try? url.resourceValues(forKeys: [
-        .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey,
+        .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey, .fileSizeKey,
       ]),
             values.isRegularFile == true,
             values.isSymbolicLink != true,
             let modifiedAt = values.contentModificationDate,
-            modifiedAt >= cutoff,
-            let manifest = loadManifestCandidate(at: url)
+            modifiedAt >= cutoff
       else { return nil }
-      return RecoveryManifestFile(url: url, manifest: manifest)
+      return (url, ManifestLineageKey(
+        path: url.standardizedFileURL.path,
+        modifiedAt: modifiedAt,
+        size: values.fileSize ?? -1
+      ))
+    }
+    // Fast path: choose the retained commits from each manifest's lineage
+    // alone, cached by path, size, and modification date, and fully decode
+    // only those few manifests. A long chat history keeps hundreds of
+    // multi-megabyte manifests inside the grace interval; decoding every one
+    // after every save kept a core busy and delayed requests behind it.
+    var lineages: [(url: URL, lineage: ManifestLineage)] = []
+    for item in recentURLs {
+      guard !shouldYield() else { return [] }
+      guard let lineage = manifestLineage(at: item.url, key: item.key) else { continue }
+      lineages.append((item.url, lineage))
+    }
+    let lineageParents = Set(lineages.compactMap(\.lineage.parentCommitID))
+    let lineageRetained = Set(lineages
+      .filter { !lineageParents.contains($0.lineage.commitID) }
+      .flatMap { [$0.lineage.commitID, $0.lineage.parentCommitID].compactMap { $0 } })
+    var fastFiles: [RecoveryManifestFile] = []
+    var fastPathIsExact = true
+    for item in lineages where lineageRetained.contains(item.lineage.commitID) {
+      guard !shouldYield() else { return [] }
+      guard let manifest = loadManifestCandidate(at: item.url),
+            manifest.commitID == item.lineage.commitID,
+            manifest.parentCommitID == item.lineage.parentCommitID
+      else {
+        // An unreadable tip changes which commits count as tips. Fall back to
+        // the exact scan rather than guess.
+        fastPathIsExact = false
+        break
+      }
+      fastFiles.append(RecoveryManifestFile(url: item.url, manifest: manifest))
+    }
+    if fastPathIsExact { return fastFiles }
+
+    let candidates = recentURLs.compactMap { item -> RecoveryManifestFile? in
+      guard !shouldYield() else { return nil }
+      guard let manifest = loadManifestCandidate(at: item.url) else { return nil }
+      return RecoveryManifestFile(url: item.url, manifest: manifest)
     }
     // Keep each recently observed branch tip plus its direct parent. That is
     // enough to recover from an incomplete synced tip without retaining a
@@ -2265,6 +2304,50 @@ final class AIChatTranscriptStore: @unchecked Sendable {
       [file.manifest.commitID, file.manifest.parentCommitID].compactMap { $0 }
     })
     return candidates.filter { retainedCommitIDs.contains($0.manifest.commitID) }
+  }
+
+  struct ManifestLineageKey: Hashable {
+    let path: String
+    let modifiedAt: Date
+    let size: Int
+  }
+
+  struct ManifestLineage: Decodable, Equatable {
+    let schema: String
+    let version: Int
+    let commitID: String
+    let parentCommitID: String?
+  }
+
+  private static let manifestLineageLock = NSLock()
+  nonisolated(unsafe) private static var manifestLineageCache: [String: (key: ManifestLineageKey, lineage: ManifestLineage)] = [:]
+  nonisolated(unsafe) static var manifestLineageDecodeCountForTesting = 0
+
+  /// Commit identity of a manifest file without materializing its threads.
+  /// Cached per file version; a changed size or modification date re-reads it.
+  static func manifestLineage(at url: URL, key: ManifestLineageKey) -> ManifestLineage? {
+    manifestLineageLock.lock()
+    if let cached = manifestLineageCache[key.path], cached.key == key {
+      manifestLineageLock.unlock()
+      return cached.lineage
+    }
+    manifestLineageLock.unlock()
+    guard !isSymbolicLink(url),
+          let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+          let lineage = try? JSONDecoder().decode(ManifestLineage.self, from: data),
+          CelorgaNames.schemaMatches(lineage.schema, Manifest.schemaValue),
+          lineage.version == 2,
+          !lineage.commitID.isEmpty,
+          lineage.commitID == URL(fileURLWithPath: lineage.commitID).lastPathComponent
+    else { return nil }
+    manifestLineageLock.lock()
+    manifestLineageDecodeCountForTesting &+= 1
+    manifestLineageCache[key.path] = (key, lineage)
+    if manifestLineageCache.count > 20_000 {
+      manifestLineageCache.removeAll(keepingCapacity: true)
+    }
+    manifestLineageLock.unlock()
+    return lineage
   }
 
   private static func removeUnretainedFiles(
