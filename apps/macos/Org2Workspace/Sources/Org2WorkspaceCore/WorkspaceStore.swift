@@ -38241,11 +38241,14 @@ extension WorkspaceStore {
   }
 
   nonisolated private static func canonicalTodoMutationTarget(
-    _ target: HeadlineMutationTarget, text: String, cli: Org2CLI
+    _ target: HeadlineMutationTarget,
+    text: String,
+    cli: Org2CLI,
+    requiresTodo: Bool = true
   ) async throws -> HeadlineMutationTarget {
     let document: Org2CanonicalDocument = try await cli.parseTextJSON(text, sourceRanges: true, sourcePath: target.file)
     if document.todoSequences?.isEmpty != false {
-      return try resolveHeadlineMutationTarget(target, in: text, requiresTodo: true)
+      return try resolveHeadlineMutationTarget(target, in: text, requiresTodo: requiresTodo)
     }
     var headlines: [Int: Org2CanonicalHeadline] = [:]
     func collect(_ nodes: [Org2CanonicalNode]) {
@@ -38257,7 +38260,7 @@ extension WorkspaceStore {
       }
     }
     collect(document.children)
-    return try resolveHeadlineMutationTarget(target, in: text, requiresTodo: true, canonicalHeadlines: headlines)
+    return try resolveHeadlineMutationTarget(target, in: text, requiresTodo: requiresTodo, canonicalHeadlines: headlines)
   }
 
   nonisolated private static func commitDocumentText(
@@ -38874,7 +38877,12 @@ extension WorkspaceStore {
     testMutation: (@Sendable (TodoEditStatus, String, Int) async throws -> String)? = nil
   ) async throws -> (status: String, target: HeadlineMutationTarget) {
     let snapshot = try await execution.readSnapshot(at: URL(fileURLWithPath: target.file))
-    let resolved = try await canonicalTodoMutationTarget(target, text: snapshot.text, cli: cli)
+    // An explicit status can create a TODO keyword, just like `todo set`.
+    // Standalone approvals can be ordinary headings (including undeclared
+    // WAITING prefixes); requiring a TODO misreports them as stale files.
+    let resolved = try await canonicalTodoMutationTarget(
+      target, text: snapshot.text, cli: cli, requiresTodo: false
+    )
     if let testMutation {
       let updatedStatus = try await testMutation(status, resolved.file, resolved.line)
       return (updatedStatus, resolved)
