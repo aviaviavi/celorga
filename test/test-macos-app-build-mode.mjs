@@ -39,6 +39,36 @@ assert.ok(
   "Keep WorkspaceStore's Observable declaration below 128 KiB; put methods in same-file extensions"
 );
 
+// Issue #589: SwiftPM's Bundle.module fatalErrors when its resource bundle is
+// missing, and packaged apps never ship it, so the app crashed on launch on
+// every machine except the one that built it. Core resources must resolve
+// through WorkspaceResources, and the app build must copy every one of them.
+{
+  const swiftSourceRoot = join(repoRoot, "apps", "macos", "Org2Workspace", "Sources");
+  const offenders = [];
+  const visit = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) visit(path);
+      else if (entry.name.endsWith(".swift")) {
+        const code = readFileSync(path, "utf8")
+          .split("\n")
+          .filter((line) => !line.trim().startsWith("//"))
+          .join("\n");
+        if (/\bBundle\.module\b/.test(code)) offenders.push(path);
+      }
+    }
+  };
+  visit(swiftSourceRoot);
+  assert.deepEqual(offenders, [], "Use WorkspaceResources instead of Bundle.module (crashes packaged apps)");
+  assert.match(macAppBuildSource, /copyCoreResources\(resourcesDir\);/);
+  assert.match(
+    macAppBuildSource,
+    /function copyCoreResources\(resourcesDir\) \{[\s\S]*?readdirSync\(coreResourcesDir/,
+    "the app build must copy every Org2WorkspaceCore resource into Contents/Resources"
+  );
+}
+
 assert.match(updaterSource, /checkForUpdatesInBackground\(\)/);
 assert.match(updaterSource, /Automatically check for updates/);
 assert.match(updaterSource, /Download updates automatically and install on quit/);

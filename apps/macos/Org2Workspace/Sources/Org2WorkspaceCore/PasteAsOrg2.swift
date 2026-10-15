@@ -40,7 +40,7 @@ final class PasteAsOrg2Runtime: NSObject, WKNavigationDelegate {
       view.loadHTMLString("<html><head><meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; script-src 'none'; connect-src 'none'\"></head><body></body></html>", baseURL: nil)
     }
     try Task.checkCancellation()
-    guard let url = Bundle.module.url(forResource: "PasteAsOrg2", withExtension: "js") else {
+    guard let url = WorkspaceResources.url(forResource: "PasteAsOrg2", withExtension: "js") else {
       throw PasteAsOrg2Error.message("Local paste converter is missing from this build.")
     }
     let script = try String(contentsOf: url, encoding: .utf8)

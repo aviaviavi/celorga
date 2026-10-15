@@ -604,6 +604,17 @@ function signSparkleFramework(frameworkPath, identity) {
   run("codesign", codesignArgs(identity, frameworkPath));
 }
 
+// Org2WorkspaceCore resolves its resources through WorkspaceResources, which
+// reads Contents/Resources first. Copy every file so no resource depends on the
+// build machine's SwiftPM bundle path (issue #589: launch crash elsewhere).
+function copyCoreResources(resourcesDir) {
+  const coreResourcesDir = join(packageDir, "Sources", "Org2WorkspaceCore", "Resources");
+  for (const entry of readdirSync(coreResourcesDir, { withFileTypes: true })) {
+    if (!entry.isFile() || entry.name.startsWith(".")) continue;
+    copyFileSync(join(coreResourcesDir, entry.name), join(resourcesDir, entry.name));
+  }
+}
+
 function writeIconSet(sourcePngPath, resourcesDir) {
   if (!existsSync(sourcePngPath)) {
     return;
@@ -977,16 +988,7 @@ function main() {
       throw new Error(`App icon not found at ${iconPath}`);
     }
     writeIconSet(iconPath, resourcesDir);
-    copyFileSync(
-      join(packageDir, "Sources", "Org2WorkspaceCore", "Resources", "NewMessage.mp3"),
-      join(resourcesDir, "NewMessage.mp3")
-    );
-    for (const logo of ["SlackLogo.png", "NotionLogo.png"]) {
-      copyFileSync(
-        join(packageDir, "Sources", "Org2WorkspaceCore", "Resources", logo),
-        join(resourcesDir, logo)
-      );
-    }
+    copyCoreResources(resourcesDir);
     const runtimeNodePath = copyOrg2Runtime(resourcesDir);
     const whisperRuntime = copyWhisperRuntime(resourcesDir);
 

@@ -122,7 +122,7 @@ public enum OrgCodeHighlighter {
   public static let tokenizationUTF16Limit = 400_000
 
   static let table: OrgCodeLanguageTable? = {
-    guard let url = Bundle.module.url(forResource: "CodeLanguages", withExtension: "json"),
+    guard let url = WorkspaceResources.url(forResource: "CodeLanguages", withExtension: "json"),
           let data = try? Data(contentsOf: url)
     else { return nil }
     return try? JSONDecoder().decode(OrgCodeLanguageTable.self, from: data)

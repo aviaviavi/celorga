@@ -3,8 +3,7 @@ import Foundation
 
 enum WorkspaceSound {
   nonisolated static let bundledNewMessageSoundURL =
-    Bundle.main.url(forResource: "NewMessage", withExtension: "mp3")
-      ?? Bundle.module.url(forResource: "NewMessage", withExtension: "mp3")
+    WorkspaceResources.url(forResource: "NewMessage", withExtension: "mp3")
 
   nonisolated static var isPlaybackSuppressed: Bool {
     NSClassFromString("XCTestCase") != nil

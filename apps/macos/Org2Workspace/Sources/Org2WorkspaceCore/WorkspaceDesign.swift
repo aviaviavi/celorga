@@ -133,7 +133,7 @@ struct WorkspaceAtmosphere: View {
 /// The canonical OpenOrg artwork, shared by the sidebar and empty chat.
 struct WorkspaceBrandMark: View {
   var size: CGFloat = 32
-  private static let image: NSImage? = Bundle.module.url(forResource: "OpenOrgBrand", withExtension: "png")
+  private static let image: NSImage? = WorkspaceResources.url(forResource: "OpenOrgBrand", withExtension: "png")
     .flatMap { NSImage(contentsOf: $0) }
 
   var body: some View {

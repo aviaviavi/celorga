@@ -35,8 +35,7 @@ struct ConnectorBrandLogo: View {
   @MainActor static func image(for type: String) -> NSImage? {
     guard let name = resourceName(for: type) else { return nil }
     if let cached = cache[name] { return cached }
-    let url = Bundle.main.url(forResource: name, withExtension: "png")
-      ?? Bundle.module.url(forResource: name, withExtension: "png")
+    let url = WorkspaceResources.url(forResource: name, withExtension: "png")
     guard let url, let image = NSImage(contentsOf: url) else { return nil }
     cache[name] = image
     return image
