@@ -207,6 +207,60 @@ final class SyncedAIChatTranscriptTests: XCTestCase {
     XCTAssertEqual(updated?.messages.map(\.id), [question.id, reply.id])
   }
 
+  /// A remote commit that changes one thread re-imports only that thread.
+  /// Untouched threads keep their in-memory copy instead of being replaced.
+  @MainActor
+  func testSyncedRefreshKeepsThreadsWhoseCommittedSourceIsUnchanged() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let transcriptURL = root.appendingPathComponent("chat.json")
+    let quietQuestion = AIChatMessage(role: .user, content: "Quiet thread")
+    let quiet = AIChatThread(title: "Quiet", runtime: .codex, sessionKey: "quiet")
+      .replacingMessages([quietQuestion])
+    let busyQuestion = AIChatMessage(role: .user, content: "Busy thread")
+    let busy = AIChatThread(title: "Busy", runtime: .codex, sessionKey: "busy")
+      .replacingMessages([busyQuestion])
+    func commit(_ threads: [AIChatThread]) throws {
+      try AIChatTranscriptStore.shared.flush(AIChatTranscriptSnapshot(
+        threads: threads,
+        selectedThreadID: busy.id,
+        settlementSettings: AIChatThreadSettlementSettings()
+      ), legacyURL: transcriptURL)
+      AIChatTranscriptStore.shared.waitUntilIdleForTesting()
+    }
+    try commit([quiet, busy])
+
+    let store = try WorkspaceStore(
+      cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()),
+      aiChatTranscriptURL: transcriptURL
+    )
+    await store.waitForAIChatTranscriptLoadForTesting()
+    _ = await store.refreshSyncedAIChatTranscript()
+
+    let firstReply = AIChatMessage(role: .assistant, content: "Streaming 1")
+    try commit([quiet, busy.replacingMessages([busyQuestion, firstReply])])
+    _ = await store.refreshSyncedAIChatTranscript()
+    let secondReply = AIChatMessage(role: .assistant, content: "Streaming 2")
+    try commit([quiet, busy.replacingMessages([busyQuestion, firstReply, secondReply])])
+    _ = await store.refreshSyncedAIChatTranscript()
+    XCTAssertEqual(store.syncedAIChatRefreshKeptCountForTesting, 1, "The unchanged thread is kept")
+
+    let updatedBusy = await store.hydratedAIChatThreadForDetail(busy.id)
+    XCTAssertEqual(updatedBusy?.messages.map(\.id), [busyQuestion.id, firstReply.id, secondReply.id])
+    let keptQuiet = await store.hydratedAIChatThreadForDetail(quiet.id)
+    XCTAssertEqual(keptQuiet?.messages.map(\.id), [quietQuestion.id])
+
+    // A metadata-only change (title) to the kept thread is still imported.
+    try commit([
+      AIChatThread(id: quiet.id, title: "Renamed", runtime: .codex, sessionKey: "quiet")
+        .replacingMessages([quietQuestion]),
+      busy.replacingMessages([busyQuestion, firstReply, secondReply]),
+    ])
+    _ = await store.refreshSyncedAIChatTranscript()
+    XCTAssertEqual(store.aiChatThreads.first(where: { $0.id == quiet.id })?.title, "Renamed")
+  }
+
   func testSyncedRefreshSkipRequiresTheSameStorageAndStillProtectedThreads() {
     let held = UUID()
     let state = SyncedAIChatAppliedState(

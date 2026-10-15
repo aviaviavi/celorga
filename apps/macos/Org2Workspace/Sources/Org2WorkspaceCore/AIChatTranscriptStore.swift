@@ -24,6 +24,9 @@ struct AIChatTranscriptLoadResult: Sendable {
   let snapshot: AIChatTranscriptSnapshot
   let unloadedThreadIDs: Set<UUID>
   let recoveryStatus: AIChatTranscriptRecoveryStatus
+  /// Content digest of each thread's committed message shard. Equal digests
+  /// mean identical messages, so a refresh can keep an already loaded copy.
+  var shardDigests: [UUID: String] = [:]
 }
 
 /// Identifies one process that commits to a (possibly replicated) transcript
@@ -886,7 +889,8 @@ final class AIChatTranscriptStore: @unchecked Sendable {
         settlementSettings: manifest.settlementSettings
       ),
       unloadedThreadIDs: unloaded,
-      recoveryStatus: state.recoveryStatus
+      recoveryStatus: state.recoveryStatus,
+      shardDigests: entriesByID.mapValues(\.shardDigest)
     )
   }
 

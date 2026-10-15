@@ -3367,9 +3367,14 @@ public final class WorkspaceStore {
   /// discarding hydrated conversations.
   @ObservationIgnored private var syncedAIChatAppliedState: SyncedAIChatAppliedState?
   @ObservationIgnored private(set) var syncedAIChatRefreshSkipCountForTesting = 0
+  @ObservationIgnored private(set) var syncedAIChatRefreshKeptCountForTesting = 0
   // Metadata at the last clean local save or replica import. Message revisions
   // separately protect edits that do not change thread metadata.
   private var syncedAIChatCleanMetadata: [UUID: AIChatThread] = [:]
+  /// The committed source (shard digest and stored metadata) each thread was
+  /// last imported from. A refresh keeps the in-memory thread, including its
+  /// loaded messages, when that source is unchanged.
+  private var syncedAIChatAppliedSources: [UUID: SyncedAIChatThreadSource] = [:]
   private var syncedAIChatCleanSettlementSettings = AIChatThreadSettlementSettings()
   private var knownAIChatThreadIDsByPath: [String: Set<UUID>] = [:]
   private var aiChatTranscriptMutationGeneration: UInt64 = 0
@@ -43042,7 +43047,13 @@ extension WorkspaceStore {
   }
 
   private func rememberCleanAIChatTranscriptMetadata() {
+    let previous = syncedAIChatCleanMetadata
     syncedAIChatCleanMetadata = aiChatTranscriptMetadata()
+    // A thread changed here must be re-imported from its next committed source.
+    for id in Array(syncedAIChatAppliedSources.keys)
+      where syncedAIChatCleanMetadata[id] != previous[id] {
+      syncedAIChatAppliedSources.removeValue(forKey: id)
+    }
     syncedAIChatCleanSettlementSettings = aiChatThreadSettlementSettings
   }
 
@@ -43110,8 +43121,29 @@ extension WorkspaceStore {
       currentMetadata[$0] != metadataBeforeRead[$0]
         || aiChatThreadMessageRevisions[$0] != revisionsBeforeRead[$0]
     })
+    // Threads whose committed source is unchanged since the last import keep
+    // their in-memory copy. Re-importing all of them on every remote commit
+    // discarded loaded messages and re-sorted the whole history each time a
+    // streaming reply on another Mac saved, several times a second.
+    let currentIDs = Set(aiChatThreads.map(\.id))
+    let sourcesByID = Dictionary(
+      loaded.snapshot.threads.compactMap { thread -> (UUID, SyncedAIChatThreadSource)? in
+        loaded.shardDigests[thread.id].map {
+          (thread.id, SyncedAIChatThreadSource(shardDigest: $0, metadata: thread.metadataOnly()))
+        }
+      },
+      uniquingKeysWith: { first, _ in first }
+    )
+    let keptIDs = Set(sourcesByID.compactMap { id, source -> UUID? in
+      guard !protectedIDs.contains(id),
+            currentIDs.contains(id),
+            syncedAIChatCleanMetadata[id] != nil,
+            syncedAIChatAppliedSources[id] == source
+      else { return nil }
+      return id
+    })
     let importedCandidates = migrateAIChatThreadDestinations(
-      loaded.snapshot.threads.filter { !protectedIDs.contains($0.id) }
+      loaded.snapshot.threads.filter { !protectedIDs.contains($0.id) && !keptIDs.contains($0.id) }
     )
     let imported = aiChatReadState.applying(
       to: Self.interruptUnresolvedAIChatSteers(
@@ -43120,8 +43152,9 @@ extension WorkspaceStore {
       ).threads,
       transcriptURL: target
     )
-    let preserved = aiChatThreads.filter { protectedIDs.contains($0.id) }
-    let refreshedIDs = Set(currentMetadata.keys).union(imported.map(\.id)).subtracting(protectedIDs)
+    let preserved = aiChatThreads.filter { protectedIDs.contains($0.id) || keptIDs.contains($0.id) }
+    let refreshedIDs = Set(currentMetadata.keys).union(imported.map(\.id))
+      .subtracting(protectedIDs).subtracting(keptIDs)
     let pendingBeforeRefresh = aiChatPendingUserMessageIDsByThreadID
     saveAIChatComposerForSelectedThread()
     for id in refreshedIDs {
@@ -43132,11 +43165,19 @@ extension WorkspaceStore {
       aiChatThreadMessageRevisions.removeValue(forKey: id)
       syncedAIChatCleanMetadata.removeValue(forKey: id)
     }
-    unloadedAIChatThreadIDs = unloadedAIChatThreadIDs.intersection(protectedIDs)
-      .union(loaded.unloadedThreadIDs.subtracting(protectedIDs))
+    unloadedAIChatThreadIDs = unloadedAIChatThreadIDs.intersection(protectedIDs.union(keptIDs))
+      .union(loaded.unloadedThreadIDs.subtracting(protectedIDs).subtracting(keptIDs))
     isApplyingPersistedAIChatThreads = true
     defer { isApplyingPersistedAIChatThreads = false }
-    aiChatThreads = Self.sortedAIChatThreadsForDisplay(preserved + imported)
+    let refreshedThreads = Self.sortedAIChatThreadsForDisplay(preserved + imported)
+    if refreshedThreads != aiChatThreads {
+      aiChatThreads = refreshedThreads
+    }
+    syncedAIChatAppliedSources = syncedAIChatAppliedSources.filter { keptIDs.contains($0.key) }
+    for thread in imported {
+      if let source = sourcesByID[thread.id] { syncedAIChatAppliedSources[thread.id] = source }
+    }
+    syncedAIChatRefreshKeptCountForTesting = keptIDs.count
     knownAIChatThreadIDsByPath[target.standardizedFileURL.path, default: []]
       .formUnion(imported.map(\.id))
     for thread in imported {
@@ -43176,7 +43217,8 @@ extension WorkspaceStore {
       aiChatThreads.contains(where: { $0.id == id }) ? id : nil
     } ?? aiChatThreads.first?.id
     if let selectedID {
-      if selectedID != selectedAIChatThreadID || !protectedIDs.contains(selectedID) {
+      if selectedID != selectedAIChatThreadID
+          || !(protectedIDs.contains(selectedID) || keptIDs.contains(selectedID)) {
         selectAIChatThread(selectedID, persistsSelection: false)
       }
     } else {
@@ -43763,6 +43805,7 @@ extension WorkspaceStore {
     let preferredSelectedThreadID = restoredSelectedAIChatThreadID()
     isLoadingAIChatTranscript = true
     aiChatTranscriptLoadGeneration &+= 1
+    syncedAIChatAppliedSources = [:]
     let generation = aiChatTranscriptLoadGeneration
     aiChatTranscriptLoadTask = Task { @MainActor [weak self] in
       let preparedLoad = await Task.detached(priority: .userInitiated) {
@@ -43843,6 +43886,7 @@ extension WorkspaceStore {
     lastEnqueuedAIChatTranscriptStoreGeneration = nil
     publishedAIChatMessagesIdentity = nil
     aiChatTranscriptLoadGeneration &+= 1
+    syncedAIChatAppliedSources = [:]
     resetAIChatTranscriptMutationTracking()
     let loadGeneration = aiChatTranscriptLoadGeneration
     aiChatTranscriptLoadTask?.cancel()
@@ -51618,6 +51662,11 @@ private struct AIChatWorkspaceTranscriptLoad: Sendable {
 private struct AIChatPreparedWorkspaceTranscriptLoad: Sendable {
   let loaded: AIChatWorkspaceTranscriptLoad
   let presentations: [AIChatPreparedMessagePresentation]
+}
+
+struct SyncedAIChatThreadSource: Equatable, Sendable {
+  let shardDigest: String
+  let metadata: AIChatThread
 }
 
 struct SyncedAIChatAppliedState: Equatable, Sendable {
