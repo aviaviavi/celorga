@@ -202,15 +202,10 @@ struct OpenOrgServer {
           } else { result = ["error": "Missing or invalid thread ID"] }
         case "retry-message":
           if let rawID = request["messageID"] as? String,
-             let messageID = UUID(uuidString: rawID),
-             store.aiChatThreads.contains(where: { thread in
-               thread.messages.contains(where: {
-                 $0.id == messageID && $0.role == .user && $0.sendFailure != nil
-               })
-             }) {
-            Task { await store.retryAIChatMessage(messageID) }
-            result = ["retryRequested": true]
-          } else { result = ["error": "Choose an existing failed user message"] }
+             let messageID = UUID(uuidString: rawID) {
+            let receipt = await store.retryAIChatMessageAwaitingDelivery(messageID)
+            result = receipt.openOrgServerRetryPayload()
+          } else { result = ["error": "Missing or invalid message ID"] }
         case "drain":
           // Finish running turns before a restart or update: accept no new
           // turns or hand-offs (clients route them to another online host)

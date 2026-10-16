@@ -34,6 +34,8 @@ enum AIChatTextAttachments {
       createdAt: message.createdAt, changeSummary: message.changeSummary,
       responseTrace: message.responseTrace, sendFailure: message.sendFailure,
       deliveryStatus: message.deliveryStatus, deliveryKind: message.deliveryKind,
+      deliveryAttemptID: message.deliveryAttemptID,
+      deliveryAttemptState: message.deliveryAttemptState,
       authorRuntime: message.authorRuntime, authorLabel: message.authorLabel,
       authorAgentRef: message.authorAgentRef, source: message.source,
       audience: message.audience, targetRuntime: message.targetRuntime,

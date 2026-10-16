@@ -65,6 +65,54 @@ final class AIChatDetachedTurnTests: XCTestCase {
     ])
   }
 
+  func testStaleCodexSendIsHeldOnlyWhenManagedRemoteFenceWasPersisted() {
+    let startedAt = Date()
+    let earlier = startedAt.addingTimeInterval(-60)
+    let provenance = AIChatMessageProvenance(
+      executionHostRef: "desktop-here",
+      executionHostName: "desktop-here",
+      acceptedAt: earlier
+    )
+    let local = AIChatMessage(
+      role: .user,
+      content: "local Codex",
+      createdAt: earlier,
+      deliveryStatus: .sending,
+      provenance: provenance
+    )
+    let managedAttemptID = UUID()
+    let managed = AIChatMessage(
+      role: .user,
+      content: "managed remote Codex",
+      createdAt: earlier,
+      deliveryStatus: .sending,
+      provenance: provenance
+    ).replacingDeliveryAttempt(
+      managedAttemptID,
+      status: .sending,
+      sendFailure: nil,
+      attemptState: .unconfirmed
+    )
+    let thread = AIChatThread(
+      title: "Codex transports",
+      runtime: .codex,
+      sessionKey: "codex-transports",
+      messages: [local, managed]
+    )
+
+    let repaired = WorkspaceStore.interruptStaleLocalAIChatSends(
+      in: [thread],
+      processStartedAt: startedAt,
+      isLocalHost: { $0 == "desktop-here" }
+    )
+
+    XCTAssertEqual(repaired.threads[0].messages[0].deliveryStatus, .interrupted)
+    XCTAssertFalse(repaired.threads[0].messages[0].deliveryIsUnconfirmed)
+    XCTAssertEqual(repaired.threads[0].messages[1].deliveryStatus, .sending)
+    XCTAssertTrue(repaired.threads[0].messages[1].deliveryIsUnconfirmed)
+    XCTAssertEqual(repaired.threads[0].messages[1].effectiveDeliveryAttemptID, managedAttemptID)
+  }
+
   func testStaleSendRepairLeavesRecoverablePendingTurnsAndColdThreads() {
     let startedAt = Date()
     let message = AIChatMessage(

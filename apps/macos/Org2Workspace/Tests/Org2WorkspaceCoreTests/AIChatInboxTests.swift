@@ -186,6 +186,186 @@ final class AIChatInboxTests: XCTestCase {
   }
 
   @MainActor
+  func testManagedRemoteInboxSendPersistsBeforeStartAndReturnsExactRetryReceipt() async throws {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+      .appendingPathComponent("cgw-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    let transcript = root
+      .appendingPathComponent(".org2", isDirectory: true)
+      .appendingPathComponent("openclaw-chat.json")
+    try FileManager.default.createDirectory(
+      at: transcript.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+    let suiteName = "AIChatInboxManagedRemoteTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let messageID = UUID()
+    let codexHome = root.appendingPathComponent("codex-home", isDirectory: true)
+    let controlDirectory = codexHome.appendingPathComponent("app-server-control", isDirectory: true)
+    try FileManager.default.createDirectory(at: controlDirectory, withIntermediateDirectories: true)
+    let socketPath = controlDirectory.appendingPathComponent("app-server-control.sock")
+    let startLog = root.appendingPathComponent("physical-starts.jsonl")
+    let acceptedPath = root.appendingPathComponent("accepted-attempt.json")
+    let daemonScript = root.appendingPathComponent("fake-daemon.py")
+    try CodexAppServerClientTests.fakeManagedRemoteDaemonScript.write(
+      to: daemonScript,
+      atomically: true,
+      encoding: .utf8
+    )
+    let daemon = Process()
+    daemon.executableURL = URL(fileURLWithPath: "/usr/local/bin/python3")
+    daemon.arguments = [
+      daemonScript.path,
+      socketPath.path,
+      startLog.path,
+      acceptedPath.path,
+      "0",
+      "drop-response-first"
+    ]
+    daemon.standardOutput = FileHandle.nullDevice
+    daemon.standardError = FileHandle.nullDevice
+    try daemon.run()
+    defer {
+      if daemon.isRunning { daemon.terminate() }
+      daemon.waitUntilExit()
+    }
+    let socketDeadline = Date().addingTimeInterval(3)
+    while !FileManager.default.fileExists(atPath: socketPath.path), Date() < socketDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertTrue(FileManager.default.fileExists(atPath: socketPath.path))
+
+    let adapterScript = root.appendingPathComponent("adapter.py")
+    try CodexAppServerClient.managedRemoteJSONLAdapter.write(
+      to: adapterScript,
+      atomically: true,
+      encoding: .utf8
+    )
+    let claimRoot = root.appendingPathComponent("claims", isDirectory: true)
+    let fakeSSH = root.appendingPathComponent("fake-managed-ssh")
+    let launcher = #"""
+    #!/bin/sh
+    export CODEX_HOME='\#(codexHome.path)'
+    export CELORGA_MANAGED_REMOTE_CLAIM_ROOT='\#(claimRoot.path)'
+    exec /usr/local/bin/python3 '\#(adapterScript.path)'
+    """#
+    try launcher.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+
+    let store = WorkspaceStore(
+      defaults: defaults,
+      aiChatTranscriptURL: transcript,
+      codexManagedRemoteSSHExecutableURLForTesting: fakeSSH,
+      legacyDefaultsDomains: []
+    )
+    store.setCorpusRoot(root, persistsDefault: false)
+    let destinationID = store.addAIChatDestination(adapter: .codexManagedRemote)
+    var destination = try XCTUnwrap(store.aiChatDestination(id: destinationID))
+    destination.endpoint = "isolated.test"
+    destination.workspaceRoot = root.path
+    store.updateAIChatDestination(destination)
+    store.createAIChatThread(destinationID: destinationID)
+    let threadID = try XCTUnwrap(store.selectedAIChatThreadID)
+    store.flushDeferredAIChatTranscriptPersistence()
+    try await store.waitForAIChatTranscriptPersistenceForTesting()
+
+    let inbox = root
+      .appendingPathComponent(".org2", isDirectory: true)
+      .appendingPathComponent("ai-chat-inbox", isDirectory: true)
+    try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+    let envelope = inbox.appendingPathComponent("\(messageID.uuidString.lowercased()).json")
+    try JSONSerialization.data(withJSONObject: [
+      "schema": "org2:ai-chat-send-message:v1",
+      "id": messageID.uuidString.lowercased(),
+      "threadID": threadID.uuidString.lowercased(),
+      "content": "Run this managed request exactly once.",
+      "createdAt": "2026-10-16T08:00:00.000Z",
+      "authorLabel": "Isolated test client",
+      "destinationID": destinationID,
+    ]).write(to: envelope, options: .atomic)
+
+    await store.drainAIChatInbox()
+    let firstDeadline = Date().addingTimeInterval(8)
+    while Date() < firstDeadline {
+      if FileManager.default.fileExists(atPath: startLog.path),
+         store.aiChatMessages.first(where: { $0.id == messageID })?.displayedSendFailure != nil {
+        break
+      }
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    let held = try XCTUnwrap(store.aiChatMessages.first(where: { $0.id == messageID }))
+    XCTAssertEqual(held.deliveryStatus, .sending)
+    XCTAssertTrue(held.deliveryIsUnconfirmed)
+    XCTAssertEqual(held.effectiveDeliveryAttemptID, messageID)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: envelope.path))
+    let firstStarts = try String(contentsOf: startLog, encoding: .utf8)
+      .split(separator: "\n")
+    XCTAssertEqual(firstStarts.count, 1)
+
+    destination.workspaceRoot = root.appendingPathComponent("changed-workspace").path
+    store.updateAIChatDestination(destination)
+    let drifted = await store.retryAIChatMessageAwaitingDelivery(messageID, timeout: .seconds(3))
+    XCTAssertEqual(drifted.state, .unconfirmed)
+    XCTAssertEqual(drifted.messageID, messageID)
+    XCTAssertEqual(drifted.deliveryAttemptID, messageID)
+    XCTAssertEqual(
+      try String(contentsOf: startLog, encoding: .utf8).split(separator: "\n").count,
+      1
+    )
+
+    destination.workspaceRoot = root.path
+    store.updateAIChatDestination(destination)
+    let receipt = await store.retryAIChatMessageAwaitingDelivery(messageID, timeout: .seconds(8))
+    XCTAssertEqual(receipt.state, .started)
+    XCTAssertEqual(receipt.messageID, messageID)
+    XCTAssertEqual(receipt.deliveryAttemptID, messageID)
+    XCTAssertEqual(receipt.runtimeThreadID, "thr-atomic")
+    XCTAssertEqual(receipt.turnID, "turn-atomic")
+#if DEBUG
+    let terminalDeadline = Date().addingTimeInterval(3)
+    while store.codexDeliveryReceiptForTesting(messageID)?.state != .completed,
+          Date() < terminalDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    let terminalReceipt = try XCTUnwrap(store.codexDeliveryReceiptForTesting(messageID))
+    XCTAssertEqual(terminalReceipt.state, .completed)
+    XCTAssertEqual(terminalReceipt.messageID, messageID)
+    XCTAssertEqual(terminalReceipt.deliveryAttemptID, messageID)
+    XCTAssertEqual(terminalReceipt.runtimeThreadID, "thr-atomic")
+    XCTAssertEqual(terminalReceipt.turnID, "turn-atomic")
+    let payload = terminalReceipt.openOrgServerRetryPayload()
+    XCTAssertEqual(payload["turnStarted"] as? Bool, true)
+    XCTAssertEqual(payload["messageID"] as? String, messageID.uuidString.lowercased())
+    XCTAssertEqual(
+      payload["deliveryAttemptID"] as? String,
+      terminalReceipt.deliveryAttemptID?.uuidString.lowercased()
+    )
+#endif
+    let allStarts = try String(contentsOf: startLog, encoding: .utf8)
+      .split(separator: "\n")
+    XCTAssertEqual(allStarts.count, 1)
+
+    try JSONSerialization.data(withJSONObject: [
+      "schema": "org2:ai-chat-send-message:v1",
+      "id": messageID.uuidString.lowercased(),
+      "threadID": threadID.uuidString.lowercased(),
+      "content": "Run this managed request exactly once.",
+      "createdAt": "2026-10-16T08:00:00.000Z",
+      "authorLabel": "Isolated test client",
+      "destinationID": destinationID,
+    ]).write(to: envelope, options: .atomic)
+    await store.drainAIChatInbox()
+    try await Task.sleep(for: .milliseconds(100))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: envelope.path))
+    XCTAssertEqual(
+      try String(contentsOf: startLog, encoding: .utf8).split(separator: "\n").count,
+      1
+    )
+    await store.shutdownAIChatTransports()
+  }
+
+  @MainActor
   func testDurableSaveSucceedsWhenAnotherThreadChangesDuringTheBarrier() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-ai-chat-inbox-concurrent-\(UUID().uuidString)", isDirectory: true)

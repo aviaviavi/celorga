@@ -1366,10 +1366,11 @@ final class AIChatTranscriptStore: @unchecked Sendable {
 
   private static func deliveryRank(_ message: AIChatMessage) -> Int {
     guard message.role == .user else { return 0 }
+    if message.deliveryIsUnconfirmed { return 2 }
     switch message.deliveryStatus {
     case .sending: return 1
-    case .failed, .interrupted: return 2
-    case .sent: return 3
+    case .failed, .interrupted: return 3
+    case .sent: return 4
     }
   }
 

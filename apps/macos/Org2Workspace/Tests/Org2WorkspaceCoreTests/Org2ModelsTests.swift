@@ -3641,8 +3641,20 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertEqual(restored.aiChatMessages.first?.sendFailure, "VPN disconnected")
     XCTAssertEqual(restored.aiChatMessages.first?.deliveryStatus, .failed)
 
-    await store.retryAIChatMessage(failedMessage.id)
+    let receipt = await store.retryAIChatMessageAwaitingDelivery(failedMessage.id)
 
+    XCTAssertEqual(receipt.state, .requested)
+    XCTAssertEqual(receipt.messageID, failedMessage.id)
+    XCTAssertNil(receipt.runtimeThreadID)
+    XCTAssertNil(receipt.turnID)
+    let retryDeadline = Date().addingTimeInterval(3)
+    while await recorder.attemptCount() < 2, Date() < retryDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    let replyDeadline = Date().addingTimeInterval(3)
+    while store.aiChatMessages.count < 2, Date() < replyDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
     let attemptCount = await recorder.attemptCount()
     XCTAssertEqual(attemptCount, 2)
     XCTAssertEqual(store.aiChatMessages.map { "\($0.role.rawValue):\($0.content)" }, [
@@ -3694,6 +3706,35 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertFalse(sending.latestDeliveryNeedsAttention)
     XCTAssertTrue(failed.latestDeliveryNeedsAttention)
     XCTAssertTrue(interrupted.latestDeliveryNeedsAttention)
+  }
+
+  func testManagedRemoteAttemptUsesOnlyStructuredFields() throws {
+    let messageID = UUID()
+    let attemptID = UUID()
+    let held = AIChatMessage(
+      id: messageID,
+      role: .user,
+      content: "Do this once",
+      sendFailure: "Delivery is awaiting confirmation.",
+      deliveryStatus: .sending,
+      deliveryAttemptID: attemptID,
+      deliveryAttemptState: .unconfirmed,
+      targetRuntime: .codex
+    )
+    let encoded = try JSONEncoder().encode(held)
+    var olderWriterObject = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+    )
+    olderWriterObject.removeValue(forKey: "deliveryAttemptID")
+    olderWriterObject.removeValue(forKey: "deliveryAttemptState")
+    let olderWriterData = try JSONSerialization.data(withJSONObject: olderWriterObject)
+
+    let restored = try JSONDecoder().decode(AIChatMessage.self, from: olderWriterData)
+
+    XCTAssertEqual(restored.id, messageID)
+    XCTAssertNil(restored.effectiveDeliveryAttemptID)
+    XCTAssertFalse(restored.deliveryIsUnconfirmed)
+    XCTAssertEqual(restored.displayedSendFailure, "Delivery is awaiting confirmation.")
   }
 
   @MainActor
@@ -7044,6 +7085,209 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertEqual(repaired?.messages.map(\.deliveryStatus), [.sent, .interrupted, .sending])
     XCTAssertEqual(repaired?.messages[1].sendFailure, WorkspaceStore.aiChatOrphanedSendFailureText)
     XCTAssertNil(WorkspaceStore.interruptOrphanedAIChatSends(in: thread, dispatchedMessageIDs: []))
+  }
+
+  func testManagedRemoteRetryRequiresExactAuthoritativeTerminalReceipt() {
+    let attemptID = UUID()
+    let message = AIChatMessage(
+      role: .user,
+      content: "retry me",
+      sendFailure: "mutable model failure",
+      deliveryStatus: .failed
+    ).replacingDeliveryAttempt(
+      attemptID,
+      status: .failed,
+      sendFailure: "mutable model failure",
+      attemptState: nil
+    )
+    func receipt(
+      _ state: AIChatDeliveryReceipt.State,
+      attempt: UUID? = nil,
+      threadID: String? = "native-thread",
+      turnID: String? = "native-turn"
+    ) -> AIChatDeliveryReceipt {
+      AIChatDeliveryReceipt(
+        state: state,
+        messageID: message.id,
+        deliveryAttemptID: attempt ?? attemptID,
+        runtimeThreadID: threadID,
+        turnID: turnID
+      )
+    }
+
+    XCTAssertEqual(
+      WorkspaceStore.managedRemoteRetryPredecessor(
+        message: message,
+        receipt: receipt(.failed)
+      ),
+      attemptID
+    )
+    XCTAssertEqual(
+      WorkspaceStore.managedRemoteRetryPredecessor(
+        message: message,
+        receipt: receipt(.interrupted)
+      ),
+      attemptID
+    )
+    XCTAssertNil(WorkspaceStore.managedRemoteRetryPredecessor(
+      message: message,
+      receipt: receipt(.completed)
+    ))
+    XCTAssertNil(WorkspaceStore.managedRemoteRetryPredecessor(
+      message: message,
+      receipt: receipt(.failed, attempt: UUID())
+    ))
+    XCTAssertNil(WorkspaceStore.managedRemoteRetryPredecessor(
+      message: message,
+      receipt: receipt(.failed, turnID: nil)
+    ))
+
+    // If a writer drops the structured attempt fields, a stale native receipt
+    // cannot authorize a child. The producer journal remains the fail-closed
+    // authority when the message is reconciled as its deterministic initial
+    // identity.
+    let fieldLost = AIChatMessage(
+      id: message.id,
+      role: .user,
+      content: message.content,
+      sendFailure: "legacy writer replaced this text",
+      deliveryStatus: .failed
+    )
+    let initialReceipt = AIChatDeliveryReceipt(
+      state: .failed,
+      messageID: message.id,
+      deliveryAttemptID: message.id,
+      runtimeThreadID: "native-thread",
+      turnID: "native-turn"
+    )
+    XCTAssertNil(WorkspaceStore.managedRemoteRetryPredecessor(
+      message: fieldLost,
+      receipt: initialReceipt
+    ))
+    XCTAssertNil(WorkspaceStore.managedRemoteRetryPredecessor(
+      message: fieldLost,
+      receipt: nil
+    ))
+  }
+
+  func testOpenOrgRetryPayloadRequiresAndPreservesExactNativeIdentity() throws {
+    let messageID = UUID()
+    let attemptID = UUID()
+    let complete = AIChatDeliveryReceipt(
+      state: .failed,
+      messageID: messageID,
+      deliveryAttemptID: attemptID,
+      runtimeThreadID: "native-thread",
+      turnID: "native-turn",
+      detail: "provider failed"
+    ).openOrgServerRetryPayload()
+
+    XCTAssertEqual(complete["retryRequested"] as? Bool, true)
+    XCTAssertEqual(complete["deliveryState"] as? String, "failed")
+    XCTAssertEqual(complete["turnStarted"] as? Bool, true)
+    XCTAssertEqual(complete["terminal"] as? Bool, true)
+    XCTAssertEqual(complete["messageID"] as? String, messageID.uuidString.lowercased())
+    XCTAssertEqual(complete["deliveryAttemptID"] as? String, attemptID.uuidString.lowercased())
+    XCTAssertEqual(complete["runtimeThreadID"] as? String, "native-thread")
+    XCTAssertEqual(complete["turnID"] as? String, "native-turn")
+    XCTAssertEqual(complete["detail"] as? String, "provider failed")
+
+    let partial = AIChatDeliveryReceipt(
+      state: .completed,
+      messageID: messageID,
+      runtimeThreadID: "native-thread",
+      turnID: "native-turn"
+    ).openOrgServerRetryPayload()
+    XCTAssertEqual(partial["turnStarted"] as? Bool, false)
+    XCTAssertEqual(partial["terminal"] as? Bool, true)
+
+    let unknown = AIChatDeliveryReceipt(
+      state: .unconfirmed,
+      messageID: messageID,
+      deliveryAttemptID: attemptID,
+      runtimeThreadID: "native-thread",
+      turnID: "native-turn"
+    ).openOrgServerRetryPayload()
+    XCTAssertEqual(unknown["turnStarted"] as? Bool, false)
+    XCTAssertEqual(unknown["terminal"] as? Bool, false)
+
+    let requested = AIChatDeliveryReceipt(
+      state: .requested,
+      messageID: messageID,
+      detail: "Retry requested; native execution has not been confirmed."
+    ).openOrgServerRetryPayload()
+    XCTAssertEqual(requested["retryRequested"] as? Bool, true)
+    XCTAssertEqual(requested["deliveryState"] as? String, "requested")
+    XCTAssertEqual(requested["turnStarted"] as? Bool, false)
+    XCTAssertEqual(requested["terminal"] as? Bool, false)
+    XCTAssertNil(requested["deliveryAttemptID"])
+    XCTAssertNil(requested["runtimeThreadID"])
+    XCTAssertNil(requested["turnID"])
+  }
+
+  @MainActor
+  func testLocalCodexKnownStartNeverEntersManagedRemoteRecheckState() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-local-codex-marker-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let transcript = root.appendingPathComponent("chat.json")
+    let startedMarker = root.appendingPathComponent("turn-started")
+    let executable = root.appendingPathComponent("fake-local-codex")
+    let script = #"""
+    #!/bin/sh
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":([0-9]+).*/\1/')
+      case "$line" in
+        *'"method":"initialize"'*)
+          printf '{"id":%s,"result":{"userAgent":"local-fixture"}}\n' "$request_id"
+          ;;
+        *'"method":"initialized"'*) ;;
+        *'"method":"account/read"'*)
+          printf '{"id":%s,"result":{"account":{"type":"chatgpt","email":"fixture@example.test"},"requiresOpenaiAuth":true}}\n' "$request_id"
+          ;;
+        *'"method":"thread/start"'*)
+          printf '{"id":%s,"result":{"thread":{"id":"thr-local-fixture"}}}\n' "$request_id"
+          ;;
+        *'"method":"turn/start"'*)
+          : > '\#(startedMarker.path)'
+          printf '{"id":%s,"result":{"turn":{"id":"turn-local-fixture","status":"inProgress"}}}\n' "$request_id"
+          sleep 1
+          printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-local-fixture","turn":{"id":"turn-local-fixture","status":"completed","items":[{"id":"agent-final","type":"agentMessage","phase":"final_answer","text":"Local completed"}]}}}'
+          ;;
+      esac
+    done
+    """#
+    try script.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let suiteName = "LocalCodexManagedMarkerTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = WorkspaceStore(
+      defaults: defaults,
+      aiChatTranscriptURL: transcript,
+      codexLocalExecutableURLForTesting: executable,
+      legacyDefaultsDomains: []
+    )
+    store.setCorpusRoot(root, persistsDefault: false)
+    store.createAIChatThread(runtime: .codex)
+
+    let send = Task { await store.sendAIChatMessage(text: "Keep local delivery semantics") }
+    let deadline = Date().addingTimeInterval(5)
+    while !FileManager.default.fileExists(atPath: startedMarker.path), Date() < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertTrue(FileManager.default.fileExists(atPath: startedMarker.path))
+    try await Task.sleep(for: .milliseconds(50))
+    let running = try XCTUnwrap(store.aiChatMessages.first(where: { $0.role == .user }))
+    XCTAssertEqual(running.deliveryStatus, .sending)
+    XCTAssertFalse(running.deliveryIsUnconfirmed)
+    XCTAssertNil(running.displayedSendFailure)
+
+    await send.value
+    await store.shutdownAIChatTransports()
+    let stopped = try XCTUnwrap(store.aiChatMessages.first(where: { $0.role == .user }))
+    XCTAssertFalse(stopped.deliveryIsUnconfirmed)
   }
 
   /// A transcript refresh while a steer is still being delivered must not

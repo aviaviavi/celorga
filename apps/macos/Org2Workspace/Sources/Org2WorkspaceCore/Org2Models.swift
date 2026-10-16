@@ -2410,6 +2410,13 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     case interrupted
   }
 
+  /// Additive state for a provider submission whose outcome is not yet known.
+  /// Older readers ignore this field and continue to see `sending`, never a
+  /// false successful delivery or an unknown enum value.
+  public enum DeliveryAttemptState: String, Codable, Sendable {
+    case unconfirmed
+  }
+
   public enum DeliveryKind: String, Codable, Sendable {
     case turn
     case steer
@@ -2426,6 +2433,10 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
   public let sendFailure: String?
   public let deliveryStatus: DeliveryStatus
   public let deliveryKind: DeliveryKind
+  /// Stable correlation for one provider submission attempt. The Celorga
+  /// message ID remains stable across explicitly authorized terminal retries.
+  public let deliveryAttemptID: UUID?
+  public let deliveryAttemptState: DeliveryAttemptState?
   public let authorRuntime: AIChatRuntime?
   public let authorLabel: String?
   public let authorAgentRef: String?
@@ -2450,6 +2461,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     sendFailure: String? = nil,
     deliveryStatus: DeliveryStatus = .sent,
     deliveryKind: DeliveryKind = .turn,
+    deliveryAttemptID: UUID? = nil,
+    deliveryAttemptState: DeliveryAttemptState? = nil,
     authorRuntime: AIChatRuntime? = nil,
     authorLabel: String? = nil,
     authorAgentRef: String? = nil,
@@ -2473,6 +2486,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     self.sendFailure = sendFailure
     self.deliveryStatus = role == .user ? deliveryStatus : .sent
     self.deliveryKind = role == .user ? deliveryKind : .turn
+    self.deliveryAttemptID = role == .user ? deliveryAttemptID : nil
+    self.deliveryAttemptState = role == .user ? deliveryAttemptState : nil
     self.authorRuntime = role == .user ? nil : authorRuntime
     self.authorLabel = role == .user ? nil : authorLabel
     self.authorAgentRef = role == .user ? nil : authorAgentRef
@@ -2498,6 +2513,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     case sendFailure
     case deliveryStatus
     case deliveryKind
+    case deliveryAttemptID
+    case deliveryAttemptState
     case authorRuntime
     case authorLabel
     case authorAgentRef
@@ -2528,6 +2545,12 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     deliveryKind = role == .user
       ? (try container.decodeIfPresent(DeliveryKind.self, forKey: .deliveryKind) ?? .turn)
       : .turn
+    deliveryAttemptID = role == .user
+      ? try container.decodeIfPresent(UUID.self, forKey: .deliveryAttemptID)
+      : nil
+    deliveryAttemptState = role == .user
+      ? try container.decodeIfPresent(DeliveryAttemptState.self, forKey: .deliveryAttemptState)
+      : nil
     authorRuntime = role == .user
       ? nil
       : try container.decodeIfPresent(AIChatRuntime.self, forKey: .authorRuntime)
@@ -2578,6 +2601,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       sendFailure: nextSendFailure,
       deliveryStatus: nextSendFailure == nil ? .sent : .failed,
       deliveryKind: deliveryKind,
+      deliveryAttemptID: deliveryAttemptID,
+      deliveryAttemptState: deliveryAttemptState,
       authorRuntime: authorRuntime,
       authorLabel: authorLabel,
       authorAgentRef: authorAgentRef,
@@ -2608,6 +2633,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       sendFailure: nextSendFailure,
       deliveryStatus: nextDeliveryStatus,
       deliveryKind: deliveryKind,
+      deliveryAttemptID: deliveryAttemptID,
+      deliveryAttemptState: deliveryAttemptState,
       authorRuntime: authorRuntime,
       authorLabel: authorLabel,
       authorAgentRef: authorAgentRef,
@@ -2635,6 +2662,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       sendFailure: sendFailure,
       deliveryStatus: deliveryStatus,
       deliveryKind: deliveryKind,
+      deliveryAttemptID: deliveryAttemptID,
+      deliveryAttemptState: deliveryAttemptState,
       authorRuntime: authorRuntime,
       authorLabel: authorLabel,
       authorAgentRef: authorAgentRef,
@@ -2662,6 +2691,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       sendFailure: sendFailure,
       deliveryStatus: deliveryStatus,
       deliveryKind: deliveryKind,
+      deliveryAttemptID: deliveryAttemptID,
+      deliveryAttemptState: deliveryAttemptState,
       authorRuntime: authorRuntime,
       authorLabel: authorLabel,
       authorAgentRef: authorAgentRef,
@@ -2689,6 +2720,87 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       sendFailure: sendFailure,
       deliveryStatus: deliveryStatus,
       deliveryKind: deliveryKind,
+      deliveryAttemptID: deliveryAttemptID,
+      deliveryAttemptState: deliveryAttemptState,
+      authorRuntime: authorRuntime,
+      authorLabel: authorLabel,
+      authorAgentRef: authorAgentRef,
+      source: source,
+      audience: audience,
+      targetRuntime: targetRuntime,
+      authorDestinationID: authorDestinationID,
+      audienceDestinationIDs: audienceDestinationIDs,
+      targetDestinationID: targetDestinationID,
+      isRoomDispatchCopy: isRoomDispatchCopy,
+      roomRoundID: roomRoundID,
+      provenance: provenance
+    )
+  }
+
+  public func replacingDeliveryAttempt(
+    _ nextDeliveryAttemptID: UUID,
+    status nextDeliveryStatus: DeliveryStatus,
+    sendFailure nextSendFailure: String? = nil,
+    attemptState nextDeliveryAttemptState: DeliveryAttemptState? = nil
+  ) -> AIChatMessage {
+    AIChatMessage(
+      id: id,
+      role: role,
+      content: content,
+      attachments: attachments,
+      createdAt: createdAt,
+      changeSummary: changeSummary,
+      responseTrace: responseTrace,
+      sendFailure: nextSendFailure,
+      deliveryStatus: nextDeliveryStatus,
+      deliveryKind: deliveryKind,
+      deliveryAttemptID: nextDeliveryAttemptID,
+      deliveryAttemptState: nextDeliveryAttemptState,
+      authorRuntime: authorRuntime,
+      authorLabel: authorLabel,
+      authorAgentRef: authorAgentRef,
+      source: source,
+      audience: audience,
+      targetRuntime: targetRuntime,
+      authorDestinationID: authorDestinationID,
+      audienceDestinationIDs: audienceDestinationIDs,
+      targetDestinationID: targetDestinationID,
+      isRoomDispatchCopy: isRoomDispatchCopy,
+      roomRoundID: roomRoundID,
+      provenance: provenance
+    )
+  }
+
+  public var deliveryIsUnconfirmed: Bool {
+    deliveryAttemptState == .unconfirmed
+  }
+
+  public var displayedSendFailure: String? {
+    sendFailure
+  }
+
+  public var effectiveDeliveryAttemptID: UUID? {
+    deliveryAttemptID
+  }
+
+  public func replacingDeliveryAttemptState(
+    _ nextDeliveryAttemptState: DeliveryAttemptState?,
+    status nextDeliveryStatus: DeliveryStatus? = nil,
+    sendFailure nextSendFailure: String? = nil
+  ) -> AIChatMessage {
+    AIChatMessage(
+      id: id,
+      role: role,
+      content: content,
+      attachments: attachments,
+      createdAt: createdAt,
+      changeSummary: changeSummary,
+      responseTrace: responseTrace,
+      sendFailure: nextSendFailure,
+      deliveryStatus: nextDeliveryStatus ?? deliveryStatus,
+      deliveryKind: deliveryKind,
+      deliveryAttemptID: deliveryAttemptID,
+      deliveryAttemptState: nextDeliveryAttemptState,
       authorRuntime: authorRuntime,
       authorLabel: authorLabel,
       authorAgentRef: authorAgentRef,
@@ -3945,6 +4057,7 @@ public struct AIChatThread: Identifiable, Hashable, Codable, Sendable {
     guard let latestMessage = messages.last else { return false }
     return latestMessage.deliveryStatus == .failed
       || latestMessage.deliveryStatus == .interrupted
+      || latestMessage.deliveryIsUnconfirmed
       || latestMessage.sendFailure != nil
   }
 
