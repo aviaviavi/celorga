@@ -2274,7 +2274,7 @@ final class CodexAppServerClientTests: XCTestCase {
       turnID: "local-retry",
       message: "same durable message",
       attachments: [],
-      workspacePath: "~/avi.org2",
+      workspacePath: "~/corpus",
       corpusAccess: .runtimeFilesystem,
       attemptIdentity: CodexTurnAttemptIdentity(messageID: messageID, attemptID: messageID),
       turnStartPolicy: .reconcileOnly
@@ -2341,7 +2341,7 @@ final class CodexAppServerClientTests: XCTestCase {
       turnID: "local-turn",
       message: "accepted before disconnect",
       attachments: [],
-      workspacePath: "~/avi.org2",
+      workspacePath: "~/corpus",
       corpusAccess: .runtimeFilesystem,
       attemptIdentity: CodexTurnAttemptIdentity(messageID: messageID, attemptID: messageID)
     )
@@ -2779,7 +2779,7 @@ final class CodexAppServerClientTests: XCTestCase {
       turnID: "local-retry",
       message: "same active message",
       attachments: [],
-      workspacePath: "~/avi.org2",
+      workspacePath: "~/corpus",
       corpusAccess: .runtimeFilesystem,
       attemptIdentity: CodexTurnAttemptIdentity(messageID: messageID, attemptID: messageID),
       turnStartPolicy: .reconcileOnly
@@ -2844,7 +2844,7 @@ final class CodexAppServerClientTests: XCTestCase {
       turnID: "local-retry",
       message: "same message, authorized retry",
       attachments: [],
-      workspacePath: "~/avi.org2",
+      workspacePath: "~/corpus",
       corpusAccess: .runtimeFilesystem,
       attemptIdentity: CodexTurnAttemptIdentity(
         messageID: messageID,
