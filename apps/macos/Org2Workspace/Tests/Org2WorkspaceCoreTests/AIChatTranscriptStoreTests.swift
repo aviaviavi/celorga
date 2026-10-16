@@ -921,6 +921,81 @@ final class AIChatTranscriptStoreTests: XCTestCase {
     XCTAssertTrue(FileManager.default.fileExists(atPath: orphan.path))
   }
 
+  func testGarbageCollectionDoesNotDeleteManifestPublishedAfterInventory() throws {
+    let fixture = try makeRecoveryFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let storeURL = AIChatTranscriptStore.storeDirectory(for: fixture.transcriptURL)
+    let manifestsURL = storeURL.appendingPathComponent("manifests", isDirectory: true)
+
+    func snapshot(_ content: String) -> AIChatTranscriptSnapshot {
+      let thread = fixture.thread.replacingMessages([
+        AIChatMessage(role: .assistant, content: content)
+      ])
+      return AIChatTranscriptSnapshot(
+        threads: [thread],
+        selectedThreadID: thread.id,
+        settlementSettings: AIChatThreadSettlementSettings()
+      )
+    }
+
+    try AIChatTranscriptStore.shared.flush(snapshot("first"), legacyURL: fixture.transcriptURL)
+    let oldUnreachableName = try XCTUnwrap(
+      try markerObject(storeURL: storeURL)["currentManifest"] as? String
+    )
+    try AIChatTranscriptStore.shared.flush(snapshot("second"), legacyURL: fixture.transcriptURL)
+    try AIChatTranscriptStore.shared.flush(snapshot("third"), legacyURL: fixture.transcriptURL)
+    AIChatTranscriptStore.shared.waitUntilIdleForTesting()
+
+    let preCollectionHead = try markerObject(storeURL: storeURL)
+    let oldCurrentName = try XCTUnwrap(preCollectionHead["currentManifest"] as? String)
+    let oldCurrentBytes = try Data(contentsOf: manifestsURL.appendingPathComponent(oldCurrentName))
+    try ageFilesRecursively(in: storeURL, by: 31 * 24 * 60 * 60)
+
+    var publicationError: Error?
+    var publishedCurrentName: String?
+    var publishedCurrentBytes: Data?
+    let completed = AIChatTranscriptStore.collectGarbageForTesting(
+      legacyURL: fixture.transcriptURL,
+      shouldYield: { false }
+    ) {
+      do {
+        try AIChatTranscriptStore.publishSnapshotForTesting(
+          snapshot("published between inventory and deletion"),
+          legacyURL: fixture.transcriptURL
+        )
+        let publishedHead = try markerObject(storeURL: storeURL)
+        publishedCurrentName = try XCTUnwrap(publishedHead["currentManifest"] as? String)
+        publishedCurrentBytes = try Data(
+          contentsOf: manifestsURL.appendingPathComponent(try XCTUnwrap(publishedCurrentName))
+        )
+        XCTAssertEqual(publishedHead["previousManifest"] as? String, oldCurrentName)
+      } catch {
+        publicationError = error
+      }
+    }
+
+    XCTAssertTrue(completed)
+    XCTAssertNil(publicationError)
+    let currentName = try XCTUnwrap(publishedCurrentName)
+    let currentBytes = try XCTUnwrap(publishedCurrentBytes)
+    XCTAssertEqual(
+      try? Data(contentsOf: manifestsURL.appendingPathComponent(currentName)),
+      currentBytes,
+      "GC must not delete a fresh manifest published after its inventory"
+    )
+    XCTAssertEqual(
+      try Data(contentsOf: manifestsURL.appendingPathComponent(oldCurrentName)),
+      oldCurrentBytes,
+      "The current head's old-byte previous manifest must remain loadable"
+    )
+    XCTAssertFalse(
+      FileManager.default.fileExists(
+        atPath: manifestsURL.appendingPathComponent(oldUnreachableName).path
+      ),
+      "Old manifests unreachable before collection should still be removed"
+    )
+  }
+
   func testCorruptAttachmentBlobThrowsAndIsNeverRewrittenAsEmpty() throws {
     let fixture = try makeRecoveryFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }

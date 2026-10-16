@@ -2072,7 +2072,8 @@ final class AIChatTranscriptStore: @unchecked Sendable {
   // can preempt the expensive historical-manifest scan before any deletion.
   private static func garbageCollect(
     legacyURL: URL,
-    shouldYield: () -> Bool = { false }
+    shouldYield: () -> Bool = { false },
+    beforeDeletion: () -> Void = {}
   ) -> Bool {
     guard let state = loadStoreState(legacyURL: legacyURL),
           !state.recoveryStatus.blocksWrites,
@@ -2138,10 +2139,14 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     }
 
     guard !shouldYield() else { return false }
+    beforeDeletion()
     removeUnretainedFiles(
       in: manifestsDirectory(storeURL: storeURL),
       retaining: retainedCommitFiles,
-      modifiedBefore: nil
+      // A writer can publish a fresh manifest after the inventory above.
+      // Give fresh unseen manifests the same grace interval as shards and
+      // blobs so this sweep cannot delete an in-flight commit.
+      modifiedBefore: cutoff
     )
     removeUnretainedFiles(
       in: threadsDirectory(storeURL: storeURL),
@@ -2158,9 +2163,22 @@ final class AIChatTranscriptStore: @unchecked Sendable {
 
   // Not DEBUG-only: the release-mode performance gate compiles every test.
   static func collectGarbageForTesting(
-    legacyURL: URL, shouldYield: () -> Bool
+    legacyURL: URL,
+    shouldYield: () -> Bool,
+    beforeDeletion: () -> Void = {}
   ) -> Bool {
-    garbageCollect(legacyURL: legacyURL, shouldYield: shouldYield)
+    garbageCollect(
+      legacyURL: legacyURL,
+      shouldYield: shouldYield,
+      beforeDeletion: beforeDeletion
+    )
+  }
+
+  static func publishSnapshotForTesting(
+    _ snapshot: AIChatTranscriptSnapshot,
+    legacyURL: URL
+  ) throws {
+    _ = try write(snapshot, legacyURL: legacyURL)
   }
 
   private struct RecoveryManifestFile {
