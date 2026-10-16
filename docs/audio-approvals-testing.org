@@ -50,3 +50,7 @@ The host retains at most 256 identity-only delivery events in process memory. It
 The paired API uses =GET /v1/audio-approvals/diagnostics=, =POST /v1/audio-approvals/delivery=, and =POST /v1/audio-approvals/probe=. Probe sends respect quiet mode and the answer window. Each APNs payload includes its unique =deliveryID=, so a previously played approval cannot masquerade as the current delivery. Older hosts fail visibly before a probe sends anything.
 
 An empty synthesis stream cannot mark a prompt heard: at least one audio buffer must finish playing. A real phone completion establishes that the private audio path consumed the prompt; it cannot prove what a person acoustically heard or understood. Physical locked-phone delivery remains unverified until the live probe receives that receipt from the updated phone.
+
+* Decision acknowledgement and continuation
+
+An exact voice decision is acknowledged as soon as its decision and receipt are durably saved. The response reports =recorded= (or =awaiting-other-approvals=); agent continuation runs separately and its eventual result remains in the run record. A slow agent turn or review refresh must not keep the phone waiting for confirmation of an already committed decision. =testExactDecisionAcknowledgesBeforeSlowContinuation= holds the continuation open and requires the exact receipt to return before it is released. Repeating the same receipt still returns the saved decision without applying it twice.

@@ -222,6 +222,46 @@ final class AudioApprovalHostTests: XCTestCase {
     XCTAssertTrue(restored.pushToTalkRegistrations.isEmpty)
   }
 
+  @MainActor
+  func testExactDecisionAcknowledgesBeforeSlowContinuation() async throws {
+    let repoRoot = try Org2CLI.defaultRepoRoot()
+    let corpus = FileManager.default.temporaryDirectory.appendingPathComponent("audio-confirmation-\(UUID())")
+    try FileManager.default.createDirectory(at: corpus, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: corpus) }
+    let demo = try createWaitingRun(repoRoot: repoRoot, corpus: corpus, title: "Slow continuation")
+    let suite = "AudioConfirmation.\(UUID())"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let store = WorkspaceStore(cli: Org2CLI(repoRoot: repoRoot), defaults: defaults, legacyDefaultsDomains: [])
+    store.corpusRoot = corpus
+    var continuationStarted = false
+    var releaseContinuation = false
+    store.agentRunApprovalContinuationForTesting = { run in
+      continuationStarted = true
+      while !releaseContinuation { try await Task.sleep(for: .milliseconds(10)) }
+      return OpenClawApprovedRunContinuation(runID: run.id, sessionKey: nil, prompt: "demo", kind: "run", alreadyResumed: true)
+    }
+    await store.refreshApprovals(updatesStatus: false)
+    let item = try XCTUnwrap(store.approvalItems.first { $0.approvalId == demo.approvalID })
+    var response: MobileRemoteWorkspaceSnapshot?
+    let request = Task {
+      response = try await store.decideMobileRemoteApproval(
+        itemID: item.id, decision: "approved", note: nil, endStatus: nil,
+        expectedRunID: demo.runID, expectedApprovalID: demo.approvalID,
+        expectedFingerprint: demo.fingerprint, receipt: "audio-approval:slow-continuation")
+    }
+    try await waitUntil { continuationStarted }
+    // The agent handoff is held indefinitely: confirming the durable decision must not wait for it.
+    let deadline = Date().addingTimeInterval(1)
+    while response == nil && Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertNotNil(response, "A committed approval must be acknowledged while continuation is still blocked")
+    releaseContinuation = true
+    try await request.value
+    XCTAssertEqual(response?.approvalDecisionReceipt?.decision, "approved")
+    XCTAssertEqual(response?.approvalDecisionReceipt?.receipt, "audio-approval:slow-continuation")
+    XCTAssertEqual(try runApproval(repoRoot: repoRoot, corpus: corpus, demo)["status"] as? String, "approved")
+  }
+
   // MARK: End to end over the paired-host transport
 
   /// Reversible local demo: a temporary corpus holds one run waiting on an approval that
@@ -345,7 +385,7 @@ final class AudioApprovalHostTests: XCTestCase {
     XCTAssertEqual(receipt.decision, "approved")
     XCTAssertEqual(receipt.runStatus, "running")
     XCTAssertEqual(receipt.pendingApprovalCount, 0)
-    XCTAssertEqual(receipt.continuation, MobileRemoteApprovalContinuation.alreadyContinuing.rawValue)
+    XCTAssertEqual(receipt.continuation, MobileRemoteApprovalContinuation.recorded.rawValue)
     XCTAssertFalse(receipt.duplicate)
     let durable = try runApproval(repoRoot: repoRoot, corpus: corpus, older)
     XCTAssertEqual(durable["status"] as? String, "approved")
