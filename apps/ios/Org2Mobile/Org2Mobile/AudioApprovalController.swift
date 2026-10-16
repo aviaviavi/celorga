@@ -64,6 +64,8 @@ final class AudioApprovalController: ObservableObject {
   private var deliveryReportID: UUID?
   private var deliveryReportBackgroundTask: UIBackgroundTaskIdentifier = .invalid
   private var promptCheckID: UUID?
+  /// Diagnostic reason attached to the next prompt `playback-failed` receipt.
+  private var playbackFailureReason: String?
   private var pushToken: Data?
   private var pushToTalkSessionActive = false
   private var replyBackgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -263,15 +265,24 @@ final class AudioApprovalController: ObservableObject {
     switch event {
     case .playbackFinished(let completed, _):
       if case .speaking(.prompt) = session.playback, let delivery = playbackDelivery {
-        reportDelivery(stage: completed ? "playback-completed" : "playback-failed", target: delivery.target, deliveryID: delivery.id)
+        reportDelivery(stage: completed ? "playback-completed" : "playback-failed", target: delivery.target,
+                       deliveryID: delivery.id, reason: completed ? nil : playbackFailureReason)
       }
+      playbackFailureReason = nil
     case .playbackStalled:
       if case .speaking(.prompt) = session.playback, let delivery = playbackDelivery {
-        reportDelivery(stage: "playback-failed", target: delivery.target, deliveryID: delivery.id)
+        reportDelivery(stage: "playback-failed", target: delivery.target, deliveryID: delivery.id, reason: "stalled")
       }
     case .sessionActivated:
       if let target = session.pushedTarget ?? session.activeTarget, let id = deliveryIDs[target] {
         reportDelivery(stage: "audio-session-active", target: target, deliveryID: id)
+      }
+    case .sessionDeactivated:
+      if case .speaking(.prompt) = session.playback, let delivery = playbackDelivery {
+        reportDelivery(stage: "playback-failed", target: delivery.target, deliveryID: delivery.id, reason: "session-ended")
+      }
+      if let target = session.pushedTarget ?? session.activeTarget, let id = deliveryIDs[target] {
+        reportDelivery(stage: "audio-session-ended", target: target, deliveryID: id)
       }
     case .decisionSucceeded(let target, _):
       if let delivery = playbackDelivery, delivery.target == target {
@@ -349,6 +360,17 @@ final class AudioApprovalController: ObservableObject {
         try? await Task.sleep(for: .seconds(delay))
         self?.send(.tick(now: Date()))
       }
+    case .checkRoute(let delay):
+      Task { [weak self] in
+        try? await Task.sleep(for: .seconds(delay))
+        guard let self else { return }
+        // Select HFP once it is listed; do not reselect it during a switch already in progress.
+        let audioSession = AVAudioSession.sharedInstance()
+        if self.pushToTalkSessionActive, audioSession.preferredInput?.portType != .bluetoothHFP {
+          AudioApprovalPushToTalkBridge.preferConnectedBluetoothHeadset(on: audioSession)
+        }
+        self.send(.routeChecked(self.currentRouteSnapshot()))
+      }
     case .sendSnooze(let target, let until):
       Task {
         do {
@@ -364,7 +386,8 @@ final class AudioApprovalController: ObservableObject {
   private func speak(_ text: String, kind: AudioSpeechKind) {
     if kind == .prompt { preparePlaybackDelivery() }
     switch planAudioPlayback(quiet: isQuiet, snapshot: currentRouteSnapshot()) {
-    case .hold:
+    case .hold(let reason):
+      playbackFailureReason = "held-\(reason.rawValue)"
       // Report an incomplete playback: a prompt that was not heard cannot be answered.
       send(.playbackFinished(completed: false, now: Date()))
     case .play:
@@ -400,7 +423,8 @@ final class AudioApprovalController: ObservableObject {
       return
     }
     // Recheck the private output for every buffer, including background route transitions.
-    guard case .play = planAudioPlayback(quiet: isQuiet, snapshot: currentRouteSnapshot()) else {
+    if case .hold(let reason) = planAudioPlayback(quiet: isQuiet, snapshot: currentRouteSnapshot()) {
+      playbackFailureReason = "held-\(reason.rawValue)"
       stopSpeech()
       send(.playbackFinished(completed: false, now: Date()))
       return
@@ -438,6 +462,7 @@ final class AudioApprovalController: ObservableObject {
       // reply's short background task covers final transcription, transport, and receipt.
       endReplyBackgroundTask()
     } catch {
+      playbackFailureReason = "engine-start-failed"
       stopSpeech()
       send(.playbackFinished(completed: false, now: Date()))
     }
@@ -633,21 +658,27 @@ final class AudioApprovalController: ObservableObject {
 
   /// Receipts are best-effort diagnostics, never decision authority. Keep them ordered and
   /// briefly retain background time after playback releases the PTT session.
-  private func reportDelivery(stage: String, target: AudioApprovalTarget, deliveryID: UUID) {
+  private func reportDelivery(stage: String, target: AudioApprovalTarget, deliveryID: UUID, reason: String? = nil) {
     guard let remote else { return }
     let hostID = remote.activeHostID
     let simulated: Bool
     let headset: Bool
+    let outputs: String
     #if DEBUG
     simulated = isDemo
-    headset = isDemo || currentRouteSnapshot().route == .headset
+    headset = isDemo ? demoRoute.route == .headset : currentRouteSnapshot().route == .headset
+    outputs = isDemo ? (demoRoute.route == .headset ? "SimulatedHeadset" : "SimulatedReceiver") : Self.currentOutputPorts()
     #else
     simulated = false
     headset = currentRouteSnapshot().route == .headset
+    outputs = Self.currentOutputPorts()
     #endif
+    // Identity-free diagnostics that explain a failure without another manual retest.
+    let detail = AudioApprovalDeliveryDetail.make(
+      outputs: outputs, appState: Self.applicationStateName(), sessionActive: pushToTalkSessionActive, reason: reason)
     let event = MobileRemoteAudioApprovalDeliveryRecord(
       deliveryID: deliveryID, runID: target.runID, approvalID: target.approvalID,
-      fingerprint: target.fingerprint, stage: stage, simulated: simulated, headset: headset)
+      fingerprint: target.fingerprint, stage: stage, simulated: simulated, headset: headset, detail: detail)
     if deliveryReportBackgroundTask == .invalid {
       deliveryReportBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Report approval playback") { [weak self] in
         Task { @MainActor [weak self] in
@@ -670,6 +701,20 @@ final class AudioApprovalController: ObservableObject {
       }
       guard !Task.isCancelled, remote.activeHostID == hostID else { return }
       try? await remote.reportAudioApprovalDelivery(event)
+    }
+  }
+
+  private static func currentOutputPorts() -> String {
+    let ports = AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portType.rawValue)
+    return ports.isEmpty ? "none" : ports.joined(separator: "+")
+  }
+
+  private static func applicationStateName() -> String {
+    switch UIApplication.shared.applicationState {
+    case .active: "active"
+    case .inactive: "inactive"
+    case .background: "background"
+    @unknown default: "unknown"
     }
   }
 
@@ -699,8 +744,18 @@ final class AudioApprovalController: ObservableObject {
   func demoReceivePush(_ payload: [String: Any]) {
     guard isDemo else { return }
     handle(.incomingPush(AudioApprovalPushToTalkBridge.target(from: payload), deliveryID: (payload["deliveryID"] as? String).flatMap(UUID.init(uuidString:))))
-    send(.sessionActivated(Self.demoRoute, now: Date()))
+    send(.sessionActivated(demoRoute, now: Date()))
   }
+
+  /// Simulates the physical route. `notify: false` changes `currentRoute` without a
+  /// route-change notification, as observed on a backgrounded phone switching AirPods to HFP.
+  func setDemoRoute(headset: Bool, notify: Bool) {
+    demoRoute = AudioRouteSnapshot(route: headset ? .headset : .nonHeadset, inCall: false, mediaPlaying: false, pushToTalkSessionActive: true)
+    if notify { send(.routeChanged(demoRoute)) }
+  }
+
+  /// Prompts the simulated output refused because the route was not a headset.
+  @Published private(set) var demoHeldPrompts = 0
 
   func demoPlayNext() {
     guard isDemo else { return }
@@ -711,28 +766,39 @@ final class AudioApprovalController: ObservableObject {
     guard isDemo else { return }
     demoTranscript = transcript
     send(.transmitBegan(initiated: true, now: Date()))
-    send(.sessionActivated(Self.demoRoute, now: Date()))
+    send(.sessionActivated(demoRoute, now: Date()))
     send(.transmitEnded(initiated: true, interrupted: false))
   }
 
-  private static let demoRoute = AudioRouteSnapshot(route: .headset, inCall: false, mediaPlaying: false, pushToTalkSessionActive: true)
+  private var demoRoute = AudioRouteSnapshot(route: .headset, inCall: false, mediaPlaying: false, pushToTalkSessionActive: true)
 
   /// Simulated hardware events are delivered synchronously so their order is deterministic.
   private func performDemo(_ effect: AudioApprovalEffect) {
     switch effect {
     case .requestAudioSession:
-      send(.sessionActivated(Self.demoRoute, now: Date()))
+      send(.sessionActivated(demoRoute, now: Date()))
     case .releaseAudioSession:
       send(.sessionDeactivated)
     case .speak(let text, let kind):
-      if kind == .prompt {
-        preparePlaybackDelivery()
-        if let delivery = playbackDelivery {
-          reportDelivery(stage: "playback-started", target: delivery.target, deliveryID: delivery.id)
-        }
+      if kind == .prompt { preparePlaybackDelivery() }
+      // Same gate as real playback: the simulated output refuses a non-headset route.
+      if case .hold(let reason) = planAudioPlayback(quiet: isQuiet, snapshot: demoRoute) {
+        if kind == .prompt { demoHeldPrompts += 1 }
+        playbackFailureReason = "held-\(reason.rawValue)"
+        send(.playbackFinished(completed: false, now: Date()))
+        return
+      }
+      if kind == .prompt, let delivery = playbackDelivery {
+        reportDelivery(stage: "playback-started", target: delivery.target, deliveryID: delivery.id)
       }
       demoSpoken = text
       send(.playbackFinished(completed: true, now: Date()))
+    case .checkRoute(let delay):
+      Task { [weak self] in
+        try? await Task.sleep(for: .seconds(delay))
+        guard let self, self.isDemo else { return }
+        self.send(.routeChecked(self.demoRoute))
+      }
     case .stopSpeaking, .startCapture, .cancelCapture:
       break
     case .finishCapture:

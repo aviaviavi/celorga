@@ -1181,15 +1181,18 @@ public struct MobileRemoteAudioApprovalDeliveryRecord: Codable, Hashable, Sendab
   public let stage: String
   public let simulated: Bool
   public let headset: Bool?
+  /// Optional bounded route/app-state context (port types, app state, failure reason).
+  /// Never approval text, transcripts, or credentials.
+  public let detail: String?
   public let deviceID: UUID?
   public let observedAt: Date?
 
   public init(deliveryID: UUID, runID: String, approvalID: String, fingerprint: String,
-              stage: String, simulated: Bool, headset: Bool? = nil,
+              stage: String, simulated: Bool, headset: Bool? = nil, detail: String? = nil,
               deviceID: UUID? = nil, observedAt: Date? = nil) {
     self.deliveryID = deliveryID; self.runID = runID; self.approvalID = approvalID
     self.fingerprint = fingerprint; self.stage = stage; self.simulated = simulated
-    self.headset = headset; self.deviceID = deviceID; self.observedAt = observedAt
+    self.headset = headset; self.detail = detail; self.deviceID = deviceID; self.observedAt = observedAt
   }
 }
 

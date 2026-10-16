@@ -106,8 +106,9 @@ final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, P
   }
 
   /// With a play-and-record session, selecting a Bluetooth HFP input also selects its matching
-  /// private output. Do this once when Push to Talk activates; route changes remain system-owned.
-  private static func preferConnectedBluetoothHeadset(on audioSession: AVAudioSession) {
+  /// private output. Do this when Push to Talk activates, and again while the controller waits
+  /// for the headset: a backgrounded activation may not list the HFP input yet.
+  static func preferConnectedBluetoothHeadset(on audioSession: AVAudioSession) {
     let outputs = audioSession.currentRoute.outputs.map(\.portType)
     if outputs.contains(.bluetoothHFP) { return }
     guard let headset = audioSession.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) else { return }

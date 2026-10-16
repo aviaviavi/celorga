@@ -97,7 +97,7 @@ try {
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
   if (!evidence.passed) {
-    const stages = evidence.events.map(event => event.stage).join(" → ") || "none";
+    const stages = evidence.events.map(event => event.detail ? `${event.stage} [${event.detail}]` : event.stage).join(" → ") || "none";
     throw new Error(`No matching physical-device playback completion. Confirmed stages: ${stages}`);
   }
   console.log("PASS: the real phone completed playback for this exact push. No approval decision was made by this probe.");

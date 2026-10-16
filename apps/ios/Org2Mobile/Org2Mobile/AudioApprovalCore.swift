@@ -24,7 +24,12 @@ enum AudioApprovalFeature {
   /// Push to Talk can activate before Bluetooth has finished changing `currentRoute` from the
   /// receiver to an already-selected headset. Keep the system session briefly so that route
   /// change can arrive; never play during this grace unless the route becomes a headset.
-  static let headsetRouteSettleInterval: TimeInterval = 5
+  /// Physical traces from a backgrounded phone show AirPods HFP taking about six seconds, and
+  /// the route-change notification alone did not reliably reach the app in that time.
+  static let headsetRouteSettleInterval: TimeInterval = 10
+  /// While the route settles, the phone rereads `currentRoute` this often instead of relying
+  /// only on route-change notifications.
+  static let routeCheckInterval: TimeInterval = 0.25
   /// While Celorga is the active remote participant, iOS disables the Talk button. A push or
   /// audio request that has not produced playback within this time releases it.
   static let remoteParticipantHoldLimit: TimeInterval = 15
@@ -194,6 +199,23 @@ enum AudioRouteClassifier {
 }
 #endif
 
+/// Bounded, identity-free context attached to a delivery receipt: output port types, app
+/// state, Push to Talk session state, and a failure reason. The host applies the same filter.
+enum AudioApprovalDeliveryDetail {
+  static let maxLength = 160
+
+  static func make(outputs: String, appState: String, sessionActive: Bool, reason: String?) -> String {
+    var parts = ["out=\(outputs)", "app=\(appState)", "ptt=\(sessionActive ? 1 : 0)"]
+    if let reason { parts.append("reason=\(reason)") }
+    return sanitize(parts.joined(separator: ";"))
+  }
+
+  static func sanitize(_ text: String) -> String {
+    let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789=;+._-")
+    return String(text.filter { allowed.contains($0) }.prefix(maxLength))
+  }
+}
+
 struct AudioRouteSnapshot: Sendable, Equatable {
   let route: AudioRouteClass
   let inCall: Bool
@@ -336,6 +358,9 @@ enum AudioApprovalEvent: Sendable, Equatable {
   case transcriptReady(String, now: Date)
   case captureFailed(String)
   case routeChanged(AudioRouteSnapshot)
+  /// The current route, reread on request (`.checkRoute`) while waiting for the headset.
+  /// Unlike `.routeChanged`, a non-headset reading never abandons audio.
+  case routeChecked(AudioRouteSnapshot)
   case interrupted
   case decisionSucceeded(AudioApprovalTarget, AudioDecisionOutcome)
   case decisionFailed(AudioApprovalTarget, String)
@@ -371,6 +396,8 @@ enum AudioApprovalEffect: Sendable, Equatable {
   case sendSnooze(AudioApprovalTarget, until: Date)
   /// Deliver `.tick` after this many seconds.
   case scheduleTick(after: TimeInterval)
+  /// Deliver `.routeChecked` with the current route after this many seconds.
+  case checkRoute(after: TimeInterval)
 }
 
 /// The audio approval state machine. Pure: every input is an event, every output an effect.
@@ -416,6 +443,9 @@ struct AudioApprovalSession: Sendable, Equatable {
   private var clock = Date.distantPast
   private var scheduledTick: Date?
   private var headsetRouteSettleUntil: Date?
+  /// Last route reported with the active session. Bluetooth HFP commonly switches away from
+  /// and back to the headset after activation, so a prompt verified later must not assume it.
+  private(set) var knownRoute: AudioRouteClass?
   private var captureEndDeadline: Date?
   /// Celorga may be the system's active remote participant: a push was answered with one, or
   /// receive audio was requested and not yet released. While it is, iOS disables Talk.
@@ -589,7 +619,7 @@ struct AudioApprovalSession: Sendable, Equatable {
       heardAt = nil
       queuedSpeech = nil
       if sessionActive, playback == .idle {
-        return speakPrompt()
+        return speakPromptWhenHeadset(now: now)
       }
       status = "Requesting audio…"
       return [.requestAudioSession]
@@ -597,6 +627,7 @@ struct AudioApprovalSession: Sendable, Equatable {
     case .sessionActivated(let route, let now):
       sessionActive = true
       awaitingAudio = false
+      knownRoute = route.route
       if capture == .awaitingSession {
         capture = .capturing
         status = "Listening for your reply…"
@@ -605,15 +636,22 @@ struct AudioApprovalSession: Sendable, Equatable {
       }
       guard playback == .idle, capture == .idle else { return [] }
       if route.route != .headset {
-        let due = now.addingTimeInterval(AudioApprovalFeature.headsetRouteSettleInterval)
-        headsetRouteSettleUntil = due
-        status = "Connecting the headset…"
-        return [.scheduleTick(after: AudioApprovalFeature.headsetRouteSettleInterval)]
+        return waitForHeadset(now: now)
       }
       return beginPlayback(route: route, now: now)
 
+    case .routeChecked(let route):
+      guard sessionActive, headsetRouteSettleUntil != nil else { return [] }
+      knownRoute = route.route
+      guard playback == .idle, capture == .idle else { return [] }
+      guard route.route == .headset else {
+        return [.checkRoute(after: AudioApprovalFeature.routeCheckInterval)]
+      }
+      return beginPlayback(route: route, now: clock)
+
     case .sessionDeactivated:
       sessionActive = false
+      knownRoute = nil
       headsetRouteSettleUntil = nil
       var effects: [AudioApprovalEffect] = []
       if case .speaking(let kind) = playback {
@@ -765,6 +803,7 @@ struct AudioApprovalSession: Sendable, Equatable {
       return handleReply(transcript, now: now)
 
     case .routeChanged(let route):
+      if sessionActive { knownRoute = route.route }
       if route.route == .headset {
         guard sessionActive, headsetRouteSettleUntil != nil,
               playback == .idle, capture == .idle else { return [] }
@@ -954,7 +993,7 @@ struct AudioApprovalSession: Sendable, Equatable {
     guard selectNext(now: now, preferPushed: true) else { return effects }
     // A released session is about to end; ask for it again rather than speak into it.
     if sessionActive, holdsRemoteParticipant, playback == .idle {
-      return effects + speakPrompt()
+      return effects + speakPromptWhenHeadset(now: now)
     }
     status = "Requesting audio…"
     return effects + [.requestAudioSession]
@@ -984,6 +1023,29 @@ struct AudioApprovalSession: Sendable, Equatable {
       clearHeard()
     }
     active = candidate
+  }
+
+  /// The session is already active. Speak only when its last known route is a headset;
+  /// otherwise keep the session and wait for Bluetooth to settle. Verification often arrives
+  /// while Push to Talk is still on the receiver, and speaking then fails the playback gate.
+  private mutating func speakPromptWhenHeadset(now: Date) -> [AudioApprovalEffect] {
+    if headsetRouteSettleUntil != nil {
+      status = "Connecting the headset…"
+      return []
+    }
+    guard knownRoute == .headset else { return waitForHeadset(now: now) }
+    return speakPrompt()
+  }
+
+  /// Keeps the system session for a bounded time and polls the route until it is a headset.
+  private mutating func waitForHeadset(now: Date) -> [AudioApprovalEffect] {
+    if headsetRouteSettleUntil != nil { return [] }
+    headsetRouteSettleUntil = now.addingTimeInterval(AudioApprovalFeature.headsetRouteSettleInterval)
+    status = "Connecting the headset…"
+    return [
+      .scheduleTick(after: AudioApprovalFeature.headsetRouteSettleInterval),
+      .checkRoute(after: AudioApprovalFeature.routeCheckInterval),
+    ]
   }
 
   private mutating func speakPrompt() -> [AudioApprovalEffect] {
@@ -1025,6 +1087,10 @@ struct AudioApprovalSession: Sendable, Equatable {
 
   private mutating func queueSpeech(_ text: String, _ kind: AudioSpeechKind) -> [AudioApprovalEffect] {
     if sessionActive, playback == .idle, capture == .idle {
+      guard knownRoute == .headset, headsetRouteSettleUntil == nil else {
+        queuedSpeech = (text, kind)
+        return waitForHeadset(now: clock)
+      }
       playback = .speaking(kind)
       return [.speak(text, kind)]
     }

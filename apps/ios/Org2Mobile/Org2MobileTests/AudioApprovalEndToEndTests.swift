@@ -123,6 +123,48 @@ final class AudioApprovalEndToEndTests: XCTestCase {
     XCTAssertEqual(rejected.approvalID, nextPush.approvalID)
     XCTAssertEqual(rejected.status, "rejected")
     XCTAssertEqual(rejected.oldStatus, "pending")
+
+    // Physical order from the build 56/57 phone trace: Push to Talk activates on the receiver
+    // before the Mac verifies the prompt; AirPods HFP becomes the route seconds later, and a
+    // backgrounded app may not receive a route-change notification for it. Verification on the
+    // receiver must not consume the prompt; the headset must be found by polling.
+    let routedPush: Push = try await control.post("/test/create-fresh", payload: Empty(), as: Push.self)
+    let backgroundPhone = AudioApprovalController()
+    backgroundPhone.attach(remote: remote)
+    backgroundPhone.setDemo(true)
+    backgroundPhone.setDemoRoute(headset: false, notify: false)
+    backgroundPhone.demoReceivePush(["runID": routedPush.runID, "approvalID": routedPush.approvalID,
+      "fingerprint": routedPush.fingerprint, "deliveryID": routedPush.deliveryID.uuidString])
+    try await eventually("The pushed prompt must be verified with the Mac while the route is still the receiver") {
+      backgroundPhone.promptText?.contains("Fresh end-to-end approval") == true || backgroundPhone.demoHeldPrompts > 0
+    }
+    try await Task.sleep(for: .seconds(1))
+    XCTAssertEqual(backgroundPhone.demoHeldPrompts, 0, "A verified prompt must not be spoken into the receiver while Bluetooth settles")
+    XCTAssertNil(backgroundPhone.demoSpoken, "Nothing plays before the headset route exists")
+    backgroundPhone.setDemoRoute(headset: true, notify: false)
+    try await eventually("The headset route must be discovered without a route-change notification") {
+      backgroundPhone.demoSpoken?.contains("Fresh end-to-end approval") == true
+    }
+    XCTAssertEqual(backgroundPhone.demoHeldPrompts, 0)
+    backgroundPhone.demoReply("yes")
+    try await eventually("Spoken yes after a delayed headset route must be confirmed by the Mac") {
+      backgroundPhone.replyHistory.first(where: { $0.target?.approvalID == routedPush.approvalID })?.outcome.contains("Approved") == true
+    }
+    let routedResult: Result = try await control.get("/test/result", as: Result.self)
+    XCTAssertEqual(routedResult.approvalID, routedPush.approvalID)
+    XCTAssertEqual(routedResult.status, "approved")
+    var routedTrace: [MobileRemoteAudioApprovalDeliveryRecord] = []
+    let routedDeadline = Date().addingTimeInterval(12)
+    repeat {
+      routedTrace = try await remote.audioApprovalDeliveryDiagnostics().filter { $0.deliveryID == routedPush.deliveryID }
+      if routedTrace.contains(where: { $0.stage == "decision-confirmed" }) { break }
+      try await Task.sleep(for: .milliseconds(50))
+    } while Date() < routedDeadline
+    let activation = try XCTUnwrap(routedTrace.first { $0.stage == "audio-session-active" })
+    XCTAssertEqual(activation.headset, false, "The activation receipt must report the receiver route: \(routedTrace)")
+    XCTAssertTrue(activation.detail?.contains("out=SimulatedReceiver") == true, "Receipts must explain the route: \(activation.detail ?? "none")")
+    XCTAssertFalse(routedTrace.contains { $0.stage == "playback-failed" }, "No failed attempt may precede the headset playback: \(routedTrace.map(\.stage))")
+    XCTAssertTrue(routedTrace.contains { $0.stage == "playback-completed" && $0.headset == true })
     let _: Empty = try await control.post("/test/complete", payload: Empty(), as: Empty.self)
   }
 

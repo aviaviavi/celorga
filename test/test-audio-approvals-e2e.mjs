@@ -23,7 +23,14 @@ const simulator = process.env.CELORGA_AUDIO_E2E_SIMULATOR || (() => {
   assert.ok(runtime && type, "An iOS Simulator runtime and iPhone device type are required.");
   return execFileSync("xcrun", ["simctl", "create", "Celorga Audio E2E", type.identifier, runtime.identifier], { encoding: "utf8" }).trim();
 })();
-const arm64Host = execFileSync("/usr/sbin/sysctl", ["-n", "hw.optional.arm64"], { encoding: "utf8" }).trim() === "1";
+// Intel Macs have no hw.optional.arm64 key; sysctl exits non-zero there.
+const arm64Host = (() => {
+  try {
+    return execFileSync("/usr/sbin/sysctl", ["-n", "hw.optional.arm64"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() === "1";
+  } catch {
+    return false;
+  }
+})();
 const nativeCommand = (command, args) => arm64Host && ["swift", "xcodebuild", "xcrun"].includes(command)
   ? ["/usr/bin/arch", ["-arm64", command, ...args]] : [command, args];
 let host;

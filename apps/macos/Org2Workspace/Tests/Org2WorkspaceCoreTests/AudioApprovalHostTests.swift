@@ -306,6 +306,19 @@ final class AudioApprovalHostTests: XCTestCase {
     XCTAssertNotEqual(recorded.deviceID, spoofedDevice, "Device identity comes from authentication")
     XCTAssertLessThan(try XCTUnwrap(recorded.observedAt), Date().addingTimeInterval(1), "Observation time comes from the host")
     XCTAssertTrue(recorded.simulated)
+    // Route context explains a physical failure; the host filters it to a bounded charset.
+    let ended = MobileRemoteAudioApprovalDeliveryRecord(deliveryID: deliveryID,
+      runID: older.runID, approvalID: older.approvalID, fingerprint: older.fingerprint,
+      stage: "audio-session-ended", simulated: true, headset: false,
+      detail: "out=Receiver;app=background;ptt=0;reason=held-no-headset \"Send $500\"" + String(repeating: "x", count: 400))
+    let _: [String: Bool] = try await call(remote, "POST", "/v1/audio-approvals/delivery", ended, token: token, as: [String: Bool].self)
+    let endedTrace = try await call(remote, "GET", "/v1/audio-approvals/diagnostics", Optional<String>.none,
+                                    token: observer.accessToken, as: [MobileRemoteAudioApprovalDeliveryRecord].self)
+    let endedRecord = try XCTUnwrap(endedTrace.last)
+    XCTAssertEqual(endedRecord.stage, "audio-session-ended")
+    let detail = try XCTUnwrap(endedRecord.detail)
+    XCTAssertTrue(detail.hasPrefix("out=Receiver;app=background;ptt=0;reason=held-no-headsetSend500"), detail)
+    XCTAssertLessThanOrEqual(detail.count, 160)
     XCTAssertEqual(try runApproval(repoRoot: repoRoot, corpus: corpus, older)["status"] as? String, "pending", "Playback diagnostics never authorize a decision")
 
     let snapshot = try await call(remote, "GET", "/v1/workspace", Optional<String>.none, token: token,

@@ -1027,6 +1027,15 @@ public final class MobileRemoteCoordinator: ObservableObject {
     if audioApprovalDeliveryRecords.count > 256 { audioApprovalDeliveryRecords.removeFirst(audioApprovalDeliveryRecords.count - 256) }
   }
 
+  /// Route and app-state context only: a fixed character set and length, so a receipt cannot
+  /// carry approval text, transcripts, or credentials into the trace.
+  nonisolated static func audioDeliveryDetail(_ detail: String?) -> String? {
+    guard let detail else { return nil }
+    let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789=;+._-")
+    let filtered = String(detail.filter { allowed.contains($0) }.prefix(160))
+    return filtered.isEmpty ? nil : filtered
+  }
+
   private func handleAudioApprovalDiagnostics(_ request: MobileRemoteHTTPRequest, path: String,
                                               token: String, store: WorkspaceStore) async -> MobileRemoteHTTPResponse? {
     if request.method == "GET", path == "/v1/audio-approvals/diagnostics" {
@@ -1035,7 +1044,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
     if request.method == "POST", path == "/v1/audio-approvals/delivery" {
       guard let device = credentialVault.device(forAccessToken: token),
             let event = try? request.decode(MobileRemoteAudioApprovalDeliveryRecord.self),
-            ["push-received", "prompt-verified", "audio-session-active", "playback-started", "playback-completed", "playback-failed", "decision-confirmed"].contains(event.stage),
+            ["push-received", "prompt-verified", "audio-session-active", "audio-session-ended", "playback-started", "playback-completed", "playback-failed", "decision-confirmed"].contains(event.stage),
             audioApprovalDeliveryRecords.contains(where: {
               $0.deviceID == device.id && $0.deliveryID == event.deliveryID && $0.stage == "apns-requested"
                 && $0.runID == event.runID && $0.approvalID == event.approvalID && $0.fingerprint == event.fingerprint
@@ -1043,7 +1052,8 @@ public final class MobileRemoteCoordinator: ObservableObject {
       appendAudioDelivery(MobileRemoteAudioApprovalDeliveryRecord(
         deliveryID: event.deliveryID, runID: event.runID, approvalID: event.approvalID,
         fingerprint: event.fingerprint, stage: event.stage, simulated: event.simulated,
-        headset: event.headset, deviceID: device.id, observedAt: Date()))
+        headset: event.headset, detail: Self.audioDeliveryDetail(event.detail),
+        deviceID: device.id, observedAt: Date()))
       return .json(["accepted": true])
     }
     guard request.method == "POST", path == "/v1/audio-approvals/probe" else { return nil }

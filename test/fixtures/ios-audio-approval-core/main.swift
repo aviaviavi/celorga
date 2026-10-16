@@ -164,8 +164,11 @@ do {
   _ = session.handle(.approvalsUpdated([a], now: t0))
   let activating = session.handle(.sessionActivated(speaker, now: t0))
   expect(
-    activating == [.scheduleTick(after: AudioApprovalFeature.headsetRouteSettleInterval)],
-    "an intermediate receiver route gets a bounded Bluetooth-settling grace"
+    activating == [
+      .scheduleTick(after: AudioApprovalFeature.headsetRouteSettleInterval),
+      .checkRoute(after: AudioApprovalFeature.routeCheckInterval),
+    ],
+    "an intermediate receiver route gets a bounded Bluetooth-settling grace and route polling"
   )
   expect(session.status == "Connecting the headset…", "the route transition is visible in Settings")
   let settled = session.handle(.routeChanged(headset))
@@ -199,6 +202,60 @@ do {
     spoken(settled).first?.contains("Approval request") == true,
     "a slower Bluetooth HFP route can still begin private playback"
   )
+}
+
+// 8b-2. Physical order (build 56/57 trace): the bridge answers the push with a remote participant,
+// so Push to Talk activates on the receiver before the Mac verifies the prompt. Verification
+// during the Bluetooth switch must wait for the headset instead of speaking into the receiver.
+do {
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  let activating = session.handle(.sessionActivated(speaker, now: t0))
+  expect(activating.contains(.checkRoute(after: AudioApprovalFeature.routeCheckInterval)), "activation on the receiver polls the route")
+  let verified = session.handle(.approvalsUpdated([a], now: t0.addingTimeInterval(0.3)))
+  expect(spoken(verified).isEmpty, "a prompt verified while the route is still the receiver is not spoken")
+  expect(!verified.contains(.releaseAudioSession), "verification during Bluetooth settling keeps the session")
+  expect(session.handle(.routeChecked(speaker)) == [.checkRoute(after: AudioApprovalFeature.routeCheckInterval)], "a receiver reading keeps polling")
+  // Six seconds after activation, past the former five-second grace, HFP arrives with no notification.
+  expect(!session.handle(.tick(now: t0.addingTimeInterval(6))).contains(.releaseAudioSession), "a six-second HFP switch is still within the grace")
+  let polled = session.handle(.routeChecked(headset))
+  expect(spoken(polled).first?.contains("Approval request") == true, "a polled headset route starts the verified prompt without a route-change notification")
+  expect(session.handle(.routeChecked(headset)).isEmpty, "polling stops once playback begins")
+}
+do {
+  // Activation reported the headset, but HFP switching moved the route away before the Mac answered.
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  expect(session.handle(.sessionActivated(headset, now: t0)).isEmpty, "a headset activation waits for the Mac")
+  _ = session.handle(.routeChanged(speaker))
+  let verified = session.handle(.approvalsUpdated([a], now: t0.addingTimeInterval(1)))
+  expect(spoken(verified).isEmpty, "verification after the route left the headset does not speak")
+  expect(verified.contains(.checkRoute(after: AudioApprovalFeature.routeCheckInterval)), "verification after the route left the headset waits for it")
+  expect(spoken(session.handle(.routeChecked(headset))).first?.contains("Approval request") == true, "the prompt plays once the headset returns")
+}
+do {
+  // The bounded grace still ends, and late readings after it do nothing.
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.sessionActivated(speaker, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  let timedOut = session.handle(.tick(now: t0.addingTimeInterval(AudioApprovalFeature.headsetRouteSettleInterval)))
+  expect(timedOut == [.releaseAudioSession], "no headset within the grace releases the session")
+  expect(session.handle(.routeChecked(headset)).isEmpty, "a route reading after the grace cannot start playback")
+  expect(session.handle(.routeChecked(speaker)).isEmpty, "a route reading after the grace never abandons the prompt")
+  expect(session.active?.target == targetA, "the timed-out prompt is kept for replay")
+}
+do {
+  // A spoken acknowledgement must not be attempted on the receiver either.
+  var session = joinedSession()
+  heardAndCapturing(&session)
+  _ = session.handle(.transmitEnded(initiated: true, interrupted: false))
+  let sending = session.handle(.transcriptReady("yes", now: t0.addingTimeInterval(6)))
+  expect(decisions(sending).count == 1, "spoken yes sends one decision")
+  _ = session.handle(.routeChanged(speaker))
+  let ack = session.handle(.decisionSucceeded(targetA, AudioDecisionOutcome(decision: "approved", runStatus: "running", pendingApprovalCount: 0, continuation: "continued", duplicate: false)))
+  expect(spoken(ack).isEmpty, "the acknowledgement waits while the route is not a headset")
+  expect(spoken(session.handle(.routeChecked(headset))) == ["Approved. The agent is continuing."], "the acknowledgement plays on the returning headset")
 }
 
 // 8c. If iOS stops audible speech without a finish/cancel callback, playback must not keep
