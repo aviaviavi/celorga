@@ -322,6 +322,7 @@ final class AIChatInboxTests: XCTestCase {
     XCTAssertEqual(receipt.deliveryAttemptID, messageID)
     XCTAssertEqual(receipt.runtimeThreadID, "thr-atomic")
     XCTAssertEqual(receipt.turnID, "turn-atomic")
+#if DEBUG
     let terminalDeadline = Date().addingTimeInterval(3)
     while store.codexDeliveryReceiptForTesting(messageID)?.state != .completed,
           Date() < terminalDeadline {
@@ -340,6 +341,7 @@ final class AIChatInboxTests: XCTestCase {
       payload["deliveryAttemptID"] as? String,
       terminalReceipt.deliveryAttemptID?.uuidString.lowercased()
     )
+#endif
     let allStarts = try String(contentsOf: startLog, encoding: .utf8)
       .split(separator: "\n")
     XCTAssertEqual(allStarts.count, 1)

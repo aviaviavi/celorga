@@ -1980,6 +1980,38 @@ final class CodexAppServerClientTests: XCTestCase {
         .filter { !$0.isEmpty }.count,
       2
     )
+
+    // Simulate a later field-losing writer after the accepted child became
+    // current. Falling back to the deterministic initial identity must not
+    // adopt any stale initial native terminal or start a third turn.
+    let fieldLost = makeClient()
+    do {
+      _ = try await fieldLost.runTurn(
+        threadID: "thr-atomic",
+        turnID: "local-after-child-field-loss",
+        message: "retry only after exact failure",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(
+          messageID: messageID,
+          attemptID: messageID
+        ),
+        turnStartPolicy: .reconcileOnly
+      )
+      XCTFail("Field loss after a child attempt must remain held")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected field-lost stale identity to remain held, got \(error)")
+      }
+    }
+    await fieldLost.shutdown()
+    XCTAssertEqual(
+      try String(contentsOf: countPath, encoding: .utf8)
+        .components(separatedBy: .newlines)
+        .filter { !$0.isEmpty }.count,
+      2
+    )
     let journalURLs = Self.managedRemoteJournalURLs(in: claimRoot)
     XCTAssertEqual(journalURLs.count, 1)
     let journalURL = try XCTUnwrap(journalURLs.first)
@@ -2082,8 +2114,8 @@ final class CodexAppServerClientTests: XCTestCase {
     }
     await first.shutdown()
 
-    // Simulate complete loss of additive transcript fields and the embedded
-    // marker: a fresh process invents a different attempt with no predecessor.
+    // Simulate complete loss of additive transcript fields: a fresh process
+    // invents a different attempt with no predecessor.
     // The independent producer journal must still block physical replay.
     let reloaded = makeClient()
     do {

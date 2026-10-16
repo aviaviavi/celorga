@@ -2397,9 +2397,6 @@ public struct AIChatMessageProvenance: Hashable, Codable, Sendable {
 }
 
 public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
-  private static let managedRemoteAttemptMarkerPrefix = "[celorga-managed-remote-attempt:"
-  private static let managedRemoteAttemptMarkerSuffix = "]"
-
   public enum Role: String, Codable, Sendable {
     case user
     case assistant
@@ -2479,7 +2476,6 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     roomRoundID: UUID? = nil,
     provenance: AIChatMessageProvenance? = nil
   ) {
-    let markerAttemptID = Self.managedRemoteAttemptID(in: sendFailure)
     self.id = id
     self.role = role
     self.content = content
@@ -2490,12 +2486,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     self.sendFailure = sendFailure
     self.deliveryStatus = role == .user ? deliveryStatus : .sent
     self.deliveryKind = role == .user ? deliveryKind : .turn
-    self.deliveryAttemptID = role == .user
-      ? (deliveryAttemptID ?? markerAttemptID ?? (deliveryStatus == .sending ? id : nil))
-      : nil
-    self.deliveryAttemptState = role == .user
-      ? (deliveryAttemptState ?? (markerAttemptID == nil ? nil : .unconfirmed))
-      : nil
+    self.deliveryAttemptID = role == .user ? deliveryAttemptID : nil
+    self.deliveryAttemptState = role == .user ? deliveryAttemptState : nil
     self.authorRuntime = role == .user ? nil : authorRuntime
     self.authorLabel = role == .user ? nil : authorLabel
     self.authorAgentRef = role == .user ? nil : authorAgentRef
@@ -2553,15 +2545,11 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     deliveryKind = role == .user
       ? (try container.decodeIfPresent(DeliveryKind.self, forKey: .deliveryKind) ?? .turn)
       : .turn
-    let markerAttemptID = Self.managedRemoteAttemptID(in: sendFailure)
     deliveryAttemptID = role == .user
-      ? (try container.decodeIfPresent(UUID.self, forKey: .deliveryAttemptID)
-          ?? markerAttemptID
-          ?? (deliveryStatus == .sending ? id : nil))
+      ? try container.decodeIfPresent(UUID.self, forKey: .deliveryAttemptID)
       : nil
     deliveryAttemptState = role == .user
-      ? (try container.decodeIfPresent(DeliveryAttemptState.self, forKey: .deliveryAttemptState)
-          ?? (markerAttemptID == nil ? nil : .unconfirmed))
+      ? try container.decodeIfPresent(DeliveryAttemptState.self, forKey: .deliveryAttemptState)
       : nil
     authorRuntime = role == .user
       ? nil
@@ -2784,59 +2772,15 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
   }
 
   public var deliveryIsUnconfirmed: Bool {
-    deliveryAttemptState == .unconfirmed || Self.managedRemoteAttemptID(in: sendFailure) != nil
+    deliveryAttemptState == .unconfirmed
   }
 
-  /// The durable marker is intentionally stored in an older-writer-safe field.
-  /// Keep it out of user-facing error text while retaining it across Codable
-  /// round trips performed by a writer that predates delivery-attempt fields.
   public var displayedSendFailure: String? {
-    Self.removingManagedRemoteAttemptMarker(from: sendFailure)
+    sendFailure
   }
 
   public var effectiveDeliveryAttemptID: UUID? {
-    deliveryAttemptID ?? Self.managedRemoteAttemptID(in: sendFailure)
-  }
-
-  public static func heldManagedRemoteDeliveryFailure(
-    attemptID: UUID,
-    detail: String
-  ) -> String {
-    let text = removingManagedRemoteAttemptMarker(from: detail)?
-      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    let marker = "\(managedRemoteAttemptMarkerPrefix)\(attemptID.uuidString.lowercased())\(managedRemoteAttemptMarkerSuffix)"
-    return text.isEmpty ? marker : "\(text)\n\(marker)"
-  }
-
-  private static func managedRemoteAttemptID(in value: String?) -> UUID? {
-    guard let value,
-          let prefixRange = value.range(of: managedRemoteAttemptMarkerPrefix, options: .backwards),
-          let suffixRange = value.range(
-            of: managedRemoteAttemptMarkerSuffix,
-            range: prefixRange.upperBound..<value.endIndex
-          )
-    else { return nil }
-    return UUID(uuidString: String(value[prefixRange.upperBound..<suffixRange.lowerBound]))
-  }
-
-  private static func removingManagedRemoteAttemptMarker(from value: String?) -> String? {
-    guard let value,
-          let prefixRange = value.range(of: managedRemoteAttemptMarkerPrefix, options: .backwards),
-          let suffixRange = value.range(
-            of: managedRemoteAttemptMarkerSuffix,
-            range: prefixRange.upperBound..<value.endIndex
-          ),
-          UUID(uuidString: String(value[prefixRange.upperBound..<suffixRange.lowerBound])) != nil
-    else { return value }
-    var result = value
-    var removalStart = prefixRange.lowerBound
-    if removalStart > result.startIndex {
-      let prior = result.index(before: removalStart)
-      if result[prior] == "\n" { removalStart = prior }
-    }
-    result.removeSubrange(removalStart..<suffixRange.upperBound)
-    let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.isEmpty ? nil : trimmed
+    deliveryAttemptID
   }
 
   public func replacingDeliveryAttemptState(

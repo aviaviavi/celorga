@@ -90,10 +90,7 @@ final class AIChatDetachedTurnTests: XCTestCase {
     ).replacingDeliveryAttempt(
       managedAttemptID,
       status: .sending,
-      sendFailure: AIChatMessage.heldManagedRemoteDeliveryFailure(
-        attemptID: managedAttemptID,
-        detail: ""
-      ),
+      sendFailure: nil,
       attemptState: .unconfirmed
     )
     let thread = AIChatThread(

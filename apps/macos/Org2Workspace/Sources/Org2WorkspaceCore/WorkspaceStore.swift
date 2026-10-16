@@ -40,6 +40,7 @@ public struct WorkspaceMissingDailyNote: Hashable, Sendable {
 public struct AIChatDeliveryReceipt: Equatable, Sendable {
   public enum State: String, Sendable {
     case rejected
+    case requested
     case started
     case completed
     case failed
@@ -3385,7 +3386,6 @@ public final class WorkspaceStore {
   private var externalThreadDetailCacheOrder: [String] = []
   private static let externalThreadDetailCacheLimit = 6
   private var codexActiveTurnsByThreadID: [UUID: (runtimeThreadID: String, turnID: String)] = [:]
-  private var codexStartedTurnsByMessageID: [UUID: (runtimeThreadID: String, turnID: String)] = [:]
   private var codexDeliveryReceiptsByMessageID: [UUID: AIChatDeliveryReceipt] = [:]
   private var codexDeliveryIdentityByRuntimeThreadID: [
     String: (messageID: UUID, attemptID: UUID)
@@ -28068,10 +28068,7 @@ extension WorkspaceStore {
             in: threadID,
             attemptID: attemptID,
             status: .sending,
-            sendFailure: AIChatMessage.heldManagedRemoteDeliveryFailure(
-              attemptID: attemptID,
-              detail: ""
-            ),
+            sendFailure: nil,
             attemptState: .unconfirmed,
             transcriptURL: sendOrigin.transcriptURL
           )
@@ -28277,24 +28274,13 @@ extension WorkspaceStore {
            let codexError = error as? CodexAppServerError,
            case .turnStartUnknown = codexError {
           aiChatDispatchedUserMessageIDs.remove(userMessageID)
-          replaceAIChatMessageDelivery(
-            for: userMessageID,
-            in: threadID,
-            status: .sending,
-            kind: userMessage.deliveryKind,
-            sendFailure: codexError.localizedDescription,
-            transcriptURL: sendOrigin.transcriptURL
-          )
           aiChatUnconfirmedOutcomeGenerationByMessageID[userMessageID, default: 0] += 1
           replaceAIChatDeliveryAttemptState(
             for: userMessageID,
             in: threadID,
             state: .unconfirmed,
             status: .sending,
-            sendFailure: AIChatMessage.heldManagedRemoteDeliveryFailure(
-              attemptID: codexDeliveryAttemptID ?? userMessage.effectiveDeliveryAttemptID ?? userMessageID,
-              detail: codexError.localizedDescription
-            ),
+            sendFailure: codexError.localizedDescription,
             transcriptURL: sendOrigin.transcriptURL
           )
           clearAIChatCompletedRunPresentation(for: threadID)
@@ -30730,8 +30716,6 @@ extension WorkspaceStore {
            $0.id == identity.messageID
              && $0.effectiveDeliveryAttemptID == identity.attemptID
          }) {
-        codexDeliveryIdentityByRuntimeThreadID[identityKey] = identity
-        codexStartedTurnsByMessageID[identity.messageID] = (runtimeThreadID, turnID)
         codexDeliveryReceiptsByMessageID[identity.messageID] = AIChatDeliveryReceipt(
           state: .started,
           messageID: identity.messageID,
@@ -30739,11 +30723,6 @@ extension WorkspaceStore {
           runtimeThreadID: runtimeThreadID,
           turnID: turnID
         )
-      } else if !isManagedRemote,
-                let messageID = activeAIChatUserMessageIDByThreadID[threadID] {
-        // Local and WebSocket Codex keep their pre-existing start tracking,
-        // but never inherit managed-remote uncertainty or receipt semantics.
-        codexStartedTurnsByMessageID[messageID] = (runtimeThreadID, turnID)
       }
       if stoppedAIChatThreadIDs.contains(threadID) {
         // Stop can race a successful turn/start response. The local request
@@ -30762,10 +30741,7 @@ extension WorkspaceStore {
           in: threadID,
           attemptID: identity.attemptID,
           status: .sending,
-          sendFailure: AIChatMessage.heldManagedRemoteDeliveryFailure(
-            attemptID: identity.attemptID,
-            detail: ""
-          ),
+          sendFailure: nil,
           attemptState: .unconfirmed
         )
       }
@@ -31476,6 +31452,38 @@ extension WorkspaceStore {
     aiChatRunActivitiesByThreadID[threadID] = []
   }
 
+  private nonisolated static func replacingAIChatMessageContent(
+    _ message: AIChatMessage,
+    with content: String
+  ) -> AIChatMessage {
+    AIChatMessage(
+      id: message.id,
+      role: message.role,
+      content: content,
+      attachments: message.attachments,
+      createdAt: message.createdAt,
+      changeSummary: message.changeSummary,
+      responseTrace: message.responseTrace,
+      sendFailure: message.sendFailure,
+      deliveryStatus: message.deliveryStatus,
+      deliveryKind: message.deliveryKind,
+      deliveryAttemptID: message.deliveryAttemptID,
+      deliveryAttemptState: message.deliveryAttemptState,
+      authorRuntime: message.authorRuntime,
+      authorLabel: message.authorLabel,
+      authorAgentRef: message.authorAgentRef,
+      source: message.source,
+      audience: message.audience,
+      targetRuntime: message.targetRuntime,
+      authorDestinationID: message.authorDestinationID,
+      audienceDestinationIDs: message.audienceDestinationIDs,
+      targetDestinationID: message.targetDestinationID,
+      isRoomDispatchCopy: message.isRoomDispatchCopy,
+      roomRoundID: message.roomRoundID,
+      provenance: message.provenance
+    )
+  }
+
   private nonisolated static func expandingOpenClawAgentCommand(
     _ message: AIChatMessage,
     corpusSkills: [AIChatSlashCommand]
@@ -31505,31 +31513,9 @@ extension WorkspaceStore {
         instruction = "Summarize the currently selected Celorga document concisely. Preserve decisions, TODOs, dates, and important links, and cite source file and line ranges."
       }
     }
-    return AIChatMessage(
-      id: message.id,
-      role: message.role,
-      content: "\(message.content)\n\n\(instruction)",
-      attachments: message.attachments,
-      createdAt: message.createdAt,
-      changeSummary: message.changeSummary,
-      responseTrace: message.responseTrace,
-      sendFailure: message.sendFailure,
-      deliveryStatus: message.deliveryStatus,
-      deliveryKind: message.deliveryKind,
-      deliveryAttemptID: message.deliveryAttemptID,
-      deliveryAttemptState: message.deliveryAttemptState,
-      authorRuntime: message.authorRuntime,
-      authorLabel: message.authorLabel,
-      authorAgentRef: message.authorAgentRef,
-      source: message.source,
-      audience: message.audience,
-      targetRuntime: message.targetRuntime,
-      authorDestinationID: message.authorDestinationID,
-      audienceDestinationIDs: message.audienceDestinationIDs,
-      targetDestinationID: message.targetDestinationID,
-      isRoomDispatchCopy: message.isRoomDispatchCopy,
-      roomRoundID: message.roomRoundID,
-      provenance: message.provenance
+    return replacingAIChatMessageContent(
+      message,
+      with: "\(message.content)\n\n\(instruction)"
     )
   }
 
@@ -31677,32 +31663,7 @@ extension WorkspaceStore {
     """
     var result = messages
     let message = result[targetIndex]
-    result[targetIndex] = AIChatMessage(
-      id: message.id,
-      role: message.role,
-      content: prompt,
-      attachments: message.attachments,
-      createdAt: message.createdAt,
-      changeSummary: message.changeSummary,
-      responseTrace: message.responseTrace,
-      sendFailure: message.sendFailure,
-      deliveryStatus: message.deliveryStatus,
-      deliveryKind: message.deliveryKind,
-      deliveryAttemptID: message.deliveryAttemptID,
-      deliveryAttemptState: message.deliveryAttemptState,
-      authorRuntime: message.authorRuntime,
-      authorLabel: message.authorLabel,
-      authorAgentRef: message.authorAgentRef,
-      source: message.source,
-      audience: message.audience,
-      targetRuntime: message.targetRuntime,
-      authorDestinationID: message.authorDestinationID,
-      audienceDestinationIDs: message.audienceDestinationIDs,
-      targetDestinationID: message.targetDestinationID,
-      isRoomDispatchCopy: message.isRoomDispatchCopy,
-      roomRoundID: message.roomRoundID,
-      provenance: message.provenance
-    )
+    result[targetIndex] = replacingAIChatMessageContent(message, with: prompt)
     return result
   }
 
@@ -32204,8 +32165,8 @@ extension WorkspaceStore {
     message: AIChatMessage,
     receipt: AIChatDeliveryReceipt?
   ) -> UUID? {
-    let currentAttemptID = message.effectiveDeliveryAttemptID ?? message.id
-    guard let receipt,
+    guard let currentAttemptID = message.deliveryAttemptID,
+          let receipt,
           receipt.messageID == message.id,
           receipt.deliveryAttemptID == currentAttemptID,
           receipt.runtimeThreadID?.isEmpty == false,
@@ -32220,7 +32181,7 @@ extension WorkspaceStore {
           let thread = aiChatThread(threadID, transcriptURL: aiChatTranscriptURL),
           let message = aiChatMessages(for: threadID).first(where: { $0.id == messageID }),
           message.role == .user,
-          message.sendFailure != nil
+          message.sendFailure != nil || message.deliveryIsUnconfirmed
     else {
       return
     }
@@ -32234,13 +32195,11 @@ extension WorkspaceStore {
     guard isHeldUncertainAttempt
       || !aiChatPendingUserMessageIDs(for: threadID).contains(messageID)
     else { return }
-    aiChatRetryAttemptGenerationByMessageID[messageID, default: 0] += 1
     // A user-initiated retry is a new attempt. Stop guards intentionally ignore
     // late events from the canceled attempt, but must not suppress the retry's
     // gateway events or turn its errors back into another stopped result.
     repairOrphanedAIChatSends(in: threadID)
     aiChatDispatchedUserMessageIDs.remove(messageID)
-    codexStartedTurnsByMessageID.removeValue(forKey: messageID)
     let destinationID = message.targetDestinationID ?? thread.destinationID
     let isManagedRemote = aiChatDestination(id: destinationID)?.adapter == .codexManagedRemote
     let currentAttemptID = message.effectiveDeliveryAttemptID ?? message.id
@@ -32252,38 +32211,41 @@ extension WorkspaceStore {
       : nil
     let startsAuthorizedRetry = authoritativePredecessor != nil
     let preservesUncertainAttempt = isManagedRemote && !startsAuthorizedRetry
-    let deliveryAttemptID = startsAuthorizedRetry || !isManagedRemote
-      ? UUID()
-      : currentAttemptID
-    aiChatRetryTurnStartPolicies[messageID] = preservesUncertainAttempt
-      ? .reconcileOnly
-      : .startIfAbsent
-    if let authoritativePredecessor {
-      aiChatRetryPredecessorAttemptIDs[messageID] = authoritativePredecessor
-    } else {
-      aiChatRetryPredecessorAttemptIDs.removeValue(forKey: messageID)
-    }
-    if startsAuthorizedRetry || !isManagedRemote {
-      codexDeliveryReceiptsByMessageID.removeValue(forKey: messageID)
+    let deliveryAttemptID = startsAuthorizedRetry ? UUID() : currentAttemptID
+    if isManagedRemote {
+      aiChatRetryAttemptGenerationByMessageID[messageID, default: 0] += 1
+      aiChatRetryTurnStartPolicies[messageID] = preservesUncertainAttempt
+        ? .reconcileOnly
+        : .startIfAbsent
+      if let authoritativePredecessor {
+        aiChatRetryPredecessorAttemptIDs[messageID] = authoritativePredecessor
+      } else {
+        aiChatRetryPredecessorAttemptIDs.removeValue(forKey: messageID)
+      }
+      if startsAuthorizedRetry {
+        codexDeliveryReceiptsByMessageID.removeValue(forKey: messageID)
+      }
     }
     stoppedAIChatThreadIDs.remove(threadID)
     staleCodexRuntimeThreadIDs.remove(threadID)
     // Decide before this message itself becomes `sending` again, which would
     // count as a running turn.
     let threadWasRunning = isAIChatThreadRunning(threadID)
-    replaceAIChatDeliveryAttempt(
-      for: messageID,
-      in: threadID,
-      attemptID: deliveryAttemptID,
-      status: .sending,
-      sendFailure: preservesUncertainAttempt
-        ? AIChatMessage.heldManagedRemoteDeliveryFailure(
-            attemptID: deliveryAttemptID,
-            detail: message.displayedSendFailure ?? Self.aiChatUnknownSendFailureText
-          )
-        : nil,
-      attemptState: preservesUncertainAttempt ? .unconfirmed : nil
-    )
+    if isManagedRemote {
+      replaceAIChatDeliveryAttempt(
+        for: messageID,
+        in: threadID,
+        attemptID: deliveryAttemptID,
+        status: .sending,
+        sendFailure: preservesUncertainAttempt
+          ? (message.displayedSendFailure ?? Self.aiChatUnknownSendFailureText)
+          : nil,
+        attemptState: preservesUncertainAttempt ? .unconfirmed : nil
+      )
+    } else {
+      clearAIChatSendFailure(for: messageID, in: threadID)
+      replaceAIChatDeliveryStatus(for: messageID, in: threadID, with: .sending)
+    }
     if message.deliveryKind == .steer {
       if threadWasRunning,
          canSteerAIChatThread(threadID, destinationID: message.targetDestinationID),
@@ -32316,9 +32278,9 @@ extension WorkspaceStore {
     await drainAIChatSendQueue(for: threadID)
   }
 
-  /// Starts an explicit retry and returns only after Celorga has evidence of a
-  /// native Codex turn or a durable terminal delivery state. Queue acceptance
-  /// alone is deliberately not a successful receipt.
+  /// Starts an explicit retry. Managed-remote Codex waits for exact native
+  /// evidence; other transports return only that the retry was requested and
+  /// never infer execution from mutable transcript state.
   public func retryAIChatMessageAwaitingDelivery(
     _ messageID: UUID,
     timeout: Duration = .seconds(25)
@@ -32327,7 +32289,7 @@ extension WorkspaceStore {
           let thread = aiChatThread(threadID, transcriptURL: aiChatTranscriptURL),
           let message = aiChatMessages(for: threadID).first(where: { $0.id == messageID }),
           message.role == .user,
-          message.sendFailure != nil,
+          message.sendFailure != nil || message.deliveryIsUnconfirmed,
           message.deliveryIsUnconfirmed
             || !aiChatPendingUserMessageIDs(for: threadID).contains(messageID)
     else {
@@ -32338,9 +32300,18 @@ extension WorkspaceStore {
       )
     }
     let destinationID = message.targetDestinationID ?? thread.destinationID
-    let requiresNativeReceipt = aiChatDestination(id: destinationID)?.adapter == .codexManagedRemote
+    let isManagedRemote = aiChatDestination(id: destinationID)?.adapter == .codexManagedRemote
+    if !isManagedRemote {
+      Task { @MainActor [weak self] in
+        await self?.retryAIChatMessage(messageID)
+      }
+      return AIChatDeliveryReceipt(
+        state: .requested,
+        messageID: messageID,
+        detail: "Retry requested; native execution has not been confirmed."
+      )
+    }
 
-    codexStartedTurnsByMessageID.removeValue(forKey: messageID)
     let priorAttemptGeneration = aiChatRetryAttemptGenerationByMessageID[messageID, default: 0]
     let priorUnconfirmedGeneration = aiChatUnconfirmedOutcomeGenerationByMessageID[messageID, default: 0]
     Task { @MainActor [weak self] in
@@ -32369,35 +32340,6 @@ extension WorkspaceStore {
             detail: current.displayedSendFailure
           )
         }
-        if !requiresNativeReceipt {
-          switch current.deliveryStatus {
-        case .failed:
-          if retryAttemptStarted {
-            return AIChatDeliveryReceipt(state: .failed, detail: current.displayedSendFailure)
-          }
-        case .interrupted:
-          if retryAttemptStarted {
-            return AIChatDeliveryReceipt(state: .interrupted, detail: current.displayedSendFailure)
-          }
-        case .sent:
-          if retryAttemptStarted {
-            return AIChatDeliveryReceipt(state: .completed)
-          }
-        case .sending:
-          break
-          }
-        }
-      }
-      if !requiresNativeReceipt,
-         let started = codexStartedTurnsByMessageID[messageID] {
-        return AIChatDeliveryReceipt(
-          state: .started,
-          messageID: messageID,
-          deliveryAttemptID: aiChatMessages(for: threadID)
-            .first(where: { $0.id == messageID })?.effectiveDeliveryAttemptID,
-          runtimeThreadID: started.runtimeThreadID,
-          turnID: started.turnID
-        )
       }
       try? await Task.sleep(for: .milliseconds(50))
     }

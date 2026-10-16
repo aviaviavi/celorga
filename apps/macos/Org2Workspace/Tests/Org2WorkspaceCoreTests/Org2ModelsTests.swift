@@ -3643,10 +3643,19 @@ final class Org2ModelsTests: XCTestCase {
 
     let receipt = await store.retryAIChatMessageAwaitingDelivery(failedMessage.id)
 
-    let attemptCount = await recorder.attemptCount()
-    XCTAssertEqual(receipt.state, .completed)
+    XCTAssertEqual(receipt.state, .requested)
+    XCTAssertEqual(receipt.messageID, failedMessage.id)
     XCTAssertNil(receipt.runtimeThreadID)
     XCTAssertNil(receipt.turnID)
+    let retryDeadline = Date().addingTimeInterval(3)
+    while await recorder.attemptCount() < 2, Date() < retryDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    let replyDeadline = Date().addingTimeInterval(3)
+    while store.aiChatMessages.count < 2, Date() < replyDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    let attemptCount = await recorder.attemptCount()
     XCTAssertEqual(attemptCount, 2)
     XCTAssertEqual(store.aiChatMessages.map { "\($0.role.rawValue):\($0.content)" }, [
       "user:Are you reachable?",
@@ -3699,17 +3708,14 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertTrue(interrupted.latestDeliveryNeedsAttention)
   }
 
-  func testManagedRemoteHoldSurvivesOlderWriterFieldLoss() throws {
+  func testManagedRemoteAttemptUsesOnlyStructuredFields() throws {
     let messageID = UUID()
     let attemptID = UUID()
     let held = AIChatMessage(
       id: messageID,
       role: .user,
       content: "Do this once",
-      sendFailure: AIChatMessage.heldManagedRemoteDeliveryFailure(
-        attemptID: attemptID,
-        detail: "Delivery is awaiting confirmation."
-      ),
+      sendFailure: "Delivery is awaiting confirmation.",
       deliveryStatus: .sending,
       deliveryAttemptID: attemptID,
       deliveryAttemptState: .unconfirmed,
@@ -3726,10 +3732,9 @@ final class Org2ModelsTests: XCTestCase {
     let restored = try JSONDecoder().decode(AIChatMessage.self, from: olderWriterData)
 
     XCTAssertEqual(restored.id, messageID)
-    XCTAssertEqual(restored.effectiveDeliveryAttemptID, attemptID)
-    XCTAssertTrue(restored.deliveryIsUnconfirmed)
+    XCTAssertNil(restored.effectiveDeliveryAttemptID)
+    XCTAssertFalse(restored.deliveryIsUnconfirmed)
     XCTAssertEqual(restored.displayedSendFailure, "Delivery is awaiting confirmation.")
-    XCTAssertNotEqual(restored.effectiveDeliveryAttemptID, restored.id)
   }
 
   @MainActor
@@ -7137,9 +7142,10 @@ final class Org2ModelsTests: XCTestCase {
       receipt: receipt(.failed, turnID: nil)
     ))
 
-    // A legacy/local writer can drop every additive attempt field and replace
-    // mutable status text. The positive native receipt remains authoritative
-    // for the stable initial message attempt; status alone remains powerless.
+    // If a writer drops the structured attempt fields, a stale native receipt
+    // cannot authorize a child. The producer journal remains the fail-closed
+    // authority when the message is reconciled as its deterministic initial
+    // identity.
     let fieldLost = AIChatMessage(
       id: message.id,
       role: .user,
@@ -7154,13 +7160,10 @@ final class Org2ModelsTests: XCTestCase {
       runtimeThreadID: "native-thread",
       turnID: "native-turn"
     )
-    XCTAssertEqual(
-      WorkspaceStore.managedRemoteRetryPredecessor(
-        message: fieldLost,
-        receipt: initialReceipt
-      ),
-      message.id
-    )
+    XCTAssertNil(WorkspaceStore.managedRemoteRetryPredecessor(
+      message: fieldLost,
+      receipt: initialReceipt
+    ))
     XCTAssertNil(WorkspaceStore.managedRemoteRetryPredecessor(
       message: fieldLost,
       receipt: nil
@@ -7207,6 +7210,19 @@ final class Org2ModelsTests: XCTestCase {
     ).openOrgServerRetryPayload()
     XCTAssertEqual(unknown["turnStarted"] as? Bool, false)
     XCTAssertEqual(unknown["terminal"] as? Bool, false)
+
+    let requested = AIChatDeliveryReceipt(
+      state: .requested,
+      messageID: messageID,
+      detail: "Retry requested; native execution has not been confirmed."
+    ).openOrgServerRetryPayload()
+    XCTAssertEqual(requested["retryRequested"] as? Bool, true)
+    XCTAssertEqual(requested["deliveryState"] as? String, "requested")
+    XCTAssertEqual(requested["turnStarted"] as? Bool, false)
+    XCTAssertEqual(requested["terminal"] as? Bool, false)
+    XCTAssertNil(requested["deliveryAttemptID"])
+    XCTAssertNil(requested["runtimeThreadID"])
+    XCTAssertNil(requested["turnID"])
   }
 
   @MainActor
