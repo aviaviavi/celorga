@@ -251,7 +251,7 @@ do {
   _ = session.handle(.decisionSucceeded(targetA, AudioDecisionOutcome(decision: "rejected", runStatus: "running", pendingApprovalCount: 0, continuation: "recorded", duplicate: false)))
   _ = session.handle(.sessionDeactivated)
   let next = session.handle(.approvalsUpdated([b], now: t0.addingTimeInterval(4)))
-  expect(next == [.requestAudioSession] && session.active?.target == targetB, "B is offered only after A settles")
+  expect(next == [.requestAudioSession, .scheduleTick(after: AudioApprovalFeature.remoteParticipantHoldLimit)] && session.active?.target == targetB, "B is offered only after A settles")
 }
 
 // 11. A push during a reply never interrupts it; the new prompt waits until the answer ends.
@@ -292,7 +292,7 @@ do {
   let tick = session.handle(.tick(now: t0.addingTimeInterval(AudioApprovalFeature.answerGrace + 1)))
   expect(tick.contains(.refreshApprovals) && session.active == nil && session.pushedTarget == targetB, "after the grace B replaces the unanswered A")
   let played = session.handle(.approvalsUpdated([a, b], now: t0.addingTimeInterval(AudioApprovalFeature.answerGrace + 2)))
-  expect(played == [.requestAudioSession] && session.active?.target == targetB, "B is offered even though A is still pending")
+  expect(played == [.requestAudioSession, .scheduleTick(after: AudioApprovalFeature.remoteParticipantHoldLimit)] && session.active?.target == targetB, "B is offered even though A is still pending")
 }
 do {
   var session = joinedSession()
@@ -321,7 +321,7 @@ do {
   var session = joinedSession()
   _ = session.handle(.transmitBegan(initiated: true, now: t0))
   let nothing = session.handle(.transmitEnded(initiated: true, interrupted: false))
-  expect(spoken(nothing).isEmpty && nothing == [.requestAudioSession] && session.lastAcknowledgement?.contains("Nothing to answer") == true, "a press with no prompt is announced after release")
+  expect(spoken(nothing).isEmpty && nothing == [.requestAudioSession, .scheduleTick(after: AudioApprovalFeature.remoteParticipantHoldLimit)] && session.lastAcknowledgement?.contains("Nothing to answer") == true, "a press with no prompt is announced after release")
   expect(spoken(session.handle(.sessionActivated(headset, now: t0))).first?.contains("Nothing to answer") == true, "and spoken once audio is available")
 }
 do {
@@ -492,6 +492,71 @@ do {
   expect(!progress.renderingFinished(first), "late generator cannot release a newer audio session")
   expect(!progress.played(second), "drained audio waits for rendering EOF")
   expect(progress.renderingFinished(second), "EOF completes an already drained utterance")
+}
+
+// Celorga must never stay the active remote participant: while it is, iOS disables Talk.
+do {
+  // A push for the prompt already heard (the Mac re-pushes it) must hand Talk back.
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  _ = session.handle(.sessionActivated(headset, now: t0))
+  _ = session.handle(.playbackFinished(completed: true, now: t0))
+  _ = session.handle(.sessionDeactivated)
+  expect(!session.holdsRemoteParticipant, "a finished prompt releases the participant")
+  let repush = session.handle(.pushReceived(targetA, now: t0.addingTimeInterval(40)))
+  expect(repush == [.refreshApprovals, .scheduleTick(after: AudioApprovalFeature.remoteParticipantHoldLimit)], "a re-push of the heard prompt is checked with the Mac")
+  let checked = session.handle(.approvalsUpdated([a], now: t0.addingTimeInterval(41)))
+  expect(checked == [.releaseAudioSession] && !session.holdsRemoteParticipant, "the re-push releases Talk once the Mac confirms nothing new")
+  let reply = session.handle(.transmitBegan(initiated: true, now: t0.addingTimeInterval(45)))
+  expect(reply.isEmpty && session.capture == .awaitingSession, "the heard prompt can still be answered")
+}
+do {
+  // A push during the answer grace is deferred; Talk must stay usable for the current prompt.
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  _ = session.handle(.sessionActivated(headset, now: t0))
+  _ = session.handle(.playbackFinished(completed: true, now: t0))
+  _ = session.handle(.sessionDeactivated)
+  let deferred = session.handle(.pushReceived(targetB, now: t0.addingTimeInterval(3)))
+  expect(deferred.contains(.releaseAudioSession) && session.deferredPush == targetB, "a deferred push releases Talk for the current answer")
+}
+do {
+  // A push before enrollment is known (background launch) must not hold the participant.
+  var session = AudioApprovalSession(makeReceipt: receipts())
+  expect(session.handle(.pushReceived(targetA, now: t0)) == [.releaseAudioSession], "an unexpected push is released")
+  expect(!session.holdsRemoteParticipant, "nothing holds Talk")
+}
+do {
+  // The Mac never answers the check: Talk is released after the hold limit.
+  var session = joinedSession()
+  let pushed = session.handle(.pushReceived(targetA, now: t0))
+  expect(pushed.contains(.scheduleTick(after: AudioApprovalFeature.remoteParticipantHoldLimit)), "a deadline is armed for the host check")
+  _ = session.handle(.sessionActivated(headset, now: t0))
+  expect(session.holdsRemoteParticipant, "the session is kept while the Mac checks the prompt")
+  let expired = session.handle(.tick(now: t0.addingTimeInterval(AudioApprovalFeature.remoteParticipantHoldLimit)))
+  expect(expired == [.releaseAudioSession] && !session.holdsRemoteParticipant, "an unanswered host check releases Talk")
+  // If the Mac answers late, the prompt is requested again rather than lost.
+  let late = session.handle(.approvalsUpdated([a], now: t0.addingTimeInterval(20)))
+  expect(late.contains(.requestAudioSession) && session.active?.target == targetA, "a late confirmation still offers the prompt")
+}
+do {
+  // Audio requested but the system never activates it.
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0.addingTimeInterval(1)))
+  let expired = session.handle(.tick(now: t0.addingTimeInterval(AudioApprovalFeature.remoteParticipantHoldLimit + 1)))
+  expect(expired == [.releaseAudioSession] && !session.holdsRemoteParticipant, "a session that never activates releases Talk")
+}
+do {
+  // Playback in progress keeps the participant; the deadline does not cut a prompt.
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  _ = session.handle(.sessionActivated(headset, now: t0))
+  expect(session.handle(.tick(now: t0.addingTimeInterval(AudioApprovalFeature.remoteParticipantHoldLimit + 1))).isEmpty, "the deadline never interrupts playback")
+  expect(session.holdsRemoteParticipant, "playing audio keeps the participant")
 }
 
 print("ios audio approval core: \(checks - failures)/\(checks) checks passed")

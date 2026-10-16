@@ -197,6 +197,8 @@ final class AudioApprovalController: ObservableObject {
     case .managerReady(let failure, let restored):
       pushToTalkAvailable = failure == nil
       if restored {
+        // A push may already have established enrollment.
+        guard !channelJoined else { return }
         channelJoined = true
         send(.enrollmentChanged(joined: true))
         Task { await registerWithMac(enabled: true) }
@@ -217,6 +219,14 @@ final class AudioApprovalController: ObservableObject {
       if initiated { beginReplyBackgroundTask() }
       send(.transmitEnded(initiated: initiated, interrupted: interrupted))
     case .incomingPush(let target):
+      // The bridge accepts a push only for the joined channel. On a background launch the push
+      // can arrive before the restored-channel callback; without this the state machine would
+      // ignore it and leave Celorga as the active speaker, which disables the Talk button.
+      if !channelJoined {
+        channelJoined = true
+        send(.enrollmentChanged(joined: true))
+        Task { await registerWithMac(enabled: true) }
+      }
       send(.pushReceived(target, now: Date()))
     case .ephemeralToken(let token):
       // Ephemeral and in memory only; valid while joined.

@@ -25,6 +25,9 @@ enum AudioApprovalFeature {
   /// receiver to an already-selected headset. Keep the system session briefly so that route
   /// change can arrive; never play during this grace unless the route becomes a headset.
   static let headsetRouteSettleInterval: TimeInterval = 5
+  /// While Celorga is the active remote participant, iOS disables the Talk button. A push or
+  /// audio request that has not produced playback within this time releases it.
+  static let remoteParticipantHoldLimit: TimeInterval = 15
 
   static var isEnabled: Bool {
     UserDefaults.standard.bool(forKey: defaultsKey)
@@ -410,6 +413,14 @@ struct AudioApprovalSession: Sendable, Equatable {
   private var scheduledTick: Date?
   private var headsetRouteSettleUntil: Date?
   private var captureEndDeadline: Date?
+  /// Celorga may be the system's active remote participant: a push was answered with one, or
+  /// receive audio was requested and not yet released. While it is, iOS disables Talk.
+  private(set) var holdsRemoteParticipant = false
+  /// A pushed prompt is being checked with the Mac.
+  private var awaitingHost = false
+  /// Receive audio was requested and the system has not yet activated the session.
+  private var awaitingAudio = false
+  private var remoteHoldDeadline: Date?
 
   private let makeReceipt: @Sendable () -> String
 
@@ -430,6 +441,8 @@ struct AudioApprovalSession: Sendable, Equatable {
 
   mutating func handle(_ event: AudioApprovalEvent) -> [AudioApprovalEffect] {
     if let now = event.now { clock = max(clock, now) }
+    // The bridge answers every push it accepts with an active remote participant.
+    if case .pushReceived = event { holdsRemoteParticipant = true }
     var effects = handleEvent(event)
     if deferredPush != nil {
       if isAnswering(at: clock) {
@@ -445,7 +458,45 @@ struct AudioApprovalSession: Sendable, Equatable {
         effects += takePush(target, now: clock)
       }
     }
-    return effects
+    return effects + settleRemoteParticipant(after: effects)
+  }
+
+  /// Celorga must not remain the active remote participant without a reason: while it is, iOS
+  /// shows Celorga as speaking and the Talk button cannot start a reply. Unless the session is
+  /// playing, about to play, or checking a pushed prompt, release the participant.
+  private mutating func settleRemoteParticipant(after effects: [AudioApprovalEffect]) -> [AudioApprovalEffect] {
+    for effect in effects {
+      switch effect {
+      case .requestAudioSession:
+        holdsRemoteParticipant = true
+        awaitingAudio = true
+      case .releaseAudioSession:
+        holdsRemoteParticipant = false
+        awaitingAudio = false
+        awaitingHost = false
+      default:
+        break
+      }
+    }
+    guard holdsRemoteParticipant else {
+      remoteHoldDeadline = nil
+      return []
+    }
+    // A transmission in progress already owns the channel.
+    if transmitting || capture != .idle { return [] }
+    let waiting = awaitingHost || awaitingAudio
+    guard playback != .idle || headsetRouteSettleUntil != nil || waiting else {
+      holdsRemoteParticipant = false
+      remoteHoldDeadline = nil
+      return [.releaseAudioSession]
+    }
+    guard waiting else {
+      remoteHoldDeadline = nil
+      return []
+    }
+    guard remoteHoldDeadline == nil else { return [] }
+    remoteHoldDeadline = clock.addingTimeInterval(AudioApprovalFeature.remoteParticipantHoldLimit)
+    return [.scheduleTick(after: AudioApprovalFeature.remoteParticipantHoldLimit)]
   }
 
   /// Playing, capturing, deciding, or just heard: a new prompt must not cut in.
@@ -485,10 +536,11 @@ struct AudioApprovalSession: Sendable, Equatable {
 
     case .approvalsUpdated(let list, let now):
       candidates = list
+      awaitingHost = false
       return reconcileWithHost(now: now)
 
     case .pushReceived(let target, let now):
-      guard joined else { return [] }
+      guard joined else { return [.releaseAudioSession] }
       guard let target else {
         status = "Ignored a prompt without a complete identity."
         return [.releaseAudioSession]
@@ -497,7 +549,10 @@ struct AudioApprovalSession: Sendable, Equatable {
         status = "Quiet: a prompt arrived and was held. Nothing played."
         return [.releaseAudioSession]
       }
-      if target == active?.target || target == deciding { return [.refreshApprovals] }
+      if target == active?.target || target == deciding {
+        awaitingHost = true
+        return [.refreshApprovals]
+      }
       if isAnswering(at: now) {
         // Never interrupt an answer in progress; take the new prompt up afterwards.
         deferredPush = target
@@ -532,6 +587,7 @@ struct AudioApprovalSession: Sendable, Equatable {
 
     case .sessionActivated(let route, let now):
       sessionActive = true
+      awaitingAudio = false
       if capture == .awaitingSession {
         capture = .capturing
         status = "Listening for your reply…"
@@ -679,6 +735,14 @@ struct AudioApprovalSession: Sendable, Equatable {
         transmitting = false
         return [.cancelCapture] + terminal("Audio ended during your reply. Nothing was decided.")
       }
+      if let due = remoteHoldDeadline, now >= due, holdsRemoteParticipant,
+         awaitingHost || awaitingAudio, playback == .idle, headsetRouteSettleUntil == nil {
+        remoteHoldDeadline = nil
+        status = active == nil
+          ? "The Mac did not confirm the prompt in time. Talk is available; nothing was decided."
+          : "Audio did not start in time. Talk is available; play the prompt again when ready."
+        return [.releaseAudioSession]
+      }
       if let due = headsetRouteSettleUntil, now >= due {
         headsetRouteSettleUntil = nil
         status = "Held (no-headset). The prompt is kept; nothing was played on another output."
@@ -770,6 +834,7 @@ struct AudioApprovalSession: Sendable, Equatable {
       activeReceipt = nil
     }
     pushedTarget = target
+    awaitingHost = true
     status = "Prompt received. Checking it with the Mac…"
     effects.append(.refreshApprovals)
     return effects
@@ -878,7 +943,8 @@ struct AudioApprovalSession: Sendable, Equatable {
     guard active == nil, deciding == nil, capture == .idle else { return effects }
     guard joined, !isQuiet(at: now) else { return effects + [.releaseAudioSession] }
     guard selectNext(now: now, preferPushed: true) else { return effects }
-    if sessionActive, playback == .idle {
+    // A released session is about to end; ask for it again rather than speak into it.
+    if sessionActive, holdsRemoteParticipant, playback == .idle {
       return effects + speakPrompt()
     }
     status = "Requesting audio…"
@@ -936,6 +1002,9 @@ struct AudioApprovalSession: Sendable, Equatable {
       return [.speak(queued.text, queued.kind)]
     }
     guard let active, active.target != heardTarget else {
+      // A push activates the session before the Mac has confirmed its prompt. Keep the
+      // session for that check instead of releasing it and requesting it again.
+      if active == nil, awaitingHost { return [] }
       return [.releaseAudioSession]
     }
     if case .hold(let reason) = planAudioPlayback(quiet: isQuiet(at: now), snapshot: snapshot) {
