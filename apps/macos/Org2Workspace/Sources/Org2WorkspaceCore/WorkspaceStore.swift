@@ -34005,6 +34005,23 @@ extension WorkspaceStore {
     selectAIChatThread(id, persistsSelection: true)
   }
 
+  /// Title of an existing chat thread, for rendering a pasted thread ID as a
+  /// link. Unknown IDs return nil and stay plain text.
+  public func aiChatThreadLinkTitle(_ id: UUID) -> String? {
+    guard let thread = aiChatThreads.first(where: { $0.id == id }) else { return nil }
+    let title = thread.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    return title.isEmpty ? "Untitled chat" : title
+  }
+
+  public func openAIChatThreadLink(_ id: UUID) {
+    guard aiChatThreads.contains(where: { $0.id == id }) else {
+      statusText = "That chat thread is not available on this Mac"
+      return
+    }
+    navigateToSurface(.aiChat)
+    selectAIChatThread(id)
+  }
+
   public func selectAIChatSearchResult(_ result: AIChatSearchResult) {
     navigateToSurface(.aiChat)
     selectAIChatThread(result.threadID)

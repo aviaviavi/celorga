@@ -1317,6 +1317,16 @@ private struct AIChatRecognizedMentionsKey: EnvironmentKey {
   static let defaultValue: [String] = []
 }
 
+/// Resolves a Celorga chat thread ID to its title. Nil for unknown threads.
+struct AIChatThreadLinkResolver: Sendable {
+  var title: @MainActor @Sendable (UUID) -> String? = { _ in nil }
+  var open: @MainActor @Sendable (UUID) -> Void = { _ in }
+}
+
+private struct AIChatThreadLinkResolverKey: EnvironmentKey {
+  static let defaultValue = AIChatThreadLinkResolver()
+}
+
 extension EnvironmentValues {
   var aiChatMediaCorpusRoot: URL? {
     get { self[AIChatMediaCorpusRootKey.self] }
@@ -1329,6 +1339,12 @@ extension EnvironmentValues {
   var aiChatRecognizedMentions: [String] {
     get { self[AIChatRecognizedMentionsKey.self] }
     set { self[AIChatRecognizedMentionsKey.self] = newValue }
+  }
+
+  /// Turns pasted chat thread IDs into links titled with the thread's name.
+  var aiChatThreadLinks: AIChatThreadLinkResolver {
+    get { self[AIChatThreadLinkResolverKey.self] }
+    set { self[AIChatThreadLinkResolverKey.self] = newValue }
   }
 }
 

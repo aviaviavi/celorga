@@ -140,6 +140,55 @@ final class AIChatDocumentTests: XCTestCase {
     XCTAssertFalse(text.contains("*four"), text)
   }
 
+  func testPastedThreadIDsBecomeTitledLinksOnlyForRealThreads() async throws {
+    let known = UUID(uuidString: "D1DD78EA-BE29-4045-B609-624E071E4AB2")!
+    let text = """
+    See d1dd78ea-be29-4045-b609-624e071e4ab2 and =d1dd78ea-be29-4045-b609-624e071e4ab2=, \
+    not 00000000-0000-4000-8000-000000000000.
+    """
+    let links = AIChatThreadLinks.links(in: text) { $0 == known ? "Automation: fix-celorga-items" : nil }
+    XCTAssertEqual(links, ["d1dd78ea-be29-4045-b609-624e071e4ab2": "Automation: fix-celorga-items"])
+    XCTAssertEqual(
+      AIChatThreadLinks.threadID(from: try XCTUnwrap(URL(string: AIChatThreadLinks.url(for: known.uuidString)))),
+      known
+    )
+
+    let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 460, height: 600))
+    view.loadHTMLString("<html><head><style>\(AIChatDocumentHTML.style)</style></head><body><main></main></body></html>", baseURL: nil)
+    for _ in 0..<100 {
+      if !view.isLoading, (try? await view.evaluateJavaScript("document.readyState")) as? String == "complete" { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    try await view.evaluateJavaScript("window.webkit = {messageHandlers: {chatHeight: {postMessage: function() {}}}}; null;")
+    try await view.evaluateJavaScript(AIChatThreadLinks.script)
+    try await view.evaluateJavaScript(AIChatDocumentHTML.updateScript)
+    let html = """
+    <main><p>See d1dd78ea-be29-4045-b609-624e071e4ab2 and <code>d1dd78ea-be29-4045-b609-624e071e4ab2</code>, \
+    not 00000000-0000-4000-8000-000000000000.</p><pre>d1dd78ea-be29-4045-b609-624e071e4ab2</pre></main>
+    """
+    try await view.callAsyncJavaScript(
+      "window.__chatUpdate(html, [], threads)",
+      arguments: ["html": html, "threads": links],
+      in: nil,
+      in: .page
+    )
+    let result = try await view.evaluateJavaScript("""
+      (() => ({
+        labels:[...document.querySelectorAll('a.chat-thread-link')].map(a => a.textContent),
+        hrefs:[...document.querySelectorAll('a.chat-thread-link')].map(a => a.getAttribute('href')),
+        pre:document.querySelector('pre').textContent,
+        text:document.querySelector('p').textContent
+      }))()
+      """) as? [String: Any]
+    XCTAssertEqual(result?["labels"] as? [String], ["Automation: fix-celorga-items", "Automation: fix-celorga-items"])
+    XCTAssertEqual(
+      result?["hrefs"] as? [String],
+      Array(repeating: AIChatThreadLinks.url(for: known.uuidString), count: 2)
+    )
+    XCTAssertEqual(result?["pre"] as? String, "d1dd78ea-be29-4045-b609-624e071e4ab2")
+    XCTAssertTrue((result?["text"] as? String ?? "").contains("00000000-0000-4000-8000-000000000000"))
+  }
+
   func testSelectionSpansParagraphsListsAndTablesAndSurvivesUpdates() async throws {
     let view = try await document("<main><p>First paragraph.</p><ul><li>Second item.</li></ul><table><tr><td>Third cell.</td></tr></table></main>")
     let selected = try await view.evaluateJavaScript("""

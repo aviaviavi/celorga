@@ -11,6 +11,7 @@ struct AIChatDocumentBody: View {
   @Environment(\.openWorkspaceWebLink) private var openWebLink
   @Environment(\.orgRoamLinkResolver) private var linkResolver
   @Environment(\.aiChatRecognizedMentions) private var recognizedMentions
+  @Environment(\.aiChatThreadLinks) private var threadLinks
   @State private var html: String?
   @State private var renderedText: String?
   @State private var height: CGFloat = 24
@@ -25,6 +26,8 @@ struct AIChatDocumentBody: View {
       corpusRoot: corpusRoot,
       linkResolver: linkResolver,
       recognizedMentions: recognizedMentions,
+      threadLinks: AIChatThreadLinks.links(in: text, title: threadLinks.title),
+      openThread: threadLinks.open,
       height: $height,
       openFileReference: openFileReference,
       openWebLink: openWebLink
@@ -156,6 +159,94 @@ enum AIChatMentionHighlight {
   """#
 }
 
+/// Shows a pasted Celorga chat thread ID as a link titled with that thread's
+/// name. Swift resolves IDs against real threads; the page only wraps the exact
+/// ID text. IDs inside preformatted blocks and existing links stay literal; an
+/// inline code span is linked only when it contains just the ID.
+enum AIChatThreadLinks {
+  static let className = "chat-thread-link"
+  static let host = "open-thread"
+
+  private static let pattern = try! NSRegularExpression(
+    pattern: #"(?<![0-9A-Fa-f-])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f-])"#
+  )
+
+  /// `[lowercased id: title]` for each thread ID in `text` that names a real thread.
+  @MainActor static func links(in text: String, title: @MainActor @Sendable (UUID) -> String?) -> [String: String] {
+    guard text.contains("-") else { return [:] }
+    var links: [String: String] = [:]
+    let range = NSRange(text.startIndex..., in: text)
+    for match in pattern.matches(in: text, range: range) {
+      guard let matched = Range(match.range, in: text) else { continue }
+      let raw = String(text[matched]).lowercased()
+      guard links[raw] == nil, let id = UUID(uuidString: raw), let name = title(id) else { continue }
+      links[raw] = name
+    }
+    return links
+  }
+
+  static func url(for id: String) -> String {
+    "\(AIChatFileReference.deepLinkScheme)://\(host)?id=\(id.lowercased())"
+  }
+
+  static func threadID(from url: URL) -> UUID? {
+    guard url.scheme == AIChatFileReference.deepLinkScheme, url.host == host,
+          let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "id" })?.value
+    else { return nil }
+    return UUID(uuidString: raw)
+  }
+
+  static let style = """
+  .chat-thread-link { color:var(--org2-link, light-dark(#1d64c4,#7db4ff)); text-decoration:none; font-weight:600; background:color-mix(in srgb, var(--org2-link, light-dark(#1d64c4,#7db4ff)) 10%, transparent); border-radius:4px; padding:0 3px; }
+  .chat-thread-link::before { content:"\\1F4AC\\00A0"; font-weight:400; }
+  .chat-thread-link:hover { text-decoration:underline; }
+  """
+
+  static let script = #"""
+  (() => {
+    const pattern = /(?<![0-9A-Fa-f-])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f-])/g;
+    const literal = 'pre, a, .chat-code';
+    window.__chatLinkThreads = (doc, root, links, scheme, host) => {
+      if (!root || !links || typeof links !== 'object' || !Object.keys(links).length) return;
+      const anchor = id => {
+        const a = doc.createElement('a');
+        a.className = 'chat-thread-link';
+        a.href = `${scheme}://${host}?id=${encodeURIComponent(id)}`;
+        a.title = `Open chat thread ${id}`;
+        a.textContent = links[id];
+        return a;
+      };
+      for (const code of [...root.querySelectorAll('code')]) {
+        if (code.closest(literal)) continue;
+        const id = code.textContent.trim().toLowerCase();
+        if (links[id]) code.replaceWith(anchor(id));
+      }
+      const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: node => node.nodeValue.includes('-') && !node.parentElement?.closest(literal + ', code, kbd, samp')
+          ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+      });
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      for (const node of nodes) {
+        const text = node.nodeValue, parts = [];
+        let last = 0;
+        for (const match of text.matchAll(pattern)) {
+          const id = match[0].toLowerCase();
+          if (!links[id]) continue;
+          if (match.index > last) parts.push(doc.createTextNode(text.slice(last, match.index)));
+          parts.push(anchor(id));
+          last = match.index + match[0].length;
+        }
+        if (!parts.length) continue;
+        if (last < text.length) parts.push(doc.createTextNode(text.slice(last)));
+        node.replaceWith(...parts);
+      }
+    };
+  })();
+  """#
+}
+
 enum AIChatDocumentHTML {
   static func plain(_ text: String) -> String {
     let escaped = text.replacingOccurrences(of: "&", with: "&amp;")
@@ -174,6 +265,7 @@ enum AIChatDocumentHTML {
   .org2-document-header { display:none; }
   .chat-plain { white-space:pre-wrap; }
   \(AIChatMentionHighlight.style)
+  \(AIChatThreadLinks.style)
   li > p:first-child { margin-top:0; }
   li > p:last-child { margin-bottom:0; }
   pre { white-space:pre; overflow-x:auto; }
@@ -203,8 +295,10 @@ enum AIChatDocumentHTML {
       window.webkit.messageHandlers.chatHeight.postMessage(Math.max(24, height));
     });
     let mentions = [];
-    window.__chatUpdate = (html, recognized) => {
+    let threadLinks = {};
+    window.__chatUpdate = (html, recognized, threads) => {
       if (Array.isArray(recognized)) mentions = recognized;
+      if (threads && typeof threads === 'object') threadLinks = threads;
       if (selected()) { pending = html; return; }
       const next = new DOMParser().parseFromString(html, 'text/html');
       const styles = next.querySelectorAll('style');
@@ -245,6 +339,7 @@ enum AIChatDocumentHTML {
         wrapper.append(button);
       }
       window.__chatHighlightMentions?.(next, next.body, mentions);
+      window.__chatLinkThreads?.(next, next.body, threadLinks, 'org2-workspace', 'open-thread');
       document.body.replaceChildren(...next.body.childNodes);
       // Charts share the document renderer's interaction script (installed by the host).
       if (window.__org2InstallCharts) window.__org2InstallCharts(document);
@@ -267,6 +362,8 @@ struct AIChatDocumentWebView: NSViewRepresentable {
   let corpusRoot: URL?
   let linkResolver: OrgRoamLinkResolver
   var recognizedMentions: [String] = []
+  var threadLinks: [String: String] = [:]
+  var openThread: (UUID) -> Void = { _ in }
   @Binding var height: CGFloat
   let openFileReference: (AIChatFileReference) -> Void
   var openWebLink = OpenWorkspaceWebLinkAction()
@@ -279,7 +376,7 @@ struct AIChatDocumentWebView: NSViewRepresentable {
     configuration.userContentController.add(context.coordinator, name: "chatHeight")
     configuration.userContentController.add(context.coordinator, name: "chatCopyCode")
     configuration.userContentController.addUserScript(WKUserScript(
-      source: AIChatSandboxFrames.script + "\n" + AIChatMentionHighlight.script + "\n" + AIChatDocumentHTML.updateScript + "\n" + OrgHTMLRichCopy.installationScript,
+      source: AIChatSandboxFrames.script + "\n" + AIChatMentionHighlight.script + "\n" + AIChatThreadLinks.script + "\n" + AIChatDocumentHTML.updateScript + "\n" + OrgHTMLRichCopy.installationScript,
       injectionTime: .atDocumentEnd, forMainFrameOnly: true
     ))
     configuration.setURLSchemeHandler(context.coordinator.resources, forURLScheme: OrgHTMLLocalResourceSchemeHandler.scheme)
@@ -301,7 +398,10 @@ struct AIChatDocumentWebView: NSViewRepresentable {
     coordinator.sourcePath = sourcePath
     coordinator.corpusRoot = corpusRoot
     let mentionsChanged = coordinator.recognizedMentions != recognizedMentions
+      || coordinator.threadLinks != threadLinks
     coordinator.recognizedMentions = recognizedMentions
+    coordinator.threadLinks = threadLinks
+    coordinator.openThread = openThread
     coordinator.resources.configure(source: EntrySource(file: sourcePath, startLine: 1,
       endLineExclusive: 1, text: "", isSubtree: false), corpusRoot: corpusRoot)
     guard coordinator.html != html || mentionsChanged else { return }
@@ -339,6 +439,8 @@ struct AIChatDocumentWebView: NSViewRepresentable {
     var corpusRoot: URL?
     var linkTask: Task<Void, Never>?
     var recognizedMentions: [String] = []
+    var threadLinks: [String: String] = [:]
+    var openThread: ((UUID) -> Void)?
 
     var installedChartScript: String?
 
@@ -350,8 +452,8 @@ struct AIChatDocumentWebView: NSViewRepresentable {
       }
       let rewritten = OrgHTMLLocalResourceSchemeHandler.rewritingLocalImageSources(in: html)
       view.callAsyncJavaScript(
-        "window.__chatUpdate(html, mentions)",
-        arguments: ["html": rewritten, "mentions": recognizedMentions],
+        "window.__chatUpdate(html, mentions, threads)",
+        arguments: ["html": rewritten, "mentions": recognizedMentions, "threads": threadLinks],
         in: nil,
         in: .page
       )
@@ -410,7 +512,9 @@ struct AIChatDocumentWebView: NSViewRepresentable {
       guard navigationAction.navigationType == .linkActivated,
         let url = navigationAction.request.url else { decisionHandler(.allow); return }
       decisionHandler(.cancel)
-      if url.scheme == AIChatFileReference.deepLinkScheme, url.host == "open-link",
+      if let threadID = AIChatThreadLinks.threadID(from: url) {
+        openThread?(threadID)
+      } else if url.scheme == AIChatFileReference.deepLinkScheme, url.host == "open-link",
         let target = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "target" })?.value {
         if let resolved = linkResolver.resolve(target: target) {
           openFileReference?(resolved.fileReference)

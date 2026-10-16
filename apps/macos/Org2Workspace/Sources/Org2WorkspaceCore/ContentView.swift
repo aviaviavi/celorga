@@ -11362,6 +11362,10 @@ private struct AIChatView: View {
       \.aiChatRecognizedMentions,
       AIChatDestinationRouting.recognizedMentionTokens(destinations: store.aiChatDestinations)
     )
+    .environment(\.aiChatThreadLinks, AIChatThreadLinkResolver(
+      title: { store.aiChatThreadLinkTitle($0) },
+      open: { store.openAIChatThreadLink($0) }
+    ))
     .task {
       await store.refreshAIChatCommands()
     }
