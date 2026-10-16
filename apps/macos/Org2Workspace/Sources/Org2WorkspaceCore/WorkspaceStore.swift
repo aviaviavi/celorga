@@ -25801,6 +25801,27 @@ extension WorkspaceStore {
       )
     }
 
+    if hasExactIdentity, let continuationRun, let approvalID = item.approvalId {
+      // The decision is durable now. Do not hold the phone's HTTP request through a
+      // corpus refresh or an agent turn: either can outlive its response deadline.
+      // Confirm only the saved decision; continuation has its own durable outcome.
+      approvalItems.removeAll { $0.id == item.id }
+      invalidateMobileRemoteWorkspaceSnapshot()
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        await self.continueOpenClawAfterApprovalBoundary(continuationRun)
+        await self.refreshApprovals(updatesStatus: false)
+      }
+      return currentMobileRemoteWorkspaceSnapshot(decisionReceipt: Self.mobileRemoteDecisionReceipt(
+        run: continuationRun,
+        approvalID: approvalID,
+        decision: normalizedDecision,
+        continuation: nil,
+        receipt: receipt,
+        duplicate: false
+      ))
+    }
+
     await refreshApprovals(updatesStatus: false)
     if !item.isRunApproval {
       await refreshAgenda(preserveSelection: true, updatesStatus: false)
