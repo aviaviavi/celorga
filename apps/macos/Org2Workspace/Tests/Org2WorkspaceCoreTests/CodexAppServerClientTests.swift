@@ -3,6 +3,15 @@ import Foundation
 import XCTest
 @testable import Org2WorkspaceCore
 
+private actor CodexTurnStartRecorder {
+  private(set) var starts: [(threadID: String, turnID: String)] = []
+
+  func record(_ event: CodexAppServerEvent) {
+    guard case .turnStarted(let threadID, let turnID) = event else { return }
+    starts.append((threadID, turnID))
+  }
+}
+
 final class CodexAppServerClientTests: XCTestCase {
   func testLegacyChatThreadDefaultsToOpenClawRuntime() throws {
     let id = UUID()
@@ -1015,7 +1024,7 @@ final class CodexAppServerClientTests: XCTestCase {
       workspaceContext: "Selected source includes an unsaved draft.",
       attachments: [],
       cwd: temporaryDirectory,
-      clientUserMessageID: UUID(),
+      attemptIdentity: CodexTurnAttemptIdentity(messageID: UUID(), attemptID: UUID()),
       model: "gpt-test",
       reasoningEffort: "high",
       sandboxAccess: .fullAccess
@@ -1070,7 +1079,7 @@ final class CodexAppServerClientTests: XCTestCase {
           printf '{"id":%s,"result":{"thread":{"id":"thr-transport-end"}}}\n' "$request_id"
           ;;
         *'"method":"turn/start"'*)
-          printf '{"id":%s,"result":{"turn":{"id":"turn-transport-end"}}}\n' "$request_id"
+          printf '{"id":%s,"result":{"turn":{"id":"turn-transport-end","status":"inProgress"}}}\n' "$request_id"
           printf '%s\n' '{"method":"turn/started","params":{"threadId":"thr-transport-end","turn":{"id":"turn-transport-end","status":"inProgress","items":[]}}}'
           sleep 0.15
           exit 0
@@ -1097,7 +1106,7 @@ final class CodexAppServerClientTests: XCTestCase {
         message: "Wait for the transport to close.",
         attachments: [],
         cwd: temporaryDirectory,
-        clientUserMessageID: UUID()
+        attemptIdentity: CodexTurnAttemptIdentity(messageID: UUID(), attemptID: UUID())
       )
       XCTFail("A closed transport should fail its active turn")
     } catch {
@@ -1549,6 +1558,570 @@ final class CodexAppServerClientTests: XCTestCase {
     await client.shutdown()
   }
 
+  func testManagedRemoteBridgeAtomicallyAdmitsOneConcurrentAttemptAcrossFreshHosts() async throws {
+    let temporaryDirectory = URL(fileURLWithPath: "/tmp", isDirectory: true)
+      .appendingPathComponent("cga-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+    let codexHome = temporaryDirectory.appendingPathComponent("codex-home", isDirectory: true)
+    let controlDirectory = codexHome
+      .appendingPathComponent("app-server-control", isDirectory: true)
+    try FileManager.default.createDirectory(at: controlDirectory, withIntermediateDirectories: true)
+    let socketPath = controlDirectory.appendingPathComponent("app-server-control.sock")
+    let countPath = temporaryDirectory.appendingPathComponent("physical-start-count")
+    let acceptedPath = temporaryDirectory.appendingPathComponent("accepted-attempt")
+    let daemonScript = temporaryDirectory.appendingPathComponent("fake-daemon.py")
+    try Self.fakeManagedRemoteDaemonScript.write(
+      to: daemonScript,
+      atomically: true,
+      encoding: .utf8
+    )
+    let daemon = Process()
+    daemon.executableURL = URL(fileURLWithPath: "/usr/local/bin/python3")
+    daemon.arguments = [
+      daemonScript.path,
+      socketPath.path,
+      countPath.path,
+      acceptedPath.path,
+      "0"
+    ]
+    let daemonError = Pipe()
+    daemon.standardOutput = FileHandle.nullDevice
+    daemon.standardError = daemonError
+    try daemon.run()
+    defer {
+      if daemon.isRunning { daemon.terminate() }
+      daemon.waitUntilExit()
+    }
+    let socketDeadline = Date().addingTimeInterval(3)
+    while !FileManager.default.fileExists(atPath: socketPath.path), Date() < socketDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    guard FileManager.default.fileExists(atPath: socketPath.path) else {
+      if daemon.isRunning { daemon.terminate() }
+      let detail = String(
+        decoding: daemonError.fileHandleForReading.readDataToEndOfFile(),
+        as: UTF8.self
+      )
+      return XCTFail("Fixture daemon did not create its socket: \(detail)")
+    }
+
+    let adapterScript = temporaryDirectory.appendingPathComponent("adapter.py")
+    try CodexAppServerClient.managedRemoteJSONLAdapter.write(
+      to: adapterScript,
+      atomically: true,
+      encoding: .utf8
+    )
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let claimRoot = temporaryDirectory.appendingPathComponent("claims", isDirectory: true)
+    let launcher = #"""
+    #!/bin/sh
+    export CODEX_HOME='\#(codexHome.path)'
+    export CELORGA_MANAGED_REMOTE_CLAIM_ROOT='\#(claimRoot.path)'
+    exec /usr/local/bin/python3 '\#(adapterScript.path)'
+    """#
+    try launcher.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+    let messageID = UUID()
+    let firstIdentity = CodexTurnAttemptIdentity(messageID: messageID, attemptID: messageID)
+    let secondIdentity = CodexTurnAttemptIdentity(messageID: messageID, attemptID: UUID())
+    let startRecorder = CodexTurnStartRecorder()
+    func makeClient() -> CodexAppServerClient {
+      CodexAppServerClient(
+        executableURL: nil,
+        sshExecutableURL: fakeSSH,
+        transport: .managedRemote(sshHost: "isolated.test"),
+        requestTimeoutNanoseconds: 2_000_000_000,
+        eventHandler: { event in await startRecorder.record(event) },
+        dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+      )
+    }
+    let first = makeClient()
+    let second = makeClient()
+    let firstTask = Task {
+      try await first.runTurn(
+        threadID: "thr-atomic",
+        turnID: "local-first",
+        message: "one physical start",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: firstIdentity
+      )
+    }
+    let secondTask = Task {
+      try await second.runTurn(
+        threadID: "thr-atomic",
+        turnID: "local-second",
+        message: "one physical start",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: secondIdentity
+      )
+    }
+    var completed = 0
+    var held = 0
+    for task in [firstTask, secondTask] {
+      do {
+        let result = try await task.value
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.turnID, "turn-atomic")
+        completed += 1
+      } catch let error as CodexAppServerError {
+        guard case .turnStartUnknown = error else {
+          XCTFail("Expected a completed reconciliation or held duplicate, got \(error)")
+          continue
+        }
+        held += 1
+      }
+    }
+    XCTAssertEqual(completed, 1)
+    XCTAssertEqual(held, 1)
+    XCTAssertEqual(
+      try String(contentsOf: countPath, encoding: .utf8)
+        .components(separatedBy: .newlines)
+        .filter { !$0.isEmpty }.count,
+      1
+    )
+    let recordedStarts = await startRecorder.starts
+    XCTAssertEqual(recordedStarts.count, 1)
+    XCTAssertEqual(recordedStarts.first?.threadID, "thr-atomic")
+    XCTAssertEqual(recordedStarts.first?.turnID, "turn-atomic")
+    let journalURLs = Self.managedRemoteJournalURLs(in: claimRoot)
+    XCTAssertEqual(journalURLs.count, 1)
+    let journalURL = try XCTUnwrap(journalURLs.first)
+    let journal = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(contentsOf: journalURL)) as? [String: Any]
+    )
+    XCTAssertEqual(journal["messageId"] as? String, messageID.uuidString.lowercased())
+    XCTAssertEqual((journal["attempts"] as? [String: Any])?.count, 1)
+    let admittedAttemptID = try XCTUnwrap(
+      UUID(uuidString: try XCTUnwrap(journal["currentAttemptId"] as? String))
+    )
+    let drifted = makeClient()
+    do {
+      _ = try await drifted.runTurn(
+        threadID: "thr-atomic",
+        turnID: "local-drifted",
+        message: "changed payload after claim",
+        attachments: [],
+        workspacePath: "~/different-corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(
+          messageID: messageID,
+          attemptID: admittedAttemptID
+        )
+      )
+      XCTFail("A claimed attempt's exact request contract must not drift")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected held contract drift, got \(error)")
+      }
+    }
+    XCTAssertEqual(
+      try String(contentsOf: countPath, encoding: .utf8)
+        .components(separatedBy: .newlines)
+        .filter { !$0.isEmpty }.count,
+      1
+    )
+    let rebound = makeClient()
+    do {
+      _ = try await rebound.runTurn(
+        threadID: "thr-replacement",
+        turnID: "local-rebound",
+        message: "one physical start",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(
+          messageID: messageID,
+          attemptID: admittedAttemptID
+        )
+      )
+      XCTFail("Replacing the native thread must not rebind message authority")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected held native-thread replacement, got \(error)")
+      }
+    }
+    await rebound.shutdown()
+
+    try FileManager.default.removeItem(at: journalURL)
+    let missingJournal = makeClient()
+    do {
+      _ = try await missingJournal.runTurn(
+        threadID: "thr-atomic",
+        turnID: "local-missing-journal",
+        message: "one physical start",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(
+          messageID: messageID,
+          attemptID: admittedAttemptID
+        )
+      )
+      XCTFail("A missing authority journal must fail closed")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected held missing journal, got \(error)")
+      }
+    }
+    await missingJournal.shutdown()
+
+    try Data("not-json".utf8).write(to: journalURL)
+    let corruptJournal = makeClient()
+    do {
+      _ = try await corruptJournal.runTurn(
+        threadID: "thr-atomic",
+        turnID: "local-corrupt-journal",
+        message: "one physical start",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(
+          messageID: messageID,
+          attemptID: admittedAttemptID
+        )
+      )
+      XCTFail("A corrupt authority journal must fail closed")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected held corrupt journal, got \(error)")
+      }
+    }
+    await corruptJournal.shutdown()
+
+    let unrelatedMessageID = UUID()
+    let missingAuthorityChild = makeClient()
+    do {
+      _ = try await missingAuthorityChild.runTurn(
+        threadID: "thr-atomic",
+        turnID: "local-missing-authority-child",
+        message: "unauthorized child",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(
+          messageID: unrelatedMessageID,
+          attemptID: UUID(),
+          predecessorAttemptID: unrelatedMessageID
+        )
+      )
+      XCTFail("A child attempt must not create missing message authority")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected held missing authority child, got \(error)")
+      }
+    }
+    await missingAuthorityChild.shutdown()
+    XCTAssertEqual(
+      try String(contentsOf: countPath, encoding: .utf8)
+        .components(separatedBy: .newlines)
+        .filter { !$0.isEmpty }.count,
+      1
+    )
+    await drifted.shutdown()
+    await first.shutdown()
+    await second.shutdown()
+  }
+
+  func testManagedRemoteBridgeAdmitsOnlyOneConcurrentChildOfFailedPredecessor() async throws {
+    let temporaryDirectory = URL(fileURLWithPath: "/tmp", isDirectory: true)
+      .appendingPathComponent("cgr-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+    let codexHome = temporaryDirectory.appendingPathComponent("codex-home", isDirectory: true)
+    let controlDirectory = codexHome.appendingPathComponent(
+      "app-server-control",
+      isDirectory: true
+    )
+    try FileManager.default.createDirectory(at: controlDirectory, withIntermediateDirectories: true)
+    let socketPath = controlDirectory.appendingPathComponent("app-server-control.sock")
+    let countPath = temporaryDirectory.appendingPathComponent("physical-start-count")
+    let acceptedPath = temporaryDirectory.appendingPathComponent("accepted-attempt")
+    let daemonScript = temporaryDirectory.appendingPathComponent("fake-daemon.py")
+    try Self.fakeManagedRemoteDaemonScript.write(
+      to: daemonScript,
+      atomically: true,
+      encoding: .utf8
+    )
+    let daemon = Process()
+    daemon.executableURL = URL(fileURLWithPath: "/usr/local/bin/python3")
+    daemon.arguments = [
+      daemonScript.path,
+      socketPath.path,
+      countPath.path,
+      acceptedPath.path,
+      "0",
+      "fail-first"
+    ]
+    let daemonError = Pipe()
+    daemon.standardOutput = FileHandle.nullDevice
+    daemon.standardError = daemonError
+    try daemon.run()
+    defer {
+      if daemon.isRunning { daemon.terminate() }
+      daemon.waitUntilExit()
+    }
+    let socketDeadline = Date().addingTimeInterval(3)
+    while !FileManager.default.fileExists(atPath: socketPath.path), Date() < socketDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    guard FileManager.default.fileExists(atPath: socketPath.path) else {
+      return XCTFail("Fixture daemon did not create its socket")
+    }
+
+    let adapterScript = temporaryDirectory.appendingPathComponent("adapter.py")
+    try CodexAppServerClient.managedRemoteJSONLAdapter.write(
+      to: adapterScript,
+      atomically: true,
+      encoding: .utf8
+    )
+    let claimRoot = temporaryDirectory.appendingPathComponent("claims", isDirectory: true)
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let launcher = #"""
+    #!/bin/sh
+    export CODEX_HOME='\#(codexHome.path)'
+    export CELORGA_MANAGED_REMOTE_CLAIM_ROOT='\#(claimRoot.path)'
+    exec /usr/local/bin/python3 '\#(adapterScript.path)'
+    """#
+    try launcher.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+    func makeClient() -> CodexAppServerClient {
+      CodexAppServerClient(
+        executableURL: nil,
+        sshExecutableURL: fakeSSH,
+        transport: .managedRemote(sshHost: "isolated.test"),
+        requestTimeoutNanoseconds: 2_000_000_000,
+        eventHandler: { _ in },
+        dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+      )
+    }
+
+    let messageID = UUID()
+    let predecessor = CodexTurnAttemptIdentity(messageID: messageID, attemptID: messageID)
+    let initial = makeClient()
+    do {
+      _ = try await initial.runTurn(
+        threadID: "thr-atomic",
+        turnID: "local-initial",
+        message: "retry only after exact failure",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: predecessor
+      )
+      XCTFail("The fixture's initial provider turn must fail")
+    } catch let error as CodexAppServerError {
+      guard case .turnFailed = error else {
+        return XCTFail("Expected exact provider failure, got \(error)")
+      }
+    }
+    await initial.shutdown()
+
+    let firstChild = CodexTurnAttemptIdentity(
+      messageID: messageID,
+      attemptID: UUID(),
+      predecessorAttemptID: messageID
+    )
+    let secondChild = CodexTurnAttemptIdentity(
+      messageID: messageID,
+      attemptID: UUID(),
+      predecessorAttemptID: messageID
+    )
+    let first = makeClient()
+    let second = makeClient()
+    let tasks = [
+      Task {
+        try await first.runTurn(
+          threadID: "thr-atomic",
+          turnID: "local-child-one",
+          message: "retry only after exact failure",
+          attachments: [],
+          workspacePath: "~/corpus",
+          corpusAccess: .runtimeFilesystem,
+          attemptIdentity: firstChild
+        )
+      },
+      Task {
+        try await second.runTurn(
+          threadID: "thr-atomic",
+          turnID: "local-child-two",
+          message: "retry only after exact failure",
+          attachments: [],
+          workspacePath: "~/corpus",
+          corpusAccess: .runtimeFilesystem,
+          attemptIdentity: secondChild
+        )
+      }
+    ]
+    var completed = 0
+    var held = 0
+    for task in tasks {
+      do {
+        let result = try await task.value
+        XCTAssertEqual(result.status, .completed)
+        completed += 1
+      } catch let error as CodexAppServerError {
+        guard case .turnStartUnknown = error else {
+          XCTFail("Expected one completed child and one held child, got \(error)")
+          continue
+        }
+        held += 1
+      }
+    }
+    XCTAssertEqual(completed, 1)
+    XCTAssertEqual(held, 1)
+    XCTAssertEqual(
+      try String(contentsOf: countPath, encoding: .utf8)
+        .components(separatedBy: .newlines)
+        .filter { !$0.isEmpty }.count,
+      2
+    )
+    let journalURLs = Self.managedRemoteJournalURLs(in: claimRoot)
+    XCTAssertEqual(journalURLs.count, 1)
+    let journalURL = try XCTUnwrap(journalURLs.first)
+    let journal = try XCTUnwrap(
+      JSONSerialization.jsonObject(
+        with: Data(contentsOf: journalURL)
+      ) as? [String: Any]
+    )
+    XCTAssertEqual((journal["attempts"] as? [String: Any])?.count, 2)
+    await first.shutdown()
+    await second.shutdown()
+  }
+
+  func testManagedRemoteBridgeHoldsPostWriteServerErrorAcrossFieldLossAndReload() async throws {
+    let temporaryDirectory = URL(fileURLWithPath: "/tmp", isDirectory: true)
+      .appendingPathComponent("cge-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+    let codexHome = temporaryDirectory.appendingPathComponent("codex-home", isDirectory: true)
+    let controlDirectory = codexHome.appendingPathComponent("app-server-control", isDirectory: true)
+    try FileManager.default.createDirectory(at: controlDirectory, withIntermediateDirectories: true)
+    let socketPath = controlDirectory.appendingPathComponent("app-server-control.sock")
+    let countPath = temporaryDirectory.appendingPathComponent("physical-start-count")
+    let acceptedPath = temporaryDirectory.appendingPathComponent("accepted-attempt")
+    let daemonScript = temporaryDirectory.appendingPathComponent("fake-daemon.py")
+    try Self.fakeManagedRemoteDaemonScript.write(
+      to: daemonScript,
+      atomically: true,
+      encoding: .utf8
+    )
+    let daemon = Process()
+    daemon.executableURL = URL(fileURLWithPath: "/usr/local/bin/python3")
+    daemon.arguments = [
+      daemonScript.path,
+      socketPath.path,
+      countPath.path,
+      acceptedPath.path,
+      "0",
+      "error-first"
+    ]
+    daemon.standardOutput = FileHandle.nullDevice
+    daemon.standardError = FileHandle.nullDevice
+    try daemon.run()
+    defer {
+      if daemon.isRunning { daemon.terminate() }
+      daemon.waitUntilExit()
+    }
+    let socketDeadline = Date().addingTimeInterval(3)
+    while !FileManager.default.fileExists(atPath: socketPath.path), Date() < socketDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    guard FileManager.default.fileExists(atPath: socketPath.path) else {
+      return XCTFail("Fixture daemon did not create its socket")
+    }
+
+    let adapterScript = temporaryDirectory.appendingPathComponent("adapter.py")
+    try CodexAppServerClient.managedRemoteJSONLAdapter.write(
+      to: adapterScript,
+      atomically: true,
+      encoding: .utf8
+    )
+    let claimRoot = temporaryDirectory.appendingPathComponent("claims", isDirectory: true)
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let launcher = #"""
+    #!/bin/sh
+    export CODEX_HOME='\#(codexHome.path)'
+    export CELORGA_MANAGED_REMOTE_CLAIM_ROOT='\#(claimRoot.path)'
+    exec /usr/local/bin/python3 '\#(adapterScript.path)'
+    """#
+    try launcher.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+    func makeClient() -> CodexAppServerClient {
+      CodexAppServerClient(
+        executableURL: nil,
+        sshExecutableURL: fakeSSH,
+        transport: .managedRemote(sshHost: "isolated.test"),
+        requestTimeoutNanoseconds: 1_000_000_000,
+        eventHandler: { _ in },
+        dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+      )
+    }
+
+    let messageID = UUID()
+    let first = makeClient()
+    do {
+      _ = try await first.runTurn(
+        threadID: "thr-atomic",
+        turnID: "local-unknown",
+        message: "server error after write",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(messageID: messageID, attemptID: messageID)
+      )
+      XCTFail("A generic post-write server error must remain unknown")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected held unknown delivery, got \(error)")
+      }
+    }
+    await first.shutdown()
+
+    // Simulate complete loss of additive transcript fields and the embedded
+    // marker: a fresh process invents a different attempt with no predecessor.
+    // The independent producer journal must still block physical replay.
+    let reloaded = makeClient()
+    do {
+      _ = try await reloaded.runTurn(
+        threadID: "thr-atomic",
+        turnID: "local-after-field-loss",
+        message: "server error after write",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(messageID: messageID, attemptID: UUID())
+      )
+      XCTFail("Field loss and reload must not bypass an unknown producer claim")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected producer-held replay, got \(error)")
+      }
+    }
+    XCTAssertEqual(
+      try String(contentsOf: countPath, encoding: .utf8)
+        .components(separatedBy: .newlines)
+        .filter { !$0.isEmpty }.count,
+      1
+    )
+    let journalURLs = Self.managedRemoteJournalURLs(in: claimRoot)
+    XCTAssertEqual(journalURLs.count, 1)
+    let journalURL = try XCTUnwrap(journalURLs.first)
+    let journal = try XCTUnwrap(
+      JSONSerialization.jsonObject(
+        with: Data(contentsOf: journalURL)
+      ) as? [String: Any]
+    )
+    let attempts = try XCTUnwrap(journal["attempts"] as? [String: [String: Any]])
+    XCTAssertEqual(attempts[messageID.uuidString.lowercased()]?["state"] as? String, "unknown")
+    XCTAssertEqual(attempts.count, 1)
+    await reloaded.shutdown()
+  }
+
   func testManagedRemoteTurnRecoversAfterSSHTransportEnds() async throws {
     let temporaryDirectory = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-managed-remote-recovery-\(UUID().uuidString)", isDirectory: true)
@@ -1578,7 +2151,7 @@ final class CodexAppServerClientTests: XCTestCase {
           printf '{"id":%s,"result":{"thread":{"id":"thr-durable"}}}\n' "$request_id"
           ;;
         *'"method":"turn/start"'*)
-          printf '{"id":%s,"result":{"turn":{"id":"turn-durable"}}}\n' "$request_id"
+          printf '{"id":%s,"result":{"turn":{"id":"turn-durable","status":"inProgress"}}}\n' "$request_id"
           printf '%s\n' '{"method":"turn/started","params":{"threadId":"thr-durable","turn":{"id":"turn-durable","status":"inProgress","items":[]}}}'
           exit 0
           ;;
@@ -1610,7 +2183,7 @@ final class CodexAppServerClientTests: XCTestCase {
       message: "Keep working while the laptop sleeps.",
       attachments: [],
       cwd: temporaryDirectory,
-      clientUserMessageID: UUID()
+      attemptIdentity: CodexTurnAttemptIdentity(messageID: UUID(), attemptID: UUID())
     )
 
     XCTAssertEqual(result.status, .completed)
@@ -1620,6 +2193,642 @@ final class CodexAppServerClientTests: XCTestCase {
         .trimmingCharacters(in: .whitespacesAndNewlines),
       "2"
     )
+    await client.shutdown()
+  }
+
+  func testManagedRemoteRetryReconcilesSameMessageWithoutStartingDuplicateTurn() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-managed-remote-retry-reconcile-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    let turnStartMarker = temporaryDirectory.appendingPathComponent("turn-started")
+    let messageID = UUID()
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let script = #"""
+    #!/bin/sh
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":([0-9]+).*/\1/')
+      case "$line" in
+        *'"method":"initialize"'*)
+          printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id"
+          ;;
+        *'"method":"initialized"'*)
+          ;;
+        *'"method":"thread/read"'*)
+          printf '{"id":%s,"result":{"thread":{"id":"thr-existing","turns":[{"id":"turn-existing","status":"completed","items":[{"id":"user-existing","type":"userMessage","clientId":"\#(messageID.uuidString.lowercased())","content":[{"type":"text","text":"same durable message"}]},{"id":"agent-final","type":"agentMessage","phase":"final_answer","text":"Already delivered once"}]}]}}}\n' "$request_id"
+          ;;
+        *'"method":"turn/start"'*)
+          : > '\#(turnStartMarker.path)'
+          printf '{"id":%s,"result":{"turn":{"id":"turn-duplicate"}}}\n' "$request_id"
+          ;;
+      esac
+    done
+    """#
+    try script.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+
+    let client = CodexAppServerClient(
+      executableURL: nil,
+      sshExecutableURL: fakeSSH,
+      transport: .managedRemote(sshHost: "remote.example"),
+      requestTimeoutNanoseconds: 2_000_000_000,
+      eventHandler: { _ in },
+      dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+    )
+
+    let result = try await client.runTurn(
+      threadID: "thr-existing",
+      turnID: "local-retry",
+      message: "same durable message",
+      attachments: [],
+      workspacePath: "~/avi.org2",
+      corpusAccess: .runtimeFilesystem,
+      attemptIdentity: CodexTurnAttemptIdentity(messageID: messageID, attemptID: messageID),
+      turnStartPolicy: .reconcileOnly
+    )
+
+    XCTAssertEqual(result.turnID, "turn-existing")
+    XCTAssertEqual(result.status, .completed)
+    XCTAssertEqual(result.reply, "Already delivered once")
+    XCTAssertFalse(FileManager.default.fileExists(atPath: turnStartMarker.path))
+    await client.shutdown()
+  }
+
+  func testManagedRemoteLostTurnStartResponseReconcilesAcceptedSameMessage() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-managed-remote-lost-start-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    let turnStartCount = temporaryDirectory.appendingPathComponent("turn-start-count")
+    let acceptedMarker = temporaryDirectory.appendingPathComponent("accepted")
+    let messageID = UUID()
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let script = #"""
+    #!/bin/sh
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":([0-9]+).*/\1/')
+      case "$line" in
+        *'"method":"initialize"'*)
+          printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id"
+          ;;
+        *'"method":"initialized"'*)
+          ;;
+        *'"method":"turn/start"'*)
+          count=0
+          if [ -f '\#(turnStartCount.path)' ]; then count=$(/usr/bin/sed -n '1p' '\#(turnStartCount.path)'); fi
+          printf '%s\n' "$((count + 1))" > '\#(turnStartCount.path)'
+          : > '\#(acceptedMarker.path)'
+          exit 0
+          ;;
+        *'"method":"thread/read"'*)
+          if [ -f '\#(acceptedMarker.path)' ]; then
+            printf '{"id":%s,"result":{"thread":{"id":"thr-lost-start","turns":[{"id":"turn-accepted","status":"completed","items":[{"id":"user-accepted","type":"userMessage","clientId":"\#(messageID.uuidString.lowercased())","content":[{"type":"text","text":"accepted before disconnect"}]},{"id":"agent-final","type":"agentMessage","phase":"final_answer","text":"Recovered accepted turn"}]}]}}}\n' "$request_id"
+          else
+            printf '{"id":%s,"result":{"thread":{"id":"thr-lost-start","turns":[]}}}\n' "$request_id"
+          fi
+          ;;
+      esac
+    done
+    """#
+    try script.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+
+    let client = CodexAppServerClient(
+      executableURL: nil,
+      sshExecutableURL: fakeSSH,
+      transport: .managedRemote(sshHost: "remote.example"),
+      requestTimeoutNanoseconds: 2_000_000_000,
+      eventHandler: { _ in },
+      dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+    )
+
+    let result = try await client.runTurn(
+      threadID: "thr-lost-start",
+      turnID: "local-turn",
+      message: "accepted before disconnect",
+      attachments: [],
+      workspacePath: "~/avi.org2",
+      corpusAccess: .runtimeFilesystem,
+      attemptIdentity: CodexTurnAttemptIdentity(messageID: messageID, attemptID: messageID)
+    )
+
+    XCTAssertEqual(result.turnID, "turn-accepted")
+    XCTAssertEqual(result.status, .completed)
+    XCTAssertEqual(result.reply, "Recovered accepted turn")
+    XCTAssertEqual(
+      try String(contentsOf: turnStartCount, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+      "1"
+    )
+    await client.shutdown()
+  }
+
+  func testManagedRemoteMissingTurnIDRemainsUnknownWithoutSecondStart() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-managed-remote-missing-turn-id-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+    let startCount = temporaryDirectory.appendingPathComponent("start-count")
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let script = #"""
+    #!/bin/sh
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":([0-9]+).*/\1/')
+      case "$line" in
+        *'"method":"initialize"'*) printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id" ;;
+        *'"method":"initialized"'*) ;;
+        *'"method":"thread/read"'*) printf '{"id":%s,"result":{"thread":{"id":"thr-missing","turns":[]}}}\n' "$request_id" ;;
+        *'"method":"turn/start"'*)
+          printf '1\n' > '\#(startCount.path)'
+          printf '{"id":%s,"result":{"turn":{"status":"inProgress"}}}\n' "$request_id"
+          ;;
+      esac
+    done
+    """#
+    try script.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+    let identity = CodexTurnAttemptIdentity(messageID: UUID(), attemptID: UUID())
+    let recorder = CodexTurnStartRecorder()
+    let client = CodexAppServerClient(
+      executableURL: nil,
+      sshExecutableURL: fakeSSH,
+      transport: .managedRemote(sshHost: "remote.example"),
+      requestTimeoutNanoseconds: 1_000_000_000,
+      eventHandler: { event in await recorder.record(event) },
+      dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+    )
+
+    do {
+      _ = try await client.runTurn(
+        threadID: "thr-missing",
+        turnID: "local-turn",
+        message: "accepted but malformed",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: identity
+      )
+      XCTFail("A missing native turn ID must remain unknown")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected held unknown delivery, got \(error)")
+      }
+    }
+    XCTAssertEqual(
+      try String(contentsOf: startCount, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+      "1"
+    )
+    let starts = await recorder.starts
+    XCTAssertTrue(starts.isEmpty)
+    await client.shutdown()
+  }
+
+  func testManagedRemoteMalformedStartStatusDoesNotReportVerifiedStart() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-managed-remote-malformed-status-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+    let startCount = temporaryDirectory.appendingPathComponent("start-count")
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let script = #"""
+    #!/bin/sh
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":([0-9]+).*/\1/')
+      case "$line" in
+        *'"method":"initialize"'*) printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id" ;;
+        *'"method":"initialized"'*) ;;
+        *'"method":"thread/read"'*) printf '{"id":%s,"result":{"thread":{"id":"thr-malformed","turns":[]}}}\n' "$request_id" ;;
+        *'"method":"turn/start"'*)
+          printf '1\n' > '\#(startCount.path)'
+          printf '{"id":%s,"result":{"turn":{"id":"turn-malformed","status":"queued"}}}\n' "$request_id"
+          ;;
+      esac
+    done
+    """#
+    try script.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+    let recorder = CodexTurnStartRecorder()
+    let client = CodexAppServerClient(
+      executableURL: nil,
+      sshExecutableURL: fakeSSH,
+      transport: .managedRemote(sshHost: "remote.example"),
+      requestTimeoutNanoseconds: 1_000_000_000,
+      eventHandler: { event in await recorder.record(event) },
+      dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+    )
+
+    do {
+      _ = try await client.runTurn(
+        threadID: "thr-malformed",
+        turnID: "local-turn",
+        message: "malformed status",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(messageID: UUID(), attemptID: UUID())
+      )
+      XCTFail("An unsupported start status must remain unknown")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected held unknown delivery, got \(error)")
+      }
+    }
+    let starts = await recorder.starts
+    XCTAssertTrue(starts.isEmpty)
+    XCTAssertEqual(
+      try String(contentsOf: startCount, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+      "1"
+    )
+    await client.shutdown()
+  }
+
+  func testManagedRemoteDelayedVisibilityPastBoundedMissNeverStartsTwice() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-managed-remote-delayed-visibility-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+    let readCount = temporaryDirectory.appendingPathComponent("read-count")
+    let startCount = temporaryDirectory.appendingPathComponent("start-count")
+    let attemptID = UUID()
+    let identity = CodexTurnAttemptIdentity(messageID: UUID(), attemptID: attemptID)
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let script = #"""
+    #!/bin/sh
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":([0-9]+).*/\1/')
+      case "$line" in
+        *'"method":"initialize"'*) printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id" ;;
+        *'"method":"initialized"'*) ;;
+        *'"method":"thread/read"'*)
+          count=0
+          if [ -f '\#(readCount.path)' ]; then count=$(/usr/bin/sed -n '1p' '\#(readCount.path)'); fi
+          count=$((count + 1)); printf '%s\n' "$count" > '\#(readCount.path)'
+          if [ "$count" -ge 8 ]; then
+            printf '{"id":%s,"result":{"thread":{"id":"thr-delayed","turns":[{"id":"turn-delayed","status":"completed","items":[{"type":"userMessage","clientId":"\#(attemptID.uuidString.lowercased())"},{"type":"agentMessage","phase":"final_answer","text":"Visible later"}]}]}}}\n' "$request_id"
+          else
+            printf '{"id":%s,"result":{"thread":{"id":"thr-delayed","turns":[]}}}\n' "$request_id"
+          fi
+          ;;
+        *'"method":"turn/start"'*)
+          count=0
+          if [ -f '\#(startCount.path)' ]; then count=$(/usr/bin/sed -n '1p' '\#(startCount.path)'); fi
+          printf '%s\n' "$((count + 1))" > '\#(startCount.path)'
+          exit 0
+          ;;
+      esac
+    done
+    """#
+    try script.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+    let client = CodexAppServerClient(
+      executableURL: nil,
+      sshExecutableURL: fakeSSH,
+      transport: .managedRemote(sshHost: "remote.example"),
+      requestTimeoutNanoseconds: 1_000_000_000,
+      eventHandler: { _ in },
+      dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+    )
+
+    do {
+      _ = try await client.runTurn(
+        threadID: "thr-delayed",
+        turnID: "local-turn",
+        message: "accepted but delayed",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: identity
+      )
+      XCTFail("The first bounded miss must stay unknown")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected held unknown delivery, got \(error)")
+      }
+    }
+
+    let result = try await client.runTurn(
+      threadID: "thr-delayed",
+      turnID: "local-reconcile",
+      message: "accepted but delayed",
+      attachments: [],
+      workspacePath: "~/corpus",
+      corpusAccess: .runtimeFilesystem,
+      attemptIdentity: identity,
+      turnStartPolicy: .reconcileOnly
+    )
+    XCTAssertEqual(result.status, .completed)
+    XCTAssertEqual(result.turnID, "turn-delayed")
+    XCTAssertEqual(result.reply, "Visible later")
+    XCTAssertEqual(
+      try String(contentsOf: startCount, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+      "1"
+    )
+    await client.shutdown()
+  }
+
+  func testManagedRemoteUnknownNativeStatusDoesNotUnlockRetry() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-managed-remote-unknown-status-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+    let startMarker = temporaryDirectory.appendingPathComponent("turn-started")
+    let attemptID = UUID()
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let script = #"""
+    #!/bin/sh
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":([0-9]+).*/\1/')
+      case "$line" in
+        *'"method":"initialize"'*) printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id" ;;
+        *'"method":"initialized"'*) ;;
+        *'"method":"thread/read"'*)
+          printf '{"id":%s,"result":{"thread":{"id":"thr-unknown","turns":[{"id":"turn-unknown","status":"queued","items":[{"type":"userMessage","clientId":"\#(attemptID.uuidString.lowercased())"}]}]}}}\n' "$request_id"
+          ;;
+        *'"method":"turn/start"'*) : > '\#(startMarker.path)' ;;
+      esac
+    done
+    """#
+    try script.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+    let client = CodexAppServerClient(
+      executableURL: nil,
+      sshExecutableURL: fakeSSH,
+      transport: .managedRemote(sshHost: "remote.example"),
+      eventHandler: { _ in },
+      dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+    )
+
+    do {
+      _ = try await client.runTurn(
+        threadID: "thr-unknown",
+        turnID: "local-turn",
+        message: "same held attempt",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(messageID: UUID(), attemptID: attemptID),
+        turnStartPolicy: .reconcileOnly
+      )
+      XCTFail("An unsupported native status must remain unknown")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected held unknown delivery, got \(error)")
+      }
+    }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: startMarker.path))
+    await client.shutdown()
+  }
+
+  func testManagedRemoteThreadReadFromDifferentThreadIsNotPositiveProof() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-managed-remote-wrong-thread-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+    let startMarker = temporaryDirectory.appendingPathComponent("turn-started")
+    let attemptID = UUID()
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let script = #"""
+    #!/bin/sh
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":([0-9]+).*/\1/')
+      case "$line" in
+        *'"method":"initialize"'*) printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id" ;;
+        *'"method":"initialized"'*) ;;
+        *'"method":"thread/read"'*)
+          printf '{"id":%s,"result":{"thread":{"id":"thr-other","turns":[{"id":"turn-other","status":"completed","items":[{"type":"userMessage","clientId":"\#(attemptID.uuidString.lowercased())"}]}]}}}\n' "$request_id"
+          ;;
+        *'"method":"turn/start"'*) : > '\#(startMarker.path)' ;;
+      esac
+    done
+    """#
+    try script.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+    let client = CodexAppServerClient(
+      executableURL: nil,
+      sshExecutableURL: fakeSSH,
+      transport: .managedRemote(sshHost: "remote.example"),
+      eventHandler: { _ in },
+      dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+    )
+
+    do {
+      _ = try await client.runTurn(
+        threadID: "thr-expected",
+        turnID: "local-turn",
+        message: "do not adopt another thread",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(messageID: UUID(), attemptID: attemptID),
+        turnStartPolicy: .reconcileOnly
+      )
+      XCTFail("A matching client ID from another thread must not prove delivery")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected held unknown delivery, got \(error)")
+      }
+    }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: startMarker.path))
+    await client.shutdown()
+  }
+
+  func testManagedRemoteCancellationAfterKnownStartRemainsUnknown() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-managed-remote-cancel-after-start-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+    let startedMarker = temporaryDirectory.appendingPathComponent("started")
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let script = #"""
+    #!/bin/sh
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":([0-9]+).*/\1/')
+      case "$line" in
+        *'"method":"initialize"'*) printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id" ;;
+        *'"method":"initialized"'*) ;;
+        *'"method":"thread/read"'*) printf '{"id":%s,"result":{"thread":{"id":"thr-cancel","turns":[]}}}\n' "$request_id" ;;
+        *'"method":"turn/start"'*)
+          : > '\#(startedMarker.path)'
+          printf '{"id":%s,"result":{"turn":{"id":"turn-cancel","status":"inProgress"}}}\n' "$request_id"
+          ;;
+      esac
+    done
+    """#
+    try script.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+    let client = CodexAppServerClient(
+      executableURL: nil,
+      sshExecutableURL: fakeSSH,
+      transport: .managedRemote(sshHost: "remote.example"),
+      eventHandler: { _ in },
+      dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+    )
+    let task = Task {
+      try await client.runTurn(
+        threadID: "thr-cancel",
+        turnID: "local-turn",
+        message: "cancel locally after acceptance",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(messageID: UUID(), attemptID: UUID())
+      )
+    }
+    let deadline = Date().addingTimeInterval(3)
+    while !FileManager.default.fileExists(atPath: startedMarker.path), Date() < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertTrue(FileManager.default.fileExists(atPath: startedMarker.path))
+    task.cancel()
+    do {
+      _ = try await task.value
+      XCTFail("Local cancellation after native acceptance must remain unknown")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected held unknown delivery, got \(error)")
+      }
+    }
+    await client.shutdown()
+  }
+
+  func testManagedRemoteRetryReportsNativeStartForReconciledInProgressTurn() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-managed-remote-active-reconcile-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    let readCount = temporaryDirectory.appendingPathComponent("read-count")
+    let turnStartMarker = temporaryDirectory.appendingPathComponent("turn-started")
+    let messageID = UUID()
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let script = #"""
+    #!/bin/sh
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":([0-9]+).*/\1/')
+      case "$line" in
+        *'"method":"initialize"'*)
+          printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id"
+          ;;
+        *'"method":"initialized"'*)
+          ;;
+        *'"method":"thread/read"'*)
+          count=0
+          if [ -f '\#(readCount.path)' ]; then count=$(/usr/bin/sed -n '1p' '\#(readCount.path)'); fi
+          count=$((count + 1))
+          printf '%s\n' "$count" > '\#(readCount.path)'
+          if [ "$count" -eq 1 ]; then status=inProgress; reply=''; else status=completed; reply=',{"id":"agent-final","type":"agentMessage","phase":"final_answer","text":"Attached once"}'; fi
+          printf '{"id":%s,"result":{"thread":{"id":"thr-active","turns":[{"id":"turn-active","status":"%s","items":[{"id":"user-active","type":"userMessage","clientId":"\#(messageID.uuidString.lowercased())","content":[{"type":"text","text":"same active message"}]}%s]}]}}}\n' "$request_id" "$status" "$reply"
+          ;;
+        *'"method":"turn/start"'*)
+          : > '\#(turnStartMarker.path)'
+          ;;
+      esac
+    done
+    """#
+    try script.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+    let recorder = CodexTurnStartRecorder()
+    let client = CodexAppServerClient(
+      executableURL: nil,
+      sshExecutableURL: fakeSSH,
+      transport: .managedRemote(sshHost: "remote.example"),
+      requestTimeoutNanoseconds: 2_000_000_000,
+      eventHandler: { event in await recorder.record(event) },
+      dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+    )
+
+    let result = try await client.runTurn(
+      threadID: "thr-active",
+      turnID: "local-retry",
+      message: "same active message",
+      attachments: [],
+      workspacePath: "~/avi.org2",
+      corpusAccess: .runtimeFilesystem,
+      attemptIdentity: CodexTurnAttemptIdentity(messageID: messageID, attemptID: messageID),
+      turnStartPolicy: .reconcileOnly
+    )
+
+    let starts = await recorder.starts
+    XCTAssertEqual(starts.count, 1)
+    XCTAssertEqual(starts.first?.threadID, "thr-active")
+    XCTAssertEqual(starts.first?.turnID, "turn-active")
+    XCTAssertEqual(result.status, .completed)
+    XCTAssertEqual(result.reply, "Attached once")
+    XCTAssertFalse(FileManager.default.fileExists(atPath: turnStartMarker.path))
+    await client.shutdown()
+  }
+
+  func testManagedRemoteDefinitiveFailureAllowsOneNewAttemptIdentity() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-managed-remote-failed-reconcile-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    let turnStartCount = temporaryDirectory.appendingPathComponent("turn-start-count")
+    let wrongAttemptMarker = temporaryDirectory.appendingPathComponent("wrong-attempt")
+    let messageID = UUID()
+    let priorAttemptID = messageID
+    let retryAttemptID = UUID()
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let script = #"""
+    #!/bin/sh
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":([0-9]+).*/\1/')
+      case "$line" in
+        *'"method":"initialize"'*) printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id" ;;
+        *'"method":"initialized"'*) ;;
+        *'"method":"thread/read"'*)
+          printf '{"id":%s,"result":{"thread":{"id":"thr-failed","turns":[{"id":"turn-failed","status":"failed","error":{"message":"remote execution failed"},"items":[{"id":"user-failed","type":"userMessage","clientId":"\#(priorAttemptID.uuidString.lowercased())","content":[]}]}]}}}\n' "$request_id"
+          ;;
+        *'"method":"turn/start"'*)
+          case "$line" in *'"clientUserMessageId":"\#(retryAttemptID.uuidString.lowercased())"'*) ;; *) : > '\#(wrongAttemptMarker.path)' ;; esac
+          count=0
+          if [ -f '\#(turnStartCount.path)' ]; then count=$(/usr/bin/sed -n '1p' '\#(turnStartCount.path)'); fi
+          printf '%s\n' "$((count + 1))" > '\#(turnStartCount.path)'
+          printf '{"id":%s,"result":{"turn":{"id":"turn-retry","status":"inProgress"}}}\n' "$request_id"
+          printf '%s\n' '{"method":"turn/started","params":{"threadId":"thr-failed","turn":{"id":"turn-retry","status":"inProgress","items":[]}}}'
+          printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-failed","turn":{"id":"turn-retry","status":"completed","items":[{"id":"agent-final","type":"agentMessage","phase":"final_answer","text":"Retry completed"}]}}}'
+          ;;
+      esac
+    done
+    """#
+    try script.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+    let client = CodexAppServerClient(
+      executableURL: nil,
+      sshExecutableURL: fakeSSH,
+      transport: .managedRemote(sshHost: "remote.example"),
+      eventHandler: { _ in },
+      dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+    )
+
+    let result = try await client.runTurn(
+      threadID: "thr-failed",
+      turnID: "local-retry",
+      message: "same message, authorized retry",
+      attachments: [],
+      workspacePath: "~/avi.org2",
+      corpusAccess: .runtimeFilesystem,
+      attemptIdentity: CodexTurnAttemptIdentity(
+        messageID: messageID,
+        attemptID: retryAttemptID,
+        predecessorAttemptID: priorAttemptID
+      ),
+      turnStartPolicy: .startIfAbsent
+    )
+    XCTAssertEqual(result.status, .completed)
+    XCTAssertEqual(result.reply, "Retry completed")
+    XCTAssertEqual(
+      try String(contentsOf: turnStartCount, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+      "1"
+    )
+    XCTAssertFalse(FileManager.default.fileExists(atPath: wrongAttemptMarker.path))
     await client.shutdown()
   }
 
@@ -1862,6 +3071,405 @@ final class CodexAppServerClientTests: XCTestCase {
       "views/external-threads/inspect-release-state-019f-thread.org"
     )
   }
+
+  func testManagedRemoteBridgeDoesNotUnlockRetryFromMalformedOrConflictingTerminalIdentity() async throws {
+    for mode in ["missing-id-first", "empty-id-first", "conflicting-id-first"] {
+      try await assertMalformedTerminalIdentityRemainsHeld(mode: mode)
+    }
+  }
+
+  private func assertMalformedTerminalIdentityRemainsHeld(mode: String) async throws {
+    let temporaryDirectory = URL(fileURLWithPath: "/tmp", isDirectory: true)
+      .appendingPathComponent("cgt-\(mode)-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+    let codexHome = temporaryDirectory.appendingPathComponent("codex-home", isDirectory: true)
+    let controlDirectory = codexHome.appendingPathComponent("app-server-control", isDirectory: true)
+    try FileManager.default.createDirectory(at: controlDirectory, withIntermediateDirectories: true)
+    let socketPath = controlDirectory.appendingPathComponent("app-server-control.sock")
+    let countPath = temporaryDirectory.appendingPathComponent("physical-start-count")
+    let acceptedPath = temporaryDirectory.appendingPathComponent("accepted-attempt")
+    let daemonScript = temporaryDirectory.appendingPathComponent("fake-daemon.py")
+    try Self.fakeManagedRemoteDaemonScript.write(
+      to: daemonScript,
+      atomically: true,
+      encoding: .utf8
+    )
+    let daemon = Process()
+    daemon.executableURL = URL(fileURLWithPath: "/usr/local/bin/python3")
+    daemon.arguments = [
+      daemonScript.path,
+      socketPath.path,
+      countPath.path,
+      acceptedPath.path,
+      "0",
+      mode
+    ]
+    daemon.standardOutput = FileHandle.nullDevice
+    daemon.standardError = FileHandle.nullDevice
+    try daemon.run()
+    defer {
+      if daemon.isRunning { daemon.terminate() }
+      daemon.waitUntilExit()
+    }
+    let socketDeadline = Date().addingTimeInterval(3)
+    while !FileManager.default.fileExists(atPath: socketPath.path), Date() < socketDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    guard FileManager.default.fileExists(atPath: socketPath.path) else {
+      return XCTFail("Fixture daemon did not create its socket for \(mode)")
+    }
+
+    let adapterScript = temporaryDirectory.appendingPathComponent("adapter.py")
+    try CodexAppServerClient.managedRemoteJSONLAdapter.write(
+      to: adapterScript,
+      atomically: true,
+      encoding: .utf8
+    )
+    let claimRoot = temporaryDirectory.appendingPathComponent("claims", isDirectory: true)
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let launcher = #"""
+    #!/bin/sh
+    export CODEX_HOME='\#(codexHome.path)'
+    export CELORGA_MANAGED_REMOTE_CLAIM_ROOT='\#(claimRoot.path)'
+    exec /usr/local/bin/python3 '\#(adapterScript.path)'
+    """#
+    try launcher.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+    func makeClient() -> CodexAppServerClient {
+      CodexAppServerClient(
+        executableURL: nil,
+        sshExecutableURL: fakeSSH,
+        transport: .managedRemote(sshHost: "isolated.test"),
+        requestTimeoutNanoseconds: 1_000_000_000,
+        eventHandler: { _ in },
+        dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+      )
+    }
+
+    let messageID = UUID()
+    let initialIdentity = CodexTurnAttemptIdentity(messageID: messageID, attemptID: messageID)
+    let initial = makeClient()
+    do {
+      _ = try await initial.runTurn(
+        threadID: "thr-atomic",
+        turnID: "local-malformed-terminal",
+        message: "terminal identity must bind",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: initialIdentity
+      )
+      XCTFail("Malformed terminal identity must remain unconfirmed for \(mode)")
+    } catch let error as CodexAppServerError {
+      if mode == "conflicting-id-first" {
+        guard case .turnFailed = error else {
+          return XCTFail("Expected initial exact failure before conflict, got \(error)")
+        }
+      } else {
+        guard case .turnStartUnknown = error else {
+          return XCTFail("Expected malformed terminal identity to remain unknown, got \(error)")
+        }
+      }
+    }
+    await initial.shutdown()
+
+    if mode == "conflicting-id-first" {
+      let conflictReader = makeClient()
+      do {
+        _ = try await conflictReader.runTurn(
+          threadID: "thr-atomic",
+          turnID: "local-conflicting-history",
+          message: "terminal identity must bind",
+          attachments: [],
+          workspacePath: "~/corpus",
+          corpusAccess: .runtimeFilesystem,
+          attemptIdentity: initialIdentity,
+          turnStartPolicy: .reconcileOnly
+        )
+        XCTFail("Conflicting history identity must not be accepted")
+      } catch let error as CodexAppServerError {
+        guard case .turnStartUnknown = error else {
+          return XCTFail("Expected conflicting identity to remain unknown, got \(error)")
+        }
+      }
+      await conflictReader.shutdown()
+    }
+
+    let child = makeClient()
+    do {
+      _ = try await child.runTurn(
+        threadID: "thr-atomic",
+        turnID: "local-unauthorized-child",
+        message: "terminal identity must bind",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(
+          messageID: messageID,
+          attemptID: UUID(),
+          predecessorAttemptID: messageID
+        )
+      )
+      XCTFail("Malformed terminal identity must not unlock a child for \(mode)")
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else {
+        return XCTFail("Expected held child for \(mode), got \(error)")
+      }
+    }
+    await child.shutdown()
+    XCTAssertEqual(
+      try String(contentsOf: countPath, encoding: .utf8)
+        .components(separatedBy: .newlines)
+        .filter { !$0.isEmpty }.count,
+      1,
+      mode
+    )
+    let journalURLs = Self.managedRemoteJournalURLs(in: claimRoot)
+    XCTAssertEqual(journalURLs.count, 1, mode)
+    let journalURL = try XCTUnwrap(journalURLs.first)
+    let journal = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(contentsOf: journalURL)) as? [String: Any]
+    )
+    let attempts = try XCTUnwrap(journal["attempts"] as? [String: [String: Any]])
+    XCTAssertEqual(attempts[messageID.uuidString.lowercased()]?["state"] as? String, "unknown", mode)
+    XCTAssertEqual(attempts.count, 1, mode)
+  }
+
+  private static func managedRemoteJournalURLs(in root: URL) -> [URL] {
+    guard let enumerator = FileManager.default.enumerator(
+      at: root,
+      includingPropertiesForKeys: nil
+    ) else { return [] }
+    return enumerator.compactMap { value in
+      guard let url = value as? URL, url.lastPathComponent == "journal.json" else { return nil }
+      return url
+    }
+  }
+
+  static let fakeManagedRemoteDaemonScript = #"""
+  import base64
+  import hashlib
+  import json
+  import os
+  import socket
+  import struct
+  import sys
+  import threading
+  import time
+
+  socket_path, count_path, accepted_path = sys.argv[1:4]
+  required_reads = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+  mode = sys.argv[5] if len(sys.argv) > 5 else "completed"
+  fail_first = mode in (
+      "fail-first",
+      "missing-id-first",
+      "empty-id-first",
+      "conflicting-id-first",
+  )
+  error_first = mode == "error-first"
+  missing_id_first = mode == "missing-id-first"
+  empty_id_first = mode == "empty-id-first"
+  conflicting_id_first = mode == "conflicting-id-first"
+  drop_response_first = mode == "drop-response-first"
+  try:
+      os.unlink(socket_path)
+  except FileNotFoundError:
+      pass
+  listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+  listener.bind(socket_path)
+  listener.listen(8)
+  state_lock = threading.Lock()
+  thread_read_count = 0
+
+  def read_until(connection, marker):
+      data = b""
+      while marker not in data:
+          chunk = connection.recv(4096)
+          if not chunk:
+              raise EOFError()
+          data += chunk
+      return data
+
+  def read_exact(connection, count):
+      data = b""
+      while len(data) < count:
+          chunk = connection.recv(count - len(data))
+          if not chunk:
+              raise EOFError()
+          data += chunk
+      return data
+
+  def read_frame(connection):
+      first, second = read_exact(connection, 2)
+      length = second & 0x7f
+      if length == 126:
+          length = struct.unpack("!H", read_exact(connection, 2))[0]
+      elif length == 127:
+          length = struct.unpack("!Q", read_exact(connection, 8))[0]
+      mask = read_exact(connection, 4) if second & 0x80 else None
+      payload = read_exact(connection, length)
+      if mask:
+          payload = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
+      return first & 0x0f, payload
+
+  def send_json(connection, value):
+      payload = json.dumps(value, separators=(",", ":")).encode("utf-8")
+      length = len(payload)
+      if length < 126:
+          header = bytes([0x81, length])
+      elif length <= 0xffff:
+          header = bytes([0x81, 126]) + struct.pack("!H", length)
+      else:
+          header = bytes([0x81, 127]) + struct.pack("!Q", length)
+      connection.sendall(header + payload)
+
+  def handle(connection):
+      global thread_read_count
+      try:
+          header = read_until(connection, b"\r\n\r\n")
+          key_line = next(
+              line for line in header.split(b"\r\n")
+              if line.lower().startswith(b"sec-websocket-key:")
+          )
+          key = key_line.split(b":", 1)[1].strip()
+          accept = base64.b64encode(hashlib.sha1(
+              key + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+          ).digest())
+          connection.sendall(
+              b"HTTP/1.1 101 Switching Protocols\r\n"
+              b"Upgrade: websocket\r\nConnection: Upgrade\r\n"
+              b"Sec-WebSocket-Accept: " + accept + b"\r\n\r\n"
+          )
+          while True:
+              opcode, payload = read_frame(connection)
+              if opcode == 0x8:
+                  return
+              if opcode != 0x1:
+                  continue
+              request = json.loads(payload.decode("utf-8"))
+              request_id = request.get("id")
+              method = request.get("method")
+              if method == "initialize":
+                  send_json(connection, {"id": request_id, "result": {"userAgent": "fake-codex"}})
+              elif method == "initialized":
+                  continue
+              elif method == "account/read":
+                  send_json(connection, {
+                      "id": request_id,
+                      "result": {
+                          "account": {"type": "chatgpt", "email": "fixture@example.test"},
+                          "requiresOpenaiAuth": True,
+                      },
+                  })
+              elif method in ("thread/start", "thread/resume"):
+                  send_json(connection, {
+                      "id": request_id,
+                      "result": {"thread": {"id": "thr-atomic"}},
+                  })
+              elif method == "thread/read":
+                  with state_lock:
+                      thread_read_count += 1
+                      current_read_count = thread_read_count
+                  turns = []
+                  if (
+                      os.path.exists(accepted_path)
+                      and (not drop_response_first or current_read_count > 4)
+                  ):
+                      with open(accepted_path, "r", encoding="utf-8") as handle:
+                          accepted = json.load(handle)
+                      attempt_id = accepted["attemptId"]
+                      historical_turn = {
+                          "status": accepted["status"],
+                          "items": [
+                              {"type": "userMessage", "clientId": attempt_id},
+                              {"type": "agentMessage", "phase": "final_answer", "text": "Completed once"},
+                          ],
+                      }
+                      if "nativeTurnId" in accepted:
+                          historical_turn["id"] = accepted["nativeTurnId"]
+                      turns = [historical_turn]
+                  send_json(connection, {
+                      "id": request_id,
+                      "result": {"thread": {"id": "thr-atomic", "turns": turns}},
+                  })
+              elif method == "turn/start":
+                  while True:
+                      with state_lock:
+                          enough_clients_reconciled = thread_read_count >= required_reads
+                      if enough_clients_reconciled:
+                          break
+                      time.sleep(0.01)
+                  attempt_id = request["params"]["clientUserMessageId"]
+                  with state_lock:
+                      start_count = 0
+                      if os.path.exists(count_path):
+                          with open(count_path, "r", encoding="utf-8") as handle:
+                              start_count = len([line for line in handle if line.strip()])
+                      descriptor = os.open(count_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                      try:
+                          os.write(descriptor, b"start\n")
+                          os.fsync(descriptor)
+                      finally:
+                          os.close(descriptor)
+                  status = "failed" if fail_first and start_count == 0 else "completed"
+                  if error_first and start_count == 0:
+                      send_json(connection, {
+                          "id": request_id,
+                          "error": {"code": -32603, "message": "internal error after receipt"},
+                      })
+                      continue
+                  with open(accepted_path, "w", encoding="utf-8") as handle:
+                      accepted = {
+                          "attemptId": attempt_id,
+                          "status": status,
+                      }
+                      if empty_id_first and start_count == 0:
+                          accepted["nativeTurnId"] = ""
+                      elif not (missing_id_first and start_count == 0):
+                          accepted["nativeTurnId"] = (
+                              "turn-conflict"
+                              if conflicting_id_first and start_count == 0
+                              else "turn-atomic"
+                          )
+                      json.dump(accepted, handle)
+                      handle.flush()
+                      os.fsync(handle.fileno())
+                  if drop_response_first and start_count == 0:
+                      return
+                  turn = {
+                      "id": "turn-atomic",
+                      "status": status,
+                      "items": [
+                          {"type": "userMessage", "clientId": attempt_id},
+                          {"type": "agentMessage", "phase": "final_answer", "text": "Completed once"},
+                      ],
+                  }
+                  if missing_id_first and start_count == 0:
+                      turn.pop("id", None)
+                  elif empty_id_first and start_count == 0:
+                      turn["id"] = ""
+                  send_json(connection, {
+                      "method": "turn/started",
+                      "params": {
+                          "threadId": "thr-atomic",
+                          "turn": {"id": "turn-unrelated", "status": "inProgress", "items": []},
+                      },
+                  })
+                  send_json(connection, {"id": request_id, "result": {"turn": turn}})
+                  send_json(connection, {
+                      "method": "turn/completed",
+                      "params": {"threadId": "thr-atomic", "turn": turn},
+                  })
+      except (EOFError, OSError, ValueError, KeyError, json.JSONDecodeError):
+          return
+      finally:
+          connection.close()
+
+  while True:
+      connection, _ = listener.accept()
+      threading.Thread(target=handle, args=(connection,), daemon=True).start()
+  """#
 
   private static let fakeAppServerScript = #"""
   #!/bin/sh

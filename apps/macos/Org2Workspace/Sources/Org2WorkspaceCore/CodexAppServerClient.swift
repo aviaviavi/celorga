@@ -195,6 +195,7 @@ public struct CodexTurnResult: Sendable {
     case completed
     case interrupted
     case failed
+    case unknown
   }
 
   public let threadID: String
@@ -210,6 +211,12 @@ public enum CodexAppServerEvent: Sendable {
   case accountUpdated(authMode: String?, plan: String?)
   case loginCompleted(loginID: String?, success: Bool, error: String?)
   case turnStarted(threadID: String, turnID: String)
+  case turnTerminal(
+    threadID: String,
+    turnID: String,
+    status: CodexTurnResult.Status,
+    detail: String?
+  )
   case agentMessageDelta(threadID: String, turnID: String, itemID: String, delta: String)
   case reasoningDelta(threadID: String, turnID: String, delta: String)
   case activity(
@@ -260,6 +267,7 @@ public enum CodexAppServerError: LocalizedError, Sendable {
   case server(code: Int?, message: String)
   case invalidResponse(String)
   case requestTimedOut(String)
+  case turnStartUnknown(String)
   case notAuthenticated
   case turnFailed(String)
   case turnInterrupted
@@ -282,6 +290,8 @@ public enum CodexAppServerError: LocalizedError, Sendable {
       } else {
         "Codex did not respond to \(method) before the request timed out."
       }
+    case .turnStartUnknown(let detail):
+      "Codex may have accepted this turn, but Celorga could not confirm it yet. \(detail)"
     case .notAuthenticated:
       "Sign in with ChatGPT before using a Codex thread."
     case .turnFailed(let detail):
@@ -289,6 +299,31 @@ public enum CodexAppServerError: LocalizedError, Sendable {
     case .turnInterrupted:
       "Codex turn was stopped."
     }
+  }
+}
+
+public enum CodexTurnStartPolicy: Sendable {
+  /// This exact attempt has not been submitted before, so a verified history
+  /// miss may be followed by one turn/start request.
+  case startIfAbsent
+  /// This attempt may already have been accepted. A history miss remains
+  /// unknown and must never cause another turn/start request.
+  case reconcileOnly
+}
+
+public struct CodexTurnAttemptIdentity: Equatable, Sendable {
+  /// The Celorga message remains stable across explicitly authorized retries.
+  public let messageID: UUID
+  /// Every provider submission uses a distinct correlation identity.
+  public let attemptID: UUID
+  /// A retry is admissible only when the runtime-host journal has positively
+  /// recorded this exact predecessor as failed or interrupted.
+  public let predecessorAttemptID: UUID?
+
+  public init(messageID: UUID, attemptID: UUID, predecessorAttemptID: UUID? = nil) {
+    self.messageID = messageID
+    self.attemptID = attemptID
+    self.predecessorAttemptID = predecessorAttemptID
   }
 }
 
@@ -348,6 +383,11 @@ public actor CodexAppServerClient {
     }
   }
 
+  private struct RequestSubmissionError: Error, @unchecked Sendable {
+    let underlying: Error
+    let submissionStarted: Bool
+  }
+
   private var executableURL: URL?
   private let executableResolver: (@Sendable () -> URL?)?
   private let sshExecutableURL: URL
@@ -371,7 +411,9 @@ public actor CodexAppServerClient {
   ] = [:]
   private var pendingRequestTimeoutTasks: [String: Task<Void, Never>] = [:]
   private var cancelledRequestKeys = Set<String>()
+  private var submittedRequestKeys = Set<String>()
   private var pendingTurns: [String: PendingTurn] = [:]
+  private var reportedStartedTurnIDs = Set<String>()
   private var managedRemoteRecoveryTask: Task<Void, Never>?
   private var cancelledTurnIDs = Set<String>()
   private var ignoredCompletedTurnIDs = Set<String>()
@@ -487,6 +529,7 @@ public actor CodexAppServerClient {
 
   nonisolated static let managedRemoteJSONLAdapter = #"""
 import base64
+import fcntl
 import hashlib
 import json
 import os
@@ -494,6 +537,7 @@ import socket
 import struct
 import sys
 import threading
+import uuid
 
 codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
 socket_path = os.path.join(codex_home, "app-server-control", "app-server-control.sock")
@@ -527,6 +571,17 @@ if ("sec-websocket-accept: " + expected_accept).lower().encode("ascii") not in h
     raise RuntimeError("Codex daemon returned an invalid WebSocket accept value")
 
 send_lock = threading.Lock()
+output_lock = threading.Lock()
+claim_lock = threading.Lock()
+claims_by_request = {}
+claims_by_turn = {}
+# This authority is safe only when every dispatcher for the corpus uses this
+# receipt-aware bridge. A rollout must quiesce legacy executors first; older
+# direct clients do not participate in the journal and cannot be mixed live.
+claim_root = os.environ.get(
+    "CELORGA_MANAGED_REMOTE_CLAIM_ROOT",
+    os.path.join(codex_home, "celorga-managed-remote-claims", "v3"),
+)
 
 def send_frame(opcode, payload):
     length = len(payload)
@@ -541,19 +596,467 @@ def send_frame(opcode, payload):
     with send_lock:
         connection.sendall(prefix + mask + masked)
 
+def emit_client_message(message):
+    payload = json.dumps(message, separators=(",", ":")).encode("utf-8")
+    with output_lock:
+        sys.stdout.buffer.write(payload + b"\n")
+        sys.stdout.buffer.flush()
+
+def durable_json_replace(path, value):
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    temporary = "%s.tmp-%s-%s" % (path, os.getpid(), threading.get_ident())
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        payload = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        os.write(descriptor, payload)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, path)
+    directory = os.open(os.path.dirname(path), os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+def read_journal(path):
+    with open(path, "r", encoding="utf-8") as handle:
+        value = json.load(handle)
+    if not isinstance(value, dict):
+        raise ValueError("journal is not an object")
+    return value
+
+def authority_paths(message_id):
+    key = hashlib.sha256(message_id.encode("utf-8")).hexdigest()
+    namespace = os.path.join(claim_root, key)
+    return (
+        namespace,
+        os.path.join(namespace, "journal.json"),
+        os.path.join(namespace, "authority.lock"),
+    )
+
+def create_authority_namespace(message_id):
+    namespace, path, lock_path = authority_paths(message_id)
+    os.makedirs(claim_root, mode=0o700, exist_ok=True)
+    created = False
+    try:
+        os.mkdir(namespace, mode=0o700)
+        created = True
+        directory = os.open(claim_root, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except FileExistsError:
+        pass
+    return namespace, path, lock_path, created
+
+def with_authority_lock(lock_path, operation):
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        return operation()
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+def claim_hold_message(request_id, detail):
+    return {
+        "id": request_id,
+        "error": {
+            "code": -32098,
+            "message": "Celorga managed-remote delivery is held for authoritative reconciliation.",
+            "data": {"celorgaDeliveryState": "held", "detail": detail},
+        },
+    }
+
+def claim_hold_response(request_id, detail):
+    emit_client_message(claim_hold_message(request_id, detail))
+
+def no_authority_response(request_id):
+    emit_client_message({
+        "id": request_id,
+        "error": {
+            "code": -32097,
+            "message": "No admitted Celorga managed-remote attempt exists for this exact contract.",
+            "data": {"celorgaDeliveryState": "notAdmitted"},
+        },
+    })
+
+def parse_delivery_contract(contract, params):
+    if not isinstance(contract, dict):
+        raise ValueError("missing delivery contract")
+    if contract.get("schema") != "celorga:managed-remote-delivery:v3":
+        raise ValueError("unsupported delivery contract")
+    message_id = str(uuid.UUID(contract["messageId"])).lower()
+    attempt_id = str(uuid.UUID(contract["attemptId"])).lower()
+    predecessor = contract.get("predecessorAttemptId")
+    predecessor_id = str(uuid.UUID(predecessor)).lower() if predecessor is not None else None
+    thread_id = contract["threadId"]
+    if not isinstance(thread_id, str) or not thread_id or params.get("threadId") != thread_id:
+        raise ValueError("thread identity mismatch")
+    return message_id, attempt_id, predecessor_id, thread_id
+
+def delivery_contract_hash(params):
+    # Celorga's workspace snapshot and local edit correlation are transport
+    # envelope values. They can be regenerated after a crash without changing
+    # the user's requested work. Bind the durable claim to the exact user body,
+    # attachments, native thread, model, workspace, sandbox, and attempt while
+    # deliberately excluding only that leading envelope.
+    canonical = json.loads(json.dumps(params))
+    inputs = canonical.get("input")
+    if not isinstance(inputs, list) or not inputs or not isinstance(inputs[0], dict):
+        raise ValueError("missing text input")
+    text = inputs[0].get("text")
+    if not isinstance(text, str):
+        raise ValueError("missing wrapped user message")
+    start_marker = "<user-message>\n"
+    end_marker = "\n</user-message>"
+    start = text.find(start_marker)
+    end = text.rfind(end_marker)
+    if start < 0 or end < start + len(start_marker):
+        raise ValueError("invalid wrapped user message")
+    inputs[0]["text"] = text[start + len(start_marker):end]
+    payload = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+def claim_turn_start(request):
+    params = request.get("params")
+    if request.get("method") != "turn/start" or not isinstance(params, dict):
+        return True
+    contract = params.pop("celorgaDelivery", None)
+    request_id = request.get("id")
+    try:
+        message_id, attempt_id, predecessor_id, thread_id = parse_delivery_contract(contract, params)
+        if params.get("clientUserMessageId", "").lower() != attempt_id:
+            raise ValueError("attempt identity mismatch")
+    except (KeyError, TypeError, ValueError, AttributeError) as error:
+        claim_hold_response(request_id, "invalid delivery contract: %s" % error)
+        return False
+    try:
+        contract_hash = delivery_contract_hash(params)
+    except (TypeError, ValueError) as error:
+        claim_hold_response(request_id, "invalid request binding: %s" % error)
+        return False
+    namespace, _, _ = authority_paths(message_id)
+    if (
+        not os.path.isdir(namespace)
+        and (attempt_id != message_id or predecessor_id is not None)
+    ):
+        claim_hold_response(
+            request_id,
+            "only the deterministic initial attempt may create message authority",
+        )
+        return False
+    _, path, lock_path, namespace_created = create_authority_namespace(message_id)
+    accepted = False
+    detail = "message already has an authoritative attempt"
+
+    def admit():
+        nonlocal accepted, detail
+        if not os.path.exists(path):
+            if not namespace_created:
+                detail = "message authority exists without a valid journal"
+                return
+            if attempt_id != message_id or predecessor_id is not None:
+                detail = "only the deterministic initial attempt may create message authority"
+                return
+            journal = {
+                "schema": "celorga:managed-remote-delivery-journal:v3",
+                "messageId": message_id,
+                "threadId": thread_id,
+                "currentAttemptId": attempt_id,
+                "attempts": {},
+            }
+        else:
+            journal = read_journal(path)
+            if any(journal.get(key) != value for key, value in (
+                ("schema", "celorga:managed-remote-delivery-journal:v3"),
+                ("messageId", message_id),
+                ("threadId", thread_id),
+            )) or not isinstance(journal.get("attempts"), dict):
+                detail = "message journal is corrupt or conflicts"
+                return
+            current_id = journal.get("currentAttemptId")
+            current = journal["attempts"].get(current_id)
+            if attempt_id == current_id:
+                detail = (
+                    "attempt already claimed"
+                    if isinstance(current, dict) and current.get("contractHash") == contract_hash
+                    else "attempt contract changed after admission"
+                )
+                return
+            if (
+                predecessor_id != current_id
+                or not isinstance(current, dict)
+                or current.get("state") not in ("failed", "interrupted")
+                or not isinstance(current.get("nativeTurnId"), str)
+                or not current.get("nativeTurnId")
+                or attempt_id in journal["attempts"]
+            ):
+                detail = "retry lacks the exact authoritative failed or interrupted predecessor"
+                return
+        journal["attempts"][attempt_id] = {
+            "attemptId": attempt_id,
+            "predecessorAttemptId": predecessor_id,
+            "contractHash": contract_hash,
+            "state": "claimed",
+        }
+        journal["currentAttemptId"] = attempt_id
+        durable_json_replace(path, journal)
+        accepted = True
+
+    try:
+        with_authority_lock(lock_path, admit)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        detail = "message journal could not be persisted: %s" % error
+    if not accepted:
+        claim_hold_response(request_id, detail)
+        return False
+    with claim_lock:
+        claims_by_request[str(request_id)] = (path, lock_path, attempt_id, "start", thread_id)
+    return True
+
+def track_delivery_read(request):
+    params = request.get("params")
+    if request.get("method") != "thread/read" or not isinstance(params, dict):
+        return True
+    contract = params.pop("celorgaDeliveryRead", None)
+    if not isinstance(contract, dict):
+        return True
+    request_id = request.get("id")
+    try:
+        message_id, attempt_id, predecessor_id, thread_id = parse_delivery_contract(contract, params)
+        start_params = contract["startParams"]
+        if not isinstance(start_params, dict):
+            raise ValueError("missing expected start contract")
+        normalize_runtime_params(start_params)
+        if start_params.get("threadId") != thread_id:
+            raise ValueError("expected start thread mismatch")
+        if str(start_params.get("clientUserMessageId", "")).lower() != attempt_id:
+            raise ValueError("expected start attempt mismatch")
+    except (KeyError, TypeError, ValueError, AttributeError) as error:
+        claim_hold_response(request_id, "invalid reconciliation contract: %s" % error)
+        return False
+    try:
+        contract_hash = delivery_contract_hash(start_params)
+    except (TypeError, ValueError) as error:
+        claim_hold_response(request_id, "invalid reconciliation binding: %s" % error)
+        return False
+    namespace, path, lock_path = authority_paths(message_id)
+    if not os.path.isdir(namespace):
+        no_authority_response(request_id)
+        return False
+    decision = "hold"
+    detail = "message authority does not admit this reconciliation"
+
+    def inspect():
+        nonlocal decision, detail
+        if not os.path.exists(path):
+            detail = "message authority exists without a valid journal"
+            return
+        journal = read_journal(path)
+        if any(journal.get(key) != value for key, value in (
+            ("schema", "celorga:managed-remote-delivery-journal:v3"),
+            ("messageId", message_id),
+            ("threadId", thread_id),
+        )) or not isinstance(journal.get("attempts"), dict):
+            detail = "message journal is corrupt or runtime thread changed"
+            return
+        current_id = journal.get("currentAttemptId")
+        current = journal["attempts"].get(current_id)
+        if attempt_id == current_id:
+            if isinstance(current, dict) and current.get("contractHash") == contract_hash:
+                decision = "read"
+            else:
+                detail = "attempt contract changed after admission"
+            return
+        if (
+            predecessor_id == current_id
+            and isinstance(current, dict)
+            and current.get("state") in ("failed", "interrupted")
+            and isinstance(current.get("nativeTurnId"), str)
+            and current.get("nativeTurnId")
+            and attempt_id not in journal["attempts"]
+        ):
+            decision = "notAdmitted"
+            return
+        detail = "retry lacks the exact authoritative failed or interrupted predecessor"
+
+    try:
+        with_authority_lock(lock_path, inspect)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        detail = "message journal could not be read: %s" % error
+    if decision == "notAdmitted":
+        no_authority_response(request_id)
+        return False
+    if decision != "read":
+        claim_hold_response(request_id, detail)
+        return False
+    with claim_lock:
+        claims_by_request[str(request_id)] = (
+            path, lock_path, attempt_id, "read", thread_id
+        )
+    return True
+
+def update_attempt_receipt(path, lock_path, attempt_id, expected_thread_id, turn, response_error=False):
+    def update():
+        if not os.path.exists(path):
+            return
+        journal = read_journal(path)
+        attempts = journal.get("attempts")
+        attempt = attempts.get(attempt_id) if isinstance(attempts, dict) else None
+        if not isinstance(attempt, dict):
+            return
+        prior_state = attempt.get("state")
+        terminal = prior_state in ("completed", "failed", "interrupted")
+        if response_error and not terminal:
+            # An error can arrive after the daemon accepted or even started
+            # the turn. Only exact native terminal evidence may unlock retry.
+            attempt["state"] = "unknown"
+        if isinstance(turn, dict):
+            turn_id = turn.get("id")
+            status = turn.get("status")
+            has_turn_id = isinstance(turn_id, str) and bool(turn_id)
+            if has_turn_id:
+                existing_turn_id = attempt.get("nativeTurnId")
+                if isinstance(existing_turn_id, str) and existing_turn_id != turn_id:
+                    attempt["state"] = "unknown"
+                    durable_json_replace(path, journal)
+                    return
+                attempt["nativeTurnId"] = turn_id
+                with claim_lock:
+                    claims_by_turn[turn_id] = (
+                        path, lock_path, attempt_id, expected_thread_id
+                    )
+            if terminal:
+                pass
+            elif status == "inProgress":
+                attempt["state"] = "started" if has_turn_id else "unknown"
+            elif status in ("completed", "failed", "interrupted"):
+                attempt["state"] = status if has_turn_id else "unknown"
+            elif status is not None:
+                attempt["state"] = "unknown"
+        durable_json_replace(path, journal)
+    try:
+        with_authority_lock(lock_path, update)
+    except (OSError, ValueError, json.JSONDecodeError):
+        # The journal still blocks a second admission if receipt enrichment
+        # fails, so uncertainty remains fail-closed.
+        return
+
+def turn_from_thread_read(message, attempt_id, expected_thread_id):
+    result = message.get("result")
+    thread = result.get("thread") if isinstance(result, dict) else None
+    if not isinstance(thread, dict) or thread.get("id") != expected_thread_id:
+        return None
+    turns = thread.get("turns")
+    if not isinstance(turns, list):
+        return None
+    for turn in reversed(turns):
+        if not isinstance(turn, dict):
+            continue
+        items = turn.get("items")
+        if isinstance(items, list) and any(
+            isinstance(item, dict)
+            and item.get("type") == "userMessage"
+            and str(item.get("clientId", "")).lower() == attempt_id
+            for item in items
+        ):
+            return turn
+    return None
+
+def turn_conflicts_with_bound_receipt(path, lock_path, attempt_id, turn):
+    conflict = False
+
+    def inspect():
+        nonlocal conflict
+        if not os.path.exists(path):
+            conflict = True
+            return
+        journal = read_journal(path)
+        attempts = journal.get("attempts")
+        attempt = attempts.get(attempt_id) if isinstance(attempts, dict) else None
+        if not isinstance(attempt, dict):
+            conflict = True
+            return
+        existing_turn_id = attempt.get("nativeTurnId")
+        candidate_turn_id = turn.get("id") if isinstance(turn, dict) else None
+        if (
+            isinstance(existing_turn_id, str)
+            and existing_turn_id
+            and candidate_turn_id != existing_turn_id
+        ):
+            conflict = True
+
+    try:
+        with_authority_lock(lock_path, inspect)
+    except (OSError, ValueError, json.JSONDecodeError):
+        conflict = True
+    return conflict
+
+def observe_server_message(payload):
+    try:
+        message = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return
+    if not isinstance(message, dict):
+        return
+    binding = None
+    with claim_lock:
+        binding = claims_by_request.pop(str(message.get("id")), None)
+    turn = None
+    response_error = isinstance(message.get("error"), dict)
+    if binding is not None:
+        path, lock_path, attempt_id, kind, expected_thread_id = binding
+        if kind == "start":
+            result = message.get("result")
+            if isinstance(result, dict) and isinstance(result.get("turn"), dict):
+                turn = result["turn"]
+        else:
+            turn = turn_from_thread_read(message, attempt_id, expected_thread_id)
+            if turn_conflicts_with_bound_receipt(path, lock_path, attempt_id, turn):
+                update_attempt_receipt(
+                    path, lock_path, attempt_id, expected_thread_id, turn
+                )
+                return json.dumps(
+                    claim_hold_message(
+                        message.get("id"),
+                        "native turn identity conflicts with the admitted attempt",
+                    ),
+                    separators=(",", ":"),
+                ).encode("utf-8")
+    method = message.get("method")
+    params = message.get("params")
+    if method in ("turn/started", "turn/completed") and isinstance(params, dict):
+        candidate = params.get("turn")
+        if isinstance(candidate, dict):
+            turn_id = candidate.get("id")
+            if isinstance(turn_id, str):
+                with claim_lock:
+                    turn_binding = claims_by_turn.get(turn_id)
+                if turn_binding is not None:
+                    path, lock_path, attempt_id, expected_thread_id = turn_binding
+                    if params.get("threadId") == expected_thread_id:
+                        turn = candidate
+    if binding is None and turn is None:
+        return None
+    update_attempt_receipt(
+        path,
+        lock_path,
+        attempt_id,
+        expected_thread_id,
+        turn,
+        response_error=response_error,
+    )
+    return None
+
 def expand_runtime_path(value):
     if not isinstance(value, str) or not value:
         return value
     return os.path.abspath(os.path.expanduser(value))
 
-def normalize_client_request(payload):
-    try:
-        request = json.loads(payload.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return payload
-    params = request.get("params")
-    if not isinstance(params, dict):
-        return payload
+def normalize_runtime_params(params):
     if "cwd" in params:
         params["cwd"] = expand_runtime_path(params["cwd"])
     if isinstance(params.get("runtimeWorkspaceRoots"), list):
@@ -565,6 +1068,20 @@ def normalize_client_request(payload):
         sandbox_policy["writableRoots"] = [
             expand_runtime_path(path) for path in sandbox_policy["writableRoots"]
         ]
+
+def normalize_client_request(payload):
+    try:
+        request = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return payload
+    params = request.get("params")
+    if not isinstance(params, dict):
+        return payload
+    normalize_runtime_params(params)
+    if not claim_turn_start(request):
+        return None
+    if not track_delivery_read(request):
+        return None
     return json.dumps(request, separators=(",", ":")).encode("utf-8")
 
 def forward_stdin():
@@ -625,8 +1142,13 @@ while True:
         continue
     if finished:
         message = b"".join(fragments)
-        sys.stdout.buffer.write(message.rstrip(b"\r\n") + b"\n")
-        sys.stdout.buffer.flush()
+        message = message.rstrip(b"\r\n")
+        replacement = observe_server_message(message)
+        if replacement is not None:
+            message = replacement
+        with output_lock:
+            sys.stdout.buffer.write(message + b"\n")
+            sys.stdout.buffer.flush()
         fragment_opcode = None
         fragments = []
 """#
@@ -906,14 +1428,16 @@ while True:
     existingThreadID: String?,
     cwd: URL,
     model: String? = nil,
-    sandboxAccess: CodexSandboxAccess = .workspaceWrite
+    sandboxAccess: CodexSandboxAccess = .workspaceWrite,
+    allowsFreshReplacement: Bool = true
   ) async throws -> CodexThreadResolution {
     try await ensureThreadRecoveringStaleSession(
       existingThreadID: existingThreadID,
       workspacePath: cwd.standardizedFileURL.path,
       corpusAccess: .clientWorkspaceTools,
       model: model,
-      sandboxAccess: sandboxAccess
+      sandboxAccess: sandboxAccess,
+      allowsFreshReplacement: allowsFreshReplacement
     )
   }
 
@@ -922,7 +1446,8 @@ while True:
     workspacePath: String,
     corpusAccess: CodexCorpusAccess,
     model: String? = nil,
-    sandboxAccess: CodexSandboxAccess = .workspaceWrite
+    sandboxAccess: CodexSandboxAccess = .workspaceWrite,
+    allowsFreshReplacement: Bool = true
   ) async throws -> CodexThreadResolution {
     guard let existingThreadID else {
       return CodexThreadResolution(
@@ -948,7 +1473,9 @@ while True:
         replacedStaleThread: false
       )
     } catch let error as CodexAppServerError {
-      guard Self.canRecoverByStartingFresh(after: error) else { throw error }
+      guard allowsFreshReplacement,
+            Self.canRecoverByStartingFresh(after: error)
+      else { throw error }
       // Reopening an old Codex task can fail when a previous OpenOrg process
       // died while holding its writer lease, or when the task can no longer be
       // resumed by this app-server. The user message has not been submitted at
@@ -983,7 +1510,7 @@ while True:
     case .invalidResponse(let detail):
       detail.localizedCaseInsensitiveContains("thread/resume returned a different thread")
     case .executableNotFound, .launchFailed, .notAuthenticated,
-         .requestTimedOut, .turnFailed, .turnInterrupted:
+         .requestTimedOut, .turnStartUnknown, .turnFailed, .turnInterrupted:
       false
     }
   }
@@ -995,7 +1522,8 @@ while True:
     workspaceContext: String? = nil,
     attachments: [AIChatAttachment],
     cwd: URL,
-    clientUserMessageID: UUID,
+    attemptIdentity: CodexTurnAttemptIdentity,
+    turnStartPolicy: CodexTurnStartPolicy = .startIfAbsent,
     model: String? = nil,
     reasoningEffort: String? = nil,
     sandboxAccess: CodexSandboxAccess = .workspaceWrite
@@ -1008,7 +1536,8 @@ while True:
       attachments: attachments,
       workspacePath: cwd.standardizedFileURL.path,
       corpusAccess: .clientWorkspaceTools,
-      clientUserMessageID: clientUserMessageID,
+      attemptIdentity: attemptIdentity,
+      turnStartPolicy: turnStartPolicy,
       model: model,
       reasoningEffort: reasoningEffort,
       sandboxAccess: sandboxAccess
@@ -1023,7 +1552,8 @@ while True:
     attachments: [AIChatAttachment],
     workspacePath: String,
     corpusAccess: CodexCorpusAccess,
-    clientUserMessageID: UUID,
+    attemptIdentity: CodexTurnAttemptIdentity,
+    turnStartPolicy: CodexTurnStartPolicy = .startIfAbsent,
     model: String? = nil,
     reasoningEffort: String? = nil,
     sandboxAccess: CodexSandboxAccess = .workspaceWrite
@@ -1054,23 +1584,203 @@ while True:
       "cwd": .string(workspacePath),
       "approvalPolicy": .string("never"),
       "sandboxPolicy": sandboxAccess.turnSandboxPolicy(workspacePath: workspacePath),
-      "clientUserMessageId": .string(clientUserMessageID.uuidString.lowercased())
+      "clientUserMessageId": .string(attemptIdentity.attemptID.uuidString.lowercased())
     ]
     params["model"] = model.map(JSONValue.string) ?? .null
     params["effort"] = reasoningEffort.map(JSONValue.string) ?? .null
-    let result = try await requestRaw(
-      method: "turn/start",
-      params: .object(params)
-    )
-    guard let turnID = result["turn"]?["id"]?.stringValue else {
-      throw CodexAppServerError.invalidResponse("turn/start omitted the turn id")
+    if case .managedRemote = transport {
+      if let existingTurn = try await reconciledTurn(
+        threadID: threadID,
+        attemptIdentity: attemptIdentity,
+        expectedStartParams: params,
+        attempts: 3
+      ) {
+        return try await finishReconciledTurn(existingTurn, threadID: threadID)
+      }
+      if case .reconcileOnly = turnStartPolicy {
+        throw CodexAppServerError.turnStartUnknown(
+          "The matching native attempt is not visible with its exact request contract; delivery remains held for reconciliation."
+        )
+      }
     }
-    let turnResult = await waitForTurn(threadID: threadID, turnID: turnID)
+    if case .managedRemote = transport {
+      var deliveryContract: [String: JSONValue] = [
+        "schema": .string("celorga:managed-remote-delivery:v3"),
+        "messageId": .string(attemptIdentity.messageID.uuidString.lowercased()),
+        "attemptId": .string(attemptIdentity.attemptID.uuidString.lowercased()),
+        "threadId": .string(threadID)
+      ]
+      if let predecessorAttemptID = attemptIdentity.predecessorAttemptID {
+        deliveryContract["predecessorAttemptId"] = .string(
+          predecessorAttemptID.uuidString.lowercased()
+        )
+      }
+      params["celorgaDelivery"] = .object(deliveryContract)
+    }
+    let result: JSONValue
+    do {
+      result = try await requestRaw(
+        method: "turn/start",
+        params: .object(params),
+        trackSubmission: true
+      )
+    } catch let submissionError as RequestSubmissionError {
+      guard case .managedRemote = transport, submissionError.submissionStarted else {
+        throw submissionError.underlying
+      }
+      if !Task.isCancelled {
+        if let acceptedTurn = try? await reconciledTurn(
+          threadID: threadID,
+          attemptIdentity: attemptIdentity,
+          expectedStartParams: params.filter { $0.key != "celorgaDelivery" },
+          attempts: 4
+        ) {
+          return try await finishReconciledTurn(acceptedTurn, threadID: threadID)
+        }
+      }
+      throw CodexAppServerError.turnStartUnknown(
+        "The turn/start outcome is not confirmed; delivery remains held and no second start was sent."
+      )
+    }
+    guard let returnedTurn = result["turn"],
+          returnedTurn["id"]?.stringValue != nil,
+          let returnedStatus = returnedTurn["status"]?.stringValue,
+          returnedStatus == "inProgress"
+            || (CodexTurnResult.Status(rawValue: returnedStatus) != nil
+              && returnedStatus != CodexTurnResult.Status.unknown.rawValue)
+    else {
+      if let acceptedTurn = try? await reconciledTurn(
+        threadID: threadID,
+        attemptIdentity: attemptIdentity,
+        expectedStartParams: params.filter { $0.key != "celorgaDelivery" },
+        attempts: 4
+      ) {
+        return try await finishReconciledTurn(acceptedTurn, threadID: threadID)
+      }
+      throw CodexAppServerError.turnStartUnknown(
+        "Codex responded without an exact recognized turn ID and status; delivery remains held and no second start was sent."
+      )
+    }
+    return try await finishReconciledTurn(returnedTurn, threadID: threadID)
+  }
+
+  private func reconciledTurn(
+    threadID: String,
+    attemptIdentity: CodexTurnAttemptIdentity,
+    expectedStartParams: [String: JSONValue],
+    attempts: Int
+  ) async throws -> JSONValue? {
+    let clientID = attemptIdentity.attemptID.uuidString.lowercased()
+    for attempt in 0..<max(1, attempts) {
+      var params: [String: JSONValue] = [
+        "threadId": .string(threadID),
+        "includeTurns": .bool(true)
+      ]
+      if case .managedRemote = transport {
+        params["celorgaDeliveryRead"] = .object([
+          "schema": .string("celorga:managed-remote-delivery:v3"),
+          "messageId": .string(attemptIdentity.messageID.uuidString.lowercased()),
+          "attemptId": .string(clientID),
+          "threadId": .string(threadID),
+          "startParams": .object(expectedStartParams)
+        ])
+        if let predecessorAttemptID = attemptIdentity.predecessorAttemptID {
+          var deliveryRead = params["celorgaDeliveryRead"]?.objectValue ?? [:]
+          deliveryRead["predecessorAttemptId"] = .string(
+            predecessorAttemptID.uuidString.lowercased()
+          )
+          params["celorgaDeliveryRead"] = .object(deliveryRead)
+        }
+      }
+      let result: JSONValue
+      do {
+        result = try await request(method: "thread/read", params: .object(params))
+      } catch let error as CodexAppServerError {
+        if case .server(let code, _) = error, code == -32097 {
+          return nil
+        }
+        if case .server(let code, let message) = error, code == -32098 {
+          throw CodexAppServerError.turnStartUnknown(message)
+        }
+        throw error
+      }
+      guard result["thread"]?["id"]?.stringValue == threadID else {
+        if attempt + 1 < attempts {
+          try await Task.sleep(nanoseconds: 250_000_000 << attempt)
+        }
+        continue
+      }
+      if let turn = result["thread"]?["turns"]?.arrayValue?.last(where: { turn in
+        (turn["items"]?.arrayValue ?? []).contains(where: { item in
+          item["type"]?.stringValue == "userMessage"
+            && item["clientId"]?.stringValue?.lowercased() == clientID
+        })
+      }) {
+        return turn
+      }
+      if attempt + 1 < attempts {
+        try await Task.sleep(nanoseconds: 250_000_000 << attempt)
+      }
+    }
+    return nil
+  }
+
+  private func finishReconciledTurn(
+    _ turn: JSONValue,
+    threadID: String
+  ) async throws -> CodexTurnResult {
+    guard let turnID = turn["id"]?.stringValue, !turnID.isEmpty else {
+      throw CodexAppServerError.turnStartUnknown(
+        "The matching native turn has no usable ID; delivery remains held."
+      )
+    }
+    let pending = pendingTurns[turnID] ?? PendingTurn()
+    pending.threadID = threadID
+    pendingTurns[turnID] = pending
+    guard let status = turn["status"]?.stringValue else {
+      throw CodexAppServerError.turnStartUnknown(
+        "The matching native turn has no provider status; delivery remains held."
+      )
+    }
+    guard status == "inProgress"
+      || (CodexTurnResult.Status(rawValue: status) != nil
+        && status != CodexTurnResult.Status.unknown.rawValue)
+    else {
+      throw CodexAppServerError.turnStartUnknown(
+        "The matching native turn has unsupported status \(status); delivery remains held."
+      )
+    }
+    await reportTurnStarted(threadID: threadID, turnID: turnID)
+    if status == "inProgress" {
+      scheduleManagedRemoteTurnRecovery()
+    } else {
+      completeTurn(.object([
+        "threadId": .string(threadID),
+        "turn": turn
+      ]))
+    }
+    let result = await waitForTurn(threadID: threadID, turnID: turnID)
+    if Task.isCancelled, result.status == .interrupted {
+      throw CodexAppServerError.turnStartUnknown(
+        "Celorga stopped waiting after Codex accepted turn \(turnID); delivery remains held for reconciliation."
+      )
+    }
+    await reportTurnTerminal(result)
+    return try Self.requireSuccessfulTurn(result)
+  }
+
+  nonisolated private static func requireSuccessfulTurn(
+    _ turnResult: CodexTurnResult
+  ) throws -> CodexTurnResult {
     switch turnResult.status {
     case .completed:
       return turnResult
     case .interrupted:
       throw CodexAppServerError.turnInterrupted
+    case .unknown:
+      throw CodexAppServerError.turnStartUnknown(
+        "Codex reported a terminal event without a recognized native status; delivery remains held."
+      )
     case .failed:
       throw CodexAppServerError.turnFailed(turnResult.errorMessage ?? "unknown failure")
     }
@@ -1602,48 +2312,79 @@ while True:
   private func requestRaw(
     method: String,
     params: JSONValue,
-    timeoutNanoseconds: UInt64? = nil
+    timeoutNanoseconds: UInt64? = nil,
+    trackSubmission: Bool = false
   ) async throws -> JSONValue {
     requestCounter &+= 1
     let requestID = requestCounter
     let key = String(requestID)
     let effectiveTimeoutNanoseconds = timeoutNanoseconds ?? requestTimeoutNanoseconds
-    return try await withTaskCancellationHandler {
-      try Task.checkCancellation()
-      return try await withCheckedThrowingContinuation { continuation in
-        if cancelledRequestKeys.remove(key) != nil || Task.isCancelled {
-          continuation.resume(throwing: CancellationError())
-          return
-        }
-        pendingRequests[key] = continuation
-        pendingRequestTimeoutTasks[key] = Task { [weak self] in
-          do {
-            try await Task.sleep(nanoseconds: effectiveTimeoutNanoseconds)
-          } catch {
+    do {
+      let result = try await withTaskCancellationHandler {
+        try Task.checkCancellation()
+        return try await withCheckedThrowingContinuation {
+          (continuation: CheckedContinuation<JSONValue, Error>) in
+          if cancelledRequestKeys.remove(key) != nil || Task.isCancelled {
+            continuation.resume(throwing: CancellationError())
             return
           }
-          await self?.failPendingRequest(
-            key: key,
-            error: CodexAppServerError.requestTimedOut(method)
-          )
-        }
-        Task { [weak self] in
-          guard let self else { return }
-          do {
-            try await self.sendMessage(.object([
-              "id": .integer(requestID),
-              "method": .string(method),
-              "params": params
-            ]))
-          } catch {
-            await self.failPendingRequest(key: key, error: error)
+          pendingRequests[key] = continuation
+          pendingRequestTimeoutTasks[key] = Task { [weak self] in
+            do {
+              try await Task.sleep(nanoseconds: effectiveTimeoutNanoseconds)
+            } catch {
+              return
+            }
+            await self?.failPendingRequest(
+              key: key,
+              error: CodexAppServerError.requestTimedOut(method)
+            )
+          }
+          Task { [weak self] in
+            await self?.sendPendingRequest(
+              key: key,
+              requestID: requestID,
+              method: method,
+              params: params,
+              trackSubmission: trackSubmission
+            )
           }
         }
+      } onCancel: {
+        Task { [weak self] in
+          await self?.cancelPendingRequest(key: key)
+        }
       }
-    } onCancel: {
-      Task { [weak self] in
-        await self?.cancelPendingRequest(key: key)
+      submittedRequestKeys.remove(key)
+      return result
+    } catch {
+      let submissionStarted = submittedRequestKeys.remove(key) != nil
+      if trackSubmission {
+        throw RequestSubmissionError(
+          underlying: error,
+          submissionStarted: submissionStarted
+        )
       }
+      throw error
+    }
+  }
+
+  private func sendPendingRequest(
+    key: String,
+    requestID: Int64,
+    method: String,
+    params: JSONValue,
+    trackSubmission: Bool
+  ) async {
+    guard pendingRequests[key] != nil else { return }
+    do {
+      try await sendMessage(.object([
+        "id": .integer(requestID),
+        "method": .string(method),
+        "params": params
+      ]), submissionKey: trackSubmission ? key : nil)
+    } catch {
+      failPendingRequest(key: key, error: error)
     }
   }
 
@@ -1660,7 +2401,10 @@ while True:
     failPendingRequest(key: key, error: CancellationError())
   }
 
-  private func sendMessage(_ message: JSONValue) async throws {
+  private func sendMessage(
+    _ message: JSONValue,
+    submissionKey: String? = nil
+  ) async throws {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.withoutEscapingSlashes]
     let data = try encoder.encode(message)
@@ -1672,6 +2416,9 @@ while True:
       var line = data
       line.append(0x0A)
       do {
+        if let submissionKey {
+          submittedRequestKeys.insert(submissionKey)
+        }
         try standardInput.write(contentsOf: line)
       } catch {
         throw CodexAppServerError.disconnected(error.localizedDescription)
@@ -1679,6 +2426,9 @@ while True:
     case .remote:
       guard let webSocketTask else {
         throw CodexAppServerError.disconnected("remote app server is not connected")
+      }
+      if let submissionKey {
+        submittedRequestKeys.insert(submissionKey)
       }
       try await webSocketTask.send(.string(String(decoding: data, as: UTF8.self)))
     }
@@ -1774,6 +2524,21 @@ while True:
     }
   }
 
+  private func reportTurnStarted(threadID: String, turnID: String) async {
+    guard reportedStartedTurnIDs.insert(turnID).inserted else { return }
+    await eventHandler(.turnStarted(threadID: threadID, turnID: turnID))
+  }
+
+  private func reportTurnTerminal(_ result: CodexTurnResult) async {
+    guard result.status != .unknown else { return }
+    await eventHandler(.turnTerminal(
+      threadID: result.threadID,
+      turnID: result.turnID,
+      status: result.status,
+      detail: result.errorMessage
+    ))
+  }
+
   private func handleNotification(method: String, params: JSONValue) async {
     switch method {
     case "account/updated":
@@ -1789,11 +2554,11 @@ while True:
       ))
     case "turn/started":
       if let threadID = params["threadId"]?.stringValue,
-         let turnID = params["turn"]?["id"]?.stringValue {
+         let turnID = params["turn"]?["id"]?.stringValue,
+         params["turn"]?["status"]?.stringValue == "inProgress" {
         let pending = pendingTurns[turnID] ?? PendingTurn()
         pending.threadID = threadID
         pendingTurns[turnID] = pending
-        await eventHandler(.turnStarted(threadID: threadID, turnID: turnID))
       }
     case "item/agentMessage/delta":
       guard let threadID = params["threadId"]?.stringValue,
@@ -1916,7 +2681,7 @@ while True:
     }
     let pending = pendingTurns[turnID] ?? PendingTurn()
     let status = CodexTurnResult.Status(rawValue: turn["status"]?.stringValue ?? "")
-      ?? .failed
+      ?? .unknown
     let errorMessage = turn["error"]?["message"]?.stringValue ?? pending.errorMessage
     let recoveredReply = Self.recoveredTurnReply(turn)
     let result = CodexTurnResult(

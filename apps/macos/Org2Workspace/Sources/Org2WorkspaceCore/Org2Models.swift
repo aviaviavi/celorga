@@ -2397,6 +2397,9 @@ public struct AIChatMessageProvenance: Hashable, Codable, Sendable {
 }
 
 public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
+  private static let managedRemoteAttemptMarkerPrefix = "[celorga-managed-remote-attempt:"
+  private static let managedRemoteAttemptMarkerSuffix = "]"
+
   public enum Role: String, Codable, Sendable {
     case user
     case assistant
@@ -2408,6 +2411,13 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     case sending
     case failed
     case interrupted
+  }
+
+  /// Additive state for a provider submission whose outcome is not yet known.
+  /// Older readers ignore this field and continue to see `sending`, never a
+  /// false successful delivery or an unknown enum value.
+  public enum DeliveryAttemptState: String, Codable, Sendable {
+    case unconfirmed
   }
 
   public enum DeliveryKind: String, Codable, Sendable {
@@ -2426,6 +2436,10 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
   public let sendFailure: String?
   public let deliveryStatus: DeliveryStatus
   public let deliveryKind: DeliveryKind
+  /// Stable correlation for one provider submission attempt. The Celorga
+  /// message ID remains stable across explicitly authorized terminal retries.
+  public let deliveryAttemptID: UUID?
+  public let deliveryAttemptState: DeliveryAttemptState?
   public let authorRuntime: AIChatRuntime?
   public let authorLabel: String?
   public let authorAgentRef: String?
@@ -2450,6 +2464,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     sendFailure: String? = nil,
     deliveryStatus: DeliveryStatus = .sent,
     deliveryKind: DeliveryKind = .turn,
+    deliveryAttemptID: UUID? = nil,
+    deliveryAttemptState: DeliveryAttemptState? = nil,
     authorRuntime: AIChatRuntime? = nil,
     authorLabel: String? = nil,
     authorAgentRef: String? = nil,
@@ -2463,6 +2479,7 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     roomRoundID: UUID? = nil,
     provenance: AIChatMessageProvenance? = nil
   ) {
+    let markerAttemptID = Self.managedRemoteAttemptID(in: sendFailure)
     self.id = id
     self.role = role
     self.content = content
@@ -2473,6 +2490,12 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     self.sendFailure = sendFailure
     self.deliveryStatus = role == .user ? deliveryStatus : .sent
     self.deliveryKind = role == .user ? deliveryKind : .turn
+    self.deliveryAttemptID = role == .user
+      ? (deliveryAttemptID ?? markerAttemptID ?? (deliveryStatus == .sending ? id : nil))
+      : nil
+    self.deliveryAttemptState = role == .user
+      ? (deliveryAttemptState ?? (markerAttemptID == nil ? nil : .unconfirmed))
+      : nil
     self.authorRuntime = role == .user ? nil : authorRuntime
     self.authorLabel = role == .user ? nil : authorLabel
     self.authorAgentRef = role == .user ? nil : authorAgentRef
@@ -2498,6 +2521,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     case sendFailure
     case deliveryStatus
     case deliveryKind
+    case deliveryAttemptID
+    case deliveryAttemptState
     case authorRuntime
     case authorLabel
     case authorAgentRef
@@ -2528,6 +2553,16 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     deliveryKind = role == .user
       ? (try container.decodeIfPresent(DeliveryKind.self, forKey: .deliveryKind) ?? .turn)
       : .turn
+    let markerAttemptID = Self.managedRemoteAttemptID(in: sendFailure)
+    deliveryAttemptID = role == .user
+      ? (try container.decodeIfPresent(UUID.self, forKey: .deliveryAttemptID)
+          ?? markerAttemptID
+          ?? (deliveryStatus == .sending ? id : nil))
+      : nil
+    deliveryAttemptState = role == .user
+      ? (try container.decodeIfPresent(DeliveryAttemptState.self, forKey: .deliveryAttemptState)
+          ?? (markerAttemptID == nil ? nil : .unconfirmed))
+      : nil
     authorRuntime = role == .user
       ? nil
       : try container.decodeIfPresent(AIChatRuntime.self, forKey: .authorRuntime)
@@ -2578,6 +2613,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       sendFailure: nextSendFailure,
       deliveryStatus: nextSendFailure == nil ? .sent : .failed,
       deliveryKind: deliveryKind,
+      deliveryAttemptID: deliveryAttemptID,
+      deliveryAttemptState: deliveryAttemptState,
       authorRuntime: authorRuntime,
       authorLabel: authorLabel,
       authorAgentRef: authorAgentRef,
@@ -2608,6 +2645,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       sendFailure: nextSendFailure,
       deliveryStatus: nextDeliveryStatus,
       deliveryKind: deliveryKind,
+      deliveryAttemptID: deliveryAttemptID,
+      deliveryAttemptState: deliveryAttemptState,
       authorRuntime: authorRuntime,
       authorLabel: authorLabel,
       authorAgentRef: authorAgentRef,
@@ -2635,6 +2674,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       sendFailure: sendFailure,
       deliveryStatus: deliveryStatus,
       deliveryKind: deliveryKind,
+      deliveryAttemptID: deliveryAttemptID,
+      deliveryAttemptState: deliveryAttemptState,
       authorRuntime: authorRuntime,
       authorLabel: authorLabel,
       authorAgentRef: authorAgentRef,
@@ -2662,6 +2703,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       sendFailure: sendFailure,
       deliveryStatus: deliveryStatus,
       deliveryKind: deliveryKind,
+      deliveryAttemptID: deliveryAttemptID,
+      deliveryAttemptState: deliveryAttemptState,
       authorRuntime: authorRuntime,
       authorLabel: authorLabel,
       authorAgentRef: authorAgentRef,
@@ -2689,6 +2732,131 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       sendFailure: sendFailure,
       deliveryStatus: deliveryStatus,
       deliveryKind: deliveryKind,
+      deliveryAttemptID: deliveryAttemptID,
+      deliveryAttemptState: deliveryAttemptState,
+      authorRuntime: authorRuntime,
+      authorLabel: authorLabel,
+      authorAgentRef: authorAgentRef,
+      source: source,
+      audience: audience,
+      targetRuntime: targetRuntime,
+      authorDestinationID: authorDestinationID,
+      audienceDestinationIDs: audienceDestinationIDs,
+      targetDestinationID: targetDestinationID,
+      isRoomDispatchCopy: isRoomDispatchCopy,
+      roomRoundID: roomRoundID,
+      provenance: provenance
+    )
+  }
+
+  public func replacingDeliveryAttempt(
+    _ nextDeliveryAttemptID: UUID,
+    status nextDeliveryStatus: DeliveryStatus,
+    sendFailure nextSendFailure: String? = nil,
+    attemptState nextDeliveryAttemptState: DeliveryAttemptState? = nil
+  ) -> AIChatMessage {
+    AIChatMessage(
+      id: id,
+      role: role,
+      content: content,
+      attachments: attachments,
+      createdAt: createdAt,
+      changeSummary: changeSummary,
+      responseTrace: responseTrace,
+      sendFailure: nextSendFailure,
+      deliveryStatus: nextDeliveryStatus,
+      deliveryKind: deliveryKind,
+      deliveryAttemptID: nextDeliveryAttemptID,
+      deliveryAttemptState: nextDeliveryAttemptState,
+      authorRuntime: authorRuntime,
+      authorLabel: authorLabel,
+      authorAgentRef: authorAgentRef,
+      source: source,
+      audience: audience,
+      targetRuntime: targetRuntime,
+      authorDestinationID: authorDestinationID,
+      audienceDestinationIDs: audienceDestinationIDs,
+      targetDestinationID: targetDestinationID,
+      isRoomDispatchCopy: isRoomDispatchCopy,
+      roomRoundID: roomRoundID,
+      provenance: provenance
+    )
+  }
+
+  public var deliveryIsUnconfirmed: Bool {
+    deliveryAttemptState == .unconfirmed || Self.managedRemoteAttemptID(in: sendFailure) != nil
+  }
+
+  /// The durable marker is intentionally stored in an older-writer-safe field.
+  /// Keep it out of user-facing error text while retaining it across Codable
+  /// round trips performed by a writer that predates delivery-attempt fields.
+  public var displayedSendFailure: String? {
+    Self.removingManagedRemoteAttemptMarker(from: sendFailure)
+  }
+
+  public var effectiveDeliveryAttemptID: UUID? {
+    deliveryAttemptID ?? Self.managedRemoteAttemptID(in: sendFailure)
+  }
+
+  public static func heldManagedRemoteDeliveryFailure(
+    attemptID: UUID,
+    detail: String
+  ) -> String {
+    let text = removingManagedRemoteAttemptMarker(from: detail)?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let marker = "\(managedRemoteAttemptMarkerPrefix)\(attemptID.uuidString.lowercased())\(managedRemoteAttemptMarkerSuffix)"
+    return text.isEmpty ? marker : "\(text)\n\(marker)"
+  }
+
+  private static func managedRemoteAttemptID(in value: String?) -> UUID? {
+    guard let value,
+          let prefixRange = value.range(of: managedRemoteAttemptMarkerPrefix, options: .backwards),
+          let suffixRange = value.range(
+            of: managedRemoteAttemptMarkerSuffix,
+            range: prefixRange.upperBound..<value.endIndex
+          )
+    else { return nil }
+    return UUID(uuidString: String(value[prefixRange.upperBound..<suffixRange.lowerBound]))
+  }
+
+  private static func removingManagedRemoteAttemptMarker(from value: String?) -> String? {
+    guard let value,
+          let prefixRange = value.range(of: managedRemoteAttemptMarkerPrefix, options: .backwards),
+          let suffixRange = value.range(
+            of: managedRemoteAttemptMarkerSuffix,
+            range: prefixRange.upperBound..<value.endIndex
+          ),
+          UUID(uuidString: String(value[prefixRange.upperBound..<suffixRange.lowerBound])) != nil
+    else { return value }
+    var result = value
+    var removalStart = prefixRange.lowerBound
+    if removalStart > result.startIndex {
+      let prior = result.index(before: removalStart)
+      if result[prior] == "\n" { removalStart = prior }
+    }
+    result.removeSubrange(removalStart..<suffixRange.upperBound)
+    let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
+  public func replacingDeliveryAttemptState(
+    _ nextDeliveryAttemptState: DeliveryAttemptState?,
+    status nextDeliveryStatus: DeliveryStatus? = nil,
+    sendFailure nextSendFailure: String? = nil
+  ) -> AIChatMessage {
+    AIChatMessage(
+      id: id,
+      role: role,
+      content: content,
+      attachments: attachments,
+      createdAt: createdAt,
+      changeSummary: changeSummary,
+      responseTrace: responseTrace,
+      sendFailure: nextSendFailure,
+      deliveryStatus: nextDeliveryStatus ?? deliveryStatus,
+      deliveryKind: deliveryKind,
+      deliveryAttemptID: deliveryAttemptID,
+      deliveryAttemptState: nextDeliveryAttemptState,
       authorRuntime: authorRuntime,
       authorLabel: authorLabel,
       authorAgentRef: authorAgentRef,
@@ -3945,6 +4113,7 @@ public struct AIChatThread: Identifiable, Hashable, Codable, Sendable {
     guard let latestMessage = messages.last else { return false }
     return latestMessage.deliveryStatus == .failed
       || latestMessage.deliveryStatus == .interrupted
+      || latestMessage.deliveryIsUnconfirmed
       || latestMessage.sendFailure != nil
   }
 

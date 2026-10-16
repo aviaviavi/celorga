@@ -1689,10 +1689,11 @@ struct ChatBubbleView: View {
             remove: deleteQueuedMessage
           )
         }
-        if message.role == .user, let sendFailure = message.sendFailure {
+        if message.role == .user, let sendFailure = message.displayedSendFailure {
           AIChatSendFailureView(
             messageID: message.id,
             deliveryStatus: message.deliveryStatus,
+            deliveryIsUnconfirmed: message.deliveryIsUnconfirmed,
             failureText: sendFailure,
             compact: compact
           )
@@ -2735,12 +2736,17 @@ private struct AIChatRoomAgentSlot: View {
     round.dispatch(forDestinationID: destinationID)?.deliveryStatus
   }
 
+  private var deliveryIsUnconfirmed: Bool {
+    round.dispatch(forDestinationID: destinationID)?.deliveryIsUnconfirmed == true
+  }
+
   private var showsProgress: Bool {
-    deliveryStatus == .sending
+    deliveryStatus == .sending && !deliveryIsUnconfirmed
   }
 
   private var statusImage: String {
-    switch deliveryStatus {
+    if deliveryIsUnconfirmed { return "questionmark.circle" }
+    return switch deliveryStatus {
     case .failed: "exclamationmark.triangle.fill"
     case .interrupted: "stop.circle"
     case .sent: "ellipsis"
@@ -2749,7 +2755,8 @@ private struct AIChatRoomAgentSlot: View {
   }
 
   private var statusText: String {
-    switch deliveryStatus {
+    if deliveryIsUnconfirmed { return "Delivery confirmation pending" }
+    return switch deliveryStatus {
     case .failed: "Could not respond"
     case .interrupted: "Stopped"
     case .sent: "Finishing response…"
@@ -2996,6 +3003,7 @@ private struct AIChatSendFailureView: View {
   @Environment(WorkspaceStore.self) private var store
   let messageID: UUID
   let deliveryStatus: AIChatMessage.DeliveryStatus
+  let deliveryIsUnconfirmed: Bool
   let failureText: String
   let compact: Bool
 
@@ -3042,6 +3050,9 @@ private struct AIChatSendFailureView: View {
     if isProviderAuthenticationFailure {
       return "Model provider authentication failed"
     }
+    if deliveryIsUnconfirmed {
+      return "Delivery status unknown"
+    }
     switch deliveryStatus {
     case .interrupted:
       return "Response interrupted"
@@ -3055,11 +3066,15 @@ private struct AIChatSendFailureView: View {
   }
 
   private var retryButtonTitle: String {
-    isProviderAuthenticationFailure ? "Retry After Fix" : "Retry"
+    if deliveryIsUnconfirmed { return "Recheck" }
+    return isProviderAuthenticationFailure ? "Retry After Fix" : "Retry"
   }
 
   private var retryHelpText: String {
-    isProviderAuthenticationFailure
+    if deliveryIsUnconfirmed {
+      return "Recheck this held attempt without starting another Codex turn"
+    }
+    return isProviderAuthenticationFailure
       ? "Fix the model provider on the OpenClaw gateway host, then retry this message"
       : "Retry sending this message"
   }
