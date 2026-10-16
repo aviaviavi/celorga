@@ -1235,16 +1235,20 @@ public final class MobileRemoteCoordinator: ObservableObject {
 
   /// The next pending run approval with a complete exact identity that is neither snoozed nor
   /// excluded (already pushed to the device): explicitly urgent first, then oldest.
+  /// Walkie-talkie prompts are for real-time answers. Only approvals requested within `maxAge`
+  /// are pushed; an older backlog stays in the app's Approvals list and is never spoken.
   nonisolated static func nextAudioApprovalPrompt(
     from approvals: [ApprovalItem],
     snoozed: [String: Date],
     excluding: Set<String> = [],
-    now: Date
+    now: Date,
+    maxAge: TimeInterval = AudioApprovalPromptPolicy.realtimeWindow
   ) -> AudioApprovalPromptTarget? {
     approvals
       .compactMap(audioApprovalPromptCandidate)
       .filter { candidate in
         (snoozed[candidate.target.key] ?? .distantPast) <= now && !excluding.contains(candidate.target.key)
+          && AudioApprovalPromptPolicy.isRealtime(requestedAt: candidate.requestedAt, now: now, maxAge: maxAge)
       }
       .sorted { lhs, rhs in
         if lhs.urgent != rhs.urgent { return lhs.urgent }
@@ -1744,6 +1748,23 @@ enum AudioApprovalPromptPolicy {
   static let answerWindow: TimeInterval = 30
   /// How often canonical approvals are reread while a phone is enrolled.
   static let canonicalRefreshInterval: TimeInterval = 60
+  /// Only approvals requested this recently are pushed. Audio is for answering while busy;
+  /// a backlog is reviewed in the app.
+  static let realtimeWindow: TimeInterval = 10 * 60
+
+  /// An approval with a missing or unreadable request time is not real time.
+  static func isRealtime(requestedAt: String, now: Date, maxAge: TimeInterval = realtimeWindow) -> Bool {
+    if maxAge == .infinity { return true }
+    guard let requested = parseRequestedAt(requestedAt) else { return false }
+    // Small clock skew between the requesting machine and the host is tolerated.
+    return requested <= now.addingTimeInterval(120) && now.timeIntervalSince(requested) <= maxAge
+  }
+
+  static func parseRequestedAt(_ text: String) -> Date? {
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return fractional.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+  }
 
   /// When the answer window of the most recent still-pending delivery ends, if it has not yet.
   static func holdEnds(delivered: [String: Date], now: Date, window: TimeInterval = answerWindow) -> Date? {
