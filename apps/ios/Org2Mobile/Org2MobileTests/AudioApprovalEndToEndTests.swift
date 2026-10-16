@@ -1,10 +1,44 @@
 import XCTest
+import AVFoundation
 @testable import Org2Mobile
 
 /// Runs the shipped phone controller and TCP client against a real Mac host and CLI corpus.
 /// Only Apple's PTT/headset/microphone callbacks are replaced by the existing debug driver.
 @MainActor
 final class AudioApprovalEndToEndTests: XCTestCase {
+  func testClosingAnIdleChatDoesNotDeactivateThePushToTalkSession() {
+    let audio = RecordingAudioSession()
+    let transcriber = MobileVoiceTranscriber(audioSession: audio)
+    // Sending, switching chats, and leaving a chat all cancel its transcriber,
+    // including when this chat never started microphone capture.
+    transcriber.cancel()
+    transcriber.cancel()
+    XCTAssertEqual(audio.deactivations, 0, "An idle chat must not deactivate audio owned by Push to Talk")
+  }
+
+  func testDictationPreservesTheJoinedChannelsBluetoothConfiguration() throws {
+    let defaults = UserDefaults.standard
+    let old = defaults.object(forKey: AudioApprovalFeature.defaultsKey)
+    defer {
+      if let old { defaults.set(old, forKey: AudioApprovalFeature.defaultsKey) }
+      else { defaults.removeObject(forKey: AudioApprovalFeature.defaultsKey) }
+      AudioApprovalPushToTalkBridge.configureAudioSessionCategory()
+    }
+    defaults.set(true, forKey: AudioApprovalFeature.defaultsKey)
+    AudioApprovalPushToTalkBridge.configureAudioSessionCategory()
+    try MobileVoiceAudioSession().configureForDictation()
+    let session = AVAudioSession.sharedInstance()
+    XCTAssertEqual(session.category, .playAndRecord)
+    XCTAssertEqual(session.mode, .voiceChat)
+    XCTAssertTrue(session.categoryOptions.contains(.allowBluetooth), "Chat dictation must retain the headset input/output used by approvals")
+  }
+
+  private final class RecordingAudioSession: MobileVoiceAudioSessionManaging {
+    var deactivations = 0
+    func activateForDictation() throws {}
+    func deactivate() throws { deactivations += 1 }
+  }
+
   func testPushDuringWorkspaceRefreshPlaysFreshApprovalAndRecordsExactSpokenDecision() async throws {
     guard let endpoint = ProcessInfo.processInfo.environment["CELORGA_AUDIO_E2E_ENDPOINT"] else {
       XCTFail("Run npm run test:audio-approvals:e2e; a live fixture host is required.")

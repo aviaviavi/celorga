@@ -75,7 +75,7 @@ for (const [name, source] of Object.entries({ ptt, controller })) {
   assert.ok(!/\.setActive\(/.test(source), `${name} must not activate the audio session itself`);
 }
 assert.match(controller, /transcriber\.start\(managesAudioSession: false\)/, "replies are captured inside the system session");
-assert.match(transcriber, /if managesAudioSession \{\s*let audioSession = AVAudioSession\.sharedInstance\(\)\s*try audioSession\.setCategory/);
+assert.match(transcriber, /if managesAudioSession \{\s*try audioSession\.activateForDictation\(\)\s*ownsAudioSession = true/);
 assert.match(ptt, /\.playAndRecord/);
 assert.match(core, /if capture == \.awaitingSession \{\s*capture = \.capturing/, "capture starts only after didActivate");
 assert.match(ptt, /state\.markInterrupted\(\)\s*channelManager\.stopTransmitting/, "a push mid-reply ends the transmission as interrupted");
@@ -154,8 +154,8 @@ assert.match(core, /if leftUrgent != rightUrgent \{ return leftUrgent \}/);
 assert.doesNotMatch(core, /A push must never complete a partial reply/);
 assert.match(core, /deferredPush = target/);
 
-assert.match(transcriber, /self\.managesAudioSession = managesAudioSession\s+reset\(cancelRecognition: true\)/,
-  "the PTT ownership policy must apply before reset can deactivate the shared session");
+assert.match(transcriber, /guard ownsAudioSession else \{ return \}\s*ownsAudioSession = false\s*try\? audioSession\.deactivate\(\)/,
+  "idle chat cleanup and PTT replies must not deactivate a session the transcriber never acquired");
 assert.match(controller, /synthesizer\.write\(AVSpeechUtterance/, "speech is rendered to audio buffers");
 assert.match(controller, /completionCallbackType: \.dataPlayedBack/, "receive mode waits for audible playback completion");
 assert.doesNotMatch(controller, /synthesizer\.speak\(/, "the background speech path uses the PTT-owned player");

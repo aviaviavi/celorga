@@ -12,6 +12,8 @@ The scenario first loads an older pending approval. It holds a stale workspace r
 
 Apple Push to Talk callbacks, the private headset route, and microphone recognition are supplied by the debug driver. APNs delivery and acoustic playback on a locked physical iPhone are separate boundaries; a passing simulator run does not prove them. The test executes the phone's orchestration, not only its pure policy or the host API.
 
+The same XCTest target also exercises chat transcription's shared audio session. Closing or sending from a chat that never recorded must not deactivate Push to Talk's session. With approvals enabled, configuring dictation must preserve the duplex Bluetooth category, mode, and input option. These checks failed on build 56: idle chat cancellation called deactivation, and dictation replaced the headset configuration with an input-only recording category. Both checks run in the regular cross-process test command; they do not require microphone permission or a person speaking.
+
 Every attempt prints an evidence directory containing host and phone logs, the XCTest result bundle, the temporary corpus, and a success receipt. A failed attempt retains its evidence too. For local iteration after both native targets are built, =node test/test-audio-approvals-e2e.mjs --skip-build= reruns the scenario.
 
 * Focused checks

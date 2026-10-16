@@ -4,6 +4,35 @@ import Speech
 import UIKit
 
 @MainActor
+protocol MobileVoiceAudioSessionManaging {
+  func activateForDictation() throws
+  func deactivate() throws
+}
+
+@MainActor
+final class MobileVoiceAudioSession: MobileVoiceAudioSessionManaging {
+  func configureForDictation() throws {
+    let session = AVAudioSession.sharedInstance()
+    if AudioApprovalFeature.isEnabled {
+      // The category belongs to the whole app. A chat must not replace the
+      // duplex headset route that the joined Push to Talk channel will reuse.
+      try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth])
+    } else {
+      try session.setCategory(.record, mode: .measurement, options: [])
+    }
+  }
+
+  func activateForDictation() throws {
+    try configureForDictation()
+    try AVAudioSession.sharedInstance().setActive(true)
+  }
+
+  func deactivate() throws {
+    try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+  }
+}
+
+@MainActor
 final class MobileVoiceTranscriber: ObservableObject {
   /// `AVAudioEngine` invokes input taps on its real-time audio queue. Keeping
   /// the request behind an explicitly Sendable, nonisolated boundary prevents
@@ -35,9 +64,14 @@ final class MobileVoiceTranscriber: ObservableObject {
   private var pendingStartID: UUID?
   private var recognitionID: UUID?
   private var idleTimerWasDisabled: Bool?
-  /// False while Push to Talk owns the audio session. The system activates and
-  /// deactivates it; this class must not.
-  private var managesAudioSession = true
+  /// Cancel is also called for idle chats. Release only an activation this
+  /// transcriber actually acquired, never the shared session owned by PTT.
+  private var ownsAudioSession = false
+  private let audioSession: any MobileVoiceAudioSessionManaging
+
+  init(audioSession: any MobileVoiceAudioSessionManaging = MobileVoiceAudioSession()) {
+    self.audioSession = audioSession
+  }
 
   /// Audio approvals request these while Settings is onscreen, before a background reply.
   func preparePermissions() async -> Bool {
@@ -78,18 +112,14 @@ final class MobileVoiceTranscriber: ObservableObject {
       return
     }
 
-    // Push to Talk already activated this session. Reset must use the new ownership policy;
-    // otherwise the first reply deactivates the system session using the default true value.
-    self.managesAudioSession = managesAudioSession
     reset(cancelRecognition: true)
     transcript = ""
     errorMessage = nil
 
     do {
       if managesAudioSession {
-        let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.record, mode: .measurement, options: [])
-        try audioSession.setActive(true)
+        try audioSession.activateForDictation()
+        ownsAudioSession = true
       }
 
       let request = SFSpeechAudioBufferRecognitionRequest()
@@ -199,9 +229,7 @@ final class MobileVoiceTranscriber: ObservableObject {
     recognitionRequest = nil
     recognitionTask = nil
     recognitionID = nil
-    if managesAudioSession {
-      try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    }
+    releaseOwnedAudioSession()
     if let errorText, transcript.isEmpty {
       errorMessage = "Transcription stopped: \(errorText)"
     }
@@ -218,9 +246,13 @@ final class MobileVoiceTranscriber: ObservableObject {
     recognitionRequest = nil
     recognitionTask = nil
     isRecording = false
-    if managesAudioSession {
-      try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    }
+    releaseOwnedAudioSession()
+  }
+
+  private func releaseOwnedAudioSession() {
+    guard ownsAudioSession else { return }
+    ownsAudioSession = false
+    try? audioSession.deactivate()
   }
 
   private func stopAudioCapture() {
