@@ -117,6 +117,7 @@ struct MobileRemoteClient: Sendable {
       timeout: timeout
     ).run()
 
+    try Task.checkCancellation()
     if response.statusCode == 304, let cached {
       // Identical to the copy already held; the host skipped resending it.
       return try MobileRemoteWire.decoder().decode(type, from: cached.body)
@@ -264,27 +265,40 @@ private final class MobileRemoteHTTPExchange: @unchecked Sendable {
   }
 
   func run() async throws -> MobileRemoteRawResponse {
-    try await withCheckedThrowingContinuation { continuation in
-      self.continuation = continuation
-      let connection = NWConnection(host: host, port: port, using: .tcp)
-      self.connection = connection
-      connection.stateUpdateHandler = { [weak self] state in
-        guard let self else { return }
-        switch state {
-        case .ready:
-          self.sendRequest()
-        case .failed(let error):
-          self.finish(.failure(MobileRemoteClientError.connection(error.localizedDescription)))
-        case .cancelled:
-          self.finish(.failure(MobileRemoteClientError.connection("The connection closed.")))
-        default:
-          break
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        let connection = NWConnection(host: host, port: port, using: .tcp)
+        connection.stateUpdateHandler = { [weak self] state in
+          guard let self else { return }
+          switch state {
+          case .ready:
+            self.sendRequest()
+          case .failed(let error):
+            self.finish(.failure(MobileRemoteClientError.connection(error.localizedDescription)))
+          case .cancelled:
+            self.finish(.failure(MobileRemoteClientError.connection("The connection closed.")))
+          default:
+            break
+          }
+        }
+        lock.lock()
+        guard !isFinished else {
+          lock.unlock()
+          connection.stateUpdateHandler = nil
+          connection.cancel()
+          continuation.resume(throwing: CancellationError())
+          return
+        }
+        self.continuation = continuation
+        self.connection = connection
+        connection.start(queue: queue)
+        lock.unlock()
+        queue.asyncAfter(deadline: .now() + timeout) { [weak self] in
+          self?.finish(.failure(MobileRemoteClientError.connection("The request timed out.")))
         }
       }
-      connection.start(queue: queue)
-      queue.asyncAfter(deadline: .now() + timeout) { [weak self] in
-        self?.finish(.failure(MobileRemoteClientError.connection("The request timed out.")))
-      }
+    } onCancel: {
+      self.finish(.failure(CancellationError()))
     }
   }
 

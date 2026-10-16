@@ -96,10 +96,11 @@ final class AudioApprovalHostTests: XCTestCase {
     XCTAssertEqual(request.value(forHTTPHeaderField: "apns-expiration"), "0", "A stale prompt must never be delivered late")
     XCTAssertEqual(request.value(forHTTPHeaderField: "apns-id"), messageID.uuidString)
     let body = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBody)) as? [String: Any])
+    XCTAssertEqual(body["deliveryID"] as? String, messageID.uuidString)
     XCTAssertEqual(body["runID"] as? String, "run-1")
     XCTAssertEqual(body["approvalID"] as? String, "approval-1")
     XCTAssertEqual(body["fingerprint"] as? String, "sha256:abc")
-    XCTAssertEqual(Set(body.keys), ["aps", "runID", "approvalID", "fingerprint"], "Approval text never travels through APNs")
+    XCTAssertEqual(Set(body.keys), ["aps", "deliveryID", "runID", "approvalID", "fingerprint"], "Approval text never travels through APNs")
   }
 
   // MARK: Serialization across competing agents
@@ -281,6 +282,32 @@ final class AudioApprovalHostTests: XCTestCase {
     XCTAssertEqual(pushes.first?.approvalID, older.approvalID)
     XCTAssertEqual(pushes.first?.fingerprint, older.fingerprint)
 
+    // A probe adopts an already in-flight delivery instead of cutting in with a duplicate.
+    let probe = try await call(remote, "POST", "/v1/audio-approvals/probe",
+      ["runID": older.runID, "approvalID": older.approvalID, "fingerprint": older.fingerprint],
+      token: token, as: [String: String].self)
+    let deliveryID = try XCTUnwrap(pushes.first?.messageID)
+    XCTAssertEqual(probe["deliveryID"], deliveryID.uuidString)
+    XCTAssertEqual(pushes.count, 1)
+    remote.setPairingCodeForTesting("121212")
+    let observer = try await call(remote, "POST", "/v1/pair", MobileRemotePairRequest(code: "121212", deviceName: "Probe observer"),
+                                  as: MobileRemotePairResponse.self)
+    let spoofedDevice = UUID()
+    let diagnostic = MobileRemoteAudioApprovalDeliveryRecord(deliveryID: deliveryID,
+      runID: older.runID, approvalID: older.approvalID, fingerprint: older.fingerprint,
+      stage: "playback-completed", simulated: true, headset: true, deviceID: spoofedDevice,
+      observedAt: Date().addingTimeInterval(1_000_000))
+    let impersonation = try await rawCall(remote, "POST", "/v1/audio-approvals/delivery", diagnostic, token: observer.accessToken)
+    XCTAssertEqual(impersonation.statusCode, 409, "Another paired client cannot impersonate the receiving phone")
+    let _: [String: Bool] = try await call(remote, "POST", "/v1/audio-approvals/delivery", diagnostic, token: token, as: [String: Bool].self)
+    let trace = try await call(remote, "GET", "/v1/audio-approvals/diagnostics", Optional<String>.none,
+                               token: observer.accessToken, as: [MobileRemoteAudioApprovalDeliveryRecord].self)
+    let recorded = try XCTUnwrap(trace.last)
+    XCTAssertNotEqual(recorded.deviceID, spoofedDevice, "Device identity comes from authentication")
+    XCTAssertLessThan(try XCTUnwrap(recorded.observedAt), Date().addingTimeInterval(1), "Observation time comes from the host")
+    XCTAssertTrue(recorded.simulated)
+    XCTAssertEqual(try runApproval(repoRoot: repoRoot, corpus: corpus, older)["status"] as? String, "pending", "Playback diagnostics never authorize a decision")
+
     let snapshot = try await call(remote, "GET", "/v1/workspace", Optional<String>.none, token: token,
                                   as: MobileRemoteWorkspaceSnapshot.self)
     let item = try XCTUnwrap(snapshot.approvals.first { $0.approvalID == older.approvalID })
@@ -409,6 +436,117 @@ final class AudioApprovalHostTests: XCTestCase {
     XCTAssertEqual(pushes[3].approvalID, normal.approvalID)
     try await Task.sleep(for: .milliseconds(1_500))
     XCTAssertEqual(pushes.count, 4, "Each prompt is pushed once")
+  }
+
+  /// Invoked only by the cross-process iOS test command. The TCP server and CLI are production code.
+  @MainActor
+  func testPhoneControllerEndToEndFixture() async throws {
+    guard let directory = ProcessInfo.processInfo.environment["CELORGA_AUDIO_E2E_DIR"],
+          let portText = ProcessInfo.processInfo.environment["CELORGA_AUDIO_E2E_PORT"],
+          let port = UInt16(portText) else { throw XCTSkip("Run npm run test:audio-approvals:e2e") }
+    let repo = try Org2CLI.defaultRepoRoot()
+    let corpus = URL(fileURLWithPath: directory).appendingPathComponent("corpus")
+    try FileManager.default.createDirectory(at: corpus, withIntermediateDirectories: true)
+    let old = try createWaitingRun(repoRoot: repo, corpus: corpus, title: "Old unanswered approval")
+    let suite = "AudioE2EHost.\(UUID())"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let store = WorkspaceStore(cli: Org2CLI(repoRoot: repo), defaults: defaults, legacyDefaultsDomains: [])
+    store.corpusRoot = corpus
+    let remote = MobileRemoteCoordinator(defaults: defaults, credentialFile: corpus.appendingPathComponent("devices.json"))
+    remote.pushToTalkAnswerWindow = 0.01
+    remote.attach(to: store)
+    remote.setPairingCodeForTesting("434343")
+    let fixture = PhoneFixture(test: self, repo: repo, corpus: corpus, store: store, remote: remote, old: old)
+    remote.pushToTalkDeliveryForTesting = { envelope, _ in fixture.pushes.append(envelope) }
+    let server = MobileRemoteHTTPServer(handler: { request in await fixture.handle(request) })
+    try server.start(host: "127.0.0.1", port: port)
+    defer { server.stop() }
+    let ready = URL(fileURLWithPath: directory).appendingPathComponent("ready.json")
+    try JSONSerialization.data(withJSONObject: ["endpoint": "http://127.0.0.1:\(port)"]).write(to: ready, options: .atomic)
+    let deadline = Date().addingTimeInterval(240)
+    while !fixture.completed, Date() < deadline { try await Task.sleep(for: .milliseconds(50)) }
+    XCTAssertTrue(fixture.completed, "The iOS controller did not finish the end-to-end scenario")
+  }
+
+  @MainActor
+  private final class PhoneFixture {
+    let test: AudioApprovalHostTests
+    let repo: URL
+    let corpus: URL
+    let store: WorkspaceStore
+    let remote: MobileRemoteCoordinator
+    let old: DemoApproval
+    var fresh: DemoApproval?
+    var pushes: [MobileRemotePushToTalkEnvelope] = []
+    var workspaceReads = 0
+    var refreshStarted = false
+    var releaseRefresh = false
+    var failNextWorkspace = false
+    var completed = false
+
+    init(test: AudioApprovalHostTests, repo: URL, corpus: URL, store: WorkspaceStore, remote: MobileRemoteCoordinator, old: DemoApproval) {
+      self.test = test; self.repo = repo; self.corpus = corpus; self.store = store; self.remote = remote; self.old = old
+    }
+
+    func handle(_ request: MobileRemoteHTTPRequest) async -> MobileRemoteHTTPResponse {
+      do {
+        if request.path == "/v1/workspace", failNextWorkspace {
+          failNextWorkspace = false
+          return .error("Host verification deliberately unavailable", statusCode: 503)
+        }
+        switch request.path {
+        case "/test/fail-next-workspace":
+          failNextWorkspace = true
+          return .json([String: String]())
+        case "/test/wait-for-refresh":
+          let until = Date().addingTimeInterval(10)
+          while !refreshStarted, Date() < until { try await Task.sleep(for: .milliseconds(10)) }
+          return refreshStarted ? .json([String: String]()) : .error("No concurrent workspace request", statusCode: 500)
+        case "/test/create-fresh":
+          let created = try test.createWaitingRun(repoRoot: repo, corpus: corpus, title: "Fresh end-to-end approval", priority: "urgent")
+          fresh = created
+          store.invalidateMobileRemoteWorkspaceSnapshot()
+          await store.refreshApprovals()
+          let until = Date().addingTimeInterval(5)
+          while !pushes.contains(where: { $0.approvalID == created.approvalID }), Date() < until {
+            try await Task.sleep(for: .milliseconds(10))
+          }
+          guard let push = pushes.first(where: { $0.approvalID == created.approvalID }) else {
+            return .error("The actual host queue did not deliver the fresh push", statusCode: 500)
+          }
+          let data = try JSONSerialization.data(withJSONObject: MobileRemotePushSender.pushToTalkPayload(push))
+          return MobileRemoteHTTPResponse(statusCode: 200, headers: ["Content-Type": "application/json"], body: data)
+        case "/test/release-refresh":
+          releaseRefresh = true
+          return .json([String: String]())
+        case "/test/result":
+          guard let fresh else { return .error("No fresh approval", statusCode: 500) }
+          let result = try test.runApproval(repoRoot: repo, corpus: corpus, fresh)
+          let oldResult = try test.runApproval(repoRoot: repo, corpus: corpus, old)
+          return .json(["approvalID": fresh.approvalID, "status": result["status"] as? String ?? "", "receipt": result["receipt"] as? String ?? "", "oldStatus": oldResult["status"] as? String ?? ""])
+        case "/test/complete":
+          completed = true
+          return .json([String: String]())
+        default:
+          let response = await remote.handle(request)
+          if request.path == "/v1/pair", response.statusCode == 201 || response.statusCode == 200 {
+            let pair = try MobileRemoteProtocol.decoder().decode(MobileRemotePairResponse.self, from: response.body)
+            _ = try await test.rawCall(remote, "POST", "/v1/push-to-talk-registration",
+              MobileRemotePushToTalkRegistrationRequest(pushToken: "abcdef0123", environment: "sandbox", enabled: true), token: pair.accessToken)
+          }
+          if request.path == "/v1/workspace" {
+            workspaceReads += 1
+            if workspaceReads == 2 {
+              refreshStarted = true
+              let until = Date().addingTimeInterval(60)
+              while !releaseRefresh, Date() < until { try await Task.sleep(for: .milliseconds(10)) }
+            }
+          }
+          return response
+        }
+      } catch { return .error(error.localizedDescription, statusCode: 500) }
+    }
   }
 
   // MARK: Helpers

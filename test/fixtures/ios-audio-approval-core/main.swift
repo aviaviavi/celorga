@@ -476,6 +476,14 @@ do {
   expect(ordering.insert("first", at: 0) == ["first", "second", "EOF"], "audio drains in synthesis order")
   expect(ordering.insert("duplicate", at: 0).isEmpty, "late duplicates cannot replay old audio")
 }
+// A synthesizer that only emits EOF has not played any audio.
+do {
+  var empty = AudioSpeechPlaybackProgress()
+  let id = UUID()
+  empty.start(id)
+  expect(!empty.renderingFinished(id), "empty synthesis must not mark a prompt heard")
+}
+
 // Generation ending does not mean the queued audio has finished playing.
 do {
   var progress = AudioSpeechPlaybackProgress()

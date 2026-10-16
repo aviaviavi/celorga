@@ -11,7 +11,7 @@ enum AudioApprovalChannelEvent: Sendable {
   case transmitBegan(initiated: Bool)
   /// `interrupted` is true when this bridge ended the transmission to accept an incoming push.
   case transmitEnded(initiated: Bool, interrupted: Bool)
-  case incomingPush(AudioApprovalTarget?)
+  case incomingPush(AudioApprovalTarget?, deliveryID: UUID? = nil)
   case ephemeralToken(Data)
   case audioSessionActivated
   case audioSessionDeactivated
@@ -185,7 +185,7 @@ final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, P
       state.markInterrupted()
       channelManager.stopTransmitting(channelUUID: channelUUID)
     }
-    post(.incomingPush(target))
+    post(.incomingPush(target, deliveryID: (pushPayload["deliveryID"] as? String).flatMap(UUID.init(uuidString:))))
     // The controller checks the identity against the Mac and releases the session if the
     // prompt is stale, quiet, or incomplete. Nothing plays before that check.
     return PTPushResult.activeRemoteParticipant(PTParticipant(name: AudioApprovalChannel.participantName, image: nil))

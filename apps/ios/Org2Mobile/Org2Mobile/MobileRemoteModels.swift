@@ -574,3 +574,32 @@ struct MobileExternalThreadList: Codable, Hashable {
 struct MobileRemoteErrorEnvelope: Codable {
   let error: String
 }
+
+/// Identity-only diagnostic receipt. The host replaces deviceID and observedAt from the
+/// authenticated connection; a simulator receipt can never prove physical playback.
+public struct MobileRemoteAudioApprovalDeliveryRecord: Codable, Hashable, Sendable {
+  public let deliveryID: UUID
+  public let runID: String
+  public let approvalID: String
+  public let fingerprint: String
+  public let stage: String
+  public let simulated: Bool
+  public let headset: Bool?
+  public let deviceID: UUID?
+  public let observedAt: Date?
+
+  public init(deliveryID: UUID, runID: String, approvalID: String, fingerprint: String,
+              stage: String, simulated: Bool, headset: Bool? = nil,
+              deviceID: UUID? = nil, observedAt: Date? = nil) {
+    self.deliveryID = deliveryID; self.runID = runID; self.approvalID = approvalID
+    self.fingerprint = fingerprint; self.stage = stage; self.simulated = simulated
+    self.headset = headset; self.deviceID = deviceID; self.observedAt = observedAt
+  }
+}
+
+public struct MobileRemoteAudioApprovalProbeRequest: Codable, Sendable {
+  public let runID: String
+  public let approvalID: String
+  public let fingerprint: String
+  public let deviceID: UUID?
+}

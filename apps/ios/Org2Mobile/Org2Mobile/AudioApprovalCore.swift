@@ -73,14 +73,16 @@ struct AudioSpeechPlaybackProgress {
   private(set) var id: UUID?
   private var pendingBuffers = 0
   private var renderingEnded = false
+  private var playedAudio = false
 
   mutating func start(_ id: UUID) {
     self.id = id
     pendingBuffers = 0
     renderingEnded = false
+    playedAudio = false
   }
 
-  mutating func stop() { id = nil; pendingBuffers = 0; renderingEnded = false }
+  mutating func stop() { id = nil; pendingBuffers = 0; renderingEnded = false; playedAudio = false }
 
   mutating func enqueued(_ id: UUID) {
     guard self.id == id else { return }
@@ -90,13 +92,14 @@ struct AudioSpeechPlaybackProgress {
   mutating func played(_ id: UUID) -> Bool {
     guard self.id == id, pendingBuffers > 0 else { return false }
     pendingBuffers -= 1
+    playedAudio = true
     return renderingEnded && pendingBuffers == 0
   }
 
   mutating func renderingFinished(_ id: UUID) -> Bool {
     guard self.id == id else { return false }
     renderingEnded = true
-    return pendingBuffers == 0
+    return pendingBuffers == 0 && playedAudio
   }
 }
 
@@ -317,6 +320,7 @@ enum AudioApprovalEvent: Sendable, Equatable {
   case enrollmentChanged(joined: Bool)
   case quietChanged(until: Date?, now: Date)
   case approvalsUpdated([AudioApprovalCandidate], now: Date)
+  case hostCheckFailed(String)
   /// A Push to Talk notification. `nil` means the payload had no complete identity.
   case pushReceived(AudioApprovalTarget?, now: Date)
   /// The person asked to hear the next prompt, or the current one again.
@@ -538,6 +542,11 @@ struct AudioApprovalSession: Sendable, Equatable {
       candidates = list
       awaitingHost = false
       return reconcileWithHost(now: now)
+
+    case .hostCheckFailed(let message):
+      awaitingHost = false
+      status = "Could not verify the pushed approval with the Mac: \(message). Nothing was played or decided."
+      return [.releaseAudioSession]
 
     case .pushReceived(let target, let now):
       guard joined else { return [.releaseAudioSession] }

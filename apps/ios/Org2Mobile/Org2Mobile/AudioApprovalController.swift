@@ -58,6 +58,12 @@ final class AudioApprovalController: ObservableObject {
   private let transcriber = MobileVoiceTranscriber()
   private var observers: [NSObjectProtocol] = []
   private var approvalsSubscription: AnyCancellable?
+  private var deliveryIDs: [AudioApprovalTarget: UUID] = [:]
+  private var playbackDelivery: (target: AudioApprovalTarget, id: UUID)?
+  private var deliveryReportTask: Task<Void, Never>?
+  private var deliveryReportID: UUID?
+  private var deliveryReportBackgroundTask: UIBackgroundTaskIdentifier = .invalid
+  private var promptCheckID: UUID?
   private var pushToken: Data?
   private var pushToTalkSessionActive = false
   private var replyBackgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -78,7 +84,9 @@ final class AudioApprovalController: ObservableObject {
     approvalsSubscription = remote.$workspaceApprovals
       .receive(on: DispatchQueue.main)
       .sink { [weak self] approvals in
-        self?.send(.approvalsUpdated(approvals.map(Self.candidate), now: Date()))
+        // An older foreground response is not the confirmation of a just-pushed target.
+        guard let self, self.promptCheckID == nil else { return }
+        self.send(.approvalsUpdated(approvals.map(Self.candidate), now: Date()))
       }
     send(.quietChanged(until: quietUntil, now: Date()))
     if isEnabled { startPushToTalk() }
@@ -218,7 +226,12 @@ final class AudioApprovalController: ObservableObject {
     case .transmitEnded(let initiated, let interrupted):
       if initiated { beginReplyBackgroundTask() }
       send(.transmitEnded(initiated: initiated, interrupted: interrupted))
-    case .incomingPush(let target):
+    case .incomingPush(let target, let deliveryID):
+      if let target, let deliveryID {
+        if deliveryIDs.count >= 64 { deliveryIDs.removeAll() }
+        deliveryIDs[target] = deliveryID
+        reportDelivery(stage: "push-received", target: target, deliveryID: deliveryID)
+      }
       // The bridge accepts a push only for the joined channel. On a background launch the push
       // can arrive before the restored-channel callback; without this the state machine would
       // ignore it and leave Celorga as the active speaker, which disables the Talk button.
@@ -247,6 +260,25 @@ final class AudioApprovalController: ObservableObject {
   // MARK: State machine
 
   private func send(_ event: AudioApprovalEvent) {
+    switch event {
+    case .playbackFinished(let completed, _):
+      if case .speaking(.prompt) = session.playback, let delivery = playbackDelivery {
+        reportDelivery(stage: completed ? "playback-completed" : "playback-failed", target: delivery.target, deliveryID: delivery.id)
+      }
+    case .playbackStalled:
+      if case .speaking(.prompt) = session.playback, let delivery = playbackDelivery {
+        reportDelivery(stage: "playback-failed", target: delivery.target, deliveryID: delivery.id)
+      }
+    case .sessionActivated:
+      if let target = session.pushedTarget ?? session.activeTarget, let id = deliveryIDs[target] {
+        reportDelivery(stage: "audio-session-active", target: target, deliveryID: id)
+      }
+    case .decisionSucceeded(let target, _):
+      if let delivery = playbackDelivery, delivery.target == target {
+        reportDelivery(stage: "decision-confirmed", target: target, deliveryID: delivery.id)
+      }
+    default: break
+    }
     let effects = session.handle(event)
     publish()
     for effect in effects { perform(effect) }
@@ -293,10 +325,22 @@ final class AudioApprovalController: ObservableObject {
     case .cancelCapture:
       transcriber.cancel()
     case .refreshApprovals:
-      Task {
-        await remote?.refreshWorkspace(reportsErrors: false)
-        // Deliver the current list even when the refresh failed, so a push never waits forever.
-        send(.approvalsUpdated((remote?.workspaceApprovals ?? []).map(Self.candidate), now: Date()))
+      let requestID = UUID()
+      promptCheckID = requestID
+      Task { [weak self] in
+        guard let self, let remote = self.remote else { return }
+        await remote.refreshWorkspace(reportsErrors: false, requiresNewSnapshot: true)
+        guard self.promptCheckID == requestID else { return }
+        self.promptCheckID = nil
+        if let error = remote.workspaceConnectionError {
+          self.send(.hostCheckFailed(error))
+        } else {
+          if let target = self.session.pushedTarget, let id = self.deliveryIDs[target],
+             remote.workspaceApprovals.map(Self.candidate).contains(where: { $0.target == target }) {
+            self.reportDelivery(stage: "prompt-verified", target: target, deliveryID: id)
+          }
+          self.send(.approvalsUpdated(remote.workspaceApprovals.map(Self.candidate), now: Date()))
+        }
       }
     case .sendDecision(let candidate, let decision, let note, let receipt):
       sendDecision(candidate, decision: decision, note: note, receipt: receipt)
@@ -318,6 +362,7 @@ final class AudioApprovalController: ObservableObject {
 
   /// Plays only when the route, session, call, and quiet checks pass at this moment.
   private func speak(_ text: String, kind: AudioSpeechKind) {
+    if kind == .prompt { preparePlaybackDelivery() }
     switch planAudioPlayback(quiet: isQuiet, snapshot: currentRouteSnapshot()) {
     case .hold:
       // Report an incomplete playback: a prompt that was not heard cannot be answered.
@@ -383,7 +428,12 @@ final class AudioApprovalController: ObservableObject {
           }
         }
       }
-      if !player.isPlaying { player.play() }
+      if !player.isPlaying {
+        player.play()
+        if let delivery = playbackDelivery, case .speaking(.prompt) = session.playback {
+          reportDelivery(stage: "playback-started", target: delivery.target, deliveryID: delivery.id)
+        }
+      }
       // Audible playback now has the framework's runtime assertion. Until this point the
       // reply's short background task covers final transcription, transport, and receipt.
       endReplyBackgroundTask()
@@ -439,6 +489,12 @@ final class AudioApprovalController: ObservableObject {
     guard key != historyKey else { return }
     // A host switch invalidates the current prompt and its in-flight answer.
     if historyKey != nil {
+      promptCheckID = nil
+      deliveryIDs.removeAll()
+      playbackDelivery = nil
+      deliveryReportTask?.cancel()
+      deliveryReportID = nil
+      endDeliveryReportBackgroundTask()
       stopSpeech()
       endReplyBackgroundTask()
       transcriber.cancel()
@@ -569,6 +625,60 @@ final class AudioApprovalController: ObservableObject {
     )
   }
 
+  private func preparePlaybackDelivery() {
+    playbackDelivery = session.activeTarget.flatMap { target in
+      deliveryIDs[target].map { (target, $0) }
+    }
+  }
+
+  /// Receipts are best-effort diagnostics, never decision authority. Keep them ordered and
+  /// briefly retain background time after playback releases the PTT session.
+  private func reportDelivery(stage: String, target: AudioApprovalTarget, deliveryID: UUID) {
+    guard let remote else { return }
+    let hostID = remote.activeHostID
+    let simulated: Bool
+    let headset: Bool
+    #if DEBUG
+    simulated = isDemo
+    headset = isDemo || currentRouteSnapshot().route == .headset
+    #else
+    simulated = false
+    headset = currentRouteSnapshot().route == .headset
+    #endif
+    let event = MobileRemoteAudioApprovalDeliveryRecord(
+      deliveryID: deliveryID, runID: target.runID, approvalID: target.approvalID,
+      fingerprint: target.fingerprint, stage: stage, simulated: simulated, headset: headset)
+    if deliveryReportBackgroundTask == .invalid {
+      deliveryReportBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Report approval playback") { [weak self] in
+        Task { @MainActor [weak self] in
+          self?.deliveryReportTask?.cancel()
+          self?.endDeliveryReportBackgroundTask()
+        }
+      }
+    }
+    let previous = deliveryReportTask
+    let reportID = UUID()
+    deliveryReportID = reportID
+    deliveryReportTask = Task { [weak self] in
+      await previous?.value
+      guard let self else { return }
+      defer {
+        if self.deliveryReportID == reportID {
+          self.deliveryReportTask = nil
+          self.endDeliveryReportBackgroundTask()
+        }
+      }
+      guard !Task.isCancelled, remote.activeHostID == hostID else { return }
+      try? await remote.reportAudioApprovalDelivery(event)
+    }
+  }
+
+  private func endDeliveryReportBackgroundTask() {
+    guard deliveryReportBackgroundTask != .invalid else { return }
+    UIApplication.shared.endBackgroundTask(deliveryReportBackgroundTask)
+    deliveryReportBackgroundTask = .invalid
+  }
+
   // MARK: Simulator demo
 
   #if DEBUG
@@ -583,6 +693,13 @@ final class AudioApprovalController: ObservableObject {
     } else {
       send(.enrollmentChanged(joined: false))
     }
+  }
+
+  /// Injects only the external framework events; host refresh, policy, and decisions remain real.
+  func demoReceivePush(_ payload: [String: Any]) {
+    guard isDemo else { return }
+    handle(.incomingPush(AudioApprovalPushToTalkBridge.target(from: payload), deliveryID: (payload["deliveryID"] as? String).flatMap(UUID.init(uuidString:))))
+    send(.sessionActivated(Self.demoRoute, now: Date()))
   }
 
   func demoPlayNext() {
@@ -607,7 +724,13 @@ final class AudioApprovalController: ObservableObject {
       send(.sessionActivated(Self.demoRoute, now: Date()))
     case .releaseAudioSession:
       send(.sessionDeactivated)
-    case .speak(let text, _):
+    case .speak(let text, let kind):
+      if kind == .prompt {
+        preparePlaybackDelivery()
+        if let delivery = playbackDelivery {
+          reportDelivery(stage: "playback-started", target: delivery.target, deliveryID: delivery.id)
+        }
+      }
       demoSpoken = text
       send(.playbackFinished(completed: true, now: Date()))
     case .stopSpeaking, .startCapture, .cancelCapture:

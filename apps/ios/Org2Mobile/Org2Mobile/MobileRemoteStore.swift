@@ -67,6 +67,8 @@ final class MobileRemoteStore: ObservableObject {
   private var foregroundReplyPollingTask: Task<Void, Never>?
   private var appIsActive = false
   private var connectionGeneration = 0
+  private var workspaceRefreshTask: Task<Void, Never>?
+  private var workspaceRefreshID: UUID?
   private var pollingThreadID: UUID?
   private var pollingLeaseID: UUID?
   private var configurationRequestID: UUID?
@@ -239,6 +241,9 @@ final class MobileRemoteStore: ObservableObject {
   }
 
   private func invalidateConnectionRequests() {
+    workspaceRefreshTask?.cancel()
+    workspaceRefreshTask = nil
+    workspaceRefreshID = nil
     connectionGeneration &+= 1
     isRefreshing = false
     isRefreshingWorkspace = false
@@ -376,16 +381,41 @@ final class MobileRemoteStore: ObservableObject {
     }
   }
 
-  func refreshWorkspace(reportsErrors: Bool = true) async {
+  /// Ordinary callers share the current read. A push supersedes an older request: its
+  /// snapshot may predate the approval, and its timeout must not consume the PTT audio window.
+  func refreshWorkspace(reportsErrors: Bool = true, requiresNewSnapshot: Bool = false) async {
     let generation = connectionGeneration
+    if requiresNewSnapshot {
+      workspaceRefreshTask?.cancel()
+      workspaceRefreshTask = nil
+      workspaceRefreshID = nil
+    } else if let inFlight = workspaceRefreshTask {
+      await inFlight.value
+      return
+    }
+    guard isPaired, !Task.isCancelled else { return }
+    let requestID = UUID()
+    workspaceRefreshID = requestID
+    let task = Task { [weak self] in
+      guard let self else { return }
+      defer {
+        if self.workspaceRefreshID == requestID {
+          self.workspaceRefreshTask = nil
+          self.workspaceRefreshID = nil
+        }
+      }
+      await self.loadWorkspace(reportsErrors: reportsErrors, generation: generation, requestID: requestID)
+    }
+    workspaceRefreshTask = task
+    await task.value
+  }
+
+  private func loadWorkspace(reportsErrors: Bool, generation: Int, requestID: UUID) async {
     activeRequestCount += 1
     defer { activeRequestCount -= 1 }
-    guard isPaired, !isRefreshingWorkspace else { return }
     isRefreshingWorkspace = true
     defer {
-      if isCurrentConnection(generation) {
-        isRefreshingWorkspace = false
-      }
+      if isCurrentConnection(generation), workspaceRefreshID == requestID { isRefreshingWorkspace = false }
     }
     do {
       let snapshot = try await pairedClient().get(
@@ -393,12 +423,12 @@ final class MobileRemoteStore: ObservableObject {
         timeout: 60,
         as: MobileRemoteWorkspaceSnapshot.self
       )
-      guard isCurrentConnection(generation) else { return }
+      guard !Task.isCancelled, isCurrentConnection(generation), workspaceRefreshID == requestID else { return }
       apply(snapshot)
       workspaceConnectionError = nil
       isConnected = true
     } catch {
-      guard isCurrentConnection(generation) else { return }
+      guard !Task.isCancelled, isCurrentConnection(generation), workspaceRefreshID == requestID else { return }
       workspaceConnectionError = error.localizedDescription
       if reportsErrors, workspaceUpdatedAt == nil {
         errorMessage = "Could not load canonical workspace data from the host. \(error.localizedDescription)"
@@ -482,6 +512,15 @@ final class MobileRemoteStore: ObservableObject {
     apply(snapshot)
     isConnected = true
     return snapshot
+  }
+
+  func reportAudioApprovalDelivery(_ event: MobileRemoteAudioApprovalDeliveryRecord) async throws {
+    let _: [String: Bool] = try await pairedClient().post(
+      "/v1/audio-approvals/delivery", payload: event, timeout: 8, as: [String: Bool].self)
+  }
+
+  func audioApprovalDeliveryDiagnostics() async throws -> [MobileRemoteAudioApprovalDeliveryRecord] {
+    try await pairedClient().get("/v1/audio-approvals/diagnostics", as: [MobileRemoteAudioApprovalDeliveryRecord].self)
   }
 
   /// Registers the framework-issued ephemeral Push to Talk token with the paired Mac.

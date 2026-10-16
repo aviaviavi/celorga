@@ -1,0 +1,40 @@
+#+title: Testing walkie-talkie approvals
+
+* Automated software round trip
+
+The regular =npm run test:audio-approvals= suite includes this scenario. Run =npm run test:audio-approvals:e2e= on macOS with Xcode and an installed iOS Simulator runtime. Missing prerequisites and missing fixture hosts fail the command; they do not count as a passing test.
+
+The command runs the shipped iOS =AudioApprovalController=, =MobileRemoteStore=, and TCP client inside an XCTest app. A separate native Mac test starts the production HTTP server and coordinator, using the real CLI against a temporary corpus. The test never reads a personal corpus, calls an AI provider, or performs an external action. It uses a simulator named =Celorga Audio E2E=.
+
+The scenario first loads an older pending approval. It holds a stale workspace response in flight, creates a new urgent approval through the CLI, obtains the host's actual serialized APNs payload, and delivers it through the phone's Push to Talk callback adapter. Without tapping Play, the phone must select the new approval before the held old request is released, complete playback, handle an initiated spoken yes, receive its exact canonical decision receipt, and leave the older approval pending. Releasing the older response afterwards must not withdraw or replace the verified prompt. Every delivery stage is checked through the authenticated receipt API, with simulator receipts explicitly marked simulated. A second fresh approval exercises host unavailability: cached approvals must never play after a failed verification; a retried exact delivery then recovers and a spoken no rejects only that approval.
+
+Apple Push to Talk callbacks, the private headset route, and microphone recognition are supplied by the debug driver. APNs delivery and acoustic playback on a locked physical iPhone are separate boundaries; a passing simulator run does not prove them. The test executes the phone's orchestration, not only its pure policy or the host API.
+
+Every attempt prints an evidence directory containing host and phone logs, the XCTest result bundle, the temporary corpus, and a success receipt. A failed attempt retains its evidence too. For local iteration after both native targets are built, =node test/test-audio-approvals-e2e.mjs --skip-build= reruns the scenario.
+
+* Focused checks
+
+- =node test/test-ios-audio-approval-core.mjs= exercises the pure phone policy.
+- =node test/test-ios-audio-approval-contract.mjs= checks cross-layer wiring contracts.
+- =swift test --package-path apps/macos/Org2Workspace --filter AudioApprovalHostTests= exercises the native host and approval authority.
+- =npm run test:audio-approvals:e2e= exercises the cross-process phone/host round trip.
+
+Do not describe the focused host test as the entire end-to-end test, and do not request a human retest as a substitute for running the automated scenario.
+
+* Unattended physical playback probe
+
+After the host and phone contain the receipt API, the live probe sends (or adopts) one exact pending test delivery and waits for the phone's actual headset playback-completion callback. It does not decide an approval. Use a fresh harmless test approval; an already played approval is not a new test.
+
+#+begin_src sh
+node tools/test-audio-approvals-live.mjs --ssh-host paired-host.local --server-config /absolute/path/server.json --run RUN_ID --approval APPROVAL_ID --fingerprint SHA256 --wait 60
+#+end_src
+
+The native server creates a one-use pairing code in memory, the probe pairs a temporary diagnostic client, and the client is revoked afterwards. Codes and access tokens never enter arguments, output, or evidence. Alternatively, pass =--endpoint URL --token-env VARIABLE_NAME= using an existing protected token environment variable. No plaintext credential belongs in this document.
+
+A passing receipt must match both the delivery UUID and authenticated receiving device, report an actual incoming push, audio buffers starting and completing playback, mark playback as not simulated, and confirm a headset route. Old timestamps fail even for the same delivery. APNs acceptance alone, an older receipt, another device, a simulated output, a non-headset output, and a completion without an incoming-push receipt all fail. The black-box probe checks run with =node test/test-audio-approvals-live.mjs= and are included in the standard audio suite.
+
+The host retains at most 256 identity-only delivery events in process memory. It replaces device identity and observation time with authenticated host values; another paired diagnostic client cannot manufacture a phone receipt. There is no approval text, transcript, push token, or access token in this trace. A host restart clears it.
+
+The paired API uses =GET /v1/audio-approvals/diagnostics=, =POST /v1/audio-approvals/delivery=, and =POST /v1/audio-approvals/probe=. Probe sends respect quiet mode and the answer window. Each APNs payload includes its unique =deliveryID=, so a previously played approval cannot masquerade as the current delivery. Older hosts fail visibly before a probe sends anything.
+
+An empty synthesis stream cannot mark a prompt heard: at least one audio buffer must finish playing. A real phone completion establishes that the private audio path consumed the prompt; it cannot prove what a person acoustically heard or understood. Physical locked-phone delivery remains unverified until the live probe receives that receipt from the updated phone.

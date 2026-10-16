@@ -53,6 +53,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
   /// Prompt keys pushed to each device, with when. A device gets one push per prompt, and a
   /// delivered prompt left unanswered no longer blocks the next one.
   private var deliveredPushToTalkPrompts: [UUID: [String: Date]] = [:]
+  private var audioApprovalDeliveryRecords: [MobileRemoteAudioApprovalDeliveryRecord] = []
   private var pushToTalkPollTask: Task<Void, Never>?
   /// Test seam for `AudioApprovalPromptPolicy.answerWindow`.
   var pushToTalkAnswerWindow = AudioApprovalPromptPolicy.answerWindow
@@ -400,6 +401,10 @@ public final class MobileRemoteCoordinator: ObservableObject {
     }
     guard let store else {
       return .error("The Celorga workspace is unavailable.", statusCode: 503)
+    }
+
+    if let response = await handleAudioApprovalDiagnostics(request, path: path, token: token, store: store) {
+      return response
     }
 
     if request.method == "GET", path == "/v1/status" {
@@ -1010,6 +1015,92 @@ public final class MobileRemoteCoordinator: ObservableObject {
     }
   }
 
+  /// Bounded process-local trace, containing identities and stages only, never approval text or tokens.
+  private func recordAudioDelivery(_ envelope: MobileRemotePushToTalkEnvelope, deviceID: UUID, stage: String) {
+    appendAudioDelivery(MobileRemoteAudioApprovalDeliveryRecord(
+      deliveryID: envelope.messageID, runID: envelope.runID, approvalID: envelope.approvalID,
+      fingerprint: envelope.fingerprint, stage: stage, simulated: false, deviceID: deviceID, observedAt: Date()))
+  }
+
+  private func appendAudioDelivery(_ record: MobileRemoteAudioApprovalDeliveryRecord) {
+    audioApprovalDeliveryRecords.append(record)
+    if audioApprovalDeliveryRecords.count > 256 { audioApprovalDeliveryRecords.removeFirst(audioApprovalDeliveryRecords.count - 256) }
+  }
+
+  private func handleAudioApprovalDiagnostics(_ request: MobileRemoteHTTPRequest, path: String,
+                                              token: String, store: WorkspaceStore) async -> MobileRemoteHTTPResponse? {
+    if request.method == "GET", path == "/v1/audio-approvals/diagnostics" {
+      return .json(audioApprovalDeliveryRecords)
+    }
+    if request.method == "POST", path == "/v1/audio-approvals/delivery" {
+      guard let device = credentialVault.device(forAccessToken: token),
+            let event = try? request.decode(MobileRemoteAudioApprovalDeliveryRecord.self),
+            ["push-received", "prompt-verified", "audio-session-active", "playback-started", "playback-completed", "playback-failed", "decision-confirmed"].contains(event.stage),
+            audioApprovalDeliveryRecords.contains(where: {
+              $0.deviceID == device.id && $0.deliveryID == event.deliveryID && $0.stage == "apns-requested"
+                && $0.runID == event.runID && $0.approvalID == event.approvalID && $0.fingerprint == event.fingerprint
+            }) else { return .error("This delivery was not sent to this authenticated device.", statusCode: 409) }
+      appendAudioDelivery(MobileRemoteAudioApprovalDeliveryRecord(
+        deliveryID: event.deliveryID, runID: event.runID, approvalID: event.approvalID,
+        fingerprint: event.fingerprint, stage: event.stage, simulated: event.simulated,
+        headset: event.headset, deviceID: device.id, observedAt: Date()))
+      return .json(["accepted": true])
+    }
+    guard request.method == "POST", path == "/v1/audio-approvals/probe" else { return nil }
+    guard pushProviderConfigured || pushToTalkDeliveryForTesting != nil else {
+      return .error("Apple push delivery is not configured on this host.", statusCode: 503)
+    }
+    guard let probe = try? request.decode(MobileRemoteAudioApprovalProbeRequest.self) else {
+      return .error("An exact pending approval identity is required.", statusCode: 400)
+    }
+    await store.refreshApprovals(clearsError: false)
+    guard store.approvalItems.contains(where: {
+      $0.isRunApproval && $0.status == "pending" && $0.runId == probe.runID && $0.approvalId == probe.approvalID && $0.fingerprint == probe.fingerprint
+    }) else { return .error("That exact approval is no longer pending.", statusCode: 409) }
+    let registrations = credentialVault.pushToTalkRegistrations.filter { probe.deviceID == nil || $0.deviceID == probe.deviceID }
+    guard registrations.count == 1, let registration = registrations.first else {
+      return .error("Select exactly one enrolled Push to Talk device.", statusCode: 409)
+    }
+    let now = Date()
+    if let quiet = registration.registration.quietUntil, quiet > now {
+      return .json(["error": "The phone is in quiet mode.", "code": "quiet"], statusCode: 409)
+    }
+    let key = AudioApprovalPromptTarget(runID: probe.runID, approvalID: probe.approvalID, fingerprint: probe.fingerprint).key
+    if deliveredPushToTalkPrompts[registration.deviceID]?[key] != nil,
+       let inFlight = audioApprovalDeliveryRecords.last(where: {
+         $0.deviceID == registration.deviceID && $0.runID == probe.runID && $0.approvalID == probe.approvalID
+           && $0.fingerprint == probe.fingerprint && $0.stage == "apns-requested"
+           && now.timeIntervalSince($0.observedAt ?? .distantPast) < pushToTalkAnswerWindow
+       }) {
+      return .json(["deliveryID": inFlight.deliveryID.uuidString, "deviceID": registration.deviceID.uuidString])
+    }
+    if let until = snoozedAudioApprovalPrompts[key], until > now {
+      return .json(["error": "This approval is snoozed.", "code": "snoozed"], statusCode: 409)
+    }
+    if audioApprovalDeliveryRecords.contains(where: {
+      $0.deviceID == registration.deviceID && $0.runID == probe.runID && $0.approvalID == probe.approvalID
+        && $0.fingerprint == probe.fingerprint && $0.stage == "playback-completed"
+    }) {
+      return .json(["error": "Create a fresh harmless test approval.", "code": "already-played"], statusCode: 409)
+    }
+    if AudioApprovalPromptPolicy.holdEnds(delivered: deliveredPushToTalkPrompts[registration.deviceID] ?? [:],
+                                        now: now, window: pushToTalkAnswerWindow) != nil {
+      return .json(["error": "A previous prompt is still in its answer window.", "code": "audio-busy"], statusCode: 409)
+    }
+    let envelope = MobileRemotePushToTalkEnvelope(messageID: UUID(), runID: probe.runID,
+                                                 approvalID: probe.approvalID, fingerprint: probe.fingerprint)
+    deliveredPushToTalkPrompts[registration.deviceID, default: [:]][key] = now
+    recordAudioDelivery(envelope, deviceID: registration.deviceID, stage: "apns-requested")
+    do {
+      try await deliverPushToTalk(envelope, to: registration.registration)
+      recordAudioDelivery(envelope, deviceID: registration.deviceID, stage: "apns-accepted")
+      return .json(["deliveryID": envelope.messageID.uuidString, "deviceID": registration.deviceID.uuidString])
+    } catch {
+      deliveredPushToTalkPrompts[registration.deviceID]?[key] = nil
+      return .error("The probe could not be sent to Apple push delivery.", statusCode: 502)
+    }
+  }
+
   /// Reloads canonical approvals, then offers the next prompt. Use this wherever the host acts on
   /// its own (enrollment, snooze, decision, timers); the approval cache can lag the run files.
   func requestPushToTalkEvaluation() {
@@ -1060,8 +1151,10 @@ public final class MobileRemoteCoordinator: ObservableObject {
       )
       Task { [weak self] in
         guard let self else { return }
+        self.recordAudioDelivery(envelope, deviceID: registration.deviceID, stage: "apns-requested")
         do {
           try await self.deliverPushToTalk(envelope, to: registration.registration)
+          self.recordAudioDelivery(envelope, deviceID: registration.deviceID, stage: "apns-accepted")
           self.pushStatusText = "Last audio approval push delivered at \(Date().formatted(date: .omitted, time: .shortened))"
         } catch let error as MobileRemotePushError {
           self.pushStatusText = error.localizedDescription

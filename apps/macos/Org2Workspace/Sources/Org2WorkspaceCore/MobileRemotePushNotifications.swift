@@ -337,6 +337,7 @@ actor MobileRemotePushSender {
   static func pushToTalkPayload(_ envelope: MobileRemotePushToTalkEnvelope) -> [String: Any] {
     [
       "aps": [String: Any](),
+      "deliveryID": envelope.messageID.uuidString,
       "runID": envelope.runID,
       "approvalID": envelope.approvalID,
       "fingerprint": envelope.fingerprint

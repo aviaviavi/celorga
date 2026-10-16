@@ -6,6 +6,19 @@
 	objectVersion = 77;
 	objects = {
 
+		EA0000000000000000000001 = {isa = PBXBuildFile; fileRef = EA0000000000000000000002; };
+		EA0000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Org2MobileTests/AudioApprovalEndToEndTests.swift; sourceTree = SOURCE_ROOT; };
+		EA0000000000000000000003 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = Org2MobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		EA0000000000000000000004 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (EA0000000000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
+		EA0000000000000000000005 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		EA0000000000000000000006 = {isa = PBXNativeTarget; buildConfigurationList = EA0000000000000000000007; buildPhases = (EA0000000000000000000004, EA0000000000000000000005,); buildRules = (); dependencies = (EA000000000000000000000A,); name = Org2MobileTests; productName = Org2MobileTests; productReference = EA0000000000000000000003; productType = "com.apple.product-type.bundle.unit-test"; };
+		EA0000000000000000000007 = {isa = XCConfigurationList; buildConfigurations = (EA0000000000000000000008,EA0000000000000000000009,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		EA0000000000000000000008 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Org2Mobile.app/Org2Mobile"; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = 9MW3N969TR; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = org.org2.mobile.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2"; }; };
+		EA0000000000000000000009 = {isa = XCBuildConfiguration; name = Release; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Org2Mobile.app/Org2Mobile"; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = 9MW3N969TR; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = org.org2.mobile.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2"; }; };
+		EA000000000000000000000A = {isa = PBXTargetDependency; target = 0A1006012C20000000000001; targetProxy = EA000000000000000000000B; };
+		EA000000000000000000000B = {isa = PBXContainerItemProxy; containerPortal = 0A100A012C20000000000001; proxyType = 1; remoteGlobalIDString = 0A1006012C20000000000001; remoteInfo = Org2Mobile; };
+
+
 /* Begin PBXBuildFile section */
 		0B2001042C20000000000001 /* MobileCorpusCacheWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B2002042C20000000000001 /* MobileCorpusCacheWriter.swift */; };
 		0B2001032C20000000000001 /* Org2MobileDocument.js in Resources */ = {isa = PBXBuildFile; fileRef = 0B2002032C20000000000001 /* Org2MobileDocument.js */; };
@@ -118,6 +131,8 @@
 		0A1004012C20000000000001 = {
 			isa = PBXGroup;
 			children = (
+				EA0000000000000000000002 /* AudioApprovalEndToEndTests.swift */,
+				EA0000000000000000000002 /* AudioApprovalEndToEndTests.swift */,
 				0A1005012C20000000000001 /* Org2Mobile */,
 				0A1005022C20000000000001 /* Org2ShareExtension */,
 				0A1004022C20000000000001 /* Products */,
@@ -127,6 +142,7 @@
 		0A1004022C20000000000001 /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				EA0000000000000000000003 /* Org2MobileTests.xctest */,
 				0A1000012C20000000000001 /* Org2Mobile.app */,
 				0A10020E2C20000000000001 /* Org2ShareExtension.appex */,
 			);
@@ -248,6 +264,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				EA0000000000000000000006 /* Org2MobileTests */,
 				0A1006012C20000000000001 /* Org2Mobile */,
 				0A1006022C20000000000001 /* Org2ShareExtension */,
 			);
