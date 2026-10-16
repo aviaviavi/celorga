@@ -100,6 +100,46 @@ final class AIChatDocumentTests: XCTestCase {
     XCTAssertFalse((result?["text"] as? String ?? "").contains("=celorga.app="))
   }
 
+  func testChatNormalizerRendersBoldMarkdownLinksInTablesAsLinks() async throws {
+    // From the 2026-10-15 OpenClaw reply: Markdown strong emphasis around a
+    // Markdown link rendered as raw `*[[url][label]]*` text inside table cells.
+    let raw = """
+    Yes—**four more worth screening**. Of these, I’d try **Santos Solano first**, because.
+
+    | CPA / firm | Contact |
+    |---|---|
+    | **[Santos Solano — Sensiba](https://sensiba.com/santos-solano/)** · San Jose | **ssolano@sensiba.com** · **408-286-7780** |
+    | *[[https://example.com/chad][Chad McArthur]]* · SF | [Contact BPM](https://www.bpm.com/contact-us/) |
+
+    Keep =**literal**= and `2**3` as written.
+    """
+    let normalized = AIChatMessageOrgNormalizer.normalized(raw)
+    let lines = normalized.components(separatedBy: "\n")
+    XCTAssertEqual(lines[0], "Yes—*four more worth screening*. Of these, I’d try *Santos Solano first*, because.")
+    XCTAssertEqual(lines[4], "| [[https://sensiba.com/santos-solano/][Santos Solano — Sensiba]] · San Jose | *ssolano@sensiba.com* · *408-286-7780* |")
+    XCTAssertEqual(lines[5], "| [[https://example.com/chad][Chad McArthur]] · SF | [[https://www.bpm.com/contact-us/][Contact BPM]] |")
+    XCTAssertEqual(lines[7], "Keep =**literal**= and `2**3` as written.")
+
+    let cli = Org2CLI(repoRoot: try Org2CLI.defaultRepoRoot())
+    let html = try await cli.renderAppHTML(normalized, sourcePath: "/tmp/chat-test.org")
+    let view = try await document(html)
+    let result = try await view.evaluateJavaScript("""
+      (() => ({
+        links:[...document.querySelectorAll('td a')].map(node => node.textContent),
+        strong:[...document.querySelectorAll('strong')].map(node => node.textContent),
+        text:document.body.innerText
+      }))()
+      """) as? [String: Any]
+    XCTAssertEqual(result?["links"] as? [String], ["Santos Solano — Sensiba", "Chad McArthur", "Contact BPM"])
+    XCTAssertEqual(
+      result?["strong"] as? [String],
+      ["four more worth screening", "Santos Solano first", "ssolano@sensiba.com", "408-286-7780"]
+    )
+    let text = result?["text"] as? String ?? ""
+    XCTAssertFalse(text.contains("[["), text)
+    XCTAssertFalse(text.contains("*four"), text)
+  }
+
   func testSelectionSpansParagraphsListsAndTablesAndSurvivesUpdates() async throws {
     let view = try await document("<main><p>First paragraph.</p><ul><li>Second item.</li></ul><table><tr><td>Third cell.</td></tr></table></main>")
     let selected = try await view.evaluateJavaScript("""

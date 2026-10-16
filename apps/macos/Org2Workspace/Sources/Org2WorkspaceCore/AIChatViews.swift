@@ -1016,14 +1016,32 @@ enum AIChatMessageOrgNormalizer {
   ]
 
   nonisolated static func normalized(_ rawText: String) -> String {
-    var lines = rawText
+    // Legacy Markdown links become Org links first, so the emphasis repairs
+    // below see one link syntax.
+    let text = AIChatCitationNormalizer.normalized(rawText
       .replacingOccurrences(of: "\r\n", with: "\n")
-      .replacingOccurrences(of: "\r", with: "\n")
+      .replacingOccurrences(of: "\r", with: "\n"))
+    var lines = text
       .split(separator: "\n", omittingEmptySubsequences: false)
       .map(String.init)
+    var literalBlockEnd: String?
 
     for index in lines.indices {
       lines[index] = normalizedBlockDirective(lines[index])
+      let trimmed = lines[index].trimmingCharacters(in: .whitespaces).lowercased()
+      if let end = literalBlockEnd {
+        if trimmed.hasPrefix(end) { literalBlockEnd = nil }
+        continue
+      }
+      if let kind = ["src", "example", "export", "comment"].first(where: { trimmed.hasPrefix("#+begin_" + $0) }) {
+        literalBlockEnd = "#+end_" + kind
+        continue
+      }
+      if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+        literalBlockEnd = String(trimmed.prefix(3))
+        continue
+      }
+      lines[index] = normalizedMarkdownStrongEmphasis(lines[index])
       lines[index] = normalizedNestedInlineEmphasis(lines[index])
 
       guard index > lines.startIndex,
@@ -1045,7 +1063,60 @@ enum AIChatMessageOrgNormalizer {
       lines[index] = indentation + hline
     }
 
-    return AIChatCitationNormalizer.normalized(lines.joined(separator: "\n"))
+    return lines.joined(separator: "\n")
+  }
+
+  /// Agent replies often use Markdown strong emphasis (`**bold**`). Org reads
+  /// that as bold text with literal asterisks, and a Markdown table cell such
+  /// as `**[label](url)**` then shows raw link syntax. Convert the Markdown
+  /// span to Org bold at the chat boundary; code, verbatim, and links stay literal.
+  private nonisolated static func normalizedMarkdownStrongEmphasis(_ line: String) -> String {
+    guard line.contains("**") else { return line }
+    var output = ""
+    var cursor = line.startIndex
+
+    while cursor < line.endIndex {
+      if let protectedSpan = protectedInlineSpan(in: line, at: cursor) {
+        output += line[cursor..<protectedSpan.end]
+        cursor = protectedSpan.end
+        continue
+      }
+      if let strong = markdownStrongSpan(in: line, at: cursor) {
+        output += "*" + strong.content + "*"
+        cursor = strong.end
+        continue
+      }
+      output.append(line[cursor])
+      cursor = line.index(after: cursor)
+    }
+    return output
+  }
+
+  private nonisolated static func markdownStrongSpan(
+    in line: String,
+    at open: String.Index
+  ) -> (content: String, end: String.Index)? {
+    guard line[open...].hasPrefix("**"),
+          open == line.startIndex || isInlineBoundary(line[line.index(before: open)])
+    else { return nil }
+    let contentStart = line.index(open, offsetBy: 2)
+    guard contentStart < line.endIndex,
+          !line[contentStart].isWhitespace,
+          line[contentStart] != "*"
+    else { return nil }
+
+    var search = contentStart
+    while search < line.endIndex,
+          let close = line.range(of: "**", range: search..<line.endIndex) {
+      let afterClose = close.upperBound
+      if close.lowerBound > contentStart,
+         !line[line.index(before: close.lowerBound)].isWhitespace,
+         afterClose == line.endIndex || (line[afterClose] != "*" && isInlineBoundary(line[afterClose])) {
+        return (String(line[contentStart..<close.lowerBound]), afterClose)
+      }
+      search = line.index(after: close.lowerBound)
+    }
+    return nil
   }
 
   private nonisolated static func normalizedBlockDirective(_ line: String) -> String {
@@ -1062,8 +1133,10 @@ enum AIChatMessageOrgNormalizer {
     return indentation + "#" + suffix
   }
 
-  /// Agent replies occasionally wrap an Org verbatim/code span inside bold or
-  /// italic emphasis even though Org2 inline spans deliberately do not nest.
+  /// Agent replies occasionally wrap an Org verbatim/code span or a bracket
+  /// link inside bold or italic emphasis even though Org2 inline spans
+  /// deliberately do not nest (a link inside `*...*` would render as raw
+  /// `[[target][label]]` text).
   /// Keep the language rule simple and repair that common presentation mistake
   /// at the chat boundary so both intended styles remain visible.
   private nonisolated static func normalizedNestedInlineEmphasis(_ line: String) -> String {
@@ -1071,6 +1144,13 @@ enum AIChatMessageOrgNormalizer {
     var cursor = line.startIndex
 
     while cursor < line.endIndex {
+      // Links shield their bytes: a `/` in a URL never opens emphasis.
+      if line[cursor...].hasPrefix("[["),
+         let close = line.range(of: "]]", range: line.index(cursor, offsetBy: 2)..<line.endIndex) {
+        output += line[cursor..<close.upperBound]
+        cursor = close.upperBound
+        continue
+      }
       guard let repaired = repairedNestedInlineEmphasis(in: line, at: cursor) else {
         output.append(line[cursor])
         cursor = line.index(after: cursor)
@@ -1155,6 +1235,10 @@ enum AIChatMessageOrgNormalizer {
     in text: String,
     at open: String.Index
   ) -> ProtectedInlineSpan? {
+    if text[open...].hasPrefix("[["),
+       let close = text.range(of: "]]", range: text.index(open, offsetBy: 2)..<text.endIndex) {
+      return ProtectedInlineSpan(end: close.upperBound)
+    }
     let marker = text[open]
     guard marker == "=" || marker == "~" else { return nil }
     let contentStart = text.index(after: open)
