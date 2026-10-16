@@ -18,6 +18,10 @@ The same XCTest target also exercises chat transcription's shared audio session.
 
 Every attempt prints an evidence directory containing host and phone logs, the XCTest result bundle, the temporary corpus, and a success receipt. A failed attempt retains its evidence too. For local iteration after both native targets are built, =node test/test-audio-approvals-e2e.mjs --skip-build= reruns the scenario.
 
+* Real-time only
+
+The host pushes only approvals requested in the last ten minutes (=AudioApprovalPromptPolicy.realtimeWindow=). The walkie-talkie channel is for answering while busy. An older backlog, including an urgent approval, stays in the app's Approvals list and is never spoken. An approval without a readable request time is not pushed either. =testOnlyRealtimeApprovalsArePushedAndABacklogIsNeverSpoken= covers a 16-item backlog with a fresh approval behind it. The live probe still targets an exact approval the agent chose.
+
 * Focused checks
 
 - =node test/test-ios-audio-approval-core.mjs= exercises the pure phone policy.

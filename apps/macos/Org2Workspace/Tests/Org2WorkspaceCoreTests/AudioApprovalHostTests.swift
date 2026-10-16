@@ -114,25 +114,25 @@ final class AudioApprovalHostTests: XCTestCase {
       approvalItem(run: "run-d", approval: "d1", fingerprint: "fd", requestedAt: "2026-10-13T08:00:00.000Z", status: "approved"),
       approvalItem(run: nil, approval: "todo", fingerprint: "ft", requestedAt: "2026-10-13T07:00:00.000Z", kind: "todo"),
     ]
-    let first = MobileRemoteCoordinator.nextAudioApprovalPrompt(from: approvals, snoozed: [:], now: now)
+    let first = MobileRemoteCoordinator.nextAudioApprovalPrompt(from: approvals, snoozed: [:], now: now, maxAge: .infinity)
     XCTAssertEqual(first, AudioApprovalPromptTarget(runID: "run-a", approvalID: "a1", fingerprint: "fa"),
                    "Oldest complete pending run approval wins; incomplete identity, decided, and TODO approvals are never spoken")
 
     let snoozed = [first!.key: now.addingTimeInterval(600)]
     XCTAssertEqual(
-      MobileRemoteCoordinator.nextAudioApprovalPrompt(from: approvals, snoozed: snoozed, now: now),
+      MobileRemoteCoordinator.nextAudioApprovalPrompt(from: approvals, snoozed: snoozed, now: now, maxAge: .infinity),
       AudioApprovalPromptTarget(runID: "run-b", approvalID: "b1", fingerprint: "fb"),
       "Later on one prompt moves to the next agent's approval"
     )
     XCTAssertEqual(
-      MobileRemoteCoordinator.nextAudioApprovalPrompt(from: approvals, snoozed: snoozed, now: now.addingTimeInterval(601)),
+      MobileRemoteCoordinator.nextAudioApprovalPrompt(from: approvals, snoozed: snoozed, now: now.addingTimeInterval(601), maxAge: .infinity),
       first,
       "An expired snooze returns the prompt to its place"
     )
     // A changed fingerprint is a different prompt: snoozing the old one does not hide the new one.
     let revised = [approvalItem(run: "run-a", approval: "a1", fingerprint: "fa2", requestedAt: "2026-10-13T10:01:00.000Z")]
     XCTAssertEqual(
-      MobileRemoteCoordinator.nextAudioApprovalPrompt(from: revised, snoozed: snoozed, now: now)?.fingerprint,
+      MobileRemoteCoordinator.nextAudioApprovalPrompt(from: revised, snoozed: snoozed, now: now, maxAge: .infinity)?.fingerprint,
       "fa2"
     )
   }
@@ -383,19 +383,42 @@ final class AudioApprovalHostTests: XCTestCase {
                    "Snooze and quiet never decide anything")
   }
 
+  func testOnlyRealtimeApprovalsArePushedAndABacklogIsNeverSpoken() {
+    let now = AudioApprovalPromptPolicy.parseRequestedAt("2026-10-16T22:00:00Z")!
+    let backlog = (0..<16).map { index in
+      approvalItem(run: "run-old", approval: "old-\(index)", fingerprint: "sha256:o\(index)",
+                   requestedAt: "2026-10-03T16:39:\(String(format: "%02d", index)).000Z")
+    }
+    XCTAssertNil(MobileRemoteCoordinator.nextAudioApprovalPrompt(from: backlog, snoozed: [:], now: now),
+                 "A days-old backlog is reviewed in the app, never pushed to the headset")
+    let urgentButOld = approvalItem(run: "run-u", approval: "u", fingerprint: "sha256:u",
+                                    requestedAt: "2026-10-16T21:00:00Z", priority: "urgent")
+    XCTAssertNil(MobileRemoteCoordinator.nextAudioApprovalPrompt(from: [urgentButOld], snoozed: [:], now: now),
+                 "Urgency does not revive an approval that is no longer real time")
+    let fresh = approvalItem(run: "run-new", approval: "new", fingerprint: "sha256:n", requestedAt: "2026-10-16T21:58:30.123Z")
+    XCTAssertEqual(MobileRemoteCoordinator.nextAudioApprovalPrompt(from: backlog + [urgentButOld, fresh], snoozed: [:], now: now)?.approvalID,
+                   "new", "A just-requested approval is pushed even behind a large backlog")
+    XCTAssertEqual(MobileRemoteCoordinator.nextAudioApprovalPrompt(from: [fresh], snoozed: [:],
+                                                                   now: now.addingTimeInterval(AudioApprovalPromptPolicy.realtimeWindow))?.approvalID,
+                   nil, "An unanswered prompt ages out of the audio channel after the real-time window")
+    let undated = approvalItem(run: "run-x", approval: "x", fingerprint: "sha256:x", requestedAt: "")
+    XCTAssertNil(MobileRemoteCoordinator.nextAudioApprovalPrompt(from: [undated], snoozed: [:], now: now),
+                 "An approval without a request time is not treated as real time")
+  }
+
   func testUrgentFirstAndDeliveredPromptsDoNotBlockNewerOnes() {
     let now = Date()
     let older = approvalItem(run: "run-a", approval: "a", fingerprint: "sha256:a", requestedAt: "2026-10-13T10:00:00Z")
     let newer = approvalItem(run: "run-b", approval: "b", fingerprint: "sha256:b", requestedAt: "2026-10-13T10:05:00Z")
     let urgent = approvalItem(run: "run-u", approval: "u", fingerprint: "sha256:u", requestedAt: "2026-10-13T11:00:00Z", priority: "urgent")
-    XCTAssertEqual(MobileRemoteCoordinator.nextAudioApprovalPrompt(from: [older, newer, urgent], snoozed: [:], now: now)?.approvalID, "u")
-    XCTAssertEqual(MobileRemoteCoordinator.nextAudioApprovalPrompt(from: [newer, older], snoozed: [:], now: now)?.approvalID, "a",
+    XCTAssertEqual(MobileRemoteCoordinator.nextAudioApprovalPrompt(from: [older, newer, urgent], snoozed: [:], now: now, maxAge: .infinity)?.approvalID, "u")
+    XCTAssertEqual(MobileRemoteCoordinator.nextAudioApprovalPrompt(from: [newer, older], snoozed: [:], now: now, maxAge: .infinity)?.approvalID, "a",
                    "Without explicit urgency, age decides the order")
     XCTAssertEqual(MobileRemoteCoordinator.nextAudioApprovalPrompt(
-      from: [older, newer], snoozed: [:], excluding: ["run-a|a|sha256:a"], now: now)?.approvalID, "b",
+      from: [older, newer], snoozed: [:], excluding: ["run-a|a|sha256:a"], now: now, maxAge: .infinity)?.approvalID, "b",
       "A delivered, unanswered prompt does not block the next one")
     XCTAssertNil(MobileRemoteCoordinator.nextAudioApprovalPrompt(
-      from: [older], snoozed: [:], excluding: ["run-a|a|sha256:a"], now: now), "A delivered prompt is not pushed again")
+      from: [older], snoozed: [:], excluding: ["run-a|a|sha256:a"], now: now, maxAge: .infinity), "A delivered prompt is not pushed again")
     XCTAssertEqual(AudioApprovalPromptPolicy.holdEnds(delivered: ["k": now], now: now.addingTimeInterval(10)),
                    now.addingTimeInterval(AudioApprovalPromptPolicy.answerWindow))
     XCTAssertNil(AudioApprovalPromptPolicy.holdEnds(delivered: ["k": now], now: now.addingTimeInterval(AudioApprovalPromptPolicy.answerWindow + 1)))
