@@ -1085,6 +1085,8 @@ private final class AgentRunProjectionBox: @unchecked Sendable {
   let sourceMeetingContextsByID: [AgentRunItem.ID: AgentRunContextItem]
   let runIDsBySourceMeetingReference: [String: [AgentRunItem.ID]]
   let wasBuiltOnMainThread: Bool
+  /// True when only the filter changed and the run-derived indexes were reused.
+  var reusedRunIndexes = false
 
   init(
     filterTextByID: [AgentRunItem.ID: String],
@@ -2379,6 +2381,7 @@ public final class WorkspaceStore {
   }
   public private(set) var agentRuns: [AgentRunItem] = [] {
     didSet {
+      agentRunsRevision &+= 1
       scheduleAgentRunProjectionRefresh()
     }
   }
@@ -3790,6 +3793,12 @@ public final class WorkspaceStore {
   @ObservationIgnored private var agentRunProjectionGeneration: UInt64 = 0
   @ObservationIgnored private var agentRunProjectionTask: Task<Void, Never>?
   @ObservationIgnored private(set) var agentRunProjectionBuildCountForTesting = 0
+  @ObservationIgnored private(set) var agentRunProjectionIndexReuseCountForTesting = 0
+  /// Bumped on every `agentRuns` assignment. A published projection built for
+  /// the current revision can be re-filtered without rebuilding its per-run
+  /// search text, scope entries, and source-meeting contexts.
+  @ObservationIgnored private var agentRunsRevision: UInt64 = 0
+  @ObservationIgnored private var agentRunProjectionIndexes: (revision: UInt64, box: AgentRunProjectionBox)?
   @ObservationIgnored private(set) var agentRunProjectionMainThreadBuildCountForTesting = 0
   @ObservationIgnored var agentRunProjectionPreparationForTesting: (@Sendable () async -> Void)?
   @ObservationIgnored var agentRunProjectionDidBuildForTesting: (@Sendable (Bool) -> Void)?
@@ -7526,7 +7535,7 @@ extension WorkspaceStore {
       publishAgentRunProjection(Self.agentRunProjection(
         runs: runs,
         filterTerms: agentRunFilterTerms
-      ))
+      )!)
       agentRunProjectionTask = nil
     }
     markRunReviewPageLoaded(.runs)
@@ -37024,13 +37033,19 @@ extension WorkspaceStore {
       publishAgentRunProjection(Self.agentRunProjection(
         runs: agentRuns,
         filterTerms: agentRunFilterTerms
-      ))
+      )!)
       agentRunProjectionTask = nil
       return
     }
 
     let runs = agentRuns
     let terms = agentRunFilterTerms
+    let revision = agentRunsRevision
+    // A filter keystroke over an unchanged archive reuses the per-run indexes;
+    // only the cheap term match and section grouping run again.
+    let indexes = agentRunProjectionIndexes?.revision == revision
+      ? agentRunProjectionIndexes?.box
+      : nil
     let preparation = agentRunProjectionPreparationForTesting
     let didBuild = agentRunProjectionDidBuildForTesting
     agentRunProjectionTask = Task { @MainActor [weak self] in
@@ -37041,34 +37056,52 @@ extension WorkspaceStore {
           return
         }
       }
-      let projection = await Task.detached(priority: .userInitiated) {
+      let build = Task.detached(priority: .userInitiated) { () -> AgentRunProjectionBox? in
         if let preparation { await preparation() }
-        let projection = Self.agentRunProjection(runs: runs, filterTerms: terms)
+        let projection: AgentRunProjectionBox?
+        if let indexes {
+          projection = Self.agentRunProjection(reusing: indexes, filterTerms: terms, checksCancellation: true)
+        } else {
+          projection = Self.agentRunProjection(runs: runs, filterTerms: terms, checksCancellation: true)
+        }
+        guard let projection else { return nil }
         didBuild?(projection.wasBuiltOnMainThread)
         return projection
-      }.value
+      }
+      // Superseded keystrokes cancel their build instead of competing with
+      // the current one for CPU.
+      let projection = await withTaskCancellationHandler {
+        await build.value
+      } onCancel: {
+        build.cancel()
+      }
       guard let self,
+            let projection,
             !Task.isCancelled,
             self.agentRunProjectionGeneration == generation,
-            self.agentRuns.count == runs.count,
+            self.agentRunsRevision == revision,
             self.agentRunFilterTerms == terms
       else { return }
-      self.publishAgentRunProjection(projection)
+      self.publishAgentRunProjection(projection, runsRevision: revision)
       self.agentRunProjectionTask = nil
     }
   }
 
+  /// Builds the complete projection. Returns nil only when `checksCancellation`
+  /// is set and the surrounding task is canceled.
   nonisolated private static func agentRunProjection(
     runs: [AgentRunItem],
-    filterTerms: [String]
-  ) -> AgentRunProjectionBox {
+    filterTerms: [String],
+    checksCancellation: Bool = false
+  ) -> AgentRunProjectionBox? {
     var filterTextByID: [AgentRunItem.ID: String] = [:]
     var runsByID: [AgentRunItem.ID: AgentRunItem] = [:]
     var countByGoalRef: [String: Int] = [:]
     var countByAgentRef: [String: Int] = [:]
     filterTextByID.reserveCapacity(runs.count)
     runsByID.reserveCapacity(runs.count)
-    for run in runs {
+    for (index, run) in runs.enumerated() {
+      if checksCancellation, index % 256 == 0, Task.isCancelled { return nil }
       filterTextByID[run.id] = run.runFilterText
       runsByID[run.id] = run
       if let goalRef = run.goalRef { countByGoalRef[goalRef, default: 0] += 1 }
@@ -37077,10 +37110,6 @@ extension WorkspaceStore {
 
     var scopeCounts: [AgentRunScope: Int] = [:]
     var scopeEntries: [AgentRunScope: [AgentRunScopeEntry]] = [:]
-    var filteredEntries: [AgentRunScope: [AgentRunScopeEntry]] = [:]
-    var filteredIDs: [AgentRunScope: [AgentRunItem.ID]] = [:]
-    var filteredIDSets: [AgentRunScope: Set<AgentRunItem.ID>] = [:]
-    var sectionsByScope: [AgentRunScope: [RunCenterSection]] = [:]
     let sourceMeetingContexts = RunCenterPresentation.sourceMeetingContextsByRunID(in: runs)
     var runIDsBySourceMeetingReference: [String: [AgentRunItem.ID]] = [:]
     runIDsBySourceMeetingReference.reserveCapacity(min(sourceMeetingContexts.count, 32))
@@ -37094,10 +37123,54 @@ extension WorkspaceStore {
       let entries = scope.entries(in: runs)
       scopeEntries[scope] = entries
       scopeCounts[scope] = entries.count
+    }
+
+    let indexes = AgentRunProjectionBox(
+      filterTextByID: filterTextByID,
+      runsByID: runsByID,
+      countByGoalRef: countByGoalRef,
+      countByAgentRef: countByAgentRef,
+      scopeCounts: scopeCounts,
+      scopeEntries: scopeEntries,
+      filteredScopeEntries: [:],
+      filteredScopeIDs: [:],
+      filteredScopeIDSets: [:],
+      sectionsByScope: [:],
+      sourceMeetingContextsByID: sourceMeetingContexts,
+      runIDsBySourceMeetingReference: runIDsBySourceMeetingReference,
+      wasBuiltOnMainThread: Thread.isMainThread
+    )
+    guard let projection = agentRunProjection(
+      reusing: indexes,
+      filterTerms: filterTerms,
+      checksCancellation: checksCancellation
+    ) else {
+      return nil
+    }
+    projection.reusedRunIndexes = false
+    return projection
+  }
+
+  /// Applies `filterTerms` to run-derived indexes that are already built.
+  /// Returns nil only when `checksCancellation` is set and the surrounding
+  /// task is canceled.
+  nonisolated private static func agentRunProjection(
+    reusing indexes: AgentRunProjectionBox,
+    filterTerms: [String],
+    checksCancellation: Bool = false
+  ) -> AgentRunProjectionBox? {
+    var filteredEntries: [AgentRunScope: [AgentRunScopeEntry]] = [:]
+    var filteredIDs: [AgentRunScope: [AgentRunItem.ID]] = [:]
+    var filteredIDSets: [AgentRunScope: Set<AgentRunItem.ID>] = [:]
+    var sectionsByScope: [AgentRunScope: [RunCenterSection]] = [:]
+
+    for scope in AgentRunScope.allCases {
+      if checksCancellation, Task.isCancelled { return nil }
+      let entries = indexes.scopeEntries[scope] ?? []
       let visibleEntries = filterTerms.isEmpty
         ? entries
         : entries.filter { entry in
-          let text = filterTextByID[entry.id] ?? entry.run.runFilterText
+          let text = indexes.filterTextByID[entry.id] ?? entry.run.runFilterText
           return filterTerms.allSatisfy { text.contains($0) }
         }
       filteredEntries[scope] = visibleEntries
@@ -37106,28 +37179,37 @@ extension WorkspaceStore {
       filteredIDSets[scope] = Set(visibleIDs)
       sectionsByScope[scope] = RunCenterPresentation.sections(
         for: visibleEntries,
-        sourceMeetingContexts: sourceMeetingContexts
+        sourceMeetingContexts: indexes.sourceMeetingContextsByID
       )
     }
 
-    return AgentRunProjectionBox(
-      filterTextByID: filterTextByID,
-      runsByID: runsByID,
-      countByGoalRef: countByGoalRef,
-      countByAgentRef: countByAgentRef,
-      scopeCounts: scopeCounts,
-      scopeEntries: scopeEntries,
+    let projection = AgentRunProjectionBox(
+      filterTextByID: indexes.filterTextByID,
+      runsByID: indexes.runsByID,
+      countByGoalRef: indexes.countByGoalRef,
+      countByAgentRef: indexes.countByAgentRef,
+      scopeCounts: indexes.scopeCounts,
+      scopeEntries: indexes.scopeEntries,
       filteredScopeEntries: filteredEntries,
       filteredScopeIDs: filteredIDs,
       filteredScopeIDSets: filteredIDSets,
       sectionsByScope: sectionsByScope,
-      sourceMeetingContextsByID: sourceMeetingContexts,
-      runIDsBySourceMeetingReference: runIDsBySourceMeetingReference,
+      sourceMeetingContextsByID: indexes.sourceMeetingContextsByID,
+      runIDsBySourceMeetingReference: indexes.runIDsBySourceMeetingReference,
       wasBuiltOnMainThread: Thread.isMainThread
     )
+    projection.reusedRunIndexes = true
+    return projection
   }
 
-  private func publishAgentRunProjection(_ projection: AgentRunProjectionBox) {
+  private func publishAgentRunProjection(
+    _ projection: AgentRunProjectionBox,
+    runsRevision: UInt64? = nil
+  ) {
+    agentRunProjectionIndexes = (runsRevision ?? agentRunsRevision, projection)
+    if projection.reusedRunIndexes {
+      agentRunProjectionIndexReuseCountForTesting &+= 1
+    }
     agentRunProjectionBuildCountForTesting &+= 1
     if projection.wasBuiltOnMainThread {
       agentRunProjectionMainThreadBuildCountForTesting &+= 1

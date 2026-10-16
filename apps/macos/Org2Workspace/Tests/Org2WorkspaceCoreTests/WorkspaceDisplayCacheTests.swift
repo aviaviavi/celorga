@@ -381,6 +381,35 @@ final class WorkspaceDisplayCacheTests: XCTestCase {
   }
 
   @MainActor
+  func testRunFilterKeystrokesReuseRunIndexesUntilRunsChange() async throws {
+    let store = try WorkspaceStore(cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()))
+    let runs = try (0..<1_200).map { index in
+      try agentRun(
+        id: "history-\(index)",
+        goal: "Automation attempt \(index)",
+        status: "completed"
+      )
+    }
+    store.replaceAgentRunsForTesting(runs)
+    XCTAssertEqual(store.agentRunProjectionIndexReuseCountForTesting, 0)
+
+    store.agentRunFilter = "attempt 11"
+    await store.waitForAgentRunProjectionForTesting()
+    store.agentRunFilter = "attempt 1199"
+    await store.waitForAgentRunProjectionForTesting()
+
+    XCTAssertEqual(store.agentRunProjectionIndexReuseCountForTesting, 2, "A filter change must not rebuild per-run search text")
+    XCTAssertEqual(store.agentRunEntries(for: .all).map(\.id), ["history-1199"])
+
+    // New runs invalidate the reusable indexes.
+    let added = try agentRun(id: "history-new", goal: "Automation attempt 1199 rerun", status: "completed")
+    store.replaceAgentRunsForTesting(runs + [added], buildsProjectionSynchronously: false)
+    await store.waitForAgentRunProjectionForTesting()
+    XCTAssertEqual(store.agentRunProjectionIndexReuseCountForTesting, 2)
+    XCTAssertTrue(store.agentRunEntries(for: .all).map(\.id).contains("history-new"))
+  }
+
+  @MainActor
   func testCachedRunReviewPageRevisitDoesNotRefresh() async throws {
     let root = try makeRunReviewRoot(label: "cached-revisit")
     defer { try? FileManager.default.removeItem(at: root) }
