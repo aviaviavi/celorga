@@ -211,7 +211,7 @@ const HELP = `Agentic workspace commands:
   celorga run list|show|wait|validate|start|resume|retry|cancel|complete|complete-external|reopen-external|fail|block|fork|normalize|reconcile-source|artifact-review
   celorga run block ID --reason "Specific clarification needed" [--separate-from-approval]
   celorga run complete ID --summary "What happened" [--highlight TEXT] [--next-action TEXT]
-  celorga run complete-external ID --summary "Where or how it was completed" --actor NAME
+  celorga run complete-external ID [--summary "Where or how it was completed"] --actor NAME
   celorga run reopen-external ID --summary "Corrected open-run outcome" --actor NAME
   celorga run outcome ID --summary "What happened" [--highlight TEXT] [--next-action TEXT]
   celorga run runtime ID [--provider ID] [--model ID] [--tokens-used N] [--cost-used-usd N] [--elapsed-seconds N]
@@ -1282,7 +1282,7 @@ async function runCommand(parsed: ParsedArgs): Promise<void> {
   let run = existing;
   const transitions: Record<string, AgentRunStatus> = { start: "running", resume: "running", retry: "queued", cancel: "canceled", complete: "completed", fail: "failed", block: "blocked" };
   if (action === "complete-external") run = completeAgentRunExternally(existing, {
-    summary: required(flag(parsed, "summary"), "--summary is required"),
+    summary: flag(parsed, "summary"),
     actor: required(flag(parsed, "actor"), "--actor is required"),
   });
   else if (action === "reopen-external") run = reopenExternallyCompletedApprovalRun(existing, {

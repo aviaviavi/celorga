@@ -7141,10 +7141,17 @@ private enum RunCompletionMode {
   var detail: String {
     switch self {
     case .run: "Describe what happened in plain language. This is the first thing people will see when they review the run."
-    case .external: "Describe where or how the outcome was completed. This closes the Celorga item and retains unresolved approvals and review metadata as history. It does not stop work that may still be running in another system."
-    case .approvalExternal: "Describe where or how this exact approval action was completed. Only this approval is closed; sibling approvals and the containing run remain open."
-    case .approvalExternalBulk(let count): "Describe where or how these \(count) approval actions were completed. Each selected approval is closed independently; sibling approvals and containing runs remain open."
+    case .external: "Optionally note where or how the outcome was completed. This closes the Celorga item and retains unresolved approvals and review metadata as history. It does not stop work that may still be running in another system."
+    case .approvalExternal: "Optionally note where or how this exact approval action was completed. Only this approval is closed; sibling approvals and the containing run remain open."
+    case .approvalExternalBulk(let count): "Optionally note where or how these \(count) approval actions were completed. Each selected approval is closed independently; sibling approvals and containing runs remain open."
     }
+  }
+
+  /// Only an in-workflow completion needs an outcome summary. A "Done Elsewhere"
+  /// note is optional.
+  var requiresSummary: Bool {
+    if case .run = self { return true }
+    return false
   }
 
   var actionTitle: String {
@@ -8209,14 +8216,14 @@ private struct RunCompletionSheet: View {
       Text(mode.title).font(.title2.weight(.semibold))
       Text(mode.detail)
         .foregroundStyle(.secondary)
-      TextField("Outcome summary", text: $summary, axis: .vertical)
+      TextField(mode.requiresSummary ? "Outcome summary" : "Note (optional)", text: $summary, axis: .vertical)
         .lineLimit(3...7)
       HStack {
         Spacer()
         Button("Cancel") { dismiss() }
         Button(mode.actionTitle) { complete(normalizedSummary) }
           .keyboardShortcut(.defaultAction)
-          .disabled(normalizedSummary.isEmpty)
+          .disabled(mode.requiresSummary && normalizedSummary.isEmpty)
       }
     }
     .padding(22)
@@ -8631,7 +8638,7 @@ private struct BulkApprovalRejectionSheet: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text("Reject \(count) Approvals").font(.title2.weight(.semibold))
-      Text("The reason is recorded on every selected approval. Standalone approval headings use the chosen final TODO state; run-backed approvals are rejected through their canonical run records.")
+      Text("An optional reason is recorded on every selected approval. Standalone approval headings use the chosen final TODO state; run-backed approvals are rejected through their canonical run records.")
         .foregroundStyle(.secondary)
 
       Picker("Final standalone TODO state", selection: $endStatus) {
@@ -8639,7 +8646,7 @@ private struct BulkApprovalRejectionSheet: View {
         Text("Done").tag(TodoEditStatus.done)
       }
 
-      TextField("Rejection reason", text: $reason, axis: .vertical)
+      TextField("Rejection reason (optional)", text: $reason, axis: .vertical)
         .lineLimit(3...7)
 
       HStack {
@@ -8647,7 +8654,6 @@ private struct BulkApprovalRejectionSheet: View {
         Button("Cancel") { dismiss() }
         Button("Reject Selected") { reject(endStatus, normalizedReason) }
           .keyboardShortcut(.defaultAction)
-          .disabled(normalizedReason.isEmpty)
       }
     }
     .padding(22)

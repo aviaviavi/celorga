@@ -18204,6 +18204,72 @@ final class Org2ModelsTests: XCTestCase {
   }
 
   @MainActor
+  func testRejectionReasonAndDoneElsewhereNoteAreOptional() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-workspace-optional-approval-notes-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let note = root.appendingPathComponent("optional-approval-notes.org2")
+    try """
+    * TODO Approve reply to Maya
+    :PROPERTIES:
+    :ID: reject-without-reason
+    :STATUS: draft-needs-review
+    :END:
+
+    * TODO Approve follow-up to Lee
+    :PROPERTIES:
+    :ID: done-elsewhere-without-note
+    :STATUS: draft-needs-review
+    :END:
+    """.write(to: note, atomically: true, encoding: .utf8)
+
+    func approval(_ id: String, title: String, line: Int) -> ApprovalItem {
+      ApprovalItem(
+        title: title,
+        status: "draft-needs-review",
+        todo: "TODO",
+        level: 1,
+        file: note.path,
+        line: line,
+        idValue: id,
+        properties: ["ID": id, "STATUS": "draft-needs-review"],
+        body: "",
+        tags: []
+      )
+    }
+    let rejected = approval("reject-without-reason", title: "Approve reply to Maya", line: 1)
+    let completed = approval("done-elsewhere-without-note", title: "Approve follow-up to Lee", line: 7)
+    let store = try WorkspaceStore(cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()))
+    store.setCorpusRoot(root)
+    store.replaceApprovalItemsForTesting([rejected, completed])
+    store.todoStatusMutationForTesting = { status, file, line in
+      let fileURL = URL(fileURLWithPath: file)
+      var lines = try String(contentsOf: fileURL, encoding: .utf8)
+        .split(separator: "\n", omittingEmptySubsequences: false)
+        .map(String.init)
+      lines[line - 1] = lines[line - 1].replacingOccurrences(of: " TODO ", with: " \(status.label) ")
+      try lines.joined(separator: "\n").write(to: fileURL, atomically: true, encoding: .utf8)
+      return status.label
+    }
+
+    await store.rejectApproval(rejected, endStatus: .canceled, reason: "  \n ")
+    XCTAssertNil(store.errorText, store.statusText)
+    await store.completeApprovalExternally(completed, summary: " ")
+    XCTAssertNil(store.errorText, store.statusText)
+
+    let updated = try String(contentsOf: note, encoding: .utf8)
+    XCTAssertTrue(updated.contains("* CANCELED Approve reply to Maya"), updated)
+    XCTAssertTrue(updated.contains(":STATUS: rejected"), updated)
+    XCTAssertTrue(updated.contains(":REJECTION_END_STATUS: CANCELED"), updated)
+    XCTAssertFalse(updated.contains("REJECTION_REASON"), updated)
+    XCTAssertTrue(updated.contains("* DONE Approve follow-up to Lee"), updated)
+    XCTAssertTrue(updated.contains(":STATUS: completed-externally"), updated)
+    XCTAssertFalse(updated.contains("EXTERNAL_COMPLETION_NOTE"), updated)
+    XCTAssertTrue(store.approvalItems.isEmpty)
+  }
+
+  @MainActor
   func testMarkStandaloneApprovalDoneElsewhereUsesStableIDAndRecordsAuditNote() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-workspace-external-approval-stale-line-\(UUID().uuidString)", isDirectory: true)

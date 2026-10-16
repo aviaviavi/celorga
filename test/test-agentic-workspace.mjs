@@ -410,6 +410,19 @@ try {
   ], { encoding: "utf8" });
   assert.equal(externalCompletion.status, 0, externalCompletion.stderr || externalCompletion.stdout);
   assert.equal(loadAgentRun(root, "external-cli").events.at(-1).type, "completed-externally");
+  saveAgentRun(root, transitionAgentRun(
+    createAgentRun({ id: "external-cli-no-note", goal: "Confirm outcome without a note" }),
+    "blocked",
+    { reason: "Waiting for work in another system." }
+  ));
+  const noteless = spawnSync(process.execPath, [
+    path.resolve("dist/cli.js"), "run", "complete-external", "external-cli-no-note",
+    "--actor", "Avi", "--dir", root, "--json",
+  ], { encoding: "utf8" });
+  assert.equal(noteless.status, 0, noteless.stderr || noteless.stdout);
+  const notelessRun = loadAgentRun(root, "external-cli-no-note");
+  assert.equal(notelessRun.status, "completed");
+  assert.equal(notelessRun.outcome.summary, "Completed outside this workflow.");
   let reopenExternalCLI = transitionAgentRun(
     createAgentRun({ id: "reopen-external-cli", goal: "Review an external action" }),
     "running",
@@ -434,6 +447,7 @@ try {
   assert.equal(loadAgentRun(root, "reopen-external-cli").events.at(-1).type, "external-completion-reopened");
   fs.unlinkSync(path.join(root, ".org2", "runs", "external-cli.org"));
   fs.unlinkSync(path.join(root, ".org2", "runs", "reopen-external-cli.org"));
+  fs.unlinkSync(path.join(root, ".org2", "runs", "external-cli-no-note.org"));
   assert.throws(
     () => transitionAgentRun(transitionAgentRun(createAgentRun({ id: "missing-outcome", goal: "Explain the result" }), "running"), "completed"),
     /requires --summary/

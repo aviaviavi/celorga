@@ -1270,8 +1270,12 @@ final class CorpusStore: ObservableObject {
       "STATUS": "rejected",
       "REJECTED_AT": timestamp,
       "REJECTION_END_STATUS": endStatus.rawValue,
-      "REJECTION_REASON": sanitizeProperty(reason),
     ]
+    // The reason is optional; do not write an empty property.
+    let sanitizedReason = sanitizeProperty(reason)
+    if !sanitizedReason.isEmpty {
+      properties["REJECTION_REASON"] = sanitizedReason
+    }
 
     for key in CelorgaNames.withAliases([
       "ORG2_REVIEW_STATUS",
@@ -1437,14 +1441,18 @@ final class CorpusStore: ObservableObject {
     let range = headingMetadataRange(in: lines, headingIndex: headingIndex)
     var replacementLines = Array(lines[range])
     replacementLines[0] = headingLine(replacementLines[0], settingTodo: endStatus.rawValue)
+    var pairedProperties = [
+      "STATUS": "rejected",
+      "REJECTED_AT": timestamp,
+      "REJECTION_END_STATUS": endStatus.rawValue,
+      "REJECTED_APPROVAL_TODO": approvalTitle,
+    ]
+    let sanitizedReason = sanitizeProperty(reason)
+    if !sanitizedReason.isEmpty {
+      pairedProperties["REJECTION_REASON"] = sanitizedReason
+    }
     upsertProperties(
-      [
-        "STATUS": "rejected",
-        "REJECTED_AT": timestamp,
-        "REJECTION_END_STATUS": endStatus.rawValue,
-        "REJECTION_REASON": sanitizeProperty(reason),
-        "REJECTED_APPROVAL_TODO": approvalTitle,
-      ],
+      pairedProperties,
       in: &replacementLines,
       headingIndex: 0
     )

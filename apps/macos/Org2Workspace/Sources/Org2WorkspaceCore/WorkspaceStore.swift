@@ -1937,14 +1937,6 @@ private struct ApprovalRejectionChoice {
   let reason: String
 }
 
-private enum ApprovalRejectionError: LocalizedError {
-  case reasonRequired
-
-  var errorDescription: String? {
-    "Enter a reason before rejecting this approval."
-  }
-}
-
 private enum ApprovalActionKind {
   case approve
   case reject
@@ -8678,11 +8670,6 @@ extension WorkspaceStore {
   public func completeAgentRunExternally(_ run: AgentRunItem, summary: String) async {
     guard corpusRoot != nil, run.canMarkDoneElsewhere, !mutatingAgentRunIDs.contains(run.id) else { return }
     let normalizedSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !normalizedSummary.isEmpty else {
-      errorText = "Describe where or how the work was completed."
-      statusText = "External completion note required"
-      return
-    }
     mutatingAgentRunIDs.insert(run.id)
     defer { mutatingAgentRunIDs.remove(run.id) }
     do {
@@ -8708,13 +8695,11 @@ extension WorkspaceStore {
     if let agentRunExternalCompletionForTesting {
       return try await agentRunExternalCompletionForTesting(runID, summary)
     }
-    return try await cli.runJSON([
-      "run", "complete-external", runID,
-      "--summary", summary,
-      "--actor", "Org2Workspace",
-      "--dir", corpusRoot.path,
-      "--json"
-    ])
+    // The note is optional: the runtime records a default outcome when it is omitted.
+    var arguments = ["run", "complete-external", runID]
+    if !summary.isEmpty { arguments += ["--summary", summary] }
+    arguments += ["--actor", "Org2Workspace", "--dir", corpusRoot.path, "--json"]
+    return try await cli.runJSON(arguments)
   }
 
   private func recordAgentRunExternalCompletion(_ updated: AgentRunItem) {
@@ -10126,11 +10111,6 @@ extension WorkspaceStore {
   ) async {
     guard !isApprovalActionInProgress(item) else { return }
     let normalizedSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !normalizedSummary.isEmpty else {
-      errorText = "Describe where or how the work was completed."
-      statusText = "External completion note required"
-      return
-    }
     let originalVisibleIndex = visibleApprovalItems.firstIndex(where: { $0.id == item.id })
     beginApprovalAction(item, kind: .externalCompletion)
     defer { endApprovalAction(item, kind: .externalCompletion) }
@@ -10141,7 +10121,9 @@ extension WorkspaceStore {
         let updated = try await decideRunApprovalItem(
           item,
           decision: "canceled",
-          receipt: "Completed externally: \(normalizedSummary)"
+          receipt: normalizedSummary.isEmpty
+            ? "Completed externally"
+            : "Completed externally: \(normalizedSummary)"
         )
         if updatesApprovalQueue {
           removeApprovalItemOptimistically(item.id, originalVisibleIndex: originalVisibleIndex)
@@ -25686,12 +25668,7 @@ extension WorkspaceStore {
         ))
       }
     case "rejected":
-      guard let note, !note.isEmpty else {
-        throw CocoaError(
-          .validationMissingMandatoryProperty,
-          userInfo: [NSLocalizedDescriptionKey: "Enter a reason before rejecting this approval."]
-        )
-      }
+      let note = note.flatMap(Self.normalizedApprovalRejectionReason)
       if item.isRunApproval {
         continuationRun = try await decideRunApprovalItem(item, decision: "rejected", note: note, receipt: receipt)
       } else {
@@ -25704,7 +25681,7 @@ extension WorkspaceStore {
             idValue: item.idValue
           ),
           endStatus: endStatus,
-          reason: note
+          reason: note ?? ""
         )
       }
     case "revised":
@@ -39510,7 +39487,7 @@ extension WorkspaceStore {
     for target: HeadlineMutationTarget,
     approvalProperties: [String: String],
     endStatus: TodoEditStatus,
-    reason: String,
+    reason: String?,
     timestamp: String,
     cli: Org2CLI,
     execution: WorkspaceDocumentMutationExecution,
@@ -39550,14 +39527,14 @@ extension WorkspaceStore {
       execution: execution,
       testMutation: testMutation
     )
+    var rejectionProperties = approvalRejectionProperties(
+      timestamp: timestamp,
+      endStatus: endStatus,
+      reason: reason
+    )
+    rejectionProperties["REJECTED_APPROVAL_TODO"] = resolved.title
     _ = try await upsertPropertiesInDocument(
-      [
-        "STATUS": "rejected",
-        "REJECTED_AT": timestamp,
-        "REJECTION_END_STATUS": endStatus.label,
-        "REJECTION_REASON": sanitizeOrgPropertyValue(reason),
-        "REJECTED_APPROVAL_TODO": resolved.title,
-      ],
+      rejectionProperties,
       target: statusResult.target,
       execution: execution
     )
@@ -39714,8 +39691,11 @@ extension WorkspaceStore {
     var properties: [String: String] = [
       "STATUS": "completed-externally",
       "COMPLETED_EXTERNALLY_AT": timestamp,
-      "EXTERNAL_COMPLETION_NOTE": sanitizeOrgPropertyValue(summary),
     ]
+    let note = sanitizeOrgPropertyValue(summary)
+    if !note.isEmpty {
+      properties["EXTERNAL_COMPLETION_NOTE"] = note
+    }
 
     for key in CelorgaNames.withAliases([
       "ORG2_REVIEW_STATUS",
@@ -39749,9 +39729,7 @@ extension WorkspaceStore {
   }
 
   private func rejectApproval(_ target: HeadlineMutationTarget, endStatus: TodoEditStatus, reason: String) async throws {
-    guard let reason = Self.normalizedApprovalRejectionReason(reason) else {
-      throw ApprovalRejectionError.reasonRequired
-    }
+    let reason = Self.normalizedApprovalRejectionReason(reason)
     let originatingSurface = selectedSurface
     let originalVisibleIndex = target.agendaItemID.flatMap { id in
       visibleAgendaItems.firstIndex(where: { $0.id == id })
@@ -39771,12 +39749,11 @@ extension WorkspaceStore {
       let snapshot = try await execution.readSnapshot(at: URL(fileURLWithPath: target.file))
       let current = try Self.approvalProperties(for: statusResult.target, in: snapshot.text)
       _ = try await Self.upsertPropertiesInDocument(
-        [
-          "STATUS": "rejected",
-          "REJECTED_AT": timestamp,
-          "REJECTION_END_STATUS": endStatus.label,
-          "REJECTION_REASON": Self.sanitizeOrgPropertyValue(reason),
-        ],
+        Self.approvalRejectionProperties(
+          timestamp: timestamp,
+          endStatus: endStatus,
+          reason: reason
+        ),
         target: current.target,
         execution: execution
       )
@@ -49201,16 +49178,34 @@ extension WorkspaceStore {
       .trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
+  /// The rejection reason is optional. Returns nil for blank input so no empty
+  /// `REJECTION_REASON` property is written.
   nonisolated static func normalizedApprovalRejectionReason(_ value: String) -> String? {
     let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return normalized.isEmpty ? nil : normalized
+  }
+
+  nonisolated static func approvalRejectionProperties(
+    timestamp: String,
+    endStatus: TodoEditStatus,
+    reason: String?
+  ) -> [String: String] {
+    var properties = [
+      "STATUS": "rejected",
+      "REJECTED_AT": timestamp,
+      "REJECTION_END_STATUS": endStatus.label,
+    ]
+    if let reason = reason.map(sanitizeOrgPropertyValue), !reason.isEmpty {
+      properties["REJECTION_REASON"] = reason
+    }
+    return properties
   }
 
   @MainActor
   private static func promptForApprovalRejection() -> ApprovalRejectionChoice? {
     let alert = NSAlert()
     alert.messageText = "Reject Approval"
-    alert.informativeText = "Choose the final TODO state and record why this approval was rejected."
+    alert.informativeText = "Choose the final TODO state and, optionally, record why this approval was rejected."
     alert.addButton(withTitle: "Reject")
     alert.addButton(withTitle: "Cancel")
 
@@ -49232,7 +49227,7 @@ extension WorkspaceStore {
     statusPopup.translatesAutoresizingMaskIntoConstraints = false
 
     let reasonField = NSTextField()
-    reasonField.placeholderString = "Reason"
+    reasonField.placeholderString = "Reason (optional)"
     reasonField.translatesAutoresizingMaskIntoConstraints = false
     reasonField.lineBreakMode = .byWordWrapping
     reasonField.maximumNumberOfLines = 4
@@ -49253,45 +49248,31 @@ extension WorkspaceStore {
     ])
     alert.accessoryView = accessoryView
 
-    while true {
-      alert.window.initialFirstResponder = reasonField
-      guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-      guard let reason = normalizedApprovalRejectionReason(reasonField.stringValue) else {
-        alert.alertStyle = .warning
-        alert.informativeText = "A rejection reason is required. Enter a reason below, or choose Cancel."
-        WorkspaceSound.beep()
-        continue
-      }
-      let status: TodoEditStatus = statusPopup.indexOfSelectedItem == 1 ? .done : .canceled
-      return ApprovalRejectionChoice(endStatus: status, reason: reason)
-    }
+    alert.window.initialFirstResponder = reasonField
+    guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+    let reason = normalizedApprovalRejectionReason(reasonField.stringValue) ?? ""
+    let status: TodoEditStatus = statusPopup.indexOfSelectedItem == 1 ? .done : .canceled
+    return ApprovalRejectionChoice(endStatus: status, reason: reason)
   }
 
   @MainActor
   private static func promptForRunApprovalRejection() -> ApprovalRejectionChoice? {
     let alert = NSAlert()
     alert.messageText = "Reject Run Approval"
-    alert.informativeText = "Record why this action is rejected. The approval will be resolved and the run will be canceled automatically."
+    alert.informativeText = "Optionally record why this action is rejected. The approval will be resolved and the run will be canceled automatically."
     alert.addButton(withTitle: "Reject")
     alert.addButton(withTitle: "Cancel")
 
     let reasonField = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 50))
-    reasonField.placeholderString = "Reason"
+    reasonField.placeholderString = "Reason (optional)"
     reasonField.lineBreakMode = .byWordWrapping
     reasonField.maximumNumberOfLines = 4
     alert.accessoryView = reasonField
 
-    while true {
-      alert.window.initialFirstResponder = reasonField
-      guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-      guard let reason = normalizedApprovalRejectionReason(reasonField.stringValue) else {
-        alert.alertStyle = .warning
-        alert.informativeText = "A rejection reason is required. Enter a reason below, or choose Cancel."
-        WorkspaceSound.beep()
-        continue
-      }
-      return ApprovalRejectionChoice(endStatus: .canceled, reason: reason)
-    }
+    alert.window.initialFirstResponder = reasonField
+    guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+    let reason = normalizedApprovalRejectionReason(reasonField.stringValue) ?? ""
+    return ApprovalRejectionChoice(endStatus: .canceled, reason: reason)
   }
 
   nonisolated private static func scanPropertyDrawer(lines: [String], afterHeadingIndex headingIndex: Int) -> [String: String] {

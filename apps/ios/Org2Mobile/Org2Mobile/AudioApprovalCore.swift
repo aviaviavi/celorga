@@ -911,7 +911,7 @@ struct AudioApprovalSession: Sendable, Equatable {
       deciding = target
       status = "Sending the decision to the Mac…"
       updateReply(outcome: "Sending to the Mac…")
-      // The Mac requires a reason to reject. Record the fact of a spoken "no" rather than inventing one.
+      // A reason is optional; record the fact of a spoken "no" so the history shows how it was decided.
       let note = decision == "rejected" ? "Rejected by spoken reply (walkie-talkie approval)." : nil
       return [.sendDecision(active, decision: decision, note: note, receipt: receipt)]
     }

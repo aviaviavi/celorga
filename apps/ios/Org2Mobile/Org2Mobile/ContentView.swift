@@ -1138,7 +1138,7 @@ private struct RejectApprovalView: View {
           .pickerStyle(.segmented)
         }
 
-        Section("Reason") {
+        Section("Reason (optional)") {
           TextEditor(text: $reason)
             .frame(minHeight: 120)
         }
@@ -1153,7 +1153,6 @@ private struct RejectApprovalView: View {
             Label("Reject", systemImage: "xmark.octagon")
               .frame(maxWidth: .infinity)
           }
-          .disabled(reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
       }
       .navigationTitle("Reject Approval")

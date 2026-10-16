@@ -648,7 +648,9 @@ export function transitionAgentRun(run: AgentRun, status: AgentRunStatus, option
   return next;
 }
 
-export function completeAgentRunExternally(run: AgentRun, input: { summary: string; actor: string; now?: string }): AgentRun {
+export const AGENT_RUN_EXTERNAL_COMPLETION_DEFAULT_SUMMARY = "Completed outside this workflow.";
+
+export function completeAgentRunExternally(run: AgentRun, input: { summary?: string; actor: string; now?: string }): AgentRun {
   if (run.status === "completed") throw new Error("a completed run cannot be marked completed outside the workflow");
   const actor = optional(input.actor);
   if (!actor) throw new Error("marking a run completed outside the workflow requires an actor");
@@ -663,7 +665,8 @@ export function completeAgentRunExternally(run: AgentRun, input: { summary: stri
     }),
   };
   return transitionAgentRun(prepared, "completed", {
-    summary: input.summary,
+    // The note is optional: a person may only confirm that the work is done.
+    summary: optional(input.summary) || AGENT_RUN_EXTERNAL_COMPLETION_DEFAULT_SUMMARY,
     actor,
     now,
     completionSource: "external",
