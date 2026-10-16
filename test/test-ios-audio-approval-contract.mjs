@@ -124,6 +124,9 @@ for (const key of ["runID", "approvalID", "fingerprint"]) {
 assert.match(entitlements, /<key>com\.apple\.developer\.push-to-talk<\/key>\s*<true\/>/);
 assert.match(entitlements, /<key>aps-environment<\/key>/);
 assert.match(infoPlist, /<key>UIBackgroundModes<\/key>\s*<array>[\s\S]*?<string>push-to-talk<\/string>[\s\S]*?<\/array>/);
+const backgroundModes = /<key>UIBackgroundModes<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(infoPlist)?.[1] ?? "";
+assert.match(backgroundModes, /<string>audio<\/string>/,
+  "PTT pushes alone cannot activate background playback; the packaged app also needs the audio background mode");
 assert.match(infoPlist, /<key>NSMicrophoneUsageDescription<\/key>\s*<string>[^<]*approval[^<]*<\/string>/);
 
 // 9. Every audio Swift file is in the Xcode target.

@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { verifyAudioBackgroundModes } from "../tools/ios-beta.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 assert.equal(process.platform, "darwin", "The cross-process iOS test requires macOS and Xcode; it must not silently skip.");
@@ -45,6 +46,9 @@ try {
     await run("xcodebuild", ["build-for-testing", ...xcode], "ios-build.log");
     await run("swift", ["test", "--package-path", "apps/macos/Org2Workspace", "--filter", "AudioApprovalHostTests"], "host-tests.log");
   }
+  // Simulated PTT activation can succeed even when a real background app cannot
+  // activate audio. Validate the packaged app before any injected callbacks.
+  verifyAudioBackgroundModes(path.join(derived, "Build", "Products", "Debug-iphonesimulator", "Org2Mobile.app"));
   await run("xcrun", ["simctl", "bootstatus", simulator, "-b"], "simulator-boot.log");
   console.log("Starting an isolated native host and temporary approval corpus…");
   const server = net.createServer();

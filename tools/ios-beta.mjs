@@ -80,6 +80,26 @@ function settingValues(pbxproj, key) {
   return [...pbxproj.matchAll(new RegExp(`\\b${key} = ([^;]+);`, "g"))].map((match) => match[1].replace(/"/g, "").trim());
 }
 
+export function audioBackgroundModeChecks(modes) {
+  return [
+    ["push-to-talk", "background-push-to-talk", "receive Push to Talk pushes"],
+    ["audio", "background-audio", "activate the Push to Talk audio session while backgrounded"],
+  ].map(([mode, name, purpose]) => ({
+    name, status: Array.isArray(modes) && modes.includes(mode) ? "pass" : "fail",
+    detail: `UIBackgroundModes must contain ${mode} to ${purpose}`,
+  }));
+}
+
+/** Check the built product too: simulator callbacks do not enforce background capabilities. */
+export function verifyAudioBackgroundModes(appPath, captureCommand = capture) {
+  const result = captureCommand("/usr/bin/plutil", ["-extract", "UIBackgroundModes", "json", "-o", "-", join(appPath, "Info.plist")]);
+  if (!result.ok) throw new Error(`Could not inspect built app background modes: ${appPath}`);
+  const modes = JSON.parse(result.stdout);
+  const failed = audioBackgroundModeChecks(modes).filter(check => check.status === "fail");
+  if (failed.length) throw new Error(`Built app cannot run background audio approvals: ${failed.map(check => check.detail).join("; ")}`);
+  return modes;
+}
+
 /** Offline checks. Each entry is { name, status: "pass"|"warn"|"fail", detail }. */
 export function preflight({ build = null, marketingVersion = "", environment = process.env } = {}) {
   const checks = [];
@@ -116,8 +136,9 @@ export function preflight({ build = null, marketingVersion = "", environment = p
     "aps-environment (App ID capability: Push Notifications)");
   add("entitlement-app-group", appEntitlements.includes(IOS_BETA.appGroup) && extensionEntitlements.includes(IOS_BETA.appGroup),
     `${IOS_BETA.appGroup} on the app and the share extension (App ID capability: App Groups)`);
-  add("background-push-to-talk", /<key>UIBackgroundModes<\/key>\s*<array>[\s\S]*?<string>push-to-talk<\/string>/.test(infoPlist),
-    "UIBackgroundModes contains push-to-talk");
+  const backgroundArray = /<key>UIBackgroundModes<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(infoPlist)?.[1] ?? "";
+  const backgroundModes = [...backgroundArray.matchAll(/<string>([^<]+)<\/string>/g)].map(match => match[1]);
+  checks.push(...audioBackgroundModeChecks(backgroundModes));
   add("microphone-usage", /<key>NSMicrophoneUsageDescription<\/key>\s*<string>[^<]+<\/string>/.test(infoPlist),
     "NSMicrophoneUsageDescription present");
 
@@ -240,6 +261,7 @@ function main() {
   mkdirSync(steps.artifactsDir, { recursive: true });
   if (options.command !== "archive") {
     if (!existsSync(steps.archivePath)) throw new Error(`Archive missing: run archive --build ${options.build} first.`);
+    verifyAudioBackgroundModes(join(steps.archivePath, "Products", "Applications", "Org2Mobile.app"));
     const destination = options.command === "upload" ? "upload" : "export";
     writeFileSync(join(steps.artifactsDir, `ExportOptions-${destination}.plist`), exportOptionsPlist(destination));
   }
@@ -248,6 +270,9 @@ function main() {
     lastCommand: options.command, at: new Date().toISOString(),
   }, null, 2));
   execFileSync(command[0], command.slice(1), { stdio: "inherit", cwd: repoRoot });
+  if (options.command === "archive") {
+    verifyAudioBackgroundModes(join(steps.archivePath, "Products", "Applications", "Org2Mobile.app"));
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

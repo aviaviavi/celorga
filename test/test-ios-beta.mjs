@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { IOS_BETA, displayCommand, exportOptionsPlist, parseArguments, plan, preflight } from "../tools/ios-beta.mjs";
+import { IOS_BETA, audioBackgroundModeChecks, displayCommand, exportOptionsPlist, parseArguments, plan, preflight, verifyAudioBackgroundModes } from "../tools/ios-beta.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -20,13 +20,26 @@ const result = preflight({ build: 1_000_000, environment: {} });
 const byName = Object.fromEntries(result.checks.map((check) => [check.name, check]));
 for (const name of [
   "team", "automatic-signing", "bundle-ids", "release-aps-environment", "entitlement-push-to-talk",
-  "entitlement-push", "entitlement-app-group", "background-push-to-talk", "microphone-usage", "build-number",
+  "entitlement-push", "entitlement-app-group", "background-push-to-talk", "background-audio", "microphone-usage", "build-number",
 ]) {
   assert.equal(byName[name]?.status, "pass", `${name}: ${byName[name]?.detail}`);
 }
 assert.ok(["pass", "warn"].includes(byName.xcode.status), "the Xcode check reports but never hard-fails preflight");
 assert.equal(preflight({ build: 1, environment: {} }).checks.find((c) => c.name === "build-number").status, "fail",
   "a build number at or below the project's is refused");
+
+// Build 55 accepted PTT pushes but could not activate audio in the background. Both modes
+// must be checked on the actual built product before simulator tests or TestFlight upload.
+for (const modes of [[], ["push-to-talk"], ["audio"]]) {
+  assert.ok(audioBackgroundModeChecks(modes).some(check => check.status === "fail"), `${modes}: incomplete capabilities must fail`);
+  assert.throws(() => verifyAudioBackgroundModes("/tmp/Packaged.app", () => ({ ok: true, stdout: JSON.stringify(modes) })), /Built app cannot run background audio approvals/);
+}
+assert.deepEqual(verifyAudioBackgroundModes("/tmp/Packaged.app", (command, args) => {
+  assert.equal(command, "/usr/bin/plutil");
+  assert.equal(args.at(-1), "/tmp/Packaged.app/Info.plist");
+  return { ok: true, stdout: '["fetch","push-to-talk","audio"]' };
+}), ["fetch", "push-to-talk", "audio"]);
+assert.throws(() => verifyAudioBackgroundModes("/tmp/Unreadable.app", () => ({ ok: false })), /Could not inspect built app/);
 
 // Commands match the existing release automation and Apple's App Store Connect export.
 const steps = plan({ build: 48, artifactsDir: "/tmp/ios-beta-test", marketingVersion: "" }, {});
