@@ -11437,7 +11437,7 @@ private struct AIChatView: View {
     case .fullPage:
       HeaderBar(
         title: store.selectedAIChatIsSharedRoom
-          ? "Shared AI Room · Experimental"
+          ? "Shared AI Room"
           : "\(store.selectedAIChatDestination.title) Chat",
         subtitle: store.aiChatStatusText,
         surface: surface
@@ -11545,7 +11545,7 @@ private struct AIChatView: View {
       Button {
         store.createAIChatSharedRoom()
       } label: {
-        Label("New Shared Room (Experimental)", systemImage: "person.2.fill")
+        Label("New Shared Room", systemImage: "person.2.fill")
       }
     } label: {
       Label("New", systemImage: "plus")
