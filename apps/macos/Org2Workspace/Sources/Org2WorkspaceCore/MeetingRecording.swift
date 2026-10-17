@@ -255,7 +255,7 @@ public enum MeetingArtifactWriter {
     )
     try transcriptText.write(to: paths.transcriptURL, atomically: true, encoding: .utf8)
 
-    let noteText = buildMeetingNote(
+    let generatedNote = buildMeetingNote(
       paths: paths,
       corpusRoot: corpusRoot,
       duration: duration,
@@ -263,6 +263,14 @@ public enum MeetingArtifactWriter {
       systemAudioURL: systemAudioURL,
       captureSources: captureSources ?? defaultCaptureSources(systemAudioURL: systemAudioURL)
     )
+    // A live recording already has a note the user may have written in.
+    // Update only its generated metadata and transcript section.
+    let noteText: String
+    if let existingNote = try? String(contentsOf: paths.noteURL, encoding: .utf8) {
+      noteText = mergeMeetingNote(existing: existingNote, generated: generatedNote)
+    } else {
+      noteText = generatedNote
+    }
     try noteText.write(to: paths.noteURL, atomically: true, encoding: .utf8)
 
     let item = MeetingWorkspaceItem(
@@ -284,6 +292,198 @@ public enum MeetingArtifactWriter {
       systemAudioURL: systemAudioURL,
       transcriptURL: paths.transcriptURL
     )
+  }
+
+  /// Transcription status of a meeting note created when recording starts,
+  /// before any transcript exists.
+  public static let liveRecordingStatus = "recording"
+
+  /// Creates the meeting note when recording starts, so the user can take
+  /// notes while the meeting is recorded. Never replaces an existing file.
+  public static func writeLiveMeetingNote(
+    paths: MeetingArtifactPaths,
+    corpusRoot: URL
+  ) throws -> MeetingWorkspaceItem {
+    try FileManager.default.createDirectory(
+      at: paths.noteURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    let text = buildLiveMeetingNote(paths: paths, corpusRoot: corpusRoot)
+    try Data(text.utf8).write(to: paths.noteURL, options: [.withoutOverwriting])
+    return MeetingWorkspaceItem(
+      title: paths.title,
+      file: paths.noteURL.path,
+      line: 1,
+      recordedAt: isoTimestamp(paths.recordedAt),
+      modifiedAt: Date(),
+      audioArtifact: relativePath(from: corpusRoot, to: paths.audioURL),
+      transcriptArtifact: relativePath(from: corpusRoot, to: paths.transcriptURL),
+      transcriptionStatus: liveRecordingStatus,
+      idValue: paths.meetingID
+    )
+  }
+
+  public static func buildLiveMeetingNote(
+    paths: MeetingArtifactPaths,
+    corpusRoot: URL
+  ) -> String {
+    let audioPath = relativePath(from: corpusRoot, to: paths.audioURL)
+    let transcriptPath = relativePath(from: corpusRoot, to: paths.transcriptURL)
+    let calendarLines = paths.calendar.map(calendarPropertyLines) ?? ""
+    let attendeesSection = paths.calendar.map(attendeesSection) ?? ""
+
+    return """
+    #+TITLE: Meeting: \(paths.title)
+    #+ORG2_KIND: meeting
+
+    * Meeting: \(paths.title)
+    :PROPERTIES:
+    :ID: \(paths.meetingID)
+    :kind: meeting
+    :recorded_at: \(isoTimestamp(paths.recordedAt))
+    :audio_artifact: \(audioPath)
+    :transcript_artifact: \(transcriptPath)
+    :transcription_status: \(liveRecordingStatus)
+    \(calendarLines):source: org2-workspace
+    :END:
+    \(attendeesSection)
+    ** Notes
+
+
+    ** Summary
+    - Pending OpenClaw processing.
+
+    ** Decisions
+    - [ ] Review transcript and extract decisions.
+
+    ** TODOs
+    - [ ] Review this meeting transcript.
+
+    ** Transcript
+    [[file:\(transcriptPath)][Open transcript artifact]]
+
+    - Recording in progress. The transcript appears here after the recording stops.
+
+    """
+  }
+
+  /// Property keys the writer owns that may be absent from a later write.
+  /// Existing values for them are dropped rather than left stale.
+  private static let writerOwnedOptionalProperties: Set<String> = [
+    "duration_seconds", "system_audio_artifact", "transcription_error",
+  ]
+
+  /// Applies a freshly generated meeting note to the note that already exists
+  /// for the recording. The first heading's property drawer and the
+  /// `** Transcript` section come from `generated`; everything else, including
+  /// notes written during the recording, stays as it is in `existing`.
+  public static func mergeMeetingNote(existing: String, generated: String) -> String {
+    let generatedLines = generated.components(separatedBy: "\n")
+    guard let generatedDrawer = firstHeadingDrawer(in: generatedLines),
+          let generatedTranscript = sectionRange(named: "** Transcript", in: generatedLines)
+    else {
+      return existing
+    }
+    var lines = existing.components(separatedBy: "\n")
+    let generatedTranscriptLines = trimmingTrailingBlankLines(Array(generatedLines[generatedTranscript]))
+
+    if let transcript = sectionRange(named: "** Transcript", in: lines) {
+      lines.replaceSubrange(transcript, with: generatedTranscriptLines)
+    } else {
+      lines = trimmingTrailingBlankLines(lines)
+      lines.append("")
+      lines.append(contentsOf: generatedTranscriptLines)
+    }
+
+    if let drawer = firstHeadingDrawer(in: lines) {
+      let body = (drawer.lowerBound + 1)..<(drawer.upperBound - 1)
+      let generatedBody = (generatedDrawer.lowerBound + 1)..<(generatedDrawer.upperBound - 1)
+      let generatedProperties = Array(generatedLines[generatedBody])
+      let generatedKeys = Set(generatedProperties.compactMap(propertyKey))
+      let preserved = lines[body].filter { line in
+        guard let key = propertyKey(line) else { return true }
+        return !generatedKeys.contains(key) && !writerOwnedOptionalProperties.contains(key)
+      }
+      lines.replaceSubrange(body, with: generatedProperties + preserved)
+    }
+    var merged = trimmingTrailingBlankLines(lines).joined(separator: "\n")
+    merged += "\n"
+    return merged
+  }
+
+  /// The line range of the property drawer directly under the first
+  /// top-level heading, including its `:PROPERTIES:` and `:END:` lines.
+  private static func firstHeadingDrawer(in lines: [String]) -> Range<Int>? {
+    guard let heading = lines.firstIndex(where: { $0.hasPrefix("* ") }) else { return nil }
+    var index = heading + 1
+    while index < lines.count, isPlanningLine(lines[index]) { index += 1 }
+    guard index < lines.count,
+          lines[index].trimmingCharacters(in: .whitespaces).uppercased() == ":PROPERTIES:"
+    else {
+      return nil
+    }
+    guard let end = lines[(index + 1)...].firstIndex(where: {
+      $0.trimmingCharacters(in: .whitespaces).uppercased() == ":END:"
+    }) else {
+      return nil
+    }
+    return index..<(end + 1)
+  }
+
+  private static func isPlanningLine(_ line: String) -> Bool {
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    return trimmed.hasPrefix("SCHEDULED:") || trimmed.hasPrefix("DEADLINE:") || trimmed.hasPrefix("CLOSED:")
+  }
+
+  /// A level-two section from its heading through its last non-blank line
+  /// before the next heading at level one or two.
+  private static func sectionRange(named heading: String, in lines: [String]) -> Range<Int>? {
+    // Prefer the generated section, which links the transcript artifact, over
+    // a heading of the same name the user wrote.
+    let candidates = lines.indices.filter {
+      lines[$0].trimmingCharacters(in: .whitespaces) == heading
+    }
+    let generated = candidates.first { index in
+      index + 1 < lines.count && lines[index + 1].contains("][Open transcript artifact]]")
+    }
+    guard let start = generated ?? candidates.first else {
+      return nil
+    }
+    // Transcript text inside a block may itself start with stars.
+    var end = lines.count
+    var inBlock = false
+    for index in (start + 1)..<lines.count {
+      let lowered = lines[index].trimmingCharacters(in: .whitespaces).lowercased()
+      if lowered.hasPrefix("#+begin_") { inBlock = true; continue }
+      if lowered.hasPrefix("#+end_") { inBlock = false; continue }
+      if !inBlock, lines[index].hasPrefix("* ") || lines[index].hasPrefix("** ") {
+        end = index
+        break
+      }
+    }
+    while end > start + 1, lines[end - 1].trimmingCharacters(in: .whitespaces).isEmpty {
+      end -= 1
+    }
+    return start..<end
+  }
+
+  private static func propertyKey(_ line: String) -> String? {
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    guard trimmed.hasPrefix(":"),
+          let close = trimmed.dropFirst().firstIndex(of: ":")
+    else {
+      return nil
+    }
+    let key = trimmed[trimmed.index(after: trimmed.startIndex)..<close]
+    return key.isEmpty ? nil : key.lowercased()
+  }
+
+  private static func trimmingTrailingBlankLines(_ lines: [String]) -> [String] {
+    var result = lines
+    while let last = result.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+      result.removeLast()
+    }
+    return result
   }
 
   public static func buildMeetingNote(

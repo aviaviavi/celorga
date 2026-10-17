@@ -11507,6 +11507,7 @@ extension WorkspaceStore {
       selectedSurface = .meetings
       meetingStatusText = "Recording \(paths.title)"
       statusText = meetingStatusText
+      await openLiveMeetingNote(paths: paths, corpusRoot: corpusRoot)
     } catch {
       meetingRecordingRecoveryExclusionPaths = nil
       isCapturingSystemAudio = false
@@ -11517,6 +11518,54 @@ extension WorkspaceStore {
       meetingStatusText = "Recording failed: \(error.localizedDescription)"
       statusText = "Recording failed"
     }
+  }
+
+  /// Creates the meeting note as recording starts and opens it beside the
+  /// meeting list, so notes can be taken during the meeting. The finished
+  /// recording later fills in its metadata and transcript in place.
+  private func openLiveMeetingNote(paths: MeetingArtifactPaths, corpusRoot: URL) async {
+    let context = captureAIChatCorpusContext()
+    let directory = Self.meetingArtifactsDirectory(corpusRoot: corpusRoot)
+    let item: MeetingWorkspaceItem
+    do {
+      item = try await documentMutationLane.perform(
+        rootPath: corpusRoot.path,
+        resourcePaths: [directory.path]
+      ) { execution in
+        _ = try execution.authorizeDescendant(paths.noteURL, ofDeclaredDirectory: directory)
+        return try MeetingArtifactWriter.writeLiveMeetingNote(paths: paths, corpusRoot: corpusRoot)
+      }
+    } catch {
+      // Recording continues; the note is written when the recording stops.
+      guard isCurrentAIChatCorpusContext(context) else { return }
+      statusText = "Recording \(paths.title); live note unavailable: \(error.localizedDescription)"
+      return
+    }
+    guard isCurrentAIChatCorpusContext(context),
+          activeMeetingRecording?.paths.noteURL == paths.noteURL
+    else {
+      return
+    }
+    if let existingIndex = meetings.firstIndex(where: { $0.file == item.file }) {
+      meetings[existingIndex] = item
+    } else {
+      meetings.insert(item, at: 0)
+    }
+    selectMeeting(item)
+    markWorkspaceSurfacesDirty([.agenda, .files, .search], refreshVisible: false)
+  }
+
+  /// Saves pending edits to a live meeting note before the finished
+  /// recording updates the same file.
+  private func savePendingEditsToMeetingNote(_ noteURL: URL) async {
+    guard let file = selectedLocation?.file ?? selectedEntrySource?.file,
+          URL(fileURLWithPath: file).standardizedFileURL.path == noteURL.standardizedFileURL.path
+    else {
+      return
+    }
+    _ = await savePendingEditsBeforeExport(
+      blockedStatus: "Meeting note has unsaved edits; resolve them to keep both versions"
+    )
   }
 
   public func stopMeetingRecording() async {
@@ -11703,6 +11752,9 @@ extension WorkspaceStore {
           attendees: MeetingAttendeeResolver.attendees(for: context.event, resolver: orgRoamLinkResolver)
         )
       }
+      if isCurrentAIChatCorpusContext(context) {
+        await savePendingEditsToMeetingNote(paths.noteURL)
+      }
       let bundle = try await writeMeetingArtifacts(
         paths: paths,
         corpusRoot: corpusRoot,
@@ -11772,7 +11824,11 @@ extension WorkspaceStore {
     context: AIChatCorpusContextToken
   ) {
     guard isCurrentAIChatCorpusContext(context), !recoverable.isEmpty else { return }
-    let knownAudioArtifacts = Set(knownItems.compactMap(\.audioArtifact))
+    // A live note left by an interrupted recording does not make its audio
+    // known: the recording still needs a transcript.
+    let knownAudioArtifacts = Set(knownItems.filter {
+      $0.transcriptionStatus?.lowercased() != MeetingArtifactWriter.liveRecordingStatus
+    }.compactMap(\.audioArtifact))
     let activeRecordingPaths = meetingRecordingRecoveryExclusionPaths
       ?? activeMeetingRecording?.paths
 
@@ -50141,11 +50197,28 @@ extension WorkspaceStore {
       let baseName = audioURL.deletingPathExtension().lastPathComponent
       let noteURL = OrgDocumentDefaults.url(in: meetingsDirectory, baseName: baseName, fileManager: fileManager)
       let transcriptURL = OrgDocumentDefaults.url(in: meetingsDirectory, baseName: "\(baseName).transcript", fileManager: fileManager)
-      let existingDocuments = OrgDocumentDefaults.candidateURLs(in: meetingsDirectory, baseName: baseName)
-        + OrgDocumentDefaults.candidateURLs(in: meetingsDirectory, baseName: "\(baseName).transcript")
-      guard !existingDocuments.contains(where: { fileManager.fileExists(atPath: $0.path) })
-      else {
+      let existingTranscripts = OrgDocumentDefaults.candidateURLs(in: meetingsDirectory, baseName: "\(baseName).transcript")
+      guard !existingTranscripts.contains(where: { fileManager.fileExists(atPath: $0.path) }) else {
         continue
+      }
+      // A note without a transcript is recoverable only when it is the live
+      // note of a recording that never finished.
+      let existingNotes = OrgDocumentDefaults.candidateURLs(in: meetingsDirectory, baseName: baseName)
+        .filter { fileManager.fileExists(atPath: $0.path) }
+      var liveNoteID: String?
+      var liveNoteTitle: String?
+      if !existingNotes.isEmpty {
+        guard existingNotes.count == 1,
+              existingNotes[0].path == noteURL.path,
+              let prefix = try? readPrefix(noteURL, maxBytes: 96 * 1024),
+              meetingProperty("transcription_status", in: prefix)?.lowercased()
+                == MeetingArtifactWriter.liveRecordingStatus
+        else {
+          continue
+        }
+        liveNoteID = meetingNodeID(in: prefix)
+        liveNoteTitle = aiChatTitle(from: prefix, fallback: "").title
+          .replacingOccurrences(of: #"^Meeting:\s*"#, with: "", options: .regularExpression)
       }
 
       let values = try? audioURL.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
@@ -50155,8 +50228,8 @@ extension WorkspaceStore {
       )
       let systemAudioURL = systemAudioFilesByBaseName[baseName]
       let paths = MeetingArtifactPaths(
-        meetingID: UUID().uuidString.lowercased(),
-        title: parsed.title,
+        meetingID: liveNoteID ?? UUID().uuidString.lowercased(),
+        title: liveNoteTitle.flatMap { $0.isEmpty ? nil : $0 } ?? parsed.title,
         recordedAt: parsed.recordedAt,
         baseName: baseName,
         noteURL: noteURL,

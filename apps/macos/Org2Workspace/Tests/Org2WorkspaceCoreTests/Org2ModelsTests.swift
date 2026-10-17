@@ -5422,6 +5422,128 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertTrue(transcript.contains("We decided to publish the reporting update."))
   }
 
+  func testLiveMeetingNoteKeepsNotesTakenDuringRecording() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-workspace-live-meeting-note-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recordedAt = ISO8601DateFormatter().date(from: "2026-10-16T17:00:00Z")!
+    let paths = try MeetingArtifactWriter.preparePaths(
+      corpusRoot: root,
+      title: "Pricing review",
+      recordedAt: recordedAt
+    )
+    try Data("fake audio".utf8).write(to: paths.audioURL)
+
+    let item = try MeetingArtifactWriter.writeLiveMeetingNote(paths: paths, corpusRoot: root)
+    XCTAssertEqual(item.file, paths.noteURL.path)
+    XCTAssertEqual(item.transcriptionStatus, MeetingArtifactWriter.liveRecordingStatus)
+    XCTAssertEqual(item.idValue, paths.meetingID)
+    let live = try String(contentsOf: paths.noteURL, encoding: .utf8)
+    XCTAssertTrue(live.contains("** Notes"))
+    XCTAssertTrue(live.contains(":transcription_status: recording"))
+    // The live note is never written over an existing file.
+    XCTAssertThrowsError(try MeetingArtifactWriter.writeLiveMeetingNote(paths: paths, corpusRoot: root))
+
+    // The user jots notes and adds a property while recording.
+    let edited = live
+      .replacingOccurrences(of: "** Notes\n", with: "** Notes\n- Ask about annual pricing\n- Pasted from chat: ship Friday\n")
+      .replacingOccurrences(of: ":source: org2-workspace\n", with: ":source: org2-workspace\n:CUSTOM: kept\n")
+    try edited.write(to: paths.noteURL, atomically: true, encoding: .utf8)
+
+    _ = try MeetingArtifactWriter.writeArtifacts(
+      paths: paths,
+      corpusRoot: root,
+      duration: 42,
+      transcript: MeetingTranscriptResult(
+        text: "We agreed on annual pricing.",
+        status: .complete,
+        engine: "whisper.cpp"
+      )
+    )
+
+    let finished = try String(contentsOf: paths.noteURL, encoding: .utf8)
+    XCTAssertTrue(finished.contains("** Notes\n- Ask about annual pricing\n- Pasted from chat: ship Friday\n"))
+    XCTAssertTrue(finished.contains(":CUSTOM: kept"))
+    XCTAssertTrue(finished.contains(":ID: \(paths.meetingID)"))
+    XCTAssertTrue(finished.contains(":transcription_status: complete"))
+    XCTAssertTrue(finished.contains(":duration_seconds: 42.0"))
+    XCTAssertFalse(finished.contains(":transcription_status: recording"))
+    XCTAssertFalse(finished.contains("Recording in progress"))
+    XCTAssertTrue(finished.contains("We agreed on annual pricing."))
+    XCTAssertEqual(finished.components(separatedBy: ":transcription_status:").count, 2)
+    XCTAssertEqual(finished.components(separatedBy: "** Transcript").count, 2)
+    XCTAssertEqual(finished.components(separatedBy: "** Summary").count, 2)
+  }
+
+  func testMeetingNoteMergeKeepsSectionsAfterTheTranscriptAndUserHeadings() {
+    let existing = """
+    #+TITLE: Meeting: Sync
+
+    * Meeting: Sync
+    :PROPERTIES:
+    :ID: abc
+    :transcription_status: recording
+    :transcription_error: stale
+    :END:
+
+    ** Notes
+    *** Transcript
+    My own subheading stays.
+
+    ** Transcript
+    [[file:meetings/x.transcript.org][Open transcript artifact]]
+
+    - Recording in progress.
+
+    ** Follow-ups
+    - Email Sam
+    """
+    let generated = """
+    #+TITLE: Meeting: Sync
+
+    * Meeting: Sync
+    :PROPERTIES:
+    :ID: abc
+    :transcription_status: complete
+    :END:
+
+    ** Transcript
+    [[file:meetings/x.transcript.org][Open transcript artifact]]
+
+    #+begin_quote
+    ** not a heading
+    #+end_quote
+    """
+    let merged = MeetingArtifactWriter.mergeMeetingNote(existing: existing, generated: generated)
+    XCTAssertTrue(merged.contains("*** Transcript\nMy own subheading stays."))
+    XCTAssertTrue(merged.contains("#+begin_quote\n** not a heading\n#+end_quote\n\n** Follow-ups\n- Email Sam\n"))
+    XCTAssertFalse(merged.contains("Recording in progress"))
+    XCTAssertFalse(merged.contains("transcription_error"))
+    XCTAssertTrue(merged.contains(":transcription_status: complete"))
+  }
+
+  func testScansLiveNoteOfInterruptedRecordingAsRecoverable() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-workspace-live-note-recovery-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let paths = try MeetingArtifactWriter.preparePaths(
+      corpusRoot: root,
+      title: "ACME kickoff",
+      recordedAt: Date()
+    )
+    try Data("fake audio".utf8).write(to: paths.audioURL)
+    _ = try MeetingArtifactWriter.writeLiveMeetingNote(paths: paths, corpusRoot: root)
+
+    let recoverable = try WorkspaceStore.scanRecoverableMeetingRecordings(corpusRoot: root)
+
+    XCTAssertEqual(recoverable.count, 1)
+    XCTAssertEqual(recoverable.first?.paths.meetingID, paths.meetingID)
+    XCTAssertEqual(recoverable.first?.paths.title, "ACME kickoff")
+    XCTAssertEqual(recoverable.first?.paths.noteURL.standardizedFileURL, paths.noteURL.standardizedFileURL)
+  }
+
   func testMeetingRecorderMeterNormalizesAudioPower() {
     XCTAssertEqual(MeetingAudioRecorder.normalizedMeterLevel(fromDecibels: -80), 0)
     XCTAssertEqual(MeetingAudioRecorder.normalizedMeterLevel(fromDecibels: 0), 1)
