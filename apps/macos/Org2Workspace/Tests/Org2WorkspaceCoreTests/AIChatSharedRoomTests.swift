@@ -433,6 +433,89 @@ final class AIChatSharedRoomTests: XCTestCase {
   }
 
   @MainActor
+  func testSharedRoomStoresAnIndependentReasoningEffortForEachDestination() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-shared-reasoning-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let suiteName = "AIChatSharedRoom.Reasoning.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = WorkspaceStore(
+      defaults: defaults,
+      aiChatTranscriptURL: root.appendingPathComponent("chat.json"),
+      legacyDefaultsDomains: []
+    )
+    store.setCorpusRoot(root, persistsDefault: false)
+    store.createAIChatSharedRoom()
+    let codexID = AIChatDestinationConfiguration.localCodexID
+    let openClawID = AIChatDestinationConfiguration.openClawID
+
+    store.setSelectedAIChatRoomModel("gpt-5.6-sol", forDestinationID: codexID)
+    store.setSelectedAIChatRoomReasoningEffort("high", forDestinationID: codexID)
+    store.setSelectedAIChatRoomReasoningEffort("low", forDestinationID: openClawID)
+
+    var thread = try XCTUnwrap(store.selectedAIChatThread)
+    XCTAssertEqual(thread.reasoningEffort(forDestinationID: codexID), "high")
+    XCTAssertEqual(thread.reasoningEffort(forDestinationID: openClawID), "low")
+    XCTAssertNil(thread.reasoningEffort)
+    XCTAssertEqual(store.selectedAIChatRoomReasoningLabel(forDestinationID: openClawID), "Low")
+
+    // Persisted with the room and restored on decode.
+    let decoded = try JSONDecoder().decode(AIChatThread.self, from: JSONEncoder().encode(thread))
+    XCTAssertEqual(decoded.roomReasoningEffortsByDestination, [codexID: "high", openClawID: "low"])
+
+    // Changing a destination's model returns only that destination to its
+    // default effort.
+    store.setSelectedAIChatRoomModel("gpt-5.6", forDestinationID: codexID)
+    thread = try XCTUnwrap(store.selectedAIChatThread)
+    XCTAssertNil(thread.reasoningEffort(forDestinationID: codexID))
+    XCTAssertEqual(thread.reasoningEffort(forDestinationID: openClawID), "low")
+
+    store.setSelectedAIChatRoomReasoningEffort(nil, forDestinationID: openClawID)
+    XCTAssertNil(store.selectedAIChatThread?.reasoningEffort(forDestinationID: openClawID))
+
+    // Single-agent threads keep their own effort for their destination.
+    let single = AIChatThread(
+      title: "Single",
+      runtime: .codex,
+      sessionKey: "single",
+      reasoningEffort: "medium"
+    )
+    XCTAssertEqual(single.reasoningEffort(forDestinationID: codexID), "medium")
+  }
+
+  func testSharedRoomReasoningOptionsFollowEachDestinationModel() {
+    let high = AIChatReasoningOption(id: "high", label: "High")
+    let low = AIChatReasoningOption(id: "low", label: "Low")
+    let models = [
+      AIChatModelOption(id: "default", label: "Default", reasoningOptions: [low], isDefault: true),
+      AIChatModelOption(id: "big", label: "Big", reasoningOptions: [low, high])
+    ]
+    XCTAssertEqual(
+      WorkspaceStore.aiChatRoomReasoningOptions(adapter: .codexLocal, selectedModel: nil, models: models),
+      [low]
+    )
+    XCTAssertEqual(
+      WorkspaceStore.aiChatRoomReasoningOptions(adapter: .codexLocal, selectedModel: "big", models: models),
+      [low, high]
+    )
+    XCTAssertFalse(
+      WorkspaceStore.aiChatRoomReasoningOptions(adapter: .openCodeLocal, selectedModel: nil, models: []).isEmpty
+    )
+    XCTAssertTrue(
+      WorkspaceStore.aiChatRoomReasoningOptions(
+        adapter: .openClaw,
+        selectedModel: "openai/plain",
+        models: [AIChatModelOption(id: "openai/plain", label: "Plain", supportsReasoning: false)]
+      ).isEmpty
+    )
+    XCTAssertTrue(
+      WorkspaceStore.aiChatRoomReasoningOptions(adapter: .claudeLocal, selectedModel: nil, models: []).isEmpty
+    )
+  }
+
+  @MainActor
   func testOneHarnessFailureDoesNotPreventTheOtherHarnessFromReplying() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-shared-room-failure-\(UUID().uuidString)", isDirectory: true)

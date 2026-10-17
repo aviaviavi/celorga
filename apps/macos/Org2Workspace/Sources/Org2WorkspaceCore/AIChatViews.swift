@@ -3846,6 +3846,17 @@ struct AIChatComposerView: View {
     .help("Choose which agent gets messages that do not @mention anyone. An @mention only routes that one message.")
   }
 
+  private func roomModelPickerTitle(
+    forDestinationID destinationID: String,
+    destination: AIChatDestinationConfiguration?
+  ) -> String {
+    var title = "\(destination?.title ?? destinationID) · \(store.selectedAIChatRoomModelLabel(forDestinationID: destinationID))"
+    if let reasoning = store.selectedAIChatRoomReasoningLabel(forDestinationID: destinationID) {
+      title += " · \(reasoning)"
+    }
+    return title
+  }
+
   private func roomModelPicker(forDestinationID destinationID: String) -> some View {
     let options = store.aiChatDestinationModelOptions[destinationID] ?? []
     let destination = store.aiChatDestination(id: destinationID)
@@ -3882,10 +3893,40 @@ struct AIChatComposerView: View {
       } else {
         Text("No models reported")
       }
+
+      let reasoningOptions = store.selectedAIChatRoomReasoningOptions(forDestinationID: destinationID)
+      if !reasoningOptions.isEmpty {
+        Divider()
+        Section("Reasoning") {
+          Button {
+            store.setSelectedAIChatRoomReasoningEffort(nil, forDestinationID: destinationID)
+          } label: {
+            HStack {
+              Text("Default reasoning")
+              if store.selectedAIChatRoomReasoningEffort(forDestinationID: destinationID) == nil {
+                Image(systemName: "checkmark")
+              }
+            }
+          }
+          ForEach(reasoningOptions) { option in
+            Button {
+              store.setSelectedAIChatRoomReasoningEffort(option.id, forDestinationID: destinationID)
+            } label: {
+              HStack {
+                Text(option.label)
+                if store.selectedAIChatRoomReasoningEffort(forDestinationID: destinationID) == option.id {
+                  Image(systemName: "checkmark")
+                }
+              }
+            }
+            .help(option.detail ?? option.label)
+          }
+        }
+      }
     } label: {
       HStack(spacing: 4) {
         Image(systemName: destination?.systemImage ?? runtime.systemImage)
-        Text("\(destination?.title ?? destinationID) · \(store.selectedAIChatRoomModelLabel(forDestinationID: destinationID))")
+        Text(roomModelPickerTitle(forDestinationID: destinationID, destination: destination))
           .lineLimit(1)
           .frame(maxWidth: compact ? 125 : 165)
         Image(systemName: "chevron.up.chevron.down")
