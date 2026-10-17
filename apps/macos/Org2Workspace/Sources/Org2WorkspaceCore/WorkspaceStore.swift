@@ -25801,16 +25801,20 @@ extension WorkspaceStore {
       )
     }
 
-    if hasExactIdentity, let continuationRun, let approvalID = item.approvalId {
+    if let continuationRun {
       // The decision is durable now. Do not hold the phone's HTTP request through a
       // corpus refresh or an agent turn: either can outlive its response deadline.
       // Confirm only the saved decision; continuation has its own durable outcome.
+      // This applies to an in-app tap as well as a spoken reply.
       approvalItems.removeAll { $0.id == item.id }
       invalidateMobileRemoteWorkspaceSnapshot()
       Task { @MainActor [weak self] in
         guard let self else { return }
         await self.continueOpenClawAfterApprovalBoundary(continuationRun)
         await self.refreshApprovals(updatesStatus: false)
+      }
+      guard hasExactIdentity, let approvalID = item.approvalId else {
+        return currentMobileRemoteWorkspaceSnapshot()
       }
       return currentMobileRemoteWorkspaceSnapshot(decisionReceipt: Self.mobileRemoteDecisionReceipt(
         run: continuationRun,
@@ -25826,23 +25830,7 @@ extension WorkspaceStore {
     if !item.isRunApproval {
       await refreshAgenda(preserveSelection: true, updatesStatus: false)
     }
-    var continuation: MobileRemoteApprovalContinuation?
-    if let continuationRun {
-      continuation = await continueOpenClawAfterApprovalBoundary(continuationRun)
-    }
-    guard hasExactIdentity, let continuationRun, let approvalID = item.approvalId else {
-      return currentMobileRemoteWorkspaceSnapshot()
-    }
-    // Report the run as it stands after the decision and any agent continuation.
-    let settledRun = agentRuns.first(where: { $0.id == continuationRun.id }) ?? continuationRun
-    return currentMobileRemoteWorkspaceSnapshot(decisionReceipt: Self.mobileRemoteDecisionReceipt(
-      run: settledRun,
-      approvalID: approvalID,
-      decision: normalizedDecision,
-      continuation: continuation,
-      receipt: receipt,
-      duplicate: false
-    ))
+    return currentMobileRemoteWorkspaceSnapshot()
   }
 
   nonisolated static func mobileRemoteDecisionReceipt(

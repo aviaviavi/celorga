@@ -260,6 +260,28 @@ final class AudioApprovalHostTests: XCTestCase {
     XCTAssertEqual(response?.approvalDecisionReceipt?.decision, "approved")
     XCTAssertEqual(response?.approvalDecisionReceipt?.receipt, "audio-approval:slow-continuation")
     XCTAssertEqual(try runApproval(repoRoot: repoRoot, corpus: corpus, demo)["status"] as? String, "approved")
+
+    // The phone's Approvals list taps Approve without exact identity. It must not wait for
+    // the agent turn either, or a backlog reviewed in the app times out on every tap.
+    let tapped = try createWaitingRun(repoRoot: repoRoot, corpus: corpus, title: "Tapped in the app")
+    continuationStarted = false
+    releaseContinuation = false
+    await store.refreshApprovals(updatesStatus: false)
+    let tappedItem = try XCTUnwrap(store.approvalItems.first { $0.approvalId == tapped.approvalID })
+    var tappedResponse: MobileRemoteWorkspaceSnapshot?
+    let tap = Task {
+      tappedResponse = try await store.decideMobileRemoteApproval(
+        itemID: tappedItem.id, decision: "approved", note: nil, endStatus: nil)
+    }
+    try await waitUntil { continuationStarted }
+    let tapDeadline = Date().addingTimeInterval(1)
+    while tappedResponse == nil && Date() < tapDeadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertNotNil(tappedResponse, "An in-app approval must be acknowledged while continuation is still blocked")
+    XCTAssertFalse(tappedResponse?.approvals.contains { $0.approvalID == tapped.approvalID } ?? true,
+                   "The acknowledged snapshot no longer lists the decided approval")
+    releaseContinuation = true
+    try await tap.value
+    XCTAssertEqual(try runApproval(repoRoot: repoRoot, corpus: corpus, tapped)["status"] as? String, "approved")
   }
 
   // MARK: End to end over the paired-host transport
