@@ -23830,6 +23830,84 @@ extension WorkspaceStore {
       ?? model
   }
 
+  public func selectedAIChatRoomReasoningEffort(forDestinationID destinationID: String) -> String? {
+    guard let thread = selectedAIChatThread, thread.isSharedRoom else { return nil }
+    return thread.roomReasoningEffortsByDestination[destinationID]
+  }
+
+  /// Reasoning efforts a shared-room destination accepts for its selected
+  /// (or default) model. Empty when the destination has no effort control.
+  public func selectedAIChatRoomReasoningOptions(
+    forDestinationID destinationID: String
+  ) -> [AIChatReasoningOption] {
+    guard let destination = aiChatDestination(id: destinationID) else { return [] }
+    return Self.aiChatRoomReasoningOptions(
+      adapter: destination.adapter,
+      selectedModel: selectedAIChatRoomModel(forDestinationID: destinationID),
+      models: aiChatDestinationModelOptions[destinationID] ?? []
+    )
+  }
+
+  nonisolated static func aiChatRoomReasoningOptions(
+    adapter: AIChatDestinationAdapter,
+    selectedModel: String?,
+    models: [AIChatModelOption]
+  ) -> [AIChatReasoningOption] {
+    switch adapter {
+    case .codexLocal, .codexRemote, .codexManagedRemote:
+      let option = selectedModel.flatMap { selected in
+        models.first(where: { $0.id == selected })
+      } ?? models.first(where: \.isDefault)
+      return option?.reasoningOptions ?? []
+    case .piLocal, .piRemote, .openCodeLocal, .openCodeRemote:
+      return cliHarnessReasoningOptions
+    case .openClaw:
+      // OpenClaw reports thinking levels per session; rooms offer the
+      // standard levels when the model reasons. The Gateway still validates.
+      let option = selectedModel.flatMap { selected in
+        models.first(where: { $0.id == selected })
+      }
+      if let option, !option.supportsReasoning { return [] }
+      return cliHarnessReasoningOptions
+    case .claudeLocal, .openAI, .anthropic, .openRouter, .ollama:
+      return []
+    }
+  }
+
+  public func selectedAIChatRoomReasoningLabel(forDestinationID destinationID: String) -> String? {
+    guard let effort = selectedAIChatRoomReasoningEffort(forDestinationID: destinationID) else {
+      return nil
+    }
+    return selectedAIChatRoomReasoningOptions(forDestinationID: destinationID)
+      .first(where: { $0.id == effort })?.label
+      ?? Self.aiChatReasoningLabel(effort)
+  }
+
+  public func setSelectedAIChatRoomReasoningEffort(
+    _ reasoningEffort: String?,
+    forDestinationID destinationID: String
+  ) {
+    guard let selectedAIChatThreadID,
+          !isAIChatThreadRunning(selectedAIChatThreadID),
+          let index = aiChatThreads.firstIndex(where: {
+            $0.id == selectedAIChatThreadID
+          }),
+          aiChatThreads[index].isSharedRoom,
+          aiChatThreads[index].roomDestinationIDs.contains(destinationID),
+          aiChatThreads[index].roomReasoningEffortsByDestination[destinationID] != reasoningEffort
+    else {
+      return
+    }
+    var nextEfforts = aiChatThreads[index].roomReasoningEffortsByDestination
+    nextEfforts[destinationID] = reasoningEffort
+    aiChatThreads[index] = aiChatThreads[index]
+      .replacingAIChatMetadata(roomReasoningEffortsByDestination: nextEfforts)
+    persistAIChatTranscript()
+    aiChatStatusText = reasoningEffort == nil
+      ? "\(aiChatDestinationTitle(destinationID)) will use its default reasoning"
+      : "\(aiChatDestinationTitle(destinationID)) will use \(selectedAIChatRoomReasoningLabel(forDestinationID: destinationID) ?? reasoningEffort!) reasoning"
+  }
+
   public func selectedAIChatRoomModelLabel(for runtime: AIChatRuntime) -> String {
     guard let model = selectedAIChatRoomModel(for: runtime) else { return "Default" }
     return aiChatRoomModelOptions[runtime]?
@@ -24206,12 +24284,17 @@ extension WorkspaceStore {
     var nextModels = aiChatThreads[index].roomModelsByDestination
     nextModels[destinationID] = model
     if model == nil { nextModels.removeValue(forKey: destinationID) }
+    // A different model may not support the previous effort, so the
+    // destination returns to its default effort, as in single-agent chats.
+    var nextEfforts = aiChatThreads[index].roomReasoningEffortsByDestination
+    nextEfforts.removeValue(forKey: destinationID)
     let runtime = aiChatDestinationRuntime(destinationID)
     let legacyModels = aiChatThreads[index].roomModels.replacingModel(model, for: runtime)
     aiChatThreads[index] = aiChatThreads[index]
       .replacingAIChatMetadata(
         roomModels: legacyModels,
-        roomModelsByDestination: nextModels
+        roomModelsByDestination: nextModels,
+        roomReasoningEffortsByDestination: nextEfforts
       )
     persistAIChatTranscript()
     aiChatStatusText = model == nil
@@ -29202,7 +29285,7 @@ extension WorkspaceStore {
       attachments: requestUserMessage.attachments,
       cwd: corpusRoot,
       model: thread.model(forDestinationID: destinationID) ?? destination.model,
-      reasoningEffort: thread.isSharedRoom ? nil : thread.reasoningEffort,
+      reasoningEffort: thread.reasoningEffort(forDestinationID: destinationID),
       sandboxAccess: codexSandboxAccess
     )
     persistRuntimeSessionID(
@@ -29364,7 +29447,7 @@ extension WorkspaceStore {
         attachments: requestUserMessage.attachments,
         cwd: corpusRoot,
         model: thread.model(forDestinationID: sessionDestinationID) ?? destination.model,
-        reasoningEffort: thread.isSharedRoom ? nil : thread.reasoningEffort,
+        reasoningEffort: thread.reasoningEffort(forDestinationID: sessionDestinationID),
         sandboxAccess: codexSandboxAccess,
         runToken: pendingTurn?.runID
       )
@@ -29552,7 +29635,7 @@ extension WorkspaceStore {
 
     let existingRuntimeThreadID = thread.runtimeThreadID(forDestinationID: destinationID)
     let selectedModel = thread.model(forDestinationID: destinationID)
-    let selectedReasoningEffort = thread.isSharedRoom ? nil : thread.reasoningEffort
+    let selectedReasoningEffort = thread.reasoningEffort(forDestinationID: destinationID)
     let usesRuntimeFilesystem = destination.adapter == .codexRemote
       || destination.adapter == .codexManagedRemote
     let workspacePath = try Self.codexRuntimeWorkspacePath(
@@ -30943,9 +31026,7 @@ extension WorkspaceStore {
       corpusSkills: corpusAgentSkillCommands
     )
     let selectedModel = threadConfiguration?.model(forDestinationID: destinationID)
-    let selectedReasoningEffort = threadConfiguration?.isSharedRoom == true
-      ? nil
-      : threadConfiguration?.reasoningEffort
+    let selectedReasoningEffort = threadConfiguration?.reasoningEffort(forDestinationID: destinationID)
     if let aiChatSendHandler {
       let handlerContext = threadConfiguration.map {
         workspaceContext.replacingThreadContinuation(
@@ -31227,9 +31308,12 @@ extension WorkspaceStore {
       if thread.isSharedRoom {
         var modelsByDestination = thread.roomModelsByDestination
         modelsByDestination.removeValue(forKey: destinationID)
+        var effortsByDestination = thread.roomReasoningEffortsByDestination
+        effortsByDestination.removeValue(forKey: destinationID)
         replacement = thread.replacingAIChatMetadata(
           roomModels: thread.roomModels.replacingModel(nil, for: .openClaw),
-          roomModelsByDestination: modelsByDestination
+          roomModelsByDestination: modelsByDestination,
+          roomReasoningEffortsByDestination: effortsByDestination
         )
       } else {
         replacement = thread.replacingAIChatMetadata(
@@ -34211,16 +34295,19 @@ extension WorkspaceStore {
     let titlePrefix = sharedRoom && !source.isSharedRoom ? "Shared" : "Fork"
     let roomModels: AIChatRoomModelSelection
     let roomModelsByDestination: [String: String]
+    let roomReasoningEffortsByDestination: [String: String]
     let roomDestinationIDs: [String]
     let roomDefaultDestinationID: String?
     if source.isSharedRoom {
       roomModels = source.roomModels
       roomModelsByDestination = source.roomModelsByDestination
+      roomReasoningEffortsByDestination = source.roomReasoningEffortsByDestination
       roomDestinationIDs = source.roomDestinationIDs
       roomDefaultDestinationID = source.roomDefaultDestinationID
     } else {
       roomModels = AIChatRoomModelSelection().replacingModel(source.model, for: source.runtime)
       roomModelsByDestination = source.model.map { [source.destinationID: $0] } ?? [:]
+      roomReasoningEffortsByDestination = source.reasoningEffort.map { [source.destinationID: $0] } ?? [:]
       roomDestinationIDs = [source.destinationID]
       // Pinging another agent from a thread keeps the original agent as
       // the room's default; only that one message goes to the new agent.
@@ -34248,6 +34335,7 @@ extension WorkspaceStore {
       roomModels: roomModels,
       roomDestinationIDs: roomDestinationIDs,
       roomModelsByDestination: roomModelsByDestination,
+      roomReasoningEffortsByDestination: roomReasoningEffortsByDestination,
       roomDefaultDestinationID: roomDefaultDestinationID,
       roomAgentTurnLimit: source.isSharedRoom ? source.roomAgentTurnLimit : nil,
       agentRef: source.agentRef
@@ -35398,6 +35486,7 @@ extension WorkspaceStore {
       roomModels: current.roomModels,
       roomDestinationIDs: current.roomDestinationIDs,
       roomModelsByDestination: current.roomModelsByDestination,
+      roomReasoningEffortsByDestination: current.roomReasoningEffortsByDestination,
       roomDefaultDestinationID: current.roomDefaultDestinationID,
       roomAgentTurnLimit: current.roomAgentTurnLimit,
       agentRef: current.agentRef
