@@ -209,6 +209,31 @@ do {
   expect(session.handle(.transmitBegan(initiated: true, now: t0)).isEmpty, "partial prompt: nothing to answer")
 }
 
+// 6b. Pressing Talk while a long prompt is read stops the readout and answers that prompt.
+do {
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a, b], now: t0))
+  expect(!spoken(session.handle(.sessionActivated(headset, now: t0))).isEmpty, "the prompt starts reading")
+  let barge = session.handle(.transmitBegan(initiated: true, now: t0.addingTimeInterval(2)))
+  expect(barge == [.stopSpeaking, .startCapture], "Talk during the readout stops speech and opens the microphone at once")
+  expect(session.playback == .idle && session.capture == .capturing, "the reply is captured, not the rest of the prompt")
+  expect(session.replyHistory.first?.target == targetA, "the reply is bound to the prompt being read")
+  expect(session.handle(.transmitEnded(initiated: true, interrupted: false)) == [.finishCapture], "release finishes capture")
+  let decided = decisions(session.handle(.transcriptReady("no", now: t0.addingTimeInterval(3))))
+  expect(decided.count == 1 && decided[0].0.target == targetA && decided[0].1 == "rejected", "rejects exactly the interrupted prompt")
+}
+
+// 6c. A passive transmission during the readout never interrupts it or answers it.
+do {
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  _ = session.handle(.sessionActivated(headset, now: t0))
+  expect(session.handle(.transmitBegan(initiated: false, now: t0)).isEmpty, "an uninitiated transmission changes nothing")
+  expect(session.playback == .speaking(.prompt), "the readout continues")
+}
+
 // 7. Headset loss mid-prompt stops it, moves nothing to the speaker, and voids the prompt.
 do {
   var session = joinedSession()

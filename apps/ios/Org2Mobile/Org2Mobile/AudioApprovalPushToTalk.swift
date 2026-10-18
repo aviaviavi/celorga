@@ -77,6 +77,7 @@ final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, P
       self.manager = channelManager
       let restored = channelManager?.activeChannelUUID == AudioApprovalChannel.channelUUID
       self.state.isEnrolled = restored
+      if restored, let channelManager { self.allowTalkDuringPrompts(on: channelManager) }
       self.post(.managerReady(failure: error?.localizedDescription, restored: restored))
     }
   }
@@ -138,6 +139,16 @@ final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, P
     }
   }
 
+  /// A half-duplex channel (the default) disables Talk while Celorga is the active remote
+  /// participant, so a long prompt could not be answered until it was read to the end. Full
+  /// duplex keeps Talk available during a readout; the state machine stops speech and binds
+  /// the reply to the prompt being read.
+  private func allowTalkDuringPrompts(on manager: PTChannelManager) {
+    manager.setTransmissionMode(.fullDuplex, channelUUID: AudioApprovalChannel.channelUUID) { [weak self] error in
+      if let error { self?.post(.failed("Talk stays unavailable while a prompt plays: \(error.localizedDescription)")) }
+    }
+  }
+
   // MARK: PTChannelRestorationDelegate
 
   func channelDescriptor(restoredChannelUUID channelUUID: UUID) -> PTChannelDescriptor {
@@ -148,6 +159,7 @@ final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, P
 
   func channelManager(_ channelManager: PTChannelManager, didJoinChannel channelUUID: UUID, reason: PTChannelJoinReason) {
     state.isEnrolled = true
+    allowTalkDuringPrompts(on: channelManager)
     post(.joined)
   }
 
@@ -181,8 +193,9 @@ final class AudioApprovalPushToTalkBridge: NSObject, PTChannelManagerDelegate, P
     }
     guard state.isEnrolled else { return PTPushResult.leaveChannel }
     if state.isTransmitting {
-      // Half duplex: Apple requires ending the local transmission before reporting a remote
-      // participant. The partial reply is discarded, never decided.
+      // A new prompt never joins a reply in progress, even on the full-duplex channel: end the
+      // local transmission before reporting a remote participant. The partial reply is
+      // discarded, never decided.
       state.markInterrupted()
       channelManager.stopTransmitting(channelUUID: channelUUID)
     }

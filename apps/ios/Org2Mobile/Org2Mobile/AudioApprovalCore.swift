@@ -389,7 +389,7 @@ struct AudioDecisionOutcome: Sendable, Equatable {
 }
 
 enum AudioSpeechKind: Sendable, Equatable {
-  /// The approval prompt. Only a completely played prompt can be answered.
+  /// The approval prompt. It can be answered once it finishes, or by pressing Talk while it plays.
   case prompt
   case info
   case acknowledgement
@@ -461,7 +461,8 @@ enum AudioApprovalEffect: Sendable, Equatable {
 /// The audio approval state machine. Pure: every input is an event, every output an effect.
 ///
 /// Safety rules it enforces:
-/// - Only a completely heard prompt can be answered, and only for `replyWindow` seconds.
+/// - Only a prompt that finished playing, or that the person interrupted by pressing Talk while
+///   it was being read, can be answered, and only for `replyWindow` seconds.
 /// - Only initiated transmissions (system button or headset button) capture a reply.
 /// - A push never switches the prompt being answered; it waits until the current one settles.
 /// - A push whose exact identity is no longer pending is stale and plays nothing.
@@ -783,6 +784,16 @@ struct AudioApprovalSession: Sendable, Equatable {
       guard deciding == nil else {
         return reject("Still sending your last decision. Nothing new was decided.")
       }
+      var effects: [AudioApprovalEffect] = []
+      if case .speaking(.prompt) = playback, let target = active?.target {
+        // Pressing Talk during the readout answers the prompt being read, so a long approval
+        // never has to be heard to the end. The channel is full duplex for this reason.
+        playback = .idle
+        effects.append(.stopSpeaking)
+        heardTarget = target
+        heardAt = now
+        updateReply(outcome: "Readout interrupted by your reply.")
+      }
       guard let heardTarget, heardTarget == active?.target, let heardAt else {
         return reject("Nothing to answer. Nothing was decided. Play the prompt first.")
       }
@@ -790,7 +801,6 @@ struct AudioApprovalSession: Sendable, Equatable {
         clearHeard()
         return reject("That prompt expired. Nothing was decided. Play it again before answering.")
       }
-      var effects: [AudioApprovalEffect] = []
       if case .speaking = playback {
         playback = .idle
         effects.append(.stopSpeaking)
