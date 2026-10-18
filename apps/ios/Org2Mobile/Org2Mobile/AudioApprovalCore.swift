@@ -18,6 +18,9 @@ enum AudioApprovalFeature {
   static let snoozeInterval: TimeInterval = 30 * 60
   /// A reply binds only to a prompt heard this recently.
   static let replyWindow: TimeInterval = 120
+  /// Match the host's real-time window even when iOS restores an old push or an older host
+  /// delivers a backlog. Pending approvals remain available for review in the app.
+  static let realtimeWindow: TimeInterval = 10 * 60
   /// After a prompt finishes playing, a newly pushed prompt waits this long before it may
   /// replace it, so it cannot cut in while the person starts to answer. The Mac separately
   /// spaces pushes to one device (`AudioApprovalPromptPolicy.answerWindow`).
@@ -191,6 +194,17 @@ struct AudioApprovalCandidate: Hashable, Sendable {
     else { return nil }
     return AudioApprovalTarget(runID: runID, approvalID: approvalID, fingerprint: fingerprint)
   }
+
+  func isRealtime(at now: Date) -> Bool {
+    guard let requestedAt else { return false }
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    guard let requested = fractional.date(from: requestedAt) ?? ISO8601DateFormatter().date(from: requestedAt) else {
+      return false
+    }
+    return requested <= now.addingTimeInterval(120)
+      && now.timeIntervalSince(requested) <= AudioApprovalFeature.realtimeWindow
+  }
 }
 
 enum AudioSpokenIntent: String, Sendable {
@@ -299,8 +313,9 @@ func selectAudioApprovalCandidate(
 ) -> (target: AudioApprovalTarget, candidate: AudioApprovalCandidate)? {
   candidates
     .compactMap { candidate in candidate.target.map { ($0, candidate) } }
-    .filter { target, _ in
-      (snoozedUntil[target.promptKey] ?? .distantPast) <= now && !answeredKeys.contains(target.promptKey)
+    .filter { target, candidate in
+      candidate.isRealtime(at: now)
+        && (snoozedUntil[target.promptKey] ?? .distantPast) <= now && !answeredKeys.contains(target.promptKey)
     }
     .sorted { lhs, rhs in
       let leftUrgent = lhs.1.priority == "urgent"
@@ -399,10 +414,10 @@ enum AudioApprovalEvent: Sendable, Equatable {
   case transmitEnded(initiated: Bool, interrupted: Bool)
   case transcriptReady(String, now: Date)
   case captureFailed(String)
-  case routeChanged(AudioRouteSnapshot)
+  case routeChanged(AudioRouteSnapshot, now: Date)
   /// The current route, reread on request (`.checkRoute`) while waiting for the headset.
   /// Unlike `.routeChanged`, a non-headset reading never abandons audio.
-  case routeChecked(AudioRouteSnapshot)
+  case routeChecked(AudioRouteSnapshot, now: Date)
   case interrupted
   case decisionSucceeded(AudioApprovalTarget, AudioDecisionOutcome)
   case decisionFailed(AudioApprovalTarget, String)
@@ -415,7 +430,8 @@ extension AudioApprovalEvent {
     switch self {
     case .quietChanged(_, let now), .approvalsUpdated(_, let now), .pushReceived(_, let now),
          .playRequested(let now), .sessionActivated(_, let now), .playbackFinished(_, let now),
-         .transmitBegan(_, let now), .transcriptReady(_, let now), .tick(let now):
+         .transmitBegan(_, let now), .transcriptReady(_, let now), .tick(let now),
+         .routeChanged(_, let now), .routeChecked(_, let now):
       return now
     default:
       return nil
@@ -682,7 +698,7 @@ struct AudioApprovalSession: Sendable, Equatable {
       }
       return beginPlayback(route: route, now: now)
 
-    case .routeChecked(let route):
+    case .routeChecked(let route, _):
       guard sessionActive, headsetRouteSettleUntil != nil else { return [] }
       knownRoute = route.route
       guard playback == .idle, capture == .idle else { return [] }
@@ -844,7 +860,7 @@ struct AudioApprovalSession: Sendable, Equatable {
       capture = .idle
       return handleReply(transcript, now: now)
 
-    case .routeChanged(let route):
+    case .routeChanged(let route, _):
       if sessionActive { knownRoute = route.route }
       if route.route == .headset {
         guard sessionActive, headsetRouteSettleUntil != nil,
@@ -1021,10 +1037,10 @@ struct AudioApprovalSession: Sendable, Equatable {
       status = "That prompt was decided elsewhere or changed. Nothing was decided here."
     }
     guard let pushed = pushedTarget else { return effects }
-    if !pending.contains(pushed) {
+    if !pending.contains(pushed) || !candidates.contains(where: { $0.target == pushed && $0.isRealtime(at: now) }) {
       pushedTarget = nil
       if active == nil {
-        status = "Ignored a stale prompt that is no longer pending."
+        status = "Ignored an old or withdrawn audio prompt. Review pending requests in Approvals."
         effects.append(.releaseAudioSession)
       }
       return effects
@@ -1045,6 +1061,7 @@ struct AudioApprovalSession: Sendable, Equatable {
   private mutating func selectNext(now: Date, preferPushed: Bool) -> Bool {
     if preferPushed, let pushed = pushedTarget,
        let candidate = candidates.first(where: { $0.target == pushed }),
+       candidate.isRealtime(at: now),
        answered[pushed.promptKey] == nil {
       setActive(candidate)
       return true
@@ -1092,6 +1109,14 @@ struct AudioApprovalSession: Sendable, Equatable {
 
   private mutating func speakPrompt() -> [AudioApprovalEffect] {
     guard let active else { return [.releaseAudioSession] }
+    guard active.isRealtime(at: clock) else {
+      self.active = nil
+      activeReceipt = nil
+      if pushedTarget == active.target { pushedTarget = nil }
+      clearHeard()
+      status = "This audio prompt expired. Review the pending request in Approvals."
+      return [.releaseAudioSession]
+    }
     playback = .speaking(.prompt)
     clearHeard()
     status = "Playing the prompt on the headset…"

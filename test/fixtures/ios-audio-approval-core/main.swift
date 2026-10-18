@@ -14,7 +14,7 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String, line: Int =
   }
 }
 
-let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+let t0 = ISO8601DateFormatter().date(from: "2026-10-13T10:05:00Z")!
 let headset = AudioRouteSnapshot(route: .headset, inCall: false, mediaPlaying: false, pushToTalkSessionActive: true)
 let speaker = AudioRouteSnapshot(route: .nonHeadset, inCall: false, mediaPlaying: false, pushToTalkSessionActive: true)
 
@@ -129,6 +129,43 @@ do {
   expect(selectAudioApprovalCandidate(from: [b, a], snoozedUntil: [:], answeredKeys: [targetA.promptKey], now: t0)?.target == targetB, "answered prompt is skipped")
 }
 
+// An exact still-pending identity is insufficient: delayed delivery must not revive a backlog.
+do {
+  let old = candidate("revenue-scout", "old-review", requestedAt: "2026-10-01T15:41:53.321Z")
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(old.target, now: t0))
+  _ = session.handle(.sessionActivated(headset, now: t0))
+  let verified = session.handle(.approvalsUpdated([old, b], now: t0))
+  expect(spoken(verified).isEmpty, "a delayed exact Revenue Scout push must not speak an old pending request")
+  expect(session.active == nil, "a stale pushed identity must not fall back to another pending approval")
+  expect(verified.contains(.releaseAudioSession), "a stale push releases the receive session")
+  expect(selectAudioApprovalCandidate(from: [old, b], snoozedUntil: [:], answeredKeys: [], now: t0)?.target == targetB,
+         "Play next skips a dated backlog and selects a fresh request")
+  for timestamp in ["", "unreadable", "2026-10-13T10:07:01Z", "2026-10-13T09:54:59Z"] {
+    let invalid = candidate("invalid", "invalid", requestedAt: timestamp)
+    var phone = joinedSession()
+    _ = phone.handle(.pushReceived(invalid.target, now: t0))
+    _ = phone.handle(.approvalsUpdated([invalid], now: t0))
+    expect(spoken(phone.handle(.sessionActivated(headset, now: t0))).isEmpty && phone.active == nil,
+           "missing, malformed, future, or expired request time cannot speak: \(timestamp)")
+  }
+}
+
+// Recheck at playback: verification and Bluetooth routing may outlive the real-time window.
+do {
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  let activation = session.handle(.sessionActivated(headset, now: t0.addingTimeInterval(301)))
+  expect(spoken(activation).isEmpty && session.active == nil, "a request that ages out before activation stays silent")
+  expect(activation.contains(.releaseAudioSession), "expiration before playback releases the channel")
+  var routed = joinedSession()
+  _ = routed.handle(.pushReceived(targetA, now: t0.addingTimeInterval(299)))
+  _ = routed.handle(.sessionActivated(speaker, now: t0.addingTimeInterval(299)))
+  _ = routed.handle(.approvalsUpdated([a], now: t0.addingTimeInterval(299)))
+  expect(spoken(routed.handle(.routeChanged(headset, now: t0.addingTimeInterval(301)))).isEmpty, "a delayed headset route cannot revive an expired request")
+}
+
 // 4. Happy path: the decision carries the exact heard identity and a receipt; the host receipt is spoken.
 do {
   var session = joinedSession()
@@ -178,7 +215,7 @@ do {
   _ = session.handle(.pushReceived(targetA, now: t0))
   _ = session.handle(.approvalsUpdated([a], now: t0))
   _ = session.handle(.sessionActivated(headset, now: t0))
-  let lost = session.handle(.routeChanged(speaker))
+  let lost = session.handle(.routeChanged(speaker, now: t0))
   expect(lost.contains(.stopSpeaking) && lost.contains(.releaseAudioSession), "headset loss stops playback and releases audio")
   expect(spoken(lost).isEmpty, "headset loss never speaks elsewhere")
   _ = session.handle(.playbackFinished(completed: false, now: t0))
@@ -193,7 +230,7 @@ do {
 do {
   var session = joinedSession()
   heardAndCapturing(&session)
-  expect(session.handle(.routeChanged(speaker)).contains(.cancelCapture), "headset loss cancels capture")
+  expect(session.handle(.routeChanged(speaker, now: t0)).contains(.cancelCapture), "headset loss cancels capture")
   expect(decisions(session.handle(.transcriptReady("yes", now: t0))).isEmpty, "a cancelled reply decides nothing")
 }
 
@@ -211,7 +248,7 @@ do {
     "an intermediate receiver route gets a bounded Bluetooth-settling grace and route polling"
   )
   expect(session.status == "Connecting the headset…", "the route transition is visible in Settings")
-  let settled = session.handle(.routeChanged(headset))
+  let settled = session.handle(.routeChanged(headset, now: t0))
   expect(spoken(settled).first?.contains("Approval request") == true, "the prompt starts when Bluetooth becomes the active route")
   let staleTick = session.handle(.tick(now: t0.addingTimeInterval(AudioApprovalFeature.headsetRouteSettleInterval)))
   expect(!staleTick.contains(.releaseAudioSession), "the old settling timer cannot stop headset playback")
@@ -221,7 +258,7 @@ do {
   _ = session.handle(.pushReceived(targetA, now: t0))
   _ = session.handle(.approvalsUpdated([a], now: t0))
   _ = session.handle(.sessionActivated(speaker, now: t0))
-  expect(session.handle(.routeChanged(speaker)).isEmpty, "intermediate non-headset route changes keep waiting")
+  expect(session.handle(.routeChanged(speaker, now: t0)).isEmpty, "intermediate non-headset route changes keep waiting")
   let timedOut = session.handle(.tick(now: t0.addingTimeInterval(AudioApprovalFeature.headsetRouteSettleInterval)))
   expect(timedOut == [.releaseAudioSession], "a missing headset still releases the session after the bounded grace")
   expect(session.status.contains("Held (no-headset)"), "a real missing headset remains explicit")
@@ -237,7 +274,7 @@ do {
     !oldDeadline.contains(.releaseAudioSession),
     "a connected Bluetooth headset gets longer than the old two-second route transition"
   )
-  let settled = session.handle(.routeChanged(headset))
+  let settled = session.handle(.routeChanged(headset, now: t0))
   expect(
     spoken(settled).first?.contains("Approval request") == true,
     "a slower Bluetooth HFP route can still begin private playback"
@@ -255,23 +292,23 @@ do {
   let verified = session.handle(.approvalsUpdated([a], now: t0.addingTimeInterval(0.3)))
   expect(spoken(verified).isEmpty, "a prompt verified while the route is still the receiver is not spoken")
   expect(!verified.contains(.releaseAudioSession), "verification during Bluetooth settling keeps the session")
-  expect(session.handle(.routeChecked(speaker)) == [.checkRoute(after: AudioApprovalFeature.routeCheckInterval)], "a receiver reading keeps polling")
+  expect(session.handle(.routeChecked(speaker, now: t0)) == [.checkRoute(after: AudioApprovalFeature.routeCheckInterval)], "a receiver reading keeps polling")
   // Six seconds after activation, past the former five-second grace, HFP arrives with no notification.
   expect(!session.handle(.tick(now: t0.addingTimeInterval(6))).contains(.releaseAudioSession), "a six-second HFP switch is still within the grace")
-  let polled = session.handle(.routeChecked(headset))
+  let polled = session.handle(.routeChecked(headset, now: t0))
   expect(spoken(polled).first?.contains("Approval request") == true, "a polled headset route starts the verified prompt without a route-change notification")
-  expect(session.handle(.routeChecked(headset)).isEmpty, "polling stops once playback begins")
+  expect(session.handle(.routeChecked(headset, now: t0)).isEmpty, "polling stops once playback begins")
 }
 do {
   // Activation reported the headset, but HFP switching moved the route away before the Mac answered.
   var session = joinedSession()
   _ = session.handle(.pushReceived(targetA, now: t0))
   expect(session.handle(.sessionActivated(headset, now: t0)).isEmpty, "a headset activation waits for the Mac")
-  _ = session.handle(.routeChanged(speaker))
+  _ = session.handle(.routeChanged(speaker, now: t0))
   let verified = session.handle(.approvalsUpdated([a], now: t0.addingTimeInterval(1)))
   expect(spoken(verified).isEmpty, "verification after the route left the headset does not speak")
   expect(verified.contains(.checkRoute(after: AudioApprovalFeature.routeCheckInterval)), "verification after the route left the headset waits for it")
-  expect(spoken(session.handle(.routeChecked(headset))).first?.contains("Approval request") == true, "the prompt plays once the headset returns")
+  expect(spoken(session.handle(.routeChecked(headset, now: t0))).first?.contains("Approval request") == true, "the prompt plays once the headset returns")
 }
 do {
   // The bounded grace still ends, and late readings after it do nothing.
@@ -281,8 +318,8 @@ do {
   _ = session.handle(.approvalsUpdated([a], now: t0))
   let timedOut = session.handle(.tick(now: t0.addingTimeInterval(AudioApprovalFeature.headsetRouteSettleInterval)))
   expect(timedOut == [.releaseAudioSession], "no headset within the grace releases the session")
-  expect(session.handle(.routeChecked(headset)).isEmpty, "a route reading after the grace cannot start playback")
-  expect(session.handle(.routeChecked(speaker)).isEmpty, "a route reading after the grace never abandons the prompt")
+  expect(session.handle(.routeChecked(headset, now: t0)).isEmpty, "a route reading after the grace cannot start playback")
+  expect(session.handle(.routeChecked(speaker, now: t0)).isEmpty, "a route reading after the grace never abandons the prompt")
   expect(session.active?.target == targetA, "the timed-out prompt is kept for replay")
 }
 do {
@@ -292,10 +329,10 @@ do {
   _ = session.handle(.transmitEnded(initiated: true, interrupted: false))
   let sending = session.handle(.transcriptReady("yes", now: t0.addingTimeInterval(6)))
   expect(decisions(sending).count == 1, "spoken yes sends one decision")
-  _ = session.handle(.routeChanged(speaker))
+  _ = session.handle(.routeChanged(speaker, now: t0))
   let ack = session.handle(.decisionSucceeded(targetA, AudioDecisionOutcome(decision: "approved", runStatus: "running", pendingApprovalCount: 0, continuation: "continued", duplicate: false)))
   expect(spoken(ack).isEmpty, "the acknowledgement waits while the route is not a headset")
-  expect(spoken(session.handle(.routeChecked(headset))) == ["Approved. The agent is continuing."], "the acknowledgement plays on the returning headset")
+  expect(spoken(session.handle(.routeChecked(headset, now: t0))) == ["Approved. The agent is continuing."], "the acknowledgement plays on the returning headset")
 }
 
 // 8c. If iOS stops audible speech without a finish/cancel callback, playback must not keep
@@ -406,7 +443,7 @@ do {
 do {
   let urgentNewer = AudioApprovalCandidate(
     id: "appr-u", title: "Urgent", action: "send", body: "", riskClass: nil, requestedFrom: nil,
-    requestedAt: "2026-10-13T11:00:00Z", priority: "urgent", status: "pending",
+    requestedAt: "2026-10-13T10:06:00Z", priority: "urgent", status: "pending",
     isRunApproval: true, runID: "run-u", approvalID: "appr-u", fingerprint: "sha256:u"
   )
   expect(selectAudioApprovalCandidate(from: [a, b, urgentNewer], snoozedUntil: [:], answeredKeys: [], now: t0)?.target.approvalID == "appr-u", "an urgent approval goes first")

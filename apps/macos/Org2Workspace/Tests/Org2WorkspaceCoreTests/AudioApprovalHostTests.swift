@@ -545,7 +545,7 @@ final class AudioApprovalHostTests: XCTestCase {
     let repo = try Org2CLI.defaultRepoRoot()
     let corpus = URL(fileURLWithPath: directory).appendingPathComponent("corpus")
     try FileManager.default.createDirectory(at: corpus, withIntermediateDirectories: true)
-    let old = try createWaitingRun(repoRoot: repo, corpus: corpus, title: "Old unanswered approval")
+    let old = try createBacklogRun(repoRoot: repo, corpus: corpus)
     let suite = "AudioE2EHost.\(UUID())"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
@@ -631,6 +631,13 @@ final class AudioApprovalHostTests: XCTestCase {
         case "/test/release-refresh":
           releaseRefresh = true
           return .json([String: String]())
+        case "/test/delayed-old-push":
+          // Model a restored/delayed APNs payload or an older host. The canonical approval
+          // remains pending with its original request time, and the real payload is used.
+          let push = MobileRemotePushToTalkEnvelope(messageID: UUID(), runID: old.runID,
+            approvalID: old.approvalID, fingerprint: old.fingerprint)
+          let data = try JSONSerialization.data(withJSONObject: MobileRemotePushSender.pushToTalkPayload(push))
+          return MobileRemoteHTTPResponse(statusCode: 200, headers: ["Content-Type": "application/json"], body: data)
         case "/test/result":
           guard let fresh else { return .error("No fresh approval", statusCode: 500) }
           let result = try test.runApproval(repoRoot: repo, corpus: corpus, fresh)
@@ -736,6 +743,31 @@ final class AudioApprovalHostTests: XCTestCase {
       approvalID: try XCTUnwrap(approval["id"] as? String),
       fingerprint: try XCTUnwrap(approval["fingerprint"] as? String)
     )
+  }
+
+  private func createBacklogRun(repoRoot: URL, corpus: URL) throws -> DemoApproval {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.currentDirectoryURL = repoRoot
+    process.arguments = ["node", "--input-type=module", "-e", """
+      import {createAgentRun, transitionAgentRun, requestAgentRunApproval, saveAgentRun} from './dist/agentRun.js';
+      const now = '2026-10-01T15:41:53.321Z';
+      let run = createAgentRun({title:'Old unanswered approval', goal:'Reproduce delayed backlog playback', now});
+      run = transitionAgentRun(run, 'running', {actor:'Fixture', now});
+      run = requestAgentRunApproval(run, {title:'Old unanswered approval', action:'No external action; demo only',
+        riskClass:'external-action', requestedAt:now}, 'Revenue Scout');
+      saveAgentRun(process.argv[1], run);
+      console.log(JSON.stringify({runID:run.id, approvalID:run.approvals[0].id, fingerprint:run.approvals[0].fingerprint}));
+      """, corpus.path]
+    let output = Pipe()
+    process.standardOutput = output
+    try process.run()
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    XCTAssertEqual(process.terminationStatus, 0)
+    let result = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: String])
+    return DemoApproval(runID: try XCTUnwrap(result["runID"]), approvalID: try XCTUnwrap(result["approvalID"]),
+      fingerprint: try XCTUnwrap(result["fingerprint"]))
   }
 
   private func runApproval(repoRoot: URL, corpus: URL, _ demo: DemoApproval) throws -> [String: Any] {

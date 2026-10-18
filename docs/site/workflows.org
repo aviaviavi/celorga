@@ -153,6 +153,8 @@ The [[file:headless-server.org][headless server]] reuses these workflow and run 
 
 Enable walkie-talkie approvals in iPhone Settings, grant Microphone and Speech Recognition access, and join the approvals channel. Celorga reads one exact pending run approval on a connected headset. A completely played prompt is required before a spoken yes or no can request a decision from the paired Mac. If playback or capture fails, nothing is decided.
 
+Audio prompts are limited to requests from the last ten minutes. The phone checks the original request time after verifying a push and again before playback, so a delayed notification or restored channel cannot read an old backlog. Requests with missing or unreadable times are held for review in Approvals. Older pending requests stay available there without being decided or dismissed by the audio filter.
+
 While joined, approval prompts can interrupt a podcast or music through the system Push to Talk audio session. Quiet mode and snooze hold prompts, and phone or FaceTime calls retain system priority. Finishing a prompt releases the receive session so other audio can resume.
 
 In *Settings → Audio approvals → Voice*, choose an installed voice or use Automatic to select the highest-quality voice for your language and region. Automatic prefers Premium, then Enhanced, then Standard within that region, falling back to another region of the same language when necessary. Download additional Enhanced or Premium voices through iPhone Settings by searching for Voices, then return to Celorga. Speech is generated on the phone. If a chosen voice is removed, Celorga uses Automatic while preserving the preference for a later download.

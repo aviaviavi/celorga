@@ -432,7 +432,7 @@ final class AudioApprovalController: ObservableObject {
           self.send(.hostCheckFailed(error))
         } else {
           if let target = self.session.pushedTarget, let id = self.deliveryIDs[target],
-             remote.workspaceApprovals.map(Self.candidate).contains(where: { $0.target == target }) {
+             remote.workspaceApprovals.map(Self.candidate).contains(where: { $0.target == target && $0.isRealtime(at: Date()) }) {
             self.reportDelivery(stage: "prompt-verified", target: target, deliveryID: id)
           }
           self.send(.approvalsUpdated(remote.workspaceApprovals.map(Self.candidate), now: Date()))
@@ -454,7 +454,7 @@ final class AudioApprovalController: ObservableObject {
         if self.pushToTalkSessionActive, audioSession.preferredInput?.portType != .bluetoothHFP {
           AudioApprovalPushToTalkBridge.preferConnectedBluetoothHeadset(on: audioSession)
         }
-        self.send(.routeChecked(self.currentRouteSnapshot()))
+        self.send(.routeChecked(self.currentRouteSnapshot(), now: Date()))
       }
     case .sendSnooze(let target, let until):
       Task {
@@ -734,7 +734,7 @@ final class AudioApprovalController: ObservableObject {
         #if DEBUG
         if self.isDemo { return }
         #endif
-        self.send(.routeChanged(self.currentRouteSnapshot()))
+        self.send(.routeChanged(self.currentRouteSnapshot(), now: Date()))
       }
     })
     observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
@@ -865,7 +865,7 @@ final class AudioApprovalController: ObservableObject {
   /// route-change notification, as observed on a backgrounded phone switching AirPods to HFP.
   func setDemoRoute(headset: Bool, notify: Bool) {
     demoRoute = AudioRouteSnapshot(route: headset ? .headset : .nonHeadset, inCall: false, mediaPlaying: demoRoute.mediaPlaying, pushToTalkSessionActive: true)
-    if notify { send(.routeChanged(demoRoute)) }
+    if notify { send(.routeChanged(demoRoute, now: Date())) }
   }
 
   /// The other app can still report audio while Push to Talk takes over its session.
@@ -919,7 +919,7 @@ final class AudioApprovalController: ObservableObject {
       Task { [weak self] in
         try? await Task.sleep(for: .seconds(delay))
         guard let self, self.isDemo else { return }
-        self.send(.routeChecked(self.demoRoute))
+        self.send(.routeChecked(self.demoRoute, now: Date()))
       }
     case .stopSpeaking, .startCapture, .cancelCapture:
       break

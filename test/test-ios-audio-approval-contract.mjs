@@ -69,7 +69,7 @@ for (const [name, source] of Object.entries({ core, ptt, controller })) {
 assert.match(core, /if snapshot\.route != \.headset \{ return \.hold\(\.noHeadset\) \}/);
 assert.match(core, /allSatisfy \{ headsetPorts\.contains\(\$0\) \}/, "route is headset only when every output is headset");
 assert.match(controller, /case \.hold\(let reason\):\s*playbackFailureReason = "held-\\\(reason\.rawValue\)"\s*(\/\/[^\n]*\n\s*)*send\(\.playbackFinished\(completed: false/, "a held prompt is reported unheard with its reason, not rerouted");
-assert.match(controller, /case \.checkRoute\(let delay\):[\s\S]*?send\(\.routeChecked\(self\.currentRouteSnapshot\(\)\)\)/, "the route is polled while Bluetooth settles, not only observed through notifications");
+assert.match(controller, /case \.checkRoute\(let delay\):[\s\S]*?send\(\.routeChecked\(self\.currentRouteSnapshot\(\), now: Date\(\)\)\)/, "the route is polled with the current time while Bluetooth settles, not only observed through notifications");
 
 // 4. Apple's Push to Talk audio-session rules: the system activates the session.
 for (const [name, source] of Object.entries({ ptt, controller })) {

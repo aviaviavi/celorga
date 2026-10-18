@@ -230,6 +230,22 @@ final class AudioApprovalEndToEndTests: XCTestCase {
     XCTAssertTrue(activation.detail?.contains("out=SimulatedReceiver") == true, "Receipts must explain the route: \(activation.detail ?? "none")")
     XCTAssertFalse(routedTrace.contains { $0.stage == "playback-failed" }, "No failed attempt may precede the headset playback: \(routedTrace.map(\.stage))")
     XCTAssertTrue(routedTrace.contains { $0.stage == "playback-completed" && $0.headset == true })
+
+    // A cold controller must reject an exact old push even though the real host still lists
+    // the canonical approval as pending. Opening/rejoining never turns that backlog into speech.
+    let delayed: Push = try await control.post("/test/delayed-old-push", payload: Empty(), as: Push.self)
+    let stalePhone = AudioApprovalController()
+    stalePhone.attach(remote: remote)
+    stalePhone.setDemo(true)
+    stalePhone.demoReceivePush(["runID": delayed.runID, "approvalID": delayed.approvalID,
+      "fingerprint": delayed.fingerprint, "deliveryID": delayed.deliveryID.uuidString])
+    try await eventually("An old still-pending push must be suppressed after a fresh host read") {
+      stalePhone.phase.contains("Ignored an old")
+    }
+    XCTAssertNil(stalePhone.demoSpoken, "Delayed Revenue Scout notifications must never reach synthesis")
+    XCTAssertNil(stalePhone.promptText)
+    XCTAssertTrue(remote.workspaceApprovals.contains { $0.approvalID == delayed.approvalID },
+      "Suppressing audio must preserve the pending request for review")
     let _: Empty = try await control.post("/test/complete", payload: Empty(), as: Empty.self)
   }
 
