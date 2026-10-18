@@ -478,6 +478,81 @@ final class AIChatCrossHostTests: XCTestCase {
   }
 
   @MainActor
+  func testHandOffQueuedBehindTheTargetsRunningTurnIsNotReclaimed() async throws {
+    let transcriptURL = root.appendingPathComponent("chat.json")
+    let server = AIChatHostIdentity(ref: "build-host", name: "Celorga on build-host", kind: .server)
+    let laptop = AIChatHostIdentity(ref: "desktop-studio", name: "Studio Mac", kind: .desktop)
+    let earlier = Date().addingTimeInterval(-600)
+    let followUp = AIChatMessage(
+      role: .user, content: "also check the old prompts", createdAt: earlier.addingTimeInterval(5),
+      deliveryStatus: .sending, deliveryKind: .followUp,
+      provenance: AIChatMessageProvenance(
+        originClient: .desktop,
+        receivedByHostRef: laptop.ref, receivedByHostName: laptop.name,
+        executionHostRef: server.ref, executionHostName: server.name
+      )
+    )
+    let thread = AIChatThread(
+      title: "Long server turn", createdAt: earlier, updatedAt: earlier, runtime: .codex,
+      sessionKey: "long-server-turn",
+      messages: [
+        AIChatMessage(
+          role: .user, content: "start a long build", createdAt: earlier, deliveryStatus: .sending,
+          provenance: AIChatMessageProvenance(
+            receivedByHostRef: server.ref, receivedByHostName: server.name,
+            executionHostRef: server.ref, executionHostName: server.name, acceptedAt: earlier
+          )
+        ),
+        followUp,
+      ]
+    )
+    try AIChatTranscriptStore.shared.flush(
+      AIChatTranscriptSnapshot(threads: [thread], selectedThreadID: thread.id, settlementSettings: settings),
+      legacyURL: transcriptURL
+    )
+    // The server runs the turn and has begun draining for an update.
+    try AIChatLiveHostDirectory.write(
+      AIChatLiveHostRecord(
+        writerID: "server-writer", host: server, enabledDestinationIDs: [thread.destinationID],
+        turns: [AIChatLiveTurnRecord(threadID: thread.id)], isDraining: true
+      ),
+      transcriptURL: transcriptURL
+    )
+    let counter = CrossHostSendCounter()
+    let store = try makeStore(transcriptURL: transcriptURL) { messages, _, _ in
+      await counter.record(messages.last?.content ?? "")
+      return "answered here"
+    }
+    store.configureAIChatHost(laptop)
+    store.aiChatHandoffTimeout = 0
+    await store.waitForAIChatTranscriptLoadForTesting()
+    await store.refreshAIChatRemoteLiveHosts()
+
+    store.processAIChatHandoffs()
+    try await Task.sleep(for: .milliseconds(100))
+
+    let waiting = try XCTUnwrap(store.aiChatMessages.first { $0.id == followUp.id })
+    XCTAssertEqual(waiting.provenance?.executionHostRef, server.ref, "it stays with the host running the turn")
+    XCTAssertNil(waiting.provenance?.acceptedAt)
+    let promptsWhileRunning = await counter.prompts
+    XCTAssertTrue(promptsWhileRunning.isEmpty, "the laptop must not run it beside the server's live turn")
+
+    // Once the server's presence no longer reports the turn, the drain hand-off is reclaimed.
+    try AIChatLiveHostDirectory.write(
+      AIChatLiveHostRecord(
+        writerID: "server-writer", host: server, enabledDestinationIDs: [thread.destinationID],
+        isDraining: true
+      ),
+      transcriptURL: transcriptURL
+    )
+    await store.refreshAIChatRemoteLiveHosts()
+    store.processAIChatHandoffs()
+    let reclaimed = try XCTUnwrap(store.aiChatMessages.first { $0.id == followUp.id })
+    XCTAssertEqual(reclaimed.provenance?.executionHostRef, laptop.ref)
+    XCTAssertNotNil(reclaimed.provenance?.acceptedAt)
+  }
+
+  @MainActor
   func testHostAcceptsAHandOffExactlyOnce() async throws {
     let transcriptURL = root.appendingPathComponent("chat.json")
     let handedOff = AIChatMessage(

@@ -44865,9 +44865,16 @@ extension WorkspaceStore {
           if !isAIChatDraining { accepted.append(message.id) }
         } else if provenance.receivedByHostRef == hostRef {
           let targetName = provenance.executionHostName ?? target
-          if freshAIChatRemoteHost(ref: target, now: now) == nil {
+          let targetRecord = freshAIChatRemoteHost(ref: target, now: now)
+          if targetRecord == nil {
             reclaimed.append((message.id, "\(targetName) is offline"))
-          } else if freshAIChatRemoteHost(ref: target, now: now)?.isDraining == true, !isAIChatDraining {
+          } else if targetRecord?.turns.contains(where: { $0.threadID == thread.id }) == true {
+            // The target is still running this conversation's turn. A message
+            // queued behind it waits there; running it here would split the
+            // runtime session across hosts and strand it behind a turn this
+            // host cannot drive.
+            continue
+          } else if targetRecord?.isDraining == true, !isAIChatDraining {
             reclaimed.append((message.id, "\(targetName) is restarting"))
           } else if now.timeIntervalSince(message.createdAt) > aiChatHandoffTimeout {
             reclaimed.append((message.id, "\(targetName) did not pick it up"))
