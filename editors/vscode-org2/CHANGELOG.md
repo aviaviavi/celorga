@@ -111,7 +111,7 @@ OpenOrg 0.8.4 makes AI chats started from iPhone full workspace clients of the c
 
 This release also improves chat reliability and polish: delayed replies remain chronologically visible, stopped turns no longer appear active, remote activity ownership is reported correctly, transport initialization can recover cleanly, the assistant/provider picker works at narrow widths, and direct Anthropic destinations load their model catalogs.
 
-Agenda completions no longer reappear after an older refresh finishes. Large approval collections, including Revenue Scout reviews, now switch and render without mounting every large body at once.
+Agenda completions no longer reappear after an older refresh finishes. Large approval collections now switch and render without mounting every large body at once.
 
 ## Highlights
 

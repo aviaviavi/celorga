@@ -107,6 +107,12 @@ that looked normal in Gmail's narrow composer from becoming a fixed-width
 plain-text message after send. Set =enforceSafeGmailDrafts: false= only for an
 integration that supplies an equivalent provider-side invariant.
 
+The draft helper loads its private recipient-salutation validator from
+`CELORGA_GMAIL_PREFLIGHT_MODULE`, or from
+`~/.config/celorga/gmail-recipient-preflight.mjs` when unset. The module must export
+`validateRecipientSalutation`. Keep that local binding and validator outside the
+public repository. A missing validator fails closed before any draft mutation.
+
 The built-in effect recognizers cover direct tools whose operation names
 contain =draft= plus =create/save/update/upsert= or =send/deliver=, and the
 configured Google Workspace CLI form (=gog gmail drafts create/send=).

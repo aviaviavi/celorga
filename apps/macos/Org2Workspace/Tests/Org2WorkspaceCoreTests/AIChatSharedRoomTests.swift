@@ -744,8 +744,8 @@ final class AIChatSharedRoomTests: XCTestCase {
   func testComposerMentionsIncludeCorpusFilesAndRemoveTheCompletedToken() {
     let files = [
       CorpusFile(
-        path: "/tmp/revenue-scout.org2",
-        relativePath: "agents/revenue-scout.org2",
+        path: "/tmp/example-reviewer.org2",
+        relativePath: "agents/example-reviewer.org2",
         modifiedAt: nil,
         byteCount: nil
       ),
@@ -758,17 +758,17 @@ final class AIChatSharedRoomTests: XCTestCase {
     ]
 
     let suggestions = AIChatComposerMentionSuggestion.suggestions(
-      for: "Review @revenue",
+      for: "Review @example",
       destinations: AIChatDestinationConfiguration.defaults,
       allDestinationIDs: AIChatDestinationConfiguration.defaults.map(\.id),
       corpusFiles: files
     )
 
-    XCTAssertEqual(suggestions.map(\.id), ["file:/tmp/revenue-scout.org2"])
-    XCTAssertEqual(suggestions.map(\.title), ["revenue-scout.org2"])
-    XCTAssertEqual(suggestions.map(\.detail), ["agents/revenue-scout.org2"])
+    XCTAssertEqual(suggestions.map(\.id), ["file:/tmp/example-reviewer.org2"])
+    XCTAssertEqual(suggestions.map(\.title), ["example-reviewer.org2"])
+    XCTAssertEqual(suggestions.map(\.detail), ["agents/example-reviewer.org2"])
     XCTAssertEqual(
-      AIChatMentionSuggestion.removingActiveMention(in: "Review @revenue"),
+      AIChatMentionSuggestion.removingActiveMention(in: "Review @example"),
       "Review "
     )
     XCTAssertTrue(

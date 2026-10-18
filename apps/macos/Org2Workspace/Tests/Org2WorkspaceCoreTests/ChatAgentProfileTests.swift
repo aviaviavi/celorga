@@ -18,7 +18,7 @@ final class ChatAgentProfileTests: XCTestCase {
 
   func testAgentContextIsIncludedForEveryRuntimeAndKeepsStableIdentity() {
     let ref = UUID().uuidString, goal = UUID().uuidString
-    let profile = AgentProfileItem(schema: "org2:agent-profile:v1", id: ref, name: "Revenue Scout",
+    let profile = AgentProfileItem(schema: "org2:agent-profile:v1", id: ref, name: "Example Reviewer",
       description: "Find useful revenue signals", status: "active", responsibilities: ["Research accounts"],
       capabilities: ["Research"], skills: ["account-research"], defaultRuntime: "openclaw",
       runtimeBindings: [], goalRefs: [goal],
@@ -27,7 +27,7 @@ final class ChatAgentProfileTests: XCTestCase {
       selectedSurface: "AI Chat", selectedLocation: nil, selectedEntrySource: nil, backlinks: nil,
       agenda: nil, searchQuery: "", searchResults: [], chatAgentRef: ref, chatAgentProfile: profile)
     for prompt in [context.systemPrompt(), context.codexSystemPrompt(), context.localAgentSystemPrompt(runtime: "claude", runtimeTitle: "Claude Code")] {
-      XCTAssertTrue(prompt.contains("Revenue Scout"))
+      XCTAssertTrue(prompt.contains("Example Reviewer"))
       XCTAssertTrue(prompt.contains("Research accounts"))
       XCTAssertTrue(prompt.contains("account-research"))
       XCTAssertTrue(prompt.contains("AGENT_REF: \(ref)"))
@@ -51,8 +51,8 @@ final class ChatAgentProfileTests: XCTestCase {
     store.createAIChatThread(destinationID: AIChatDestinationConfiguration.localCodexID)
     let profile = AgentProfileItem(
       schema: "org2:agent-profile:v1",
-      id: "revenue-scout",
-      name: "Revenue Scout",
+      id: "example-reviewer",
+      name: "Example Reviewer",
       description: "",
       status: "active",
       responsibilities: [],
@@ -63,7 +63,7 @@ final class ChatAgentProfileTests: XCTestCase {
       goalRefs: [],
       primaryGoalRef: nil,
       reportsToAgentRef: nil,
-      file: "/tmp/revenue-scout.org2",
+      file: "/tmp/example-reviewer.org2",
       createdAt: "today",
       updatedAt: "today"
     )

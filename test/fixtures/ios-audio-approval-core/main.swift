@@ -131,12 +131,12 @@ do {
 
 // An exact still-pending identity is insufficient: delayed delivery must not revive a backlog.
 do {
-  let old = candidate("revenue-scout", "old-review", requestedAt: "2026-10-01T15:41:53.321Z")
+  let old = candidate("example-reviewer", "old-review", requestedAt: "2026-10-01T15:41:53.321Z")
   var session = joinedSession()
   _ = session.handle(.pushReceived(old.target, now: t0))
   _ = session.handle(.sessionActivated(headset, now: t0))
   let verified = session.handle(.approvalsUpdated([old, b], now: t0))
-  expect(spoken(verified).isEmpty, "a delayed exact Revenue Scout push must not speak an old pending request")
+  expect(spoken(verified).isEmpty, "a delayed exact Example Reviewer push must not speak an old pending request")
   expect(session.active == nil, "a stale pushed identity must not fall back to another pending approval")
   expect(verified.contains(.releaseAudioSession), "a stale push releases the receive session")
   expect(selectAudioApprovalCandidate(from: [old, b], snoozedUntil: [:], answeredKeys: [], now: t0)?.target == targetB,

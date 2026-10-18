@@ -4544,9 +4544,9 @@ final class Org2ModelsTests: XCTestCase {
     )
     XCTAssertEqual(
       AIChatThreadMode.currentThread.discussionDestinationTitle(
-        selectedThreadTitle: "Revenue Scout review"
+        selectedThreadTitle: "Example Reviewer review"
       ),
-      "Continue in \u{201c}Revenue Scout review\u{201d}"
+      "Continue in \u{201c}Example Reviewer review\u{201d}"
     )
   }
 
@@ -8376,11 +8376,11 @@ final class Org2ModelsTests: XCTestCase {
       .appendingPathComponent("org2-composer-file-mention-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let fileURL = root.appendingPathComponent("revenue-scout.org2")
-    try "#+TITLE: Revenue Scout\n".write(to: fileURL, atomically: true, encoding: .utf8)
+    let fileURL = root.appendingPathComponent("example-reviewer.org2")
+    try "#+TITLE: Example Reviewer\n".write(to: fileURL, atomically: true, encoding: .utf8)
     let file = CorpusFile(
       path: fileURL.path,
-      relativePath: "agents/revenue-scout.org2",
+      relativePath: "agents/example-reviewer.org2",
       modifiedAt: nil,
       byteCount: nil
     )
@@ -8401,9 +8401,9 @@ final class Org2ModelsTests: XCTestCase {
     )
     let firstPresentation = AIChatContextPresentation(firstDraft)
     XCTAssertEqual(firstPresentation.contexts.map(\.kind), ["selected file"])
-    XCTAssertEqual(firstPresentation.contexts.map(\.title), ["revenue scout"])
+    XCTAssertEqual(firstPresentation.contexts.map(\.title), ["example reviewer"])
     XCTAssertEqual(firstPresentation.contexts.map(\.reference), [
-      "/remote/org2/revenue-scout.org2:1"
+      "/remote/org2/example-reviewer.org2:1"
     ])
     XCTAssertEqual(firstPresentation.userText, "Please review this.")
 

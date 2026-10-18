@@ -496,7 +496,7 @@ final class WorkspaceActivityNavigationTests: XCTestCase {
     let requested = ISO8601DateFormatter().string(from: now.addingTimeInterval(-3600))
     store.replaceApprovalItemsForTesting(["Acme / a@acme.com", "Beta / b@beta.dev", "Gamma / c@gamma.io"].map { lead in
       ApprovalItem(
-        title: "Revenue Scout review: \(lead)", status: "pending", todo: nil, level: nil,
+        title: "Example Reviewer review: \(lead)", status: "pending", todo: nil, level: nil,
         file: root.appendingPathComponent(".org2/runs/scout.org2").path, line: 1, idValue: nil,
         properties: [:], body: "", tags: [], approvalId: "approval-\(lead)",
         requestedAt: requested, runId: "scout"
@@ -516,7 +516,7 @@ final class WorkspaceActivityNavigationTests: XCTestCase {
     let needsYou = Set(snapshot.needsYou.map(\.id))
     XCTAssertEqual(needsYou, ["approvals:run:scout", "approval:run:renewal:approval-renewal", "run:fresh-blocked", "run:fresh-failed"])
     let scout = try XCTUnwrap(snapshot.needsYou.first { $0.id == "approvals:run:scout" })
-    XCTAssertEqual(scout.title, "Revenue Scout review")
+    XCTAssertEqual(scout.title, "Example Reviewer review")
     XCTAssertEqual(scout.detail, "3 decisions waiting")
     XCTAssertEqual(scout.count, 3)
     XCTAssertEqual(snapshot.needsYou.first { $0.id == "approval:run:renewal:approval-renewal" }?.detail, "Approve: send email")

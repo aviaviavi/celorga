@@ -86,8 +86,8 @@ final class AIChatInboxTests: XCTestCase {
       "threadID": threadID.uuidString.lowercased(),
       "content": "The background export finished.",
       "createdAt": "2026-08-19T19:30:00.000Z",
-      "authorLabel": "Revenue Scout",
-      "authorAgentRef": "agent-profile-revenue-scout",
+      "authorLabel": "Example Reviewer",
+      "authorAgentRef": "agent-profile-example-reviewer",
       "source": "run:export-42"
     ]
     try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])
@@ -102,8 +102,8 @@ final class AIChatInboxTests: XCTestCase {
     XCTAssertEqual(delivered.messages[0].id, messageID)
     XCTAssertEqual(delivered.messages[0].role, .assistant)
     XCTAssertEqual(delivered.messages[0].content, "The background export finished.")
-    XCTAssertEqual(delivered.messages[0].authorLabel, "Revenue Scout")
-    XCTAssertEqual(delivered.messages[0].authorAgentRef, "agent-profile-revenue-scout")
+    XCTAssertEqual(delivered.messages[0].authorLabel, "Example Reviewer")
+    XCTAssertEqual(delivered.messages[0].authorAgentRef, "agent-profile-example-reviewer")
     XCTAssertEqual(delivered.messages[0].source, "run:export-42")
     XCTAssertEqual(delivered.unreadMessageCount, 1)
     XCTAssertFalse(delivered.isSettled)
@@ -118,8 +118,8 @@ final class AIChatInboxTests: XCTestCase {
     let restoredMessage = try XCTUnwrap(
       restored.aiChatThreads.first(where: { $0.id == threadID })?.messages.first
     )
-    XCTAssertEqual(restoredMessage.authorLabel, "Revenue Scout")
-    XCTAssertEqual(restoredMessage.authorAgentRef, "agent-profile-revenue-scout")
+    XCTAssertEqual(restoredMessage.authorLabel, "Example Reviewer")
+    XCTAssertEqual(restoredMessage.authorAgentRef, "agent-profile-example-reviewer")
 
     try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])
       .write(to: envelope, options: .atomic)

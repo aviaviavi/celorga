@@ -66,6 +66,11 @@ If a native operation appears missing or broken, check the installed version, ca
 - Never put credentials, tokens, cookies, private keys, model credentials, or
   machine-local bindings in source, fixtures, corpora, runs, plugins, generated
   artifacts, or documentation examples.
+- Keep private corpus context out of public material. Release notes, commit
+  messages, changelogs, code comments, and test fixtures must use fictional names
+  and synthetic data, not a user's private agent names, customer details, real
+  workflow content, or machine-specific paths. Check the complete staged diff and
+  publication text before pushing or publishing.
 - Multi-corpus reads require explicit mounts. A corpus visible in the Celorga app is not
   implicit agent authority, and writes remain scoped to one active corpus.
 - Do not perform external side effects such as sending messages, creating

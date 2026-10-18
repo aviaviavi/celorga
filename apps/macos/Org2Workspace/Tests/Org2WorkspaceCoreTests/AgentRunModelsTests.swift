@@ -336,7 +336,7 @@ final class AgentRunModelsTests: XCTestCase {
         "title": "Generate qualified meetings",
         "description": "Turn strong signals into reviewable outreach.",
         "status": "active",
-        "ownerAgentRef": "revenue-scout",
+        "ownerAgentRef": "example-reviewer",
         "measures": ["Qualified meetings"],
         "file": "/tmp/corpus/goals/qualified-meetings.org2",
         "createdAt": "2026-08-05T00:00:00.000Z",
@@ -345,7 +345,7 @@ final class AgentRunModelsTests: XCTestCase {
     }
     """#.utf8))
     let goal = try XCTUnwrap(goalPayload.goals.first)
-    XCTAssertEqual(goal.ownerAgentRef, "revenue-scout")
+    XCTAssertEqual(goal.ownerAgentRef, "example-reviewer")
     XCTAssertEqual(goal.file, "/tmp/corpus/goals/qualified-meetings.org2")
 
     let profilePayload = try JSONDecoder().decode(AgentProfileListPayload.self, from: Data(#"""
@@ -353,18 +353,18 @@ final class AgentRunModelsTests: XCTestCase {
       "schema": "org2:agent-profile-list:v1",
       "profiles": [{
         "schema": "org2:agent-profile:v1",
-        "id": "revenue-scout",
-        "name": "Revenue Scout",
+        "id": "example-reviewer",
+        "name": "Example Reviewer",
         "description": "",
         "status": "active",
         "responsibilities": ["Qualify accounts"],
         "capabilities": ["agent-context"],
         "skills": ["outreach"],
         "defaultRuntime": "openclaw",
-        "runtimeBindings": [{"runtime":"openclaw","runtimeAgentId":"scarf-revenue-scout"}],
+        "runtimeBindings": [{"runtime":"openclaw","runtimeAgentId":"example-reviewer-runtime"}],
         "goalRefs": ["qualified-meetings"],
         "primaryGoalRef": "qualified-meetings",
-        "file": "/tmp/corpus/agent-profiles/revenue-scout.org2",
+        "file": "/tmp/corpus/agent-profiles/example-reviewer.org2",
         "createdAt": "2026-08-05T00:00:00.000Z",
         "updatedAt": "2026-08-05T00:00:00.000Z"
       }]
@@ -374,7 +374,7 @@ final class AgentRunModelsTests: XCTestCase {
     XCTAssertEqual(profile.primaryGoalRef, goal.id)
     XCTAssertEqual(profile.defaultRuntime, "openclaw")
     XCTAssertEqual(profile.preferredChatRuntime, .openClaw)
-    XCTAssertEqual(profile.runtimeBindings.first?.id, "openclaw:scarf-revenue-scout")
+    XCTAssertEqual(profile.runtimeBindings.first?.id, "openclaw:example-reviewer-runtime")
     XCTAssertEqual(RunsAndReviewPage.allCases, [.runs, .review, .goals, .agents, .workflows])
   }
 

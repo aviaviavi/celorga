@@ -285,7 +285,7 @@ extension WorkspaceStore {
 
   /// One title for several decisions requested by the same run.
   nonisolated static func activityApprovalGroupTitle(_ titles: [String], run: AgentRunItem?) -> String {
-    // Titles such as "Revenue Scout review: Acme / a@acme.com" share a prefix
+    // Titles such as "Example Reviewer review: Acme / a@acme.com" share a prefix
     // that names the batch better than the run's own title.
     let prefixes = Set(titles.map { title -> String in
       guard let colon = title.firstIndex(of: ":") else { return title }

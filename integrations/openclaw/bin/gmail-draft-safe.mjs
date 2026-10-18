@@ -3,9 +3,13 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { validateRecipientSalutation } from "/Users/avi/openclaw/slack/scripts/revenue-scout-email-preflight.mjs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const recipientPreflightModule = process.env.CELORGA_GMAIL_PREFLIGHT_MODULE
+  || resolve(homedir(), ".config/celorga/gmail-recipient-preflight.mjs");
+const { validateRecipientSalutation } = await import(pathToFileURL(resolve(recipientPreflightModule)).href);
 
 import {
   header,

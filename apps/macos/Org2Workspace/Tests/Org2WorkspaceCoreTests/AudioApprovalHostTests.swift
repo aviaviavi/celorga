@@ -755,7 +755,7 @@ final class AudioApprovalHostTests: XCTestCase {
       let run = createAgentRun({title:'Old unanswered approval', goal:'Reproduce delayed backlog playback', now});
       run = transitionAgentRun(run, 'running', {actor:'Fixture', now});
       run = requestAgentRunApproval(run, {title:'Old unanswered approval', action:'No external action; demo only',
-        riskClass:'external-action', requestedAt:now}, 'Revenue Scout');
+        riskClass:'external-action', requestedAt:now}, 'Example Reviewer');
       saveAgentRun(process.argv[1], run);
       console.log(JSON.stringify({runID:run.id, approvalID:run.approvals[0].id, fingerprint:run.approvals[0].fingerprint}));
       """, corpus.path]

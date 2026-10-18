@@ -45,8 +45,8 @@ try {
   }, null, 2)}\n`);
 
   const preview = queueAIChatInboxMessage(root, threadID, "  Finished the background export.  ", {
-    authorLabel: "Revenue Scout",
-    authorAgentRef: "agent-profile-revenue-scout",
+    authorLabel: "Example Reviewer",
+    authorAgentRef: "agent-profile-example-reviewer",
     source: "run:export-42",
     idempotencyKey: "export-42-complete",
     now: new Date("2026-08-19T12:00:00Z"),

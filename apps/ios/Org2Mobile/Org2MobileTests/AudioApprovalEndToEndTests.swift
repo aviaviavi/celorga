@@ -242,7 +242,7 @@ final class AudioApprovalEndToEndTests: XCTestCase {
     try await eventually("An old still-pending push must be suppressed after a fresh host read") {
       stalePhone.phase.contains("Ignored an old")
     }
-    XCTAssertNil(stalePhone.demoSpoken, "Delayed Revenue Scout notifications must never reach synthesis")
+    XCTAssertNil(stalePhone.demoSpoken, "Delayed Example Reviewer notifications must never reach synthesis")
     XCTAssertNil(stalePhone.promptText)
     XCTAssertTrue(remote.workspaceApprovals.contains { $0.approvalID == delayed.approvalID },
       "Suppressing audio must preserve the pending request for review")

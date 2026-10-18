@@ -65,6 +65,13 @@ Use `--through PHASE` for an intentional checkpoint, `--restart` to discard phas
 
 ## 2. Validate the release candidate
 
+Before publication, review release notes, TestFlight What to Test text, changelogs,
+commit subjects and bodies, and the staged diff for private context. Use fictional
+agent names and synthetic examples. Private agent identities, corpus excerpts,
+customer details, workflow content, and local paths must not appear in public
+release material merely because they helped reproduce a bug. Describe the product
+behavior and regression in generic terms.
+
 1. Confirm GitHub authentication with `gh auth status` and npm registry reachability with `npm ping`, without printing tokens. npm publication uses the tag workflow's Trusted Publishing/OIDC identity; a local npm credential is required only for an explicitly chosen local fallback.
 2. Run the checks required by affected surfaces. For a coordinated release, the orchestrator performs one shared build, then runs the built Node, documentation, extension, and complete macOS Swift suites concurrently with packaging. The tag workflow runs one independent `npm test` gate and publishes the already-packed tarball without repeating npm lifecycle tests.
 3. Resolve failures before versioning. Report pre-existing skips accurately.
