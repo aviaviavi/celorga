@@ -580,6 +580,9 @@ final class AudioApprovalHostTests: XCTestCase {
     var workspaceReads = 0
     var refreshStarted = false
     var releaseRefresh = false
+    var holdFreshVerification = false
+    var freshVerificationStarted = false
+    var releaseFreshVerification = false
     var failNextWorkspace = false
     var completed = false
 
@@ -601,6 +604,16 @@ final class AudioApprovalHostTests: XCTestCase {
           let until = Date().addingTimeInterval(10)
           while !refreshStarted, Date() < until { try await Task.sleep(for: .milliseconds(10)) }
           return refreshStarted ? .json([String: String]()) : .error("No concurrent workspace request", statusCode: 500)
+        case "/test/hold-fresh-verification":
+          holdFreshVerification = true
+          return .json([String: String]())
+        case "/test/wait-for-fresh-verification":
+          let until = Date().addingTimeInterval(10)
+          while !freshVerificationStarted, Date() < until { try await Task.sleep(for: .milliseconds(10)) }
+          return freshVerificationStarted ? .json([String: String]()) : .error("No fresh verification request", statusCode: 500)
+        case "/test/release-fresh-verification":
+          releaseFreshVerification = true
+          return .json([String: String]())
         case "/test/create-fresh":
           let created = try test.createWaitingRun(repoRoot: repo, corpus: corpus, title: "Fresh end-to-end approval", priority: "urgent")
           fresh = created
@@ -639,6 +652,11 @@ final class AudioApprovalHostTests: XCTestCase {
               refreshStarted = true
               let until = Date().addingTimeInterval(60)
               while !releaseRefresh, Date() < until { try await Task.sleep(for: .milliseconds(10)) }
+            } else if holdFreshVerification {
+              holdFreshVerification = false
+              freshVerificationStarted = true
+              let until = Date().addingTimeInterval(45)
+              while !releaseFreshVerification, Date() < until { try await Task.sleep(for: .milliseconds(10)) }
             }
           }
           return response

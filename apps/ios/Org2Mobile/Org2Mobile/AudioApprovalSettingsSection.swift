@@ -13,6 +13,11 @@ struct AudioApprovalSettingsSection: View {
         get: { audio.isEnabled },
         set: { audio.setEnabled($0) }
       ))
+      NavigationLink {
+        AudioApprovalVoiceView()
+      } label: {
+        LabeledContent("Voice", value: audio.selectedVoice?.name ?? "Automatic")
+      }
       if audio.isEnabled || !audio.replyHistory.isEmpty {
         NavigationLink("Reply and decision history") { AudioApprovalHistoryView() }
       }
@@ -46,7 +51,10 @@ struct AudioApprovalSettingsSection: View {
     } footer: {
       Text("Agents' approval requests are read to you on a connected headset, one at a time. Press the Push to Talk button and say yes, no, why, read it to me, or later. Nothing ever plays on the speaker; without a headset, prompts wait on your Mac. Decisions go to your Mac's approval queue for the exact request you heard.")
     }
-    .task { await audio.refreshRegistration() }
+    .task {
+      audio.refreshVoices()
+      await audio.refreshRegistration()
+    }
   }
 
   @ViewBuilder
@@ -88,6 +96,75 @@ struct AudioApprovalSettingsSection: View {
     }
   }
   #endif
+}
+
+private struct AudioApprovalVoiceView: View {
+  @EnvironmentObject private var audio: AudioApprovalController
+  @State private var search = ""
+
+  private var filteredVoices: [AudioApprovalVoiceOption] {
+    audio.availableVoices.filter {
+      search.isEmpty || "\($0.name) \($0.language) \(languageName($0)) \($0.quality.label)"
+        .localizedCaseInsensitiveContains(search)
+    }
+  }
+
+  var body: some View {
+    List {
+      Section {
+        Button { audio.setVoice(nil) } label: {
+          HStack {
+            VStack(alignment: .leading, spacing: 4) {
+              Text("Automatic")
+              if let voice = audio.automaticVoice {
+                Text("\(voice.name) · \(voice.quality.label)")
+                  .font(.caption).foregroundStyle(.secondary)
+              }
+            }
+            Spacer()
+            if audio.voiceIdentifier == nil { Image(systemName: "checkmark") }
+          }
+          .foregroundStyle(.primary)
+        }
+        if audio.selectedVoiceUnavailable {
+          Text("Your chosen voice is unavailable. Using Automatic until it is downloaded again.")
+            .font(.footnote).foregroundStyle(.secondary)
+        }
+      } footer: {
+        Text("Automatic uses the highest-quality installed voice for your language and region. Speech is generated on your iPhone.")
+      }
+      Section {
+        ForEach(filteredVoices) { voice in
+          Button { audio.setVoice(voice.id) } label: {
+            HStack {
+              VStack(alignment: .leading, spacing: 4) {
+                Text(voice.name)
+                Text("\(languageName(voice)) · \(voice.quality.label)")
+                  .font(.caption).foregroundStyle(.secondary)
+              }
+              Spacer()
+              if audio.voiceIdentifier == voice.id { Image(systemName: "checkmark") }
+            }
+            .foregroundStyle(.primary)
+          }
+        }
+      } header: {
+        Text("Available voices")
+      } footer: {
+        Text("For more natural speech, open iPhone Settings, search for Voices, and download an Enhanced or Premium voice for your language. Return here to choose it.")
+      }
+    }
+    .navigationTitle("Approval voice")
+    .searchable(text: $search, prompt: "Name, language, or quality")
+    .onAppear { audio.refreshVoices() }
+    .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+      audio.refreshVoices()
+    }
+  }
+
+  private func languageName(_ voice: AudioApprovalVoiceOption) -> String {
+    Locale.current.localizedString(forIdentifier: voice.language) ?? voice.language
+  }
 }
 
 /// Available directly from Approvals as well as Settings, even after the audio feature is off.

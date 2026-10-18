@@ -157,7 +157,7 @@ assert.match(core, /deferredPush = target/);
 
 assert.match(transcriber, /guard ownsAudioSession else \{ return \}\s*ownsAudioSession = false\s*try\? audioSession\.deactivate\(\)/,
   "idle chat cleanup and PTT replies must not deactivate a session the transcriber never acquired");
-assert.match(controller, /synthesizer\.write\(AVSpeechUtterance/, "speech is rendered to audio buffers");
+assert.match(controller, /synthesizer\.write\(speechUtterance\(for: text\)\)/, "the selected voice is rendered to audio buffers");
 assert.match(controller, /completionCallbackType: \.dataPlayedBack/, "receive mode waits for audible playback completion");
 assert.doesNotMatch(controller, /synthesizer\.speak\(/, "the background speech path uses the PTT-owned player");
 assert.match(controller, /beginBackgroundTask\(withName: "Finish audio approval reply"/);

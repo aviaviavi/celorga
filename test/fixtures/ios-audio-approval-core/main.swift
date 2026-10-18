@@ -31,6 +31,31 @@ let b = candidate("run-b", "appr-b", requestedAt: "2026-10-13T10:05:00Z")
 let targetA = a.target!
 let targetB = b.target!
 
+// Voice selection upgrades the right language and keeps an explicit preference stable.
+do {
+  let compact = AudioApprovalVoiceOption(id: "us-basic", name: "Basic", language: "en-US", quality: .standard)
+  let enhanced = AudioApprovalVoiceOption(id: "us-enhanced", name: "Enhanced", language: "en-US", quality: .enhanced)
+  let premium = AudioApprovalVoiceOption(id: "us-premium", name: "Premium", language: "en-US", quality: .premium)
+  let british = AudioApprovalVoiceOption(id: "gb-premium", name: "British", language: "en-GB", quality: .premium)
+  let french = AudioApprovalVoiceOption(id: "fr-premium", name: "French", language: "fr-FR", quality: .premium)
+  func selected(_ voices: [AudioApprovalVoiceOption], _ preferred: String? = nil, _ language: String = "en-US") -> AudioApprovalVoiceOption? {
+    AudioApprovalVoiceOption.select(from: voices, preferredIdentifier: preferred, language: language)
+  }
+  expect(selected([compact, enhanced, premium]) == premium, "automatically selects installed premium voice")
+  expect(selected([compact, enhanced]) == enhanced, "upgrades to enhanced when no premium is installed")
+  expect(selected([compact]) == compact, "standard remains usable without downloaded voices")
+  expect(selected([compact, british]) == compact, "automatic preserves the preferred region")
+  expect(selected([british, french]) == british, "another region of the same language is a fallback")
+  expect(selected([french]) == nil, "never automatically picks an unrelated language")
+  expect(selected([compact, premium], compact.id) == compact, "explicit voice wins over automatic quality")
+  expect(selected([compact, premium, british], british.id) == british, "explicit accent wins over the preferred region")
+  expect(selected([enhanced], "removed-voice") == enhanced, "removed voice falls back to automatic")
+  expect(selected([premium], nil, "en_US") == premium, "normalizes locale separators")
+  expect(selected([]) == nil, "empty voice catalog leaves the system fallback available")
+  let tie = AudioApprovalVoiceOption(id: "aaa", name: "Another", language: "en-US", quality: .premium)
+  expect(selected([premium, tie]) == selected([tie, premium]), "voice catalog order cannot change automatic selection")
+}
+
 func receipts() -> @Sendable () -> String {
   final class Counter: @unchecked Sendable { var value = 0 }
   let counter = Counter()
@@ -79,6 +104,21 @@ expect(planAudioPlayback(quiet: false, snapshot: speaker) == .hold(.noHeadset), 
 expect(planAudioPlayback(quiet: true, snapshot: headset) == .hold(.quiet), "quiet holds")
 expect(planAudioPlayback(quiet: false, snapshot: AudioRouteSnapshot(route: .headset, inCall: true, mediaPlaying: false, pushToTalkSessionActive: true)) == .hold(.callActive), "calls hold")
 expect(planAudioPlayback(quiet: false, snapshot: AudioRouteSnapshot(route: .headset, inCall: false, mediaPlaying: false, pushToTalkSessionActive: false)) == .hold(.noPushToTalkSession), "no system session holds")
+
+// A podcast is precisely when a joined walkie-talkie channel should interrupt with a prompt.
+do {
+  let podcast = AudioRouteSnapshot(route: .headset, inCall: false, mediaPlaying: true, pushToTalkSessionActive: true)
+  expect(planAudioPlayback(quiet: false, snapshot: podcast) == .play, "podcast playback does not veto a system-activated headset prompt")
+  var session = joinedSession()
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  let play = session.handle(.sessionActivated(podcast, now: t0))
+  expect(!spoken(play).isEmpty, "a fresh verified approval is spoken while other media is playing")
+  expect(session.handle(.playbackFinished(completed: true, now: t0)) == [.releaseAudioSession], "completion releases the system session so media can resume")
+  expect(planAudioPlayback(quiet: true, snapshot: podcast) == .hold(.quiet), "quiet still holds over media")
+  expect(planAudioPlayback(quiet: false, snapshot: AudioRouteSnapshot(route: .nonHeadset, inCall: false, mediaPlaying: true, pushToTalkSessionActive: true)) == .hold(.noHeadset), "media never permits speaker output")
+  expect(planAudioPlayback(quiet: false, snapshot: AudioRouteSnapshot(route: .headset, inCall: true, mediaPlaying: true, pushToTalkSessionActive: true)) == .hold(.callActive), "calls keep priority over approval prompts")
+}
 
 // 3. Selection mirrors the host: oldest pending with exact identity, skipping snoozed and answered.
 do {

@@ -17,6 +17,22 @@ private final class AudioApprovalSpeechSequence: @unchecked Sendable {
   func take() -> Int { lock.withLock { defer { nextIndex += 1 }; return nextIndex } }
 }
 
+@MainActor
+protocol AudioApprovalBackgroundRuntime {
+  func begin(name: String, expiration: @escaping @MainActor @Sendable () -> Void) -> UIBackgroundTaskIdentifier
+  func end(_ identifier: UIBackgroundTaskIdentifier)
+}
+
+@MainActor
+private struct ApplicationAudioApprovalBackgroundRuntime: AudioApprovalBackgroundRuntime {
+  func begin(name: String, expiration: @escaping @MainActor @Sendable () -> Void) -> UIBackgroundTaskIdentifier {
+    UIApplication.shared.beginBackgroundTask(withName: name) {
+      Task { @MainActor in expiration() }
+    }
+  }
+  func end(_ identifier: UIBackgroundTaskIdentifier) { UIApplication.shared.endBackgroundTask(identifier) }
+}
+
 /// Runs walkie-talkie audio approvals on the phone.
 ///
 /// Policy lives in `AudioApprovalSession`; this class only performs its effects. It never stores
@@ -36,6 +52,8 @@ final class AudioApprovalController: ObservableObject {
   @Published private(set) var replyHistory: [AudioApprovalReplyRecord] = []
   @Published private(set) var registrationText = "Not registered with the Mac"
   @Published private(set) var pushToTalkAvailable = false
+  @Published private(set) var voiceIdentifier: String?
+  @Published private(set) var availableVoices: [AudioApprovalVoiceOption] = []
   #if DEBUG
   @Published private(set) var isDemo = false
   /// What the demo would have spoken on the headset.
@@ -69,13 +87,65 @@ final class AudioApprovalController: ObservableObject {
   private var pushToken: Data?
   private var pushToTalkSessionActive = false
   private var replyBackgroundTask: UIBackgroundTaskIdentifier = .invalid
+  private let voiceDefaults: UserDefaults
+  private let backgroundRuntime: any AudioApprovalBackgroundRuntime
+  private var promptBackgroundTask: UIBackgroundTaskIdentifier = .invalid
+  private var promptBackgroundGeneration: UUID?
 
-  init() {
+  init(voiceDefaults: UserDefaults = .standard, backgroundRuntime: (any AudioApprovalBackgroundRuntime)? = nil) {
+    self.backgroundRuntime = backgroundRuntime ?? ApplicationAudioApprovalBackgroundRuntime()
+    self.voiceDefaults = voiceDefaults
+    voiceIdentifier = voiceDefaults.string(forKey: AudioApprovalFeature.voiceIdentifierDefaultsKey)
     let stored = UserDefaults.standard.object(forKey: AudioApprovalFeature.quietUntilDefaultsKey) as? Date
     quietUntil = stored.flatMap { $0 > Date() ? $0 : nil }
+    // Background channel restoration must not wait for the system voice catalog.
+    // Load voices in Settings or immediately before synthesis.
   }
 
   var isQuiet: Bool { (quietUntil ?? .distantPast) > Date() }
+
+  var automaticVoice: AudioApprovalVoiceOption? {
+    AudioApprovalVoiceOption.select(from: availableVoices, preferredIdentifier: nil,
+                                   language: AVSpeechSynthesisVoice.currentLanguageCode())
+  }
+
+  var selectedVoice: AudioApprovalVoiceOption? {
+    AudioApprovalVoiceOption.select(from: availableVoices, preferredIdentifier: voiceIdentifier,
+                                   language: AVSpeechSynthesisVoice.currentLanguageCode())
+  }
+
+  var selectedVoiceUnavailable: Bool {
+    voiceIdentifier != nil && !availableVoices.contains { $0.id == voiceIdentifier }
+  }
+
+  func setVoice(_ identifier: String?) {
+    voiceIdentifier = identifier
+    if let identifier { voiceDefaults.set(identifier, forKey: AudioApprovalFeature.voiceIdentifierDefaultsKey) }
+    else { voiceDefaults.removeObject(forKey: AudioApprovalFeature.voiceIdentifierDefaultsKey) }
+  }
+
+  func refreshVoices() {
+    availableVoices = AVSpeechSynthesisVoice.speechVoices().filter {
+      !$0.voiceTraits.contains(.isNoveltyVoice) && !$0.voiceTraits.contains(.isPersonalVoice)
+    }.map {
+      AudioApprovalVoiceOption(id: $0.identifier, name: $0.name, language: $0.language,
+                               quality: AudioApprovalVoiceQuality(rawValue: Int($0.quality.rawValue)) ?? .standard)
+    }.sorted {
+      if $0.language != $1.language { return $0.language < $1.language }
+      if $0.name != $1.name { return $0.name < $1.name }
+      return $0.quality.rawValue > $1.quality.rawValue
+    }
+  }
+
+  /// Both approval prompts and their acknowledgements use this on-device voice. Refreshing
+  /// picks up downloads/removals even if Settings has not been opened since the change.
+  func speechUtterance(for text: String) -> AVSpeechUtterance {
+    refreshVoices()
+    let utterance = AVSpeechUtterance(string: text)
+    utterance.voice = selectedVoice.flatMap { AVSpeechSynthesisVoice(identifier: $0.id) }
+      ?? AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())
+    return utterance
+  }
 
   /// Called once from the app root. Creates nothing unless the person turned the feature on.
   func attach(remote: MobileRemoteStore) {
@@ -133,6 +203,8 @@ final class AudioApprovalController: ObservableObject {
   }
 
   func leave() {
+    promptCheckID = nil
+    endPromptBackgroundTask()
     endReplyBackgroundTask()
     bridge?.leave()
     channelJoined = false
@@ -263,6 +335,10 @@ final class AudioApprovalController: ObservableObject {
 
   private func send(_ event: AudioApprovalEvent) {
     switch event {
+    case .hostCheckFailed:
+      if let target = session.pushedTarget, let id = deliveryIDs[target] {
+        reportDelivery(stage: "playback-failed", target: target, deliveryID: id, reason: "host-check-failed")
+      }
     case .playbackFinished(let completed, _):
       if case .speaking(.prompt) = session.playback, let delivery = playbackDelivery {
         reportDelivery(stage: completed ? "playback-completed" : "playback-failed", target: delivery.target,
@@ -315,6 +391,9 @@ final class AudioApprovalController: ObservableObject {
     case .requestAudioSession:
       bridge?.beginReceiving()
     case .releaseAudioSession:
+      // The bounded receive-session timeout can fire before a slow host check returns.
+      // Keep background execution for that request so a late response can still start audio.
+      if promptCheckID == nil { endPromptBackgroundTask() }
       bridge?.finishReceiving()
     case .speak(let text, let kind):
       speak(text, kind: kind)
@@ -338,8 +417,14 @@ final class AudioApprovalController: ObservableObject {
     case .refreshApprovals:
       let requestID = UUID()
       promptCheckID = requestID
+      beginPromptBackgroundTask()
       Task { [weak self] in
-        guard let self, let remote = self.remote else { return }
+        guard let self, self.promptCheckID == requestID else { return }
+        guard let remote = self.remote else {
+          self.promptCheckID = nil
+          self.send(.hostCheckFailed("No paired Mac is attached."))
+          return
+        }
         await remote.refreshWorkspace(reportsErrors: false, requiresNewSnapshot: true)
         guard self.promptCheckID == requestID else { return }
         self.promptCheckID = nil
@@ -402,7 +487,7 @@ final class AudioApprovalController: ObservableObject {
       // synthesizer playback can stop when backgrounded without a finish/cancel callback.
       // Generation completion is not playback completion: the last buffer must be heard.
       let sequence = AudioApprovalSpeechSequence()
-      synthesizer.write(AVSpeechUtterance(string: text)) { @Sendable [weak self] buffer in
+      synthesizer.write(speechUtterance(for: text)) { @Sendable [weak self] buffer in
         guard let pcm = buffer as? AVAudioPCMBuffer else { return }
         let index = sequence.take()
         let transferred = AudioApprovalSpeechBuffer(pcm)
@@ -461,6 +546,7 @@ final class AudioApprovalController: ObservableObject {
       // Audible playback now has the framework's runtime assertion. Until this point the
       // reply's short background task covers final transcription, transport, and receipt.
       endReplyBackgroundTask()
+      endPromptBackgroundTask()
     } catch {
       playbackFailureReason = "engine-start-failed"
       stopSpeech()
@@ -503,6 +589,33 @@ final class AudioApprovalController: ObservableObject {
     }
   }
 
+  /// A Push to Talk wake must finish host verification and start audible buffers before
+  /// ordinary suspension is safe. Short diagnostic uploads do not cover that whole interval.
+  private func beginPromptBackgroundTask() {
+    guard promptBackgroundTask == .invalid else { return }
+    let generation = UUID()
+    promptBackgroundGeneration = generation
+    promptBackgroundTask = backgroundRuntime.begin(name: "Verify incoming audio approval") { [weak self] in
+      guard let self, self.promptBackgroundGeneration == generation else { return }
+      self.promptCheckID = nil
+      if case .speaking = self.session.playback {
+        self.send(.playbackStalled)
+      } else {
+        self.send(.hostCheckFailed("Background time expired before the prompt could start."))
+      }
+      self.endPromptBackgroundTask()
+    }
+    if promptBackgroundTask == .invalid { promptBackgroundGeneration = nil }
+  }
+
+  private func endPromptBackgroundTask() {
+    promptBackgroundGeneration = nil
+    guard promptBackgroundTask != .invalid else { return }
+    let identifier = promptBackgroundTask
+    promptBackgroundTask = .invalid
+    backgroundRuntime.end(identifier)
+  }
+
   private func endReplyBackgroundTask() {
     guard replyBackgroundTask != .invalid else { return }
     UIApplication.shared.endBackgroundTask(replyBackgroundTask)
@@ -515,6 +628,7 @@ final class AudioApprovalController: ObservableObject {
     // A host switch invalidates the current prompt and its in-flight answer.
     if historyKey != nil {
       promptCheckID = nil
+      endPromptBackgroundTask()
       deliveryIDs.removeAll()
       playbackDelivery = nil
       deliveryReportTask?.cancel()
@@ -750,8 +864,14 @@ final class AudioApprovalController: ObservableObject {
   /// Simulates the physical route. `notify: false` changes `currentRoute` without a
   /// route-change notification, as observed on a backgrounded phone switching AirPods to HFP.
   func setDemoRoute(headset: Bool, notify: Bool) {
-    demoRoute = AudioRouteSnapshot(route: headset ? .headset : .nonHeadset, inCall: false, mediaPlaying: false, pushToTalkSessionActive: true)
+    demoRoute = AudioRouteSnapshot(route: headset ? .headset : .nonHeadset, inCall: false, mediaPlaying: demoRoute.mediaPlaying, pushToTalkSessionActive: true)
     if notify { send(.routeChanged(demoRoute)) }
+  }
+
+  /// The other app can still report audio while Push to Talk takes over its session.
+  func setDemoMediaPlaying(_ playing: Bool) {
+    demoRoute = AudioRouteSnapshot(route: demoRoute.route, inCall: demoRoute.inCall,
+                                  mediaPlaying: playing, pushToTalkSessionActive: true)
   }
 
   /// Prompts the simulated output refused because the route was not a headset.
@@ -778,6 +898,7 @@ final class AudioApprovalController: ObservableObject {
     case .requestAudioSession:
       send(.sessionActivated(demoRoute, now: Date()))
     case .releaseAudioSession:
+      if promptCheckID == nil { endPromptBackgroundTask() }
       send(.sessionDeactivated)
     case .speak(let text, let kind):
       if kind == .prompt { preparePlaybackDelivery() }
@@ -791,6 +912,7 @@ final class AudioApprovalController: ObservableObject {
       if kind == .prompt, let delivery = playbackDelivery {
         reportDelivery(stage: "playback-started", target: delivery.target, deliveryID: delivery.id)
       }
+      endPromptBackgroundTask()
       demoSpoken = text
       send(.playbackFinished(completed: true, now: Date()))
     case .checkRoute(let delay):

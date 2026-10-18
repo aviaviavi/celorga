@@ -94,12 +94,14 @@ const runC = waitingRun("run-c", "appr-c", T2);
 state = selectActiveAudioPrompt(state, [runA, runB, runC], T2);
 assert.equal(state.active.promptId, firstPrompt, "active prompt is kept while its exact target is pending");
 
-// 4. Playback is headset-only, held for quiet/call/media, and revalidated at playback.
+// 4. Playback is headset-only and held for quiet/calls; ordinary media is interruptible.
 assert.deepEqual(planAudioPlayback(state, { route: "headset" }), { action: "play", reason: "headset-ready" });
 assert.deepEqual(planAudioPlayback(state, { route: "speaker" }), { action: "hold", reason: "no-headset" }, "no speaker fallback");
 assert.deepEqual(planAudioPlayback(state, { route: "none" }), { action: "hold", reason: "no-headset" });
 assert.deepEqual(planAudioPlayback(state, { route: "headset", inCall: true }), { action: "hold", reason: "call-active" });
-assert.deepEqual(planAudioPlayback(state, { route: "headset", mediaPlaying: true }), { action: "hold", reason: "media-active" });
+assert.deepEqual(planAudioPlayback(state, { route: "headset", mediaPlaying: true }), { action: "play", reason: "headset-ready" }, "joined approvals interrupt podcasts and music");
+assert.deepEqual(planAudioPlayback(state, { route: "speaker", mediaPlaying: true }), { action: "hold", reason: "no-headset" });
+assert.deepEqual(planAudioPlayback(state, { route: "headset", mediaPlaying: true, inCall: true }), { action: "hold", reason: "call-active" });
 const quiet = setAudioQuietMode(state, true);
 assert.deepEqual(planAudioPlayback(quiet, { route: "headset" }), { action: "hold", reason: "quiet" });
 // Route loss mid-prompt retains the prompt as queued rather than moving it to another output.

@@ -160,7 +160,7 @@ export function planAudioPlayback(state: AudioBrokerState, route: AudioRouteSnap
   if (state.quiet) return { action: "hold", reason: "quiet" };
   if (route.route !== "headset") return { action: "hold", reason: "no-headset" };
   if (route.inCall) return { action: "hold", reason: "call-active" };
-  if (route.mediaPlaying) return { action: "hold", reason: "media-active" };
+  // Joined approvals interrupt other media; the native audio session arbitrates playback.
   return { action: "play", reason: "headset-ready" };
 }
 

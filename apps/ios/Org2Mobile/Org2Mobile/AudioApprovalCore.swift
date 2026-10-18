@@ -14,6 +14,7 @@ enum AudioApprovalFeature {
   static let defaultsKey = "celorga.audioApprovals.enabled"
   /// Quiet or snoozed until this time. `Date.distantFuture` is quiet mode.
   static let quietUntilDefaultsKey = "celorga.audioApprovals.quietUntil"
+  static let voiceIdentifierDefaultsKey = "celorga.audioApprovals.voiceIdentifier"
   static let snoozeInterval: TimeInterval = 30 * 60
   /// A reply binds only to a prompt heard this recently.
   static let replyWindow: TimeInterval = 120
@@ -36,6 +37,46 @@ enum AudioApprovalFeature {
 
   static var isEnabled: Bool {
     UserDefaults.standard.bool(forKey: defaultsKey)
+  }
+}
+
+enum AudioApprovalVoiceQuality: Int, Sendable {
+  case standard = 1, enhanced = 2, premium = 3
+
+  var label: String {
+    switch self {
+    case .standard: "Standard"
+    case .enhanced: "Enhanced"
+    case .premium: "Premium"
+    }
+  }
+}
+
+/// Installed voices only. Identifiers survive list ordering changes and new voice downloads.
+struct AudioApprovalVoiceOption: Identifiable, Equatable, Sendable {
+  let id: String
+  let name: String
+  let language: String
+  let quality: AudioApprovalVoiceQuality
+
+  /// Respect a chosen voice, otherwise upgrade within the preferred region before trying
+  /// another region of the same language. Never automatically switch to another language.
+  static func select(from voices: [Self], preferredIdentifier: String?, language: String) -> Self? {
+    if let preferredIdentifier, let chosen = voices.first(where: { $0.id == preferredIdentifier }) {
+      return chosen
+    }
+    let normalized = language.replacingOccurrences(of: "_", with: "-").lowercased()
+    let base = normalized.split(separator: "-").first
+    let matching = voices.filter {
+      $0.language.replacingOccurrences(of: "_", with: "-").lowercased().split(separator: "-").first == base
+    }
+    let regional = matching.filter {
+      $0.language.replacingOccurrences(of: "_", with: "-").lowercased() == normalized
+    }
+    return (regional.isEmpty ? matching : regional).sorted {
+      if $0.quality != $1.quality { return $0.quality.rawValue > $1.quality.rawValue }
+      return $0.id < $1.id
+    }.first
   }
 }
 
@@ -243,7 +284,8 @@ func planAudioPlayback(quiet: Bool, snapshot: AudioRouteSnapshot) -> AudioPlayba
   if !snapshot.pushToTalkSessionActive { return .hold(.noPushToTalkSession) }
   if snapshot.route != .headset { return .hold(.noHeadset) }
   if snapshot.inCall { return .hold(.callActive) }
-  if snapshot.mediaPlaying { return .hold(.mediaActive) }
+  // A joined approvals channel interrupts media. The system-owned, nonmixing Push to Talk
+  // session arbitrates with the other app; its media-playing hint is not a playback veto.
   return .play
 }
 

@@ -1,11 +1,66 @@
 import XCTest
 import AVFoundation
+import UIKit
 @testable import Org2Mobile
 
 /// Runs the shipped phone controller and TCP client against a real Mac host and CLI corpus.
 /// Only Apple's PTT/headset/microphone callbacks are replaced by the existing debug driver.
 @MainActor
 final class AudioApprovalEndToEndTests: XCTestCase {
+  private final class RecordingBackgroundRuntime: AudioApprovalBackgroundRuntime {
+    private var next: UIBackgroundTaskIdentifier.RawValue = 1
+    var active: [UIBackgroundTaskIdentifier: @MainActor @Sendable () -> Void] = [:]
+    func begin(name: String, expiration: @escaping @MainActor @Sendable () -> Void) -> UIBackgroundTaskIdentifier {
+      let id = UIBackgroundTaskIdentifier(rawValue: next)
+      next += 1
+      active[id] = expiration
+      return id
+    }
+    func end(_ identifier: UIBackgroundTaskIdentifier) { active[identifier] = nil }
+    func expire() { Array(active.values).forEach { $0() } }
+  }
+
+  func testIncomingPushHoldsBackgroundTimeBeforeCheckingTheHost() async throws {
+    let background = RecordingBackgroundRuntime()
+    let phone = AudioApprovalController(backgroundRuntime: background)
+    phone.setDemo(true)
+    phone.demoReceivePush(["runID": "runtime-run", "approvalID": "runtime-approval", "fingerprint": "sha256:runtime"])
+    XCTAssertEqual(background.active.count, 1, "An incoming background push must hold runtime before the first asynchronous host check")
+    try await eventually("An unavailable host releases the prompt's background time") { background.active.isEmpty }
+  }
+
+  func testIncomingPushExpirationReleasesRuntimeAndDoesNotSpeak() async throws {
+    let background = RecordingBackgroundRuntime()
+    let phone = AudioApprovalController(backgroundRuntime: background)
+    phone.setDemo(true)
+    phone.demoReceivePush(["runID": "runtime-run", "approvalID": "runtime-approval", "fingerprint": "sha256:runtime"])
+    background.expire()
+    XCTAssertTrue(background.active.isEmpty)
+    XCTAssertTrue(phone.phase.contains("Background time expired"))
+    await Task.yield()
+    XCTAssertNil(phone.demoSpoken, "An expired check cannot play cached data or a late response")
+  }
+
+  func testVoicePreferenceSurvivesReopenAndConfiguresTheActualUtterance() throws {
+    let suite = "audio-voice-\(UUID())"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let phone = AudioApprovalController(voiceDefaults: defaults)
+    phone.refreshVoices()
+    let voice = try XCTUnwrap(phone.availableVoices.first)
+    phone.setVoice(voice.id)
+    let reopened = AudioApprovalController(voiceDefaults: defaults)
+    XCTAssertEqual(reopened.voiceIdentifier, voice.id)
+    XCTAssertEqual(reopened.speechUtterance(for: "Test voice").voice?.identifier, voice.id)
+    reopened.setVoice("no-longer-installed")
+    XCTAssertTrue(reopened.selectedVoiceUnavailable)
+    XCTAssertNotNil(reopened.speechUtterance(for: "Test fallback").voice)
+    XCTAssertEqual(reopened.voiceIdentifier, "no-longer-installed", "A removed preference stays recoverable")
+    reopened.setVoice(nil)
+    XCTAssertNil(AudioApprovalController(voiceDefaults: defaults).voiceIdentifier)
+    XCTAssertEqual(reopened.speechUtterance(for: "Test automatic").voice?.identifier, reopened.automaticVoice?.id)
+  }
+
   func testClosingAnIdleChatDoesNotDeactivateThePushToTalkSession() {
     let audio = RecordingAudioSession()
     let transcriber = MobileVoiceTranscriber(audioSession: audio)
@@ -31,6 +86,7 @@ final class AudioApprovalEndToEndTests: XCTestCase {
     XCTAssertEqual(session.category, .playAndRecord)
     XCTAssertEqual(session.mode, .voiceChat)
     XCTAssertTrue(session.categoryOptions.contains(.allowBluetooth), "Chat dictation must retain the headset input/output used by approvals")
+    XCTAssertFalse(session.categoryOptions.contains(.mixWithOthers), "The joined channel interrupts other audio instead of mixing with a podcast")
   }
 
   private final class RecordingAudioSession: MobileVoiceAudioSessionManaging {
@@ -57,7 +113,8 @@ final class AudioApprovalEndToEndTests: XCTestCase {
     await remote.refreshWorkspace()
     XCTAssertTrue(remote.workspaceApprovals.contains { $0.title == "Old unanswered approval" })
 
-    let phone = AudioApprovalController()
+    let background = RecordingBackgroundRuntime()
+    let phone = AudioApprovalController(backgroundRuntime: background)
     defer {
       let evidence = XCTAttachment(string: "Phone phase: \(phone.phase)\nPrompt: \(phone.promptText ?? "none")\nSpoken: \(phone.demoSpoken ?? "none")\nHost error: \(remote.workspaceConnectionError ?? "none")\nReply: \(phone.replyHistory.last?.outcome ?? "none")")
       evidence.lifetime = .keepAlways
@@ -65,15 +122,23 @@ final class AudioApprovalEndToEndTests: XCTestCase {
     }
     phone.attach(remote: remote)
     phone.setDemo(true)
+    phone.setDemoMediaPlaying(true)
     let control = try MobileRemoteClient(endpoint: endpoint, accessToken: nil)
     // Hold a foreground refresh with the OLD snapshot already captured on the host.
     let foreground = Task { await remote.refreshWorkspace() }
     let _: Empty = try await control.get("/test/wait-for-refresh", as: Empty.self)
     let push: Push = try await control.post("/test/create-fresh", payload: Empty(), as: Push.self)
+    let _: Empty = try await control.post("/test/hold-fresh-verification", payload: Empty(), as: Empty.self)
     phone.demoReceivePush(["runID": push.runID, "approvalID": push.approvalID, "fingerprint": push.fingerprint, "deliveryID": push.deliveryID.uuidString])
-    try await eventually("The pushed approval must play without opening the app or tapping Play; old cached snapshots must not discard its identity") {
+    XCTAssertEqual(background.active.count, 1, "Background runtime must bridge the pushed approval's host verification")
+    let _: Empty = try await control.get("/test/wait-for-fresh-verification", as: Empty.self)
+    try await Task.sleep(for: .seconds(AudioApprovalFeature.remoteParticipantHoldLimit + 1))
+    XCTAssertEqual(background.active.count, 1, "Releasing an idle PTT session must not suspend a still-running host verification")
+    let _: Empty = try await control.post("/test/release-fresh-verification", payload: Empty(), as: Empty.self)
+    try await eventually("The pushed approval must interrupt other media without opening the app or tapping Play; old cached snapshots must not discard its identity") {
       phone.demoSpoken?.contains("Fresh end-to-end approval") == true
     }
+    XCTAssertTrue(background.active.isEmpty, "Audio playback takes over runtime from the bounded incoming-push task")
     let _: Empty = try await control.post("/test/release-refresh", payload: Empty(), as: Empty.self)
     await foreground.value
     XCTAssertTrue(phone.promptText?.contains("Fresh end-to-end approval") == true, "A late older response must not replace the verified prompt")
