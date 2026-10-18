@@ -1123,6 +1123,215 @@ final class CodexAppServerClientTests: XCTestCase {
     await client.shutdown()
   }
 
+  func testLocalTurnWaitsForNotificationWithoutPollingThreadRead() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-codex-local-no-poll-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    let readMarker = temporaryDirectory.appendingPathComponent("thread-read-requested")
+    let executable = temporaryDirectory.appendingPathComponent("fake-codex-local-no-poll")
+    // A thread/read during the turn answers with a status Celorga does not
+    // recognize. Polling it used to fail a turn Codex was still answering.
+    let script = #"""
+    #!/bin/sh
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":([0-9]+).*/\1/')
+      case "$line" in
+        *'"method":"initialize"'*)
+          printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id"
+          ;;
+        *'"method":"initialized"'*)
+          ;;
+        *'"method":"thread/start"'*)
+          printf '{"id":%s,"result":{"thread":{"id":"thr-local"}}}\n' "$request_id"
+          ;;
+        *'"method":"turn/start"'*)
+          printf '{"id":%s,"result":{"turn":{"id":"turn-local","status":"inProgress"}}}\n' "$request_id"
+          printf '%s\n' '{"method":"turn/started","params":{"threadId":"thr-local","turn":{"id":"turn-local","status":"inProgress","items":[]}}}'
+          (
+            sleep 2.5
+            printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-local","turn":{"id":"turn-local","status":"completed","items":[{"id":"agent-final","type":"agentMessage","phase":"final_answer","text":"Finished locally"}]}}}'
+          ) &
+          ;;
+        *'"method":"thread/read"'*)
+          : > '\#(readMarker.path)'
+          printf '{"id":%s,"result":{"thread":{"id":"thr-local","turns":[{"id":"turn-local","status":"waitingOnTool","items":[]}]}}}\n' "$request_id"
+          ;;
+      esac
+    done
+    """#
+    try script.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let client = CodexAppServerClient(
+      executableURL: executable,
+      eventHandler: { _ in },
+      dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+    )
+    let threadID = try await client.ensureThread(existingThreadID: nil, cwd: temporaryDirectory)
+
+    let result = try await client.runTurn(
+      threadID: threadID,
+      turnID: "local-turn",
+      message: "Take a few seconds.",
+      attachments: [],
+      cwd: temporaryDirectory,
+      attemptIdentity: CodexTurnAttemptIdentity(messageID: UUID(), attemptID: UUID())
+    )
+
+    XCTAssertEqual(result.status, .completed)
+    XCTAssertEqual(result.reply, "Finished locally")
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: readMarker.path),
+      "a local turn must not be polled with thread/read while Codex owns it"
+    )
+    await client.shutdown()
+  }
+
+  func testTurnStartMergedIntoActiveTurnResolvesEveryWaiter() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-codex-merged-turn-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    let executable = temporaryDirectory.appendingPathComponent("fake-codex-merged-turn")
+    // Codex appends a turn/start sent during an active turn to that turn and
+    // returns the active turn's ID instead of starting a second one.
+    let script = #"""
+    #!/bin/sh
+    starts=0
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":([0-9]+).*/\1/')
+      case "$line" in
+        *'"method":"initialize"'*)
+          printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id"
+          ;;
+        *'"method":"initialized"'*)
+          ;;
+        *'"method":"thread/start"'*)
+          printf '{"id":%s,"result":{"thread":{"id":"thr-merged"}}}\n' "$request_id"
+          ;;
+        *'"method":"turn/start"'*)
+          starts=$((starts + 1))
+          printf '{"id":%s,"result":{"turn":{"id":"turn-merged","status":"inProgress"}}}\n' "$request_id"
+          if [ "$starts" = 1 ]; then
+            printf '%s\n' '{"method":"turn/started","params":{"threadId":"thr-merged","turn":{"id":"turn-merged","status":"inProgress","items":[]}}}'
+          else
+            (
+              sleep 0.5
+              printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-merged","turn":{"id":"turn-merged","status":"completed","items":[{"id":"agent-final","type":"agentMessage","phase":"final_answer","text":"Answered both"}]}}}'
+            ) &
+          fi
+          ;;
+      esac
+    done
+    """#
+    try script.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let client = CodexAppServerClient(
+      executableURL: executable,
+      eventHandler: { _ in },
+      dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+    )
+    let threadID = try await client.ensureThread(existingThreadID: nil, cwd: temporaryDirectory)
+
+    async let first = client.runTurn(
+      threadID: threadID,
+      turnID: "local-turn-1",
+      message: "First message.",
+      attachments: [],
+      cwd: temporaryDirectory,
+      attemptIdentity: CodexTurnAttemptIdentity(messageID: UUID(), attemptID: UUID())
+    )
+    try await Task.sleep(for: .milliseconds(300))
+    let second = try await client.runTurn(
+      threadID: threadID,
+      turnID: "local-turn-2",
+      message: "Second message during the active turn.",
+      attachments: [],
+      cwd: temporaryDirectory,
+      attemptIdentity: CodexTurnAttemptIdentity(messageID: UUID(), attemptID: UUID())
+    )
+    let firstResult = try await first
+
+    XCTAssertEqual(second.status, .completed)
+    XCTAssertEqual(firstResult.status, .completed, "the earlier send must not be left waiting forever")
+    XCTAssertEqual(firstResult.reply, "Answered both")
+    await client.shutdown()
+  }
+
+  func testManagedRemoteRecoveryKeepsWaitingThroughUnrecognizedStatus() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-managed-remote-unrecognized-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    let readCount = temporaryDirectory.appendingPathComponent("read-count")
+    let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
+    let script = #"""
+    #!/bin/sh
+    count_file='\#(readCount.path)'
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":([0-9]+).*/\1/')
+      case "$line" in
+        *'"method":"initialize"'*)
+          printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id"
+          ;;
+        *'"method":"initialized"'*)
+          ;;
+        *'"method":"thread/start"'*)
+          printf '{"id":%s,"result":{"thread":{"id":"thr-unrecognized"}}}\n' "$request_id"
+          ;;
+        *'"method":"turn/start"'*)
+          printf '{"id":%s,"result":{"turn":{"id":"turn-unrecognized","status":"inProgress"}}}\n' "$request_id"
+          ;;
+        *'"method":"thread/read"'*)
+          case "$line" in
+            *celorgaDeliveryRead*)
+              printf '{"id":%s,"result":{"thread":{"id":"thr-unrecognized","turns":[]}}}\n' "$request_id"
+              continue
+              ;;
+          esac
+          count=0
+          if [ -f "$count_file" ]; then count=$(/usr/bin/sed -n '1p' "$count_file"); fi
+          count=$((count + 1))
+          printf '%s\n' "$count" > "$count_file"
+          if [ "$count" -lt 2 ]; then
+            printf '{"id":%s,"result":{"thread":{"id":"thr-unrecognized","turns":[{"id":"turn-unrecognized","items":[]}]}}}\n' "$request_id"
+          else
+            printf '{"id":%s,"result":{"thread":{"id":"thr-unrecognized","turns":[{"id":"turn-unrecognized","status":"completed","items":[{"id":"agent-final","type":"agentMessage","phase":"final_answer","text":"Still answered"}]}]}}}\n' "$request_id"
+          fi
+          ;;
+      esac
+    done
+    """#
+    try script.write(to: fakeSSH, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeSSH.path)
+
+    let client = CodexAppServerClient(
+      executableURL: nil,
+      sshExecutableURL: fakeSSH,
+      transport: .managedRemote(sshHost: "remote.example"),
+      requestTimeoutNanoseconds: 5_000_000_000,
+      eventHandler: { _ in },
+      dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+    )
+    let threadID = try await client.ensureThread(existingThreadID: nil, cwd: temporaryDirectory)
+
+    let result = try await client.runTurn(
+      threadID: threadID,
+      turnID: "local-turn",
+      message: "A status-less read is not completion.",
+      attachments: [],
+      cwd: temporaryDirectory,
+      attemptIdentity: CodexTurnAttemptIdentity(messageID: UUID(), attemptID: UUID())
+    )
+
+    XCTAssertEqual(result.status, .completed)
+    XCTAssertEqual(result.reply, "Still answered")
+    await client.shutdown()
+  }
+
   func testAgedModelCatalogRestartsIdleAppServerBeforeRefresh() async throws {
     let temporaryDirectory = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-codex-model-refresh-\(UUID().uuidString)", isDirectory: true)

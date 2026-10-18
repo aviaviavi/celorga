@@ -363,7 +363,9 @@ public actor CodexAppServerClient {
     var streamedItemID: String?
     var errorMessage: String?
     var usage: AIChatTokenUsage?
-    var continuation: CheckedContinuation<CodexTurnResult, Never>?
+    /// Codex appends a turn/start sent during an active turn to that turn and
+    /// returns its ID, so more than one send can wait on the same native turn.
+    var continuations: [CheckedContinuation<CodexTurnResult, Never>] = []
     var completedResult: CodexTurnResult?
     var pendingCompletionResult: CodexTurnResult?
     var completionTask: Task<Void, Never>?
@@ -415,6 +417,8 @@ public actor CodexAppServerClient {
   private var pendingTurns: [String: PendingTurn] = [:]
   private var reportedStartedTurnIDs = Set<String>()
   private var managedRemoteRecoveryTask: Task<Void, Never>?
+  /// Recovery reported a disconnect; the next successful poll reports the reconnect.
+  private var reportedRecoveryDisconnect = false
   private var cancelledTurnIDs = Set<String>()
   private var ignoredCompletedTurnIDs = Set<String>()
   private var loadedThreadIDs = Set<String>()
@@ -1752,7 +1756,12 @@ while True:
     }
     await reportTurnStarted(threadID: threadID, turnID: turnID)
     if status == "inProgress" {
-      scheduleManagedRemoteTurnRecovery()
+      // Only an SSH-bridged daemon can lose turn notifications while the turn
+      // keeps running. A local or WebSocket app server delivers turn/completed
+      // on the live transport, and transportEnded resolves the turn otherwise.
+      if case .managedRemote = transport {
+        scheduleManagedRemoteTurnRecovery()
+      }
     } else {
       completeTurn(.object([
         "threadId": .string(threadID),
@@ -1767,6 +1776,11 @@ while True:
     }
     await reportTurnTerminal(result)
     return try Self.requireSuccessfulTurn(result)
+  }
+
+  nonisolated static func isRecognizedTerminalTurnStatus(_ status: String) -> Bool {
+    guard let parsed = CodexTurnResult.Status(rawValue: status) else { return false }
+    return parsed != .unknown
   }
 
   nonisolated private static func requireSuccessfulTurn(
@@ -2216,6 +2230,7 @@ while True:
     if case .managedRemote = transport,
        pendingTurns.values.contains(where: { $0.completedResult == nil }) {
       scheduleManagedRemoteTurnRecovery()
+      reportedRecoveryDisconnect = true
       await eventHandler(.connectionChanged(
         isConnected: false,
         detail: "\(message). The remote turn is still owned by Codex and will reconnect."
@@ -2281,8 +2296,12 @@ while True:
           }) else {
             continue
           }
-          let status = turn["status"]?.stringValue ?? ""
-          guard status != "inProgress" else { continue }
+          // Only a recognized terminal status is completion evidence. A missing,
+          // in-progress, or unfamiliar status means the turn is still Codex's;
+          // resolving it here would fail a message Codex is still answering.
+          guard let status = turn["status"]?.stringValue,
+                Self.isRecognizedTerminalTurnStatus(status)
+          else { continue }
           guard let pending = pendingTurns[turnID], pending.completedResult == nil else {
             continue
           }
@@ -2291,10 +2310,15 @@ while True:
             "turn": turn
           ]))
         }
+        if reportedRecoveryDisconnect {
+          reportedRecoveryDisconnect = false
+          await eventHandler(.connectionChanged(isConnected: true, detail: nil))
+        }
         delayNanoseconds = 2_000_000_000
       } catch is CancellationError {
         return
       } catch {
+        reportedRecoveryDisconnect = true
         await eventHandler(.connectionChanged(
           isConnected: false,
           detail: "The remote turn is still saved; reconnecting after \(error.localizedDescription)"
@@ -2732,14 +2756,15 @@ while True:
     pending.completionTask?.cancel()
     pending.completionTask = nil
     pending.pendingCompletionResult = nil
-    if let continuation = pending.continuation {
+    if !pending.continuations.isEmpty {
       // Remove ownership before resuming. Resuming schedules the waiting task,
       // whose cancellation handler can immediately reenter this actor. Keeping
       // the continuation in pendingTurns during that window lets the handler
       // resume the same checked continuation twice and traps the process.
-      pending.continuation = nil
+      let continuations = pending.continuations
+      pending.continuations = []
       pendingTurns.removeValue(forKey: turnID)
-      continuation.resume(returning: result)
+      continuations.forEach { $0.resume(returning: result) }
     } else {
       pending.completedResult = result
       pendingTurns[turnID] = pending
@@ -2780,7 +2805,7 @@ while True:
           continuation.resume(returning: completed)
         } else {
           pending.threadID = threadID
-          pending.continuation = continuation
+          pending.continuations.append(continuation)
           pendingTurns[turnID] = pending
         }
       }

@@ -30811,16 +30811,22 @@ extension WorkspaceStore {
     let destinationName = aiChatDestination(id: destinationID)?.name ?? "Codex"
     switch event {
     case .connectionChanged(let isConnected, let detail):
-      if !isConnected {
-        for threadID in aiChatSendingThreadIDs where
-          aiChatThreads.first(where: { $0.id == threadID }).map({
-            $0.destinationID == destinationID
-              || ($0.isSharedRoom && $0.roomDestinationIDs.contains(destinationID))
-          }) == true {
+      for threadID in aiChatSendingThreadIDs where
+        aiChatThreads.first(where: { $0.id == threadID }).map({
+          $0.destinationID == destinationID
+            || ($0.isSharedRoom && $0.roomDestinationIDs.contains(destinationID))
+        }) == true {
+        if isConnected {
+          // A recovered transport clears the interruption marker; otherwise
+          // the rest of a healthy turn reads as "connection interrupted".
+          guard openClawGatewayStateByThreadID[threadID] == .disconnected else { continue }
+          openClawGatewayStateByThreadID[threadID] = .connected
+          openClawGatewayDetailByThreadID[threadID] = destinationName
+        } else {
           openClawGatewayStateByThreadID[threadID] = .disconnected
           openClawGatewayDetailByThreadID[threadID] = detail
-          aiChatLastEventAtByThreadID[threadID] = Date()
         }
+        aiChatLastEventAtByThreadID[threadID] = Date()
       }
     case .accountUpdated(let authMode, let plan):
       guard destinationID == AIChatDestinationConfiguration.localCodexID else { return }
