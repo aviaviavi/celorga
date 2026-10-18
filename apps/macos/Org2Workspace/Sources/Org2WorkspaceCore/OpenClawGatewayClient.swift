@@ -701,8 +701,19 @@ public actor OpenClawGatewayClient {
   private var commentaryTextByItemID: [String: String] = [:]
   private var isShutdown = false
 
-  public init(settings: OpenClawGatewaySettings) {
+  /// Reconnect delays used while nothing has been sent yet. A busy Gateway can stall
+  /// its event loop for more than a minute; the message waits instead of failing.
+  private let preSendReconnectDelays: [TimeInterval]
+  private var timedOutSockets: Set<ObjectIdentifier> = []
+
+  public static let defaultPreSendReconnectDelays: [TimeInterval] = [2, 4, 8, 15, 15, 15, 15, 15]
+
+  public init(
+    settings: OpenClawGatewaySettings,
+    preSendReconnectDelays: [TimeInterval] = OpenClawGatewayClient.defaultPreSendReconnectDelays
+  ) {
     self.settings = settings
+    self.preSendReconnectDelays = preSendReconnectDelays
     let sessionDelegate = OpenClawWebSocketSessionDelegate()
     self.sessionDelegate = sessionDelegate
     self.session = URLSession(
@@ -1012,9 +1023,10 @@ public actor OpenClawGatewayClient {
     self.agentID = agentID
     await onEvent(.connection(.connecting, nil))
 
-    let socket = try makeSocket()
-    self.socket = socket
-    socket.resume()
+    let socket = try await connectBeforeSending(
+      scopes: Self.chatSendScopes(model: model, reasoningEffort: reasoningEffort),
+      onEvent: onEvent
+    )
     defer {
       failPendingSteerAcknowledgements(
         with: OpenClawGatewayError.protocolFailure("the active OpenClaw run ended before the steer was acknowledged")
@@ -1022,10 +1034,6 @@ public actor OpenClawGatewayClient {
     }
 
     do {
-      try await establishConnection(
-        on: socket,
-        scopes: Self.chatSendScopes(model: model, reasoningEffort: reasoningEffort)
-      )
       await onEvent(.connection(.connected, nil))
 
       if Self.shouldPatchSessionConfiguration(model: model, reasoningEffort: reasoningEffort) {
@@ -1570,23 +1578,84 @@ public actor OpenClawGatewayClient {
     return nonce
   }
 
+  /// Opens a handshaken socket for a new message. Until chat.send leaves this process
+  /// nothing can have been delivered, so a refused, dropped, or stalled connection is
+  /// retried for a bounded time rather than failing a message the Gateway never saw.
+  private func connectBeforeSending(
+    scopes: [String],
+    onEvent: @escaping EventHandler
+  ) async throws -> URLSessionWebSocketTask {
+    var attempt = 0
+    while true {
+      let socket = try makeSocket()
+      self.socket = socket
+      socket.resume()
+      do {
+        try await establishConnection(on: socket, scopes: scopes)
+        return socket
+      } catch {
+        socket.cancel(with: .goingAway, reason: nil)
+        sessionDelegate.removeCloseInfo(for: socket)
+        let failure = (error as? OpenClawGatewayError)
+          ?? OpenClawGatewayError.connection(error.localizedDescription)
+        if stopRequested || isShutdown { throw OpenClawGatewayError.aborted(nil) }
+        guard Self.shouldRetryBeforeSending(after: failure),
+              attempt < preSendReconnectDelays.count
+        else { throw failure }
+        let delay = preSendReconnectDelays[attempt]
+        attempt += 1
+        await onEvent(.connection(
+          .reconnecting,
+          "The OpenClaw Gateway is not responding (\(failure.localizedDescription)). Retrying; nothing has been sent yet."
+        ))
+        try? await Task.sleep(for: .milliseconds(Int(delay * 1_000)))
+        if stopRequested || isShutdown { throw OpenClawGatewayError.aborted(nil) }
+      }
+    }
+  }
+
+  /// Only transport failures are retried. A Gateway answer such as NOT_PAIRED or a
+  /// rejected request is definitive and must surface immediately.
+  static func shouldRetryBeforeSending(after error: OpenClawGatewayError) -> Bool {
+    if case .connection = error { return true }
+    return false
+  }
+
   private func establishConnection(
     on socket: URLSessionWebSocketTask,
     scopes: [String] = ["operator.read", "operator.write"]
   ) async throws {
-    let timeoutTask = Task {
+    let socketID = ObjectIdentifier(socket)
+    let timeoutTask = Task { [weak self] in
       do {
         try await Task.sleep(for: .seconds(Self.connectionAttemptTimeout))
       } catch {
         return
       }
+      await self?.markTimedOut(socketID)
       let reason = "OpenClaw Gateway connection timed out after \(Int(Self.connectionAttemptTimeout)) seconds."
       socket.cancel(with: .goingAway, reason: Data(reason.utf8))
     }
-    defer { timeoutTask.cancel() }
+    defer {
+      timeoutTask.cancel()
+      timedOutSockets.remove(socketID)
+    }
+    do {
+      let nonce = try await awaitChallenge(on: socket)
+      try await connect(on: socket, nonce: nonce, scopes: scopes)
+    } catch {
+      // A local cancel reports only "cancelled"; say what actually happened.
+      if timedOutSockets.contains(socketID) {
+        throw OpenClawGatewayError.connection(
+          "the Gateway did not answer the handshake within \(Int(Self.connectionAttemptTimeout)) seconds"
+        )
+      }
+      throw error
+    }
+  }
 
-    let nonce = try await awaitChallenge(on: socket)
-    try await connect(on: socket, nonce: nonce, scopes: scopes)
+  private func markTimedOut(_ socketID: ObjectIdentifier) {
+    timedOutSockets.insert(socketID)
   }
 
   private func connect(

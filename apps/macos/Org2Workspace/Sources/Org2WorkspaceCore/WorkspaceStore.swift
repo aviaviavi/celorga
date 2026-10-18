@@ -28006,6 +28006,11 @@ extension WorkspaceStore {
     }
   }
 
+  nonisolated static func openClawNotSentMessage(_ error: OpenClawGatewayError) -> String {
+    "Not sent. The OpenClaw Gateway did not respond, so this message never reached OpenClaw. "
+      + "Retry to send it. (\(error.localizedDescription))"
+  }
+
   nonisolated static let aiChatOrphanedSendFailureText =
     "This response stopped before Celorga received it. Retry to send it again."
   nonisolated static let aiChatUnknownSendFailureText =
@@ -31252,6 +31257,19 @@ extension WorkspaceStore {
         transcriptURL: sendOrigin.transcriptURL,
         shouldPersist: true
       )
+      let requiresLiveGateway = selectedModel != nil || selectedReasoningEffort != nil
+        || isGatewayCommand
+        || latestUserMessage.attachments.contains(where: { !$0.mimeType.hasPrefix("image/") })
+      if requiresLiveGateway, case .connection = error {
+        // The client already retried; chat.send never left this host. Say so plainly
+        // instead of blaming the thread's model setting.
+        openClawGatewayStateByThreadID[threadID] = .disconnected
+        openClawGatewayDetailByThreadID[threadID] = error.localizedDescription
+        throw OpenClawGatewayError.gateway(
+          code: "LIVE_GATEWAY_UNREACHABLE",
+          message: Self.openClawNotSentMessage(error)
+        )
+      }
       if selectedModel != nil || selectedReasoningEffort != nil {
         openClawGatewayStateByThreadID[threadID] = .disconnected
         openClawGatewayDetailByThreadID[threadID] = error.localizedDescription
