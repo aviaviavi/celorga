@@ -2594,8 +2594,10 @@ private struct SidebarView: View {
                     .frame(width: 12)
                   Image(systemName: "folder")
                     .foregroundStyle(WorkspaceDesign.structuralAccent)
-                  Text("Files")
+                  Text(CorpusFileTreePresentation.rootTitle(corpusRoot: store.corpusRoot))
                     .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                   Spacer(minLength: 0)
                   if showsCommandShortcuts {
                     KeyboardShortcutBadge(text: NewCorpusFileCommand.shortcutTitle)

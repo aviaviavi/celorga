@@ -14,6 +14,23 @@ private actor RunReviewPageRefreshRecorder {
 }
 
 final class WorkspaceDisplayCacheTests: XCTestCase {
+  func testCorpusFileTreeRootRowNamesTheCorpusInsteadOfRepeatingFiles() {
+    XCTAssertEqual(
+      CorpusFileTreePresentation.rootTitle(corpusRoot: URL(fileURLWithPath: "/Users/avi/avi.org2", isDirectory: true)),
+      "avi.org2"
+    )
+    XCTAssertEqual(
+      CorpusFileTreePresentation.rootTitle(corpusRoot: URL(fileURLWithPath: "/tmp/corpus/", isDirectory: true)),
+      "corpus"
+    )
+    XCTAssertEqual(CorpusFileTreePresentation.rootTitle(corpusRoot: nil), "Corpus")
+    XCTAssertNotEqual(
+      CorpusFileTreePresentation.rootTitle(corpusRoot: URL(fileURLWithPath: "/Users/avi/avi.org2")),
+      "Files",
+      "The sidebar section header already says Files"
+    )
+  }
+
   func testCorpusFileTreePresentationProducesFlatStableRows() {
     let files = [
       CorpusFile(

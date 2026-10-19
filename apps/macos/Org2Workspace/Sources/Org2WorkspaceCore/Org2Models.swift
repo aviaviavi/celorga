@@ -2115,6 +2115,14 @@ struct CorpusFileTreePresentationRow: Identifiable, Hashable, Sendable {
 }
 
 enum CorpusFileTreePresentation {
+  /// Title of the sidebar row that discloses the corpus file tree. The
+  /// enclosing sidebar section is already labelled "Files", so the row names
+  /// the corpus folder it browses, as Finder and editor explorers do.
+  static func rootTitle(corpusRoot: URL?) -> String {
+    let name = corpusRoot?.standardizedFileURL.lastPathComponent ?? ""
+    return name.isEmpty || name == "/" ? "Corpus" : name
+  }
+
   static func visibleRows(
     in roots: [CorpusFileTreeNode],
     expandedDirectoryIDs: Set<String>
