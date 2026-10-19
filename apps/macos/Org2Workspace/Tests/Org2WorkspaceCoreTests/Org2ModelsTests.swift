@@ -9171,6 +9171,62 @@ final class Org2ModelsTests: XCTestCase {
     assertToken(.keyword, "end_src", in: raw, tokens: tokens)
   }
 
+  func testOrgSyntaxHighlighterDifferentiatesOpenDoneAndCanceledHeadings() {
+    let raw = """
+    * TODO Write the draft
+    ** DONE Ship the fix :work:
+    ** CANCELED Old plan
+    *** CANCELLED British spelling
+    """
+    let tokens = OrgSyntaxHighlighter.tokens(in: raw)
+    assertToken(.todo, "TODO", in: raw, tokens: tokens)
+    assertToken(.headingTitle, "Write the draft", in: raw, tokens: tokens)
+    assertToken(.doneTodo, "DONE", in: raw, tokens: tokens)
+    assertToken(.doneHeadingTitle, "Ship the fix", in: raw, tokens: tokens)
+    assertToken(.canceledTodo, "CANCELED", in: raw, tokens: tokens)
+    assertToken(.canceledHeadingTitle, "Old plan", in: raw, tokens: tokens)
+    assertToken(.canceledTodo, "CANCELLED", in: raw, tokens: tokens)
+    assertToken(.canceledHeadingTitle, "British spelling", in: raw, tokens: tokens)
+
+    for monospaced in [true, false] {
+      let storage = NSTextStorage(string: raw)
+      OrgSyntaxHighlighter.apply(to: storage, monospaced: monospaced)
+      let ns = raw as NSString
+      func color(_ text: String) -> NSColor? {
+        storage.attribute(.foregroundColor, at: ns.range(of: text).location, effectiveRange: nil) as? NSColor
+      }
+      func strike(_ text: String) -> Int? {
+        storage.attribute(.strikethroughStyle, at: ns.range(of: text).location, effectiveRange: nil) as? Int
+      }
+      XCTAssertNotEqual(color("TODO"), color("DONE"))
+      XCTAssertNotEqual(color("DONE"), color("CANCELED"))
+      XCTAssertEqual(color("Ship the fix"), NSColor.secondaryLabelColor)
+      XCTAssertEqual(color("Old plan"), NSColor.tertiaryLabelColor)
+      XCTAssertNil(strike("Write the draft"))
+      XCTAssertNil(strike("Ship the fix"))
+      XCTAssertEqual(strike("Old plan"), NSUnderlineStyle.single.rawValue)
+      XCTAssertEqual(strike("British spelling"), NSUnderlineStyle.single.rawValue)
+      let titleFont = storage.attribute(.font, at: ns.range(of: "Write the draft").location, effectiveRange: nil) as? NSFont
+      let doneFont = storage.attribute(.font, at: ns.range(of: "Ship the fix").location, effectiveRange: nil) as? NSFont
+      XCTAssertEqual(titleFont?.pointSize, doneFont?.pointSize, "Finished headings keep their heading size")
+    }
+  }
+
+  func testOrgTodoVisualStateClassifiesCustomTerminalKeywordsAsDone() {
+    let sequences = [Org2TodoSequence(keywords: ["NEXT", "SHIPPED", "DROPPED"], terminal: ["SHIPPED", "DROPPED"])]
+    XCTAssertNil(OrgTodoVisualState.classify(nil))
+    XCTAssertEqual(OrgTodoVisualState.classify("TODO"), .open)
+    XCTAssertEqual(OrgTodoVisualState.classify("NEXT", sequences: sequences), .open)
+    XCTAssertEqual(OrgTodoVisualState.classify("SHIPPED", sequences: sequences), .done)
+    XCTAssertEqual(OrgTodoVisualState.classify("DONE"), .done)
+    XCTAssertEqual(OrgTodoVisualState.classify("CANCELED"), .canceled)
+    XCTAssertEqual(OrgTodoVisualState.classify("cancelled"), .canceled)
+    XCTAssertTrue(OrgTodoVisualState.canceled.strikesThroughTitle)
+    XCTAssertFalse(OrgTodoVisualState.done.strikesThroughTitle)
+    XCTAssertLessThan(OrgTodoVisualState.canceled.titleOpacity, OrgTodoVisualState.done.titleOpacity)
+    XCTAssertLessThan(OrgTodoVisualState.done.titleOpacity, OrgTodoVisualState.open.titleOpacity)
+  }
+
   func testOrgSyntaxHighlighterStrikesThroughCheckedListItemText() {
     let raw = """
     * [X] heading is not a list item

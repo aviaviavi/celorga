@@ -706,6 +706,7 @@ public enum WorkspaceThemeDocumentStyle {
     \(root) h3 { color: \(c(.heading3)); }
     \(root) .org2-todo { color: \(c(.todo)); background: \(mix(.todo, 13)); }
     \(root) .org2-todo.todo-done { color: \(c(.done)); background: \(mix(.done, 13)); }
+    \(root) .org2-todo.todo-canceled, \(root) .org2-todo.todo-cancelled { color: \(c(.tertiaryText)); background: \(mix(.tertiaryText, 10)); }
     \(root) .org2-priority { color: \(c(.priority)); }
     \(root) .org2-planning-kind { color: \(c(.planning)); }
     \(root) .org2-tag { color: \(c(.tag)); }

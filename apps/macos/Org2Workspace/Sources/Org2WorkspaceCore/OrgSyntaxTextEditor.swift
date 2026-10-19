@@ -1040,14 +1040,14 @@ enum OrgSourceTextChecking {
     for token in OrgSyntaxHighlighter.tokens(in: lineText)
       where NSIntersectionRange(token.range, relativeRange).length > 0 {
       switch token.kind {
-      case .headingStars, .keyword, .planningKeyword, .propertyKey, .todo, .priority,
+      case .headingStars, .keyword, .planningKeyword, .propertyKey, .todo, .doneTodo, .canceledTodo, .priority,
            .tag, .linkTarget, .code, .timestamp, .syntaxDelimiter, .comment:
         return true
       case .link:
         if let raw = substring(in: lineText, range: token.range), isBareLink(raw) {
           return true
         }
-      case .headingTitle, .emphasis, .checkedListItem:
+      case .headingTitle, .doneHeadingTitle, .canceledHeadingTitle, .emphasis, .checkedListItem:
         break
       }
     }
@@ -5661,6 +5661,14 @@ enum OrgSyntaxHighlightKind: String {
   case comment
   /// The text of a list item whose checkbox is checked (`- [X] text`).
   case checkedListItem
+  /// A finished keyword (`DONE`), drawn like Emacs `org-done`.
+  case doneTodo
+  /// A canceled keyword (`CANCELED`/`CANCELLED`), greyed out.
+  case canceledTodo
+  /// The title of a `DONE` heading, softened like `org-headline-done`.
+  case doneHeadingTitle
+  /// The title of a canceled heading, greyed out and struck through.
+  case canceledHeadingTitle
 }
 
 /// Presentation-only tokenization for the native editor. Semantic org2 structure
@@ -5887,8 +5895,17 @@ enum OrgSyntaxHighlighter {
       return
     }
 
+    let keywordRange = match.range(at: 2)
+    let todoState = keywordRange.location == NSNotFound
+      ? nil
+      : OrgTodoVisualState.classify(ns.substring(with: keywordRange))
     append(match.range(at: 1), kind: .headingStars, lineOffset: lineOffset, into: &tokens)
-    append(match.range(at: 2), kind: .todo, lineOffset: lineOffset, into: &tokens)
+    append(
+      keywordRange,
+      kind: todoState == .done ? .doneTodo : todoState == .canceled ? .canceledTodo : .todo,
+      lineOffset: lineOffset,
+      into: &tokens
+    )
     append(match.range(at: 3), kind: .priority, lineOffset: lineOffset, into: &tokens)
 
     let tagMatch = headingTagRegex.firstMatch(in: line, range: fullRange)
@@ -5908,7 +5925,7 @@ enum OrgSyntaxHighlighter {
     }
     append(
       NSRange(location: titleStart, length: titleEnd - titleStart),
-      kind: .headingTitle,
+      kind: todoState == .done ? .doneHeadingTitle : todoState == .canceled ? .canceledHeadingTitle : .headingTitle,
       lineOffset: lineOffset,
       into: &tokens
     )
@@ -5972,7 +5989,8 @@ enum OrgSyntaxHighlighter {
     case .link, .code, .emphasis, .timestamp:
       return true
     case .headingStars, .headingTitle, .keyword, .planningKeyword, .propertyKey, .todo, .priority, .tag, .linkTarget,
-         .syntaxDelimiter, .comment, .checkedListItem:
+         .syntaxDelimiter, .comment, .checkedListItem, .doneTodo, .canceledTodo, .doneHeadingTitle,
+         .canceledHeadingTitle:
       return false
     }
   }
@@ -6233,7 +6251,47 @@ enum OrgSyntaxHighlighter {
       ]
     case .checkedListItem:
       return checkedListItemAttributes
+    case .doneTodo:
+      return [
+        .foregroundColor: theme.liveColor(.done),
+        .backgroundColor: theme.liveColor(.done, alpha: 0.12),
+        .font: NSFont.systemFont(ofSize: baseFont.pointSize, weight: .semibold)
+      ]
+    case .canceledTodo:
+      return canceledTodoAttributes(baseFont: baseFont)
+    case .doneHeadingTitle, .canceledHeadingTitle:
+      return finishedHeadingTitleAttributes(
+        kind,
+        heading: attributes(for: .headingTitle, baseFont: baseFont, concealsSyntax: concealsSyntax)
+      )
     }
+  }
+
+  private static func canceledTodoAttributes(baseFont: NSFont) -> [NSAttributedString.Key: Any] {
+    [
+      .foregroundColor: NSColor.tertiaryLabelColor,
+      .backgroundColor: NSColor.tertiaryLabelColor.withAlphaComponent(0.08),
+      .font: NSFont.systemFont(ofSize: baseFont.pointSize, weight: .semibold)
+    ]
+  }
+
+  /// Keeps the heading's size and weight but recedes its color: done titles
+  /// soften (Emacs `org-headline-done`), canceled titles grey out and strike.
+  static func finishedHeadingTitleAttributes(
+    _ kind: OrgSyntaxHighlightKind,
+    heading: [NSAttributedString.Key: Any]
+  ) -> [NSAttributedString.Key: Any] {
+    var attributes = heading
+    switch kind {
+    case .doneHeadingTitle:
+      attributes[.foregroundColor] = NSColor.secondaryLabelColor
+    case .canceledHeadingTitle:
+      attributes[.foregroundColor] = NSColor.tertiaryLabelColor
+      attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+    default:
+      break
+    }
+    return attributes
   }
 
   private static var checkedListItemAttributes: [NSAttributedString.Key: Any] {
@@ -6278,7 +6336,12 @@ enum OrgSyntaxHighlighter {
       return muted
     case .checkedListItem:
       return checkedListItemAttributes
-    case .todo, .link:
+    case .doneHeadingTitle, .canceledHeadingTitle:
+      return finishedHeadingTitleAttributes(
+        kind,
+        heading: proseAttributes(for: .headingTitle, baseFont: baseFont) ?? [:]
+      )
+    case .todo, .doneTodo, .canceledTodo, .link:
       return nil
     }
   }

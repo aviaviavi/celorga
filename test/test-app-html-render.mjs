@@ -11,6 +11,21 @@ import { renderOrgDocumentToAppHtml, renderOrgDocumentToHtml, renderOrgExportInd
 import { parseOrgToCanonicalAst } from "../dist/parser.js";
 import { printCanonicalAstToOrg } from "../dist/printer.js";
 
+// Finished headings recede like Emacs Org's org-headline-done: done titles
+// soften, canceled titles grey out and strike through, open titles are unchanged.
+{
+  const doc = parseOrgToCanonicalAst("* TODO Open item\n* DONE Finished item\n* CANCELED Dropped item\n* CANCELLED Dropped spelling\n");
+  const html = renderOrgDocumentToAppHtml(doc).html;
+  assert.match(html, /<h1>.*TODO<\/span> Open item<\/h1>/);
+  assert.match(html, /<h1 class="org2-headline-done">.*DONE<\/span> Finished item<\/h1>/);
+  assert.match(html, /<h1 class="org2-headline-canceled">.*CANCELED<\/span> Dropped item<\/h1>/);
+  assert.match(html, /<h1 class="org2-headline-canceled">.*CANCELLED<\/span> Dropped spelling<\/h1>/);
+  assert.match(html, /\.org2-headline \.org2-headline-canceled \{[^}]*text-decoration: line-through/);
+  assert.match(html, /\.org2-todo\.todo-canceled, \.org2-todo\.todo-cancelled \{ color: var\(--org2-muted\)/);
+  const exported = renderOrgDocumentToHtml(doc);
+  assert.match(typeof exported === "string" ? exported : exported.html, /<h1 class="org2-headline-done">/);
+}
+
 // Audit runs can carry megabytes in one source block. Keep every byte and
 // source citation available, but defer its layout until the reader expands it.
 for (const { body, collapsed, lines } of [

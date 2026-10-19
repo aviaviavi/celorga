@@ -21,6 +21,7 @@ import type {
   TimestampRangeNode,
 } from "./ast.js";
 import { parseInlinesFromText } from "./parser.js";
+import { terminalTodoStatusFromKeyword } from "./todo.js";
 import { parseOrgColorBindingTarget, type OrgColorBinding } from "./colorBinding.js";
 import {
   buildBuiltInLinkAbbreviations,
@@ -60,7 +61,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; m
 main { display: grid; gap: 0.75rem; }
 section.org2-headline { margin: 0.5rem 0 1rem; }
 h1,h2,h3,h4,h5,h6 { margin: 1rem 0 0.5rem; line-height: 1.25; }
-.org2-todo { font-size: 0.8em; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; opacity: 0.9; }
+.org2-todo { display: inline-block; font-size: 0.8em; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; opacity: 0.9; }
+.org2-headline .org2-headline-done { opacity: 0.65; }
+.org2-headline .org2-headline-canceled { opacity: 0.45; text-decoration: line-through; }
 .org2-tags { font-size: 0.8em; opacity: 0.8; }
 .org2-tag { border: 1px solid currentColor; border-radius: 999px; padding: 0 0.35em; }
 .org2-planning { font-size: 0.95em; opacity: 0.9; }
@@ -470,6 +473,8 @@ li:has(> input[type="checkbox"]:checked) > p { color: var(--org2-muted); text-de
 .org2-priority { color: var(--org2-danger); font-family: var(--org2-font-mono); font-size: 0.72em; font-weight: 750; }
 .org2-comment-keyword { color: var(--org2-muted); font-family: var(--org2-font-mono); font-size: 0.72em; font-weight: 700; }
 .org2-headline.commented { opacity: 0.7; }
+.org2-headline .org2-headline-done { color: color-mix(in srgb, var(--org2-text) 58%, transparent); }
+.org2-headline .org2-headline-canceled { color: color-mix(in srgb, var(--org2-text) 42%, transparent); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--org2-text) 35%, transparent); }
 .org2-progress-cookie, .org2-latex-fragment, .org2-citation, .org2-export-snippet { font-family: var(--org2-font-mono); }
 .org2-latex-fragment { color: var(--org2-accent); }
 .org2-footnote-definition { margin: 0.7rem 0; padding-top: 0.45rem; border-top: 1px solid var(--org2-rule); color: var(--org2-muted); font-size: 0.86rem; }
@@ -510,7 +515,7 @@ li > .org2-image-figure { margin-top: 0.65rem; }
   vertical-align: 0.12em;
 }
 .org2-todo.todo-done { color: var(--org2-success); background: color-mix(in srgb, var(--org2-success) 11%, transparent); }
-.org2-todo.todo-canceled, .org2-todo.todo-cancelled { color: var(--org2-danger); background: color-mix(in srgb, var(--org2-danger) 10%, transparent); }
+.org2-todo.todo-canceled, .org2-todo.todo-cancelled { color: var(--org2-muted); background: color-mix(in srgb, var(--org2-muted) 10%, transparent); }
 .org2-tags { display: inline-flex; flex-wrap: wrap; gap: 0.28rem; margin-left: 0.35rem; vertical-align: 0.1em; }
 .org2-tag { color: var(--org2-muted); background: var(--org2-faint); border-radius: 4px; padding: 0.08rem 0.34rem; font-size: 0.65em; font-weight: 550; }
 .org2-encrypted {
@@ -2205,6 +2210,19 @@ function renderList(node: ListNode, context: RenderContext): string {
   return `<${tag}${renderSourceAttributes(node, context)}>\n${items}\n</${tag}>`;
 }
 
+/**
+ * Finished headings recede like Emacs Org's `org-headline-done`: done titles
+ * soften and canceled titles grey out and strike through. Open headings carry
+ * no class, so their markup is unchanged.
+ */
+function headlineTodoStateClassAttribute(node: HeadlineNode): string {
+  if (!node.todo) return "";
+  const status = node.todoTerminal === false ? undefined : terminalTodoStatusFromKeyword(node.todo) ?? (node.todoTerminal ? "done" : undefined);
+  if (status === "canceled") return ' class="org2-headline-canceled"';
+  if (status === "done") return ' class="org2-headline-done"';
+  return "";
+}
+
 function renderHeadline(node: HeadlineNode, context: RenderContext): string {
   const headingLevel = Math.max(1, Math.min(6, node.level));
   const headingTag = `h${headingLevel}`;
@@ -2214,6 +2232,7 @@ function renderHeadline(node: HeadlineNode, context: RenderContext): string {
   const todoClass = String(node.todo || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
   const appTodoClass = context.profile === "app" && todoClass ? ` todo-${escapeAttr(todoClass)}` : "";
   const todo = node.todo ? `<span class="org2-todo${appTodoClass}">${escapeHtml(node.todo)}</span> ` : "";
+  const headingStateAttr = headlineTodoStateClassAttribute(node);
   const priority = node.priority ? `<span class="org2-priority">[#${escapeHtml(node.priority)}]</span> ` : "";
   const comment = node.commented ? '<span class="org2-comment-keyword">COMMENT</span> ' : "";
   const tags =
@@ -2228,14 +2247,14 @@ function renderHeadline(node: HeadlineNode, context: RenderContext): string {
     const body = childrenHtml.trim()
       ? `\n<div class="org2-headline-body">\n${childrenHtml}\n</div>`
       : "";
-    return `<details class="org2-headline level-${node.level}${node.commented ? " commented" : ""}" open${renderSourceAttributes(node, context)}>\n<summary class="org2-headline-summary"><${headingTag}${headingIdAttr}>${headingNumber}${todo}${priority}${comment}${title}${tags}</${headingTag}></summary>${body}\n</details>`;
+    return `<details class="org2-headline level-${node.level}${node.commented ? " commented" : ""}" open${renderSourceAttributes(node, context)}>\n<summary class="org2-headline-summary"><${headingTag}${headingIdAttr}${headingStateAttr}>${headingNumber}${todo}${priority}${comment}${title}${tags}</${headingTag}></summary>${body}\n</details>`;
   }
 
   if (!childrenHtml.trim()) {
-    return `<section class="org2-headline level-${node.level}${node.commented ? " commented" : ""}"${renderSourceAttributes(node, context)}>\n<${headingTag}${headingIdAttr}>${headingNumber}${todo}${priority}${comment}${title}${tags}</${headingTag}>\n</section>`;
+    return `<section class="org2-headline level-${node.level}${node.commented ? " commented" : ""}"${renderSourceAttributes(node, context)}>\n<${headingTag}${headingIdAttr}${headingStateAttr}>${headingNumber}${todo}${priority}${comment}${title}${tags}</${headingTag}>\n</section>`;
   }
 
-  return `<section class="org2-headline level-${node.level}${node.commented ? " commented" : ""}"${renderSourceAttributes(node, context)}>\n<${headingTag}${headingIdAttr}>${headingNumber}${todo}${priority}${comment}${title}${tags}</${headingTag}>\n${childrenHtml}\n</section>`;
+  return `<section class="org2-headline level-${node.level}${node.commented ? " commented" : ""}"${renderSourceAttributes(node, context)}>\n<${headingTag}${headingIdAttr}${headingStateAttr}>${headingNumber}${todo}${priority}${comment}${title}${tags}</${headingTag}>\n${childrenHtml}\n</section>`;
 }
 
 function renderLiveEmbed(target: string, context: RenderContext): string {

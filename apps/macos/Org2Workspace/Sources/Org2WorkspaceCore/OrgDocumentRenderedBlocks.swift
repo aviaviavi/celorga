@@ -1068,6 +1068,8 @@ private struct RenderedHeadingView: View {
         if !embedded.displayText.isEmpty {
           OrgInlineText(embedded.displayText, font: font)
             .foregroundStyle(WorkspaceDesign.headingStyle(level: heading.level))
+            .strikethrough(todoState?.strikesThroughTitle == true)
+            .opacity(todoState?.titleOpacity ?? 1)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
 
@@ -1079,7 +1081,13 @@ private struct RenderedHeadingView: View {
     } else {
       OrgInlineText(rawTitle, font: font)
         .foregroundStyle(WorkspaceDesign.headingStyle(level: heading.level))
+        .strikethrough(todoState?.strikesThroughTitle == true)
+        .opacity(todoState?.titleOpacity ?? 1)
     }
+  }
+
+  private var todoState: OrgTodoVisualState? {
+    OrgTodoVisualState.classify(heading.todo, sequences: heading.todoSequences)
   }
 
   private var headingAlignment: VerticalAlignment {
