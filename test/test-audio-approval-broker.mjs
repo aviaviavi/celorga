@@ -98,6 +98,10 @@ assert.equal(state.active.promptId, firstPrompt, "active prompt is kept while it
 assert.deepEqual(planAudioPlayback(state, { route: "headset" }), { action: "play", reason: "headset-ready" });
 assert.deepEqual(planAudioPlayback(state, { route: "speaker" }), { action: "hold", reason: "no-headset" }, "no speaker fallback");
 assert.deepEqual(planAudioPlayback(state, { route: "none" }), { action: "hold", reason: "no-headset" });
+assert.deepEqual(planAudioPlayback(state, { route: "speaker" }, { allowSpeaker: true }), { action: "play", reason: "speaker-allowed" }, "speaker only with the explicit opt-in");
+assert.deepEqual(planAudioPlayback(state, { route: "speaker", headsetConnecting: true }, { allowSpeaker: true }), { action: "hold", reason: "no-headset" }, "a connecting headset is waited for");
+assert.deepEqual(planAudioPlayback(state, { route: "none" }, { allowSpeaker: true }), { action: "hold", reason: "no-headset" });
+assert.deepEqual(planAudioPlayback(state, { route: "speaker", inCall: true }, { allowSpeaker: true }), { action: "hold", reason: "call-active" });
 assert.deepEqual(planAudioPlayback(state, { route: "headset", inCall: true }), { action: "hold", reason: "call-active" });
 assert.deepEqual(planAudioPlayback(state, { route: "headset", mediaPlaying: true }), { action: "play", reason: "headset-ready" }, "joined approvals interrupt podcasts and music");
 assert.deepEqual(planAudioPlayback(state, { route: "speaker", mediaPlaying: true }), { action: "hold", reason: "no-headset" });

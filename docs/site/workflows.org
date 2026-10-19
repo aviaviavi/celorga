@@ -157,6 +157,8 @@ Audio prompts are limited to requests from the last ten minutes. The phone check
 
 While joined, approval prompts can interrupt a podcast or music through the system Push to Talk audio session. Quiet mode and snooze hold prompts, and phone or FaceTime calls retain system priority. Finishing a prompt releases the receive session so other audio can resume.
 
+Prompts play only on a headset by default. To hear them without one, turn on *Settings → Audio approvals → Play on iPhone speaker*. With it on and no headset connected, prompts play out loud on the phone's loudspeaker; a connected Bluetooth headset is still preferred and waited for while it takes over the route. Quiet mode, snooze, and calls hold prompts as before.
+
 In *Settings → Audio approvals → Voice*, choose an installed voice or use Automatic to select the highest-quality voice for your language and region. Automatic prefers Premium, then Enhanced, then Standard within that region, falling back to another region of the same language when necessary. Download additional Enhanced or Premium voices through iPhone Settings by searching for Voices, then return to Celorga. Speech is generated on the phone. If a chosen voice is removed, Celorga uses Automatic while preserving the preference for a later download.
 
 In *Approvals → Reply and decision history*, inspect the recognized words, their interpretation, and the Mac-confirmed result or failure. The latest 50 spoken attempts persist on the phone for the selected Mac, including unsuccessful attempts. Recorded decisions returned by the Mac include their actor and reason, so a canceled test can be distinguished from a spoken rejection. Older paired hosts continue to support the queue but do not supply canonical decision history.

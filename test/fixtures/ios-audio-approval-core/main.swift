@@ -726,5 +726,43 @@ do {
   expect(session.holdsRemoteParticipant, "playing audio keeps the participant")
 }
 
+// 13. Optional iPhone speaker (Settings › Audio approvals › Play on iPhone speaker; off by default).
+do {
+  let connecting = AudioRouteSnapshot(route: .nonHeadset, inCall: false, mediaPlaying: false, pushToTalkSessionActive: true, headsetConnecting: true)
+  expect(planAudioPlayback(quiet: false, snapshot: speaker) == .hold(.noHeadset), "the speaker stays off by default")
+  expect(planAudioPlayback(quiet: false, snapshot: speaker, allowsSpeaker: true) == .play, "the opt-in plays on the speaker without a headset")
+  expect(planAudioPlayback(quiet: false, snapshot: connecting, allowsSpeaker: true) == .hold(.noHeadset), "a connecting headset is waited for, not bypassed")
+  expect(planAudioPlayback(quiet: true, snapshot: speaker, allowsSpeaker: true) == .hold(.quiet), "quiet still holds speaker playback")
+  expect(planAudioPlayback(quiet: false, snapshot: AudioRouteSnapshot(route: .nonHeadset, inCall: true, mediaPlaying: false, pushToTalkSessionActive: true), allowsSpeaker: true) == .hold(.callActive), "calls still hold speaker playback")
+  expect(planAudioPlayback(quiet: false, snapshot: AudioRouteSnapshot(route: .nonHeadset, inCall: false, mediaPlaying: false, pushToTalkSessionActive: false), allowsSpeaker: true) == .hold(.noPushToTalkSession), "the speaker still needs the system Push to Talk session")
+  expect(planAudioPlayback(quiet: false, snapshot: AudioRouteSnapshot(route: .none, inCall: false, mediaPlaying: false, pushToTalkSessionActive: true), allowsSpeaker: true) == .hold(.noHeadset), "no output never plays")
+
+  var session = joinedSession()
+  session.allowsSpeaker = true
+  _ = session.handle(.pushReceived(targetA, now: t0))
+  _ = session.handle(.approvalsUpdated([a], now: t0))
+  let played = session.handle(.sessionActivated(speaker, now: t0))
+  expect(spoken(played).first?.contains("Approval request") == true, "with the opt-in, activation on the phone speaks the prompt immediately")
+  expect(session.status == "Playing the prompt on the speaker…", "status names the speaker")
+
+  var waiting = joinedSession()
+  waiting.allowsSpeaker = true
+  _ = waiting.handle(.pushReceived(targetA, now: t0))
+  _ = waiting.handle(.approvalsUpdated([a], now: t0))
+  let held = waiting.handle(.sessionActivated(connecting, now: t0))
+  expect(spoken(held).isEmpty && held.contains(.checkRoute(after: AudioApprovalFeature.routeCheckInterval)), "a connecting headset is polled instead of speaking out loud")
+  expect(spoken(waiting.handle(.routeChecked(headset, now: t0))).first?.contains("Approval request") == true, "the prompt then plays on the headset")
+
+  var lostHeadset = joinedSession()
+  lostHeadset.allowsSpeaker = true
+  heardAndCapturing(&lostHeadset)
+  expect(!lostHeadset.handle(.routeChanged(speaker, now: t0)).contains(.cancelCapture), "with the opt-in, moving to the speaker is not a disconnection")
+
+  var offByDefault = joinedSession()
+  _ = offByDefault.handle(.pushReceived(targetA, now: t0))
+  _ = offByDefault.handle(.approvalsUpdated([a], now: t0))
+  expect(spoken(offByDefault.handle(.sessionActivated(speaker, now: t0))).isEmpty, "without the opt-in, the phone speaker never speaks")
+}
+
 print("ios audio approval core: \(checks - failures)/\(checks) checks passed")
 exit(failures == 0 ? 0 : 1)

@@ -13,6 +13,10 @@ struct AudioApprovalSettingsSection: View {
         get: { audio.isEnabled },
         set: { audio.setEnabled($0) }
       ))
+      Toggle("Play on iPhone speaker", isOn: Binding(
+        get: { audio.allowsSpeaker },
+        set: { audio.setAllowsSpeaker($0) }
+      ))
       NavigationLink {
         AudioApprovalVoiceView()
       } label: {
@@ -49,7 +53,7 @@ struct AudioApprovalSettingsSection: View {
     } header: {
       Text("Audio approvals")
     } footer: {
-      Text("Agents' approval requests are read to you on a connected headset, one at a time. Press the Push to Talk button and say yes, no, why, read it to me, or later. Nothing ever plays on the speaker; without a headset, prompts wait on your Mac. Decisions go to your Mac's approval queue for the exact request you heard.")
+      Text("Agents' approval requests are read to you on a connected headset, one at a time. Press the Push to Talk button and say yes, no, why, read it to me, or later. Prompts play only on a headset unless Play on iPhone speaker is on; then, with no headset connected, they play out loud on the phone. Otherwise, without a headset, prompts wait on your Mac. Decisions go to your Mac's approval queue for the exact request you heard.")
     }
     .task {
       audio.refreshVoices()

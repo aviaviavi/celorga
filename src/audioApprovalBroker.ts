@@ -76,10 +76,12 @@ export interface AudioRouteSnapshot {
   route: AudioRoute;
   inCall?: boolean;
   mediaPlaying?: boolean;
+  /** A Bluetooth headset is connected but has not yet become the output. */
+  headsetConnecting?: boolean;
 }
 
 export type AudioPlaybackPlan =
-  | { action: "play"; reason: "headset-ready" }
+  | { action: "play"; reason: "headset-ready" | "speaker-allowed" }
   | { action: "hold"; reason: "quiet" | "no-headset" | "call-active" | "media-active" };
 
 export type AudioReplyOutcome =
@@ -155,13 +157,23 @@ export function selectActiveAudioPrompt(state: AudioBrokerState, runs: AgentRun[
   };
 }
 
-/** Headset-only playback gate, evaluated again at the moment of playback. */
-export function planAudioPlayback(state: AudioBrokerState, route: AudioRouteSnapshot): AudioPlaybackPlan {
+/**
+ * Headset-only playback gate, evaluated again at the moment of playback. The
+ * phone's speaker is allowed only with the explicit, off-by-default opt-in
+ * (iOS Settings › Audio approvals › Play on iPhone speaker), and never while a
+ * connected headset is still taking over the route.
+ */
+export function planAudioPlayback(
+  state: AudioBrokerState,
+  route: AudioRouteSnapshot,
+  opts: { allowSpeaker?: boolean } = {},
+): AudioPlaybackPlan {
   if (state.quiet) return { action: "hold", reason: "quiet" };
-  if (route.route !== "headset") return { action: "hold", reason: "no-headset" };
+  const speakerAllowed = opts.allowSpeaker === true && route.route === "speaker" && route.headsetConnecting !== true;
+  if (route.route !== "headset" && !speakerAllowed) return { action: "hold", reason: "no-headset" };
   if (route.inCall) return { action: "hold", reason: "call-active" };
   // Joined approvals interrupt other media; the native audio session arbitrates playback.
-  return { action: "play", reason: "headset-ready" };
+  return { action: "play", reason: route.route === "headset" ? "headset-ready" : "speaker-allowed" };
 }
 
 /** Route lost mid-prompt: the prompt returns to queued and is retained, never moved to a speaker. */

@@ -61,12 +61,23 @@ assert.match(app, /init\(\) \{[\s\S]*audioApprovals\.attach\(remote: mobileRemot
 assert.doesNotMatch(app, /\.task\s*\{\s*audioApprovals\.attach/,
   "background Push to Talk launch cannot depend on a SwiftUI view task");
 
-// 3. Headset only. No speaker fallback or override anywhere in the slice.
+// 3. Headset only by default. The phone speaker is an explicit, off-by-default opt-in
+// (Settings › Audio approvals › Play on iPhone speaker); nothing else may reroute output.
 for (const [name, source] of Object.entries({ core, ptt, controller })) {
   assert.ok(!/defaultToSpeaker/.test(source), `${name} must not use defaultToSpeaker`);
+}
+for (const [name, source] of Object.entries({ core, ptt })) {
   assert.ok(!/overrideOutputAudioPort/.test(source), `${name} must not override the output port`);
 }
-assert.match(core, /if snapshot\.route != \.headset \{ return \.hold\(\.noHeadset\) \}/);
+assert.equal((controller.match(/overrideOutputAudioPort/g) || []).length, 1, "one guarded speaker override");
+assert.match(controller, /private func routeToSpeakerIfAllowed\(\) \{\s*guard allowsSpeaker else \{ return \}[\s\S]{0,240}builtInReceiver[\s\S]{0,120}overrideOutputAudioPort\(\.speaker\)/,
+  "the speaker override requires the opt-in and only replaces the earpiece receiver, never a headset");
+assert.ok(core.includes(`static let speakerDefaultsKey = "celorga.audioApprovals.allowSpeaker"`));
+assert.ok(core.includes("UserDefaults.standard.bool(forKey: speakerDefaultsKey)"), "speaker opt-in defaults to off");
+assert.match(core, /func planAudioPlayback\(quiet: Bool, snapshot: AudioRouteSnapshot, allowsSpeaker: Bool = false\)/);
+assert.match(core, /if !isPlayableAudioRoute\(snapshot, allowsSpeaker: allowsSpeaker\) \{ return \.hold\(\.noHeadset\) \}/);
+assert.match(core, /case \.nonHeadset: allowsSpeaker && !snapshot\.headsetConnecting/, "a connecting headset is never bypassed for the speaker");
+assert.match(settings, /Toggle\("Play on iPhone speaker"/);
 assert.match(core, /allSatisfy \{ headsetPorts\.contains\(\$0\) \}/, "route is headset only when every output is headset");
 assert.match(controller, /case \.hold\(let reason\):\s*playbackFailureReason = "held-\\\(reason\.rawValue\)"\s*(\/\/[^\n]*\n\s*)*send\(\.playbackFinished\(completed: false/, "a held prompt is reported unheard with its reason, not rerouted");
 assert.match(controller, /case \.checkRoute\(let delay\):[\s\S]*?send\(\.routeChecked\(self\.currentRouteSnapshot\(\), now: Date\(\)\)\)/, "the route is polled with the current time while Bluetooth settles, not only observed through notifications");

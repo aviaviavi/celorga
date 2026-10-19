@@ -44,6 +44,8 @@ private struct ApplicationAudioApprovalBackgroundRuntime: AudioApprovalBackgroun
 @MainActor
 final class AudioApprovalController: ObservableObject {
   @Published private(set) var isEnabled = AudioApprovalFeature.isEnabled
+  /// Settings › Audio approvals › Play on iPhone speaker. Off by default.
+  @Published private(set) var allowsSpeaker = AudioApprovalFeature.allowsSpeaker
   @Published private(set) var channelJoined = false
   @Published private(set) var quietUntil: Date?
   @Published private(set) var phase = "Off"
@@ -98,6 +100,7 @@ final class AudioApprovalController: ObservableObject {
     voiceIdentifier = voiceDefaults.string(forKey: AudioApprovalFeature.voiceIdentifierDefaultsKey)
     let stored = UserDefaults.standard.object(forKey: AudioApprovalFeature.quietUntilDefaultsKey) as? Date
     quietUntil = stored.flatMap { $0 > Date() ? $0 : nil }
+    session.allowsSpeaker = allowsSpeaker
     // Background channel restoration must not wait for the system voice catalog.
     // Load voices in Settings or immediately before synthesis.
   }
@@ -219,6 +222,14 @@ final class AudioApprovalController: ObservableObject {
     UserDefaults.standard.set(value, forKey: AudioApprovalFeature.quietUntilDefaultsKey)
     send(.quietChanged(until: value, now: Date()))
     Task { await registerWithMac(enabled: channelJoined) }
+  }
+
+  /// Lets prompts play on the phone's speaker when no headset is connected. A connected
+  /// headset is still preferred, and quiet mode, calls, and the Push to Talk session still hold.
+  func setAllowsSpeaker(_ allowed: Bool) {
+    allowsSpeaker = allowed
+    UserDefaults.standard.set(allowed, forKey: AudioApprovalFeature.speakerDefaultsKey)
+    session.allowsSpeaker = allowed
   }
 
   func playNextPrompt() {
@@ -470,13 +481,14 @@ final class AudioApprovalController: ObservableObject {
   /// Plays only when the route, session, call, and quiet checks pass at this moment.
   private func speak(_ text: String, kind: AudioSpeechKind) {
     if kind == .prompt { preparePlaybackDelivery() }
-    switch planAudioPlayback(quiet: isQuiet, snapshot: currentRouteSnapshot()) {
+    switch planAudioPlayback(quiet: isQuiet, snapshot: currentRouteSnapshot(), allowsSpeaker: allowsSpeaker) {
     case .hold(let reason):
       playbackFailureReason = "held-\(reason.rawValue)"
       // Report an incomplete playback: a prompt that was not heard cannot be answered.
       send(.playbackFinished(completed: false, now: Date()))
     case .play:
       stopSpeech()
+      routeToSpeakerIfAllowed()
       let playbackID = UUID()
       speechProgress.start(playbackID)
       let synthesizer = AVSpeechSynthesizer()
@@ -508,7 +520,7 @@ final class AudioApprovalController: ObservableObject {
       return
     }
     // Recheck the private output for every buffer, including background route transitions.
-    if case .hold(let reason) = planAudioPlayback(quiet: isQuiet, snapshot: currentRouteSnapshot()) {
+    if case .hold(let reason) = planAudioPlayback(quiet: isQuiet, snapshot: currentRouteSnapshot(), allowsSpeaker: allowsSpeaker) {
       playbackFailureReason = "held-\(reason.rawValue)"
       stopSpeech()
       send(.playbackFinished(completed: false, now: Date()))
@@ -638,6 +650,7 @@ final class AudioApprovalController: ObservableObject {
       endReplyBackgroundTask()
       transcriber.cancel()
       session = AudioApprovalSession()
+      session.allowsSpeaker = allowsSpeaker
       _ = session.handle(.enrollmentChanged(joined: channelJoined))
       _ = session.handle(.quietChanged(until: quietUntil, now: Date()))
     }
@@ -717,12 +730,25 @@ final class AudioApprovalController: ObservableObject {
 
   private func currentRouteSnapshot() -> AudioRouteSnapshot {
     let audioSession = AVAudioSession.sharedInstance()
+    let route = AudioRouteClassifier.classify(outputPorts: audioSession.currentRoute.outputs.map(\.portType))
     return AudioRouteSnapshot(
-      route: AudioRouteClassifier.classify(outputPorts: audioSession.currentRoute.outputs.map(\.portType)),
+      route: route,
       inCall: callObserver.calls.contains { !$0.hasEnded },
       mediaPlaying: audioSession.isOtherAudioPlaying,
-      pushToTalkSessionActive: pushToTalkSessionActive
+      pushToTalkSessionActive: pushToTalkSessionActive,
+      headsetConnecting: route == .nonHeadset
+        && audioSession.availableInputs?.contains { $0.portType == .bluetoothHFP } == true
     )
+  }
+
+  /// The voice-chat session plays on the quiet earpiece receiver when no headset is connected.
+  /// With the speaker setting on, move that playback to the loudspeaker. Never overrides a
+  /// headset route.
+  private func routeToSpeakerIfAllowed() {
+    guard allowsSpeaker else { return }
+    let audioSession = AVAudioSession.sharedInstance()
+    guard audioSession.currentRoute.outputs.contains(where: { $0.portType == .builtInReceiver }) else { return }
+    try? audioSession.overrideOutputAudioPort(.speaker)
   }
 
   private func observeAudioSession() {
@@ -909,7 +935,7 @@ final class AudioApprovalController: ObservableObject {
     case .speak(let text, let kind):
       if kind == .prompt { preparePlaybackDelivery() }
       // Same gate as real playback: the simulated output refuses a non-headset route.
-      if case .hold(let reason) = planAudioPlayback(quiet: isQuiet, snapshot: demoRoute) {
+      if case .hold(let reason) = planAudioPlayback(quiet: isQuiet, snapshot: demoRoute, allowsSpeaker: allowsSpeaker) {
         if kind == .prompt { demoHeldPrompts += 1 }
         playbackFailureReason = "held-\(reason.rawValue)"
         send(.playbackFinished(completed: false, now: Date()))
