@@ -44776,7 +44776,8 @@ extension WorkspaceStore {
       if thread.storedMessageCount != nil {
         if aiChatHandoffHydrationRequests.insert(thread.id).inserted {
           Task { @MainActor [weak self] in
-            _ = await self?.hydrateAIChatThreadIfNeeded(thread.id)
+            let hydrated = await self?.hydrateAIChatThreadIfNeeded(thread.id)
+            if hydrated == nil { self?.aiChatHandoffHydrationRequests.remove(thread.id) }
           }
         }
         continue
@@ -44859,12 +44860,20 @@ extension WorkspaceStore {
     for thread in aiChatThreads where !thread.isSettled {
       if thread.storedMessageCount != nil {
         // A cold conversation whose latest message is unresolved may hold a
-        // hand-off. Hydrate it once, then examine it on the next pass.
+        // hand-off. Hydrate it, then examine it. A conversation that just
+        // arrived from another host can fail to hydrate (its shard has not
+        // synchronized yet, or a reload superseded the load); the next pass
+        // tries again instead of ignoring the hand-off until the sender
+        // reclaims it.
         if thread.storedHasUnresolvedLatestDelivery == true,
            aiChatHandoffHydrationRequests.insert(thread.id).inserted {
           Task { @MainActor [weak self] in
-            _ = await self?.hydrateAIChatThreadIfNeeded(thread.id)
-            self?.processAIChatHandoffs()
+            guard let self else { return }
+            if await self.hydrateAIChatThreadIfNeeded(thread.id) == nil {
+              self.aiChatHandoffHydrationRequests.remove(thread.id)
+            } else {
+              self.processAIChatHandoffs()
+            }
           }
         }
         continue

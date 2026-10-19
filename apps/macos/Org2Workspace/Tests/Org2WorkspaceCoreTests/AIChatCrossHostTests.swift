@@ -553,6 +553,72 @@ final class AIChatCrossHostTests: XCTestCase {
   }
 
   @MainActor
+  func testHostAcceptsAHandOffWhoseConversationArrivesBeforeItsShard() async throws {
+    let transcriptURL = root.appendingPathComponent("chat.json")
+    let marker = "new conversation handed to the server \(UUID().uuidString)"
+    let handedOff = AIChatMessage(
+      role: .user, content: marker, createdAt: Date().addingTimeInterval(-86_400),
+      deliveryStatus: .sending,
+      provenance: AIChatMessageProvenance(
+        originClient: .desktop,
+        receivedByHostRef: "desktop-studio", receivedByHostName: "Studio Mac",
+        executionHostRef: "build-host", executionHostName: "Celorga on build-host"
+      )
+    )
+    let newThread = AIChatThread(
+      title: "Brand new", createdAt: handedOff.createdAt, updatedAt: handedOff.createdAt,
+      runtime: .codex, sessionKey: "brand-new", messages: [handedOff]
+    )
+    // Newer conversations fill the eager working set, so the new one loads cold.
+    let warm = (0..<AIChatTranscriptStore.eagerWorkingSetLimit).map { index in
+      AIChatThread(
+        title: "Warm \(index)", runtime: .codex, sessionKey: "warm-\(index)",
+        messages: [AIChatMessage(role: .assistant, content: "warm \(index)")]
+      )
+    }
+    try AIChatTranscriptStore.shared.flush(
+      AIChatTranscriptSnapshot(threads: warm + [newThread], selectedThreadID: warm[0].id, settlementSettings: settings),
+      legacyURL: transcriptURL
+    )
+    // Synchronization delivered the manifest but not yet the conversation's shard.
+    let threadsDirectory = root.appendingPathComponent("chat.store/threads")
+    let shards = try FileManager.default.contentsOfDirectory(at: threadsDirectory, includingPropertiesForKeys: nil)
+      .filter { (try? String(contentsOf: $0, encoding: .utf8))?.contains(marker) == true }
+    XCTAssertFalse(shards.isEmpty)
+    let parked = root.appendingPathComponent("parked-shards", isDirectory: true)
+    try FileManager.default.createDirectory(at: parked, withIntermediateDirectories: true)
+    for shard in shards {
+      try FileManager.default.moveItem(at: shard, to: parked.appendingPathComponent(shard.lastPathComponent))
+    }
+
+    let counter = CrossHostSendCounter()
+    let store = try makeStore(transcriptURL: transcriptURL) { messages, _, _ in
+      await counter.record(messages.last?.content ?? "")
+      return "ran on the server"
+    }
+    store.configureAIChatHost(AIChatHostIdentity(ref: "build-host", name: "Celorga on build-host", kind: .server))
+    await store.waitForAIChatTranscriptLoadForTesting()
+    XCTAssertTrue(store.unloadedAIChatThreadIDsForTesting.contains(newThread.id))
+
+    store.processAIChatHandoffs()
+    try await Task.sleep(for: .milliseconds(300))
+    let promptsBeforeShard = await counter.prompts
+    XCTAssertTrue(promptsBeforeShard.isEmpty)
+
+    for shard in shards {
+      try FileManager.default.moveItem(at: parked.appendingPathComponent(shard.lastPathComponent), to: shard)
+    }
+    for _ in 0..<300 {
+      store.processAIChatHandoffs()
+      let prompts = await counter.prompts
+      if !prompts.isEmpty { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    let prompts = await counter.prompts
+    XCTAssertEqual(prompts, [marker], "the server accepts the hand-off once the conversation can be read")
+  }
+
+  @MainActor
   func testHostAcceptsAHandOffExactlyOnce() async throws {
     let transcriptURL = root.appendingPathComponent("chat.json")
     let handedOff = AIChatMessage(
