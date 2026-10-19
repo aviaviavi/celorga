@@ -364,6 +364,12 @@ private struct DocumentSettingsView: View {
         Text("Runs the shared Celorga formatter before saving a full .org page. Turn this off to preserve layout as typed; .org typing conveniences such as code fences are still saved as standard Org syntax.")
           .font(.callout)
           .foregroundStyle(.secondary)
+
+        Toggle("Vim mode", isOn: $store.sourceEditorVimModeEnabled)
+
+        Text("Edits files in the Source, Split, and Prose editors with Vim keybindings: Normal, Insert, Visual (character, line, and block), and Replace modes, operators and text objects, counts, registers, macros, marks, search, and : commands such as :w and :s. Keys follow your keyboard layout. ⌘ shortcuts keep working.")
+          .font(.callout)
+          .foregroundStyle(.secondary)
       } header: {
         Label("Source Editing", systemImage: "text.cursor")
       }

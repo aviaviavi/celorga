@@ -1202,6 +1202,8 @@ final class OrgSyntaxTextView: NSTextView {
   var onLifecycleBoundary: ((OrgSyntaxTextView) -> Void)?
   var isApplyingCrossEditorSelection = false
   var isTrackingMouseSelection = false
+  /// Present while Vim mode is on for this editor.
+  var vimState: VimTextViewState?
   private var crossEditorHighlightedRange: NSRange?
   private var pendingLatencyTokens: [WorkspaceInteractionLatency.Token] = []
 
@@ -1236,6 +1238,7 @@ final class OrgSyntaxTextView: NSTextView {
   override func resignFirstResponder() -> Bool {
     let didResign = super.resignFirstResponder()
     if didResign {
+      vimFocusDidResign()
       onLifecycleBoundary?(self)
     }
     return didResign
@@ -1250,7 +1253,57 @@ final class OrgSyntaxTextView: NSTextView {
 
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
+    attachVimStatusViewIfNeeded()
     onWindowAttachmentChanged?(self)
+  }
+
+  override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+    guard let block = vimCursorRect(for: rect) else {
+      super.drawInsertionPoint(in: rect, color: color, turnedOn: flag)
+      return
+    }
+    guard flag else {
+      setNeedsDisplay(block, avoidAdditionalLayout: true)
+      return
+    }
+    color.withAlphaComponent(vimState?.engine.mode == .replace ? 1 : 0.45).setFill()
+    block.fill(using: .sourceOver)
+  }
+
+  override func setNeedsDisplay(_ invalidRect: NSRect, avoidAdditionalLayout flag: Bool) {
+    guard vimState != nil else {
+      super.setNeedsDisplay(invalidRect, avoidAdditionalLayout: flag)
+      return
+    }
+    // The block cursor is wider than AppKit's caret; repaint its full width.
+    var rect = invalidRect
+    rect.size.width += 24
+    super.setNeedsDisplay(rect, avoidAdditionalLayout: flag)
+  }
+
+  override func setSelectedRanges(
+    _ ranges: [NSValue],
+    affinity: NSSelectionAffinity,
+    stillSelecting stillSelectingFlag: Bool
+  ) {
+    super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelectingFlag)
+    if vimState != nil {
+      vimSelectionDidChange(stillSelecting: stillSelectingFlag)
+    }
+  }
+
+  override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
+    if vimState != nil {
+      vimNoteShouldChangeText()
+    }
+    return super.shouldChangeText(in: affectedCharRange, replacementString: replacementString)
+  }
+
+  override func didChangeText() {
+    if vimState != nil {
+      vimNoteDidChangeText()
+    }
+    super.didChangeText()
   }
 
   override func mouseDown(with event: NSEvent) {
@@ -1295,6 +1348,9 @@ final class OrgSyntaxTextView: NSTextView {
       pendingLatencyTokens.append(latencyToken)
       needsDisplay = true
     }
+    if vimState != nil, handleVimKeyDown(event) {
+      return
+    }
     if handlesFindShortcut(event) {
       performFindShortcut()
       return
@@ -1327,6 +1383,9 @@ final class OrgSyntaxTextView: NSTextView {
   }
 
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    if vimState != nil, handleVimKeyEquivalent(event) {
+      return true
+    }
     if handlesFindShortcut(event) {
       performFindShortcut()
       return true
@@ -1423,7 +1482,7 @@ final class OrgSyntaxTextView: NSTextView {
     return windows.compactMap { $0.firstResponder as? OrgSyntaxTextView }.first
   }
 
-  private func performSaveShortcut() -> Bool {
+  func performSaveShortcut() -> Bool {
     if (textStorage?.length ?? 0) > OrgSyntaxTextEditor.Coordinator.synchronousTextSnapshotUTF16Limit,
        let onDeferredSaveCommand {
       return onDeferredSaveCommand()
@@ -2115,6 +2174,8 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
   /// A code, markup, config, or data language from the shared language table.
   /// When set, the editor highlights the text as that language instead of Org.
   let codeLanguage: String?
+  /// Turns on Vim keybindings for the full-file source editor.
+  let vimMode: Bool
 
   var isProse: Bool { proseController != nil }
 
@@ -2160,10 +2221,12 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
     onReplaceDocumentSelection: (([OrgSyntaxTextSelectionDocumentFragment], String) -> Bool)? = nil,
     completionKeyHandler: ((OrgSyntaxTextEditorCompletionKey, OrgSyntaxTextEditorSelectionSnapshot) -> OrgSyntaxTextEditorCompletionKeyResult)? = nil,
     proseController: OrgProseEditorController? = nil,
-    codeLanguage: String? = nil
+    codeLanguage: String? = nil,
+    vimMode: Bool = false
   ) {
     _text = text
     self.codeLanguage = codeLanguage
+    self.vimMode = vimMode
     self.monospaced = monospaced
     self.showsScrollers = showsScrollers
     self.textInset = textInset
@@ -2319,6 +2382,7 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
     textView.autoresizingMask = [.width]
 
     scrollView.documentView = textView
+    textView.setVimModeEnabled(vimMode)
     if orgWritingCommands {
       let gutter = OrgSourceEditorGutterView(scrollView: scrollView, textView: textView)
       gutter.performAction = { [weak coordinator = context.coordinator, weak textView] action in
@@ -2368,6 +2432,7 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
     // enough to route that checkpoint through its binding, callbacks, and
     // document identity rather than whichever document is arriving now.
     let pendingTextOwner = context.coordinator.updateParent(self)
+    textView.setVimModeEnabled(vimMode)
     textView.pasteAsOrgEnabled = pasteAsOrgEnabled
     textView.pasteDocumentIdentity = documentIdentity
     textView.pasteDocumentGeneration = documentGeneration

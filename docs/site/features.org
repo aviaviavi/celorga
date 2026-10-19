@@ -106,6 +106,7 @@
       <ul class="celorga-feature-list" data-heading-anchors="off">
         <li><strong>Reading, Source, Split</strong>Switch views without changing the file</li>
         <li><strong>Prose mode</strong>Keep alternatives, ghosted text, and cuts recoverable</li>
+        <li><strong>Vim mode</strong>Optional Vim keybindings in the source editor</li>
         <li><strong>Tables</strong>Spreadsheet formulas in ordinary text tables</li>
         <li><strong>Live embeds</strong>Show another note or section inline</li>
         <li><strong>Link previews</strong>Hover a link to read the target</li>

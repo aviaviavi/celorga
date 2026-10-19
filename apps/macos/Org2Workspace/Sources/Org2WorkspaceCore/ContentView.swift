@@ -14515,7 +14515,8 @@ private struct OrgSourceEditorWithLinkTools: View {
       },
       completionKeyHandler: codeLanguage == nil ? dateMentionKeyHandler : nil,
       proseController: activeProse,
-      codeLanguage: codeLanguage
+      codeLanguage: codeLanguage,
+      vimMode: store.sourceEditorVimModeEnabled
     )
   }
 

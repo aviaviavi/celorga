@@ -3013,6 +3013,12 @@ public final class WorkspaceStore {
       defaults.set(formatOrgFilesOnSave, forKey: formatOrgFilesOnSaveKey)
     }
   }
+  /// Vim keybindings in the full-file source editor (Source, Split, Prose).
+  public var sourceEditorVimModeEnabled = false {
+    didSet {
+      defaults.set(sourceEditorVimModeEnabled, forKey: sourceEditorVimModeKey)
+    }
+  }
   public var sourceEditorPresentation: SourceEditorPresentation = .source {
     didSet {
       defaults.set(sourceEditorPresentation.rawValue, forKey: sourceEditorPresentationKey)
@@ -3284,6 +3290,7 @@ public final class WorkspaceStore {
   private let renderedDocumentMarginKey = "Org2Workspace.renderedDocument.margin"
   private let propertyDrawersExpandedByDefaultKey = "Org2Workspace.renderedDocument.propertyDrawersExpandedByDefault.v1"
   private let formatOrgFilesOnSaveKey = "Org2Workspace.sourceEditor.formatOrgFilesOnSave.v1"
+  private let sourceEditorVimModeKey = "Org2Workspace.sourceEditor.vimMode.v1"
   private let sourceEditorPresentationKey = "Org2Workspace.sourceEditor.presentation"
   private let documentPreviewOverridesKey = "Org2Workspace.documentPreview.overrides.v1"
   private let documentViewportSourceLinesKey = "Org2Workspace.documentViewportSourceLines.v1"
@@ -4083,6 +4090,7 @@ public final class WorkspaceStore {
     transcriptionLanguageText = defaults.string(forKey: transcriptionLanguageKey) ?? "en"
     propertyDrawersExpandedByDefault = defaults.object(forKey: propertyDrawersExpandedByDefaultKey) as? Bool ?? true
     formatOrgFilesOnSave = defaults.object(forKey: formatOrgFilesOnSaveKey) as? Bool ?? true
+    sourceEditorVimModeEnabled = defaults.bool(forKey: sourceEditorVimModeKey)
     sourceEditorPresentation = defaults.string(forKey: sourceEditorPresentationKey)
       .flatMap(SourceEditorPresentation.init(rawValue:)) ?? .source
     documentPreviewOverrides = Self.restoreDocumentPreviewOverrides(
