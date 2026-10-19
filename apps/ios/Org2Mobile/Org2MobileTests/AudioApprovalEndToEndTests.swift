@@ -231,6 +231,38 @@ final class AudioApprovalEndToEndTests: XCTestCase {
     XCTAssertFalse(routedTrace.contains { $0.stage == "playback-failed" }, "No failed attempt may precede the headset playback: \(routedTrace.map(\.stage))")
     XCTAssertTrue(routedTrace.contains { $0.stage == "playback-completed" && $0.headset == true })
 
+    // Talk during a long readout: the reply interrupts the prompt and is bound to it, and the
+    // Mac records the decision without the prompt ever finishing.
+    let longPush: Push = try await control.post("/test/create-fresh", payload: Empty(), as: Push.self)
+    let bargePhone = AudioApprovalController()
+    bargePhone.attach(remote: remote)
+    bargePhone.setDemo(true)
+    bargePhone.demoHoldsPromptPlayback = true
+    bargePhone.demoReceivePush(["runID": longPush.runID, "approvalID": longPush.approvalID,
+      "fingerprint": longPush.fingerprint, "deliveryID": longPush.deliveryID.uuidString])
+    try await eventually("The long prompt must start reading") {
+      bargePhone.demoIsSpeakingPrompt && bargePhone.demoSpoken?.contains("Fresh end-to-end approval") == true
+    }
+    bargePhone.demoReply("no")
+    XCTAssertFalse(bargePhone.demoIsSpeakingPrompt, "Talk must stop the readout")
+    try await eventually("A reply during the readout must reject exactly that approval") {
+      bargePhone.replyHistory.first(where: { $0.target?.approvalID == longPush.approvalID })?.outcome.contains("Rejected") == true
+    }
+    let interrupted: Result = try await control.get("/test/result", as: Result.self)
+    XCTAssertEqual(interrupted.approvalID, longPush.approvalID)
+    XCTAssertEqual(interrupted.status, "rejected")
+    XCTAssertEqual(interrupted.oldStatus, "pending")
+    var bargeTrace: [MobileRemoteAudioApprovalDeliveryRecord] = []
+    let bargeDeadline = Date().addingTimeInterval(12)
+    repeat {
+      bargeTrace = try await remote.audioApprovalDeliveryDiagnostics().filter { $0.deliveryID == longPush.deliveryID }
+      if bargeTrace.contains(where: { $0.stage == "decision-confirmed" }) { break }
+      try await Task.sleep(for: .milliseconds(50))
+    } while Date() < bargeDeadline
+    XCTAssertTrue(bargeTrace.contains { $0.stage == "playback-started" }, "\(bargeTrace.map(\.stage))")
+    XCTAssertFalse(bargeTrace.contains { $0.stage == "playback-completed" }, "The interrupted prompt never finished: \(bargeTrace.map(\.stage))")
+    XCTAssertTrue(bargeTrace.contains { $0.stage == "decision-confirmed" }, "\(bargeTrace.map(\.stage))")
+
     // A cold controller must reject an exact old push even though the real host still lists
     // the canonical approval as pending. Opening/rejoining never turns that backlog into speech.
     let delayed: Push = try await control.post("/test/delayed-old-push", payload: Empty(), as: Push.self)

@@ -877,6 +877,12 @@ final class AudioApprovalController: ObservableObject {
   /// Prompts the simulated output refused because the route was not a headset.
   @Published private(set) var demoHeldPrompts = 0
 
+  /// Keeps a simulated prompt "playing" until a reply interrupts it, so a press during a
+  /// long readout can be exercised without hardware.
+  var demoHoldsPromptPlayback = false
+
+  var demoIsSpeakingPrompt: Bool { session.playback == .speaking(.prompt) }
+
   func demoPlayNext() {
     guard isDemo else { return }
     send(.playRequested(now: Date()))
@@ -914,6 +920,7 @@ final class AudioApprovalController: ObservableObject {
       }
       endPromptBackgroundTask()
       demoSpoken = text
+      if kind == .prompt, demoHoldsPromptPlayback { return }
       send(.playbackFinished(completed: true, now: Date()))
     case .checkRoute(let delay):
       Task { [weak self] in

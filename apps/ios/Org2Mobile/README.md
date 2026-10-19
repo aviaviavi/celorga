@@ -71,6 +71,16 @@ Device setup: the app declares the `com.apple.developer.push-to-talk` entitlemen
 
 Checks without a phone (`npm run test:audio-approvals`): the iOS policy compiled and run on macOS, the TypeScript broker, the cross-layer contract, and a Mac end-to-end test. That test pairs a phone over the Mobile Remote API, registers a Push to Talk token, and decides a demo approval (no external action) in a temporary corpus through the real CLI, including a wrong-fingerprint refusal, a duplicate replay, the next agent's push, snooze, and quiet. In a Debug build, **Simulator demo** under Audio approvals runs the same state machine against a real paired Mac with a simulated headset; prompts appear as text and the typed reply goes through the exact-identity decision path. Push to Talk delivery, AirPods routing, lock-screen behavior, and headset-button replies still need a physical iPhone.
 
+The phone end-to-end run (`npm run test:audio-approvals:e2e`) drives the shipped controller against a host with file-based credentials, as a headless Celorga server uses, and covers a reply that interrupts a long readout. A physical pass covers what simulation cannot. For each host the phone is paired with (a Celorga server and the Celorga Mac app), check:
+
+1. App in the foreground, then backgrounded, then the phone locked: a fresh approval plays on the headset.
+2. A podcast playing: the prompt interrupts it and the podcast can resume.
+3. Talk during a long readout: speech stops, *no* rejects that approval, and the Mac shows the rejection.
+4. Talk after the prompt finishes: *yes* approves, and the spoken receipt names how the agent continues.
+5. No headset connected: nothing plays and the approval stays pending.
+
+The host's `GET /v1/audio-approvals/diagnostics` lists each delivery's stages (`push-received`, `playback-started`, `decision-confirmed`), which shows where a failed check stopped.
+
 ## Headless host pairing
 
 Mobile Remote also connects to `celorga server` on a dedicated Mac. Settings → Host Connection saves a separate Keychain credential for each host and selects one host at a time. Existing Mac pairings migrate automatically. Hosts serve the chat history persisted in their configured corpus; selecting another host does not copy history or agent runtime sessions. Simultaneous desktop/server chat editing against synced corpus copies is not coordinated. See [headless server setup](../../../docs/site/headless-server.org).
