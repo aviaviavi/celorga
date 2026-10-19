@@ -17142,6 +17142,14 @@ extension WorkspaceStore {
     if isEditingEntry {
       if entryEditorHasUnsavedChanges {
         await saveEditedEntry()
+        guard isEditingEntry, !entryEditorHasUnsavedChanges else { return }
+        // Saving starts a re-render of the page. Leaving the editor before it
+        // publishes swaps in the loading view, then the native preview, then
+        // the web page, which reads as a flicker. Keep the editor up until the
+        // saved page is ready (bounded so a slow render never traps the user).
+        await waitForInFlightEntryRender(
+          timeoutNanoseconds: Self.saveAndDoneRenderWaitNanoseconds
+        )
       }
       guard isEditingEntry, !entryEditorHasUnsavedChanges else { return }
       cancelEditingSelectedEntry()
@@ -17149,6 +17157,20 @@ extension WorkspaceStore {
     }
 
     await saveActiveEdit()
+  }
+
+  nonisolated static let saveAndDoneRenderWaitNanoseconds: UInt64 = 1_500_000_000
+
+  /// Waits until the selected entry's current render finishes, or until the
+  /// timeout. Never cancels the render itself.
+  func waitForInFlightEntryRender(timeoutNanoseconds: UInt64) async {
+    guard let renderTask = entryHTMLRenderTask else { return }
+    await withTaskGroup(of: Void.self) { group in
+      group.addTask { await renderTask.value }
+      group.addTask { try? await Task.sleep(nanoseconds: timeoutNanoseconds) }
+      _ = await group.next()
+      group.cancelAll()
+    }
   }
 
   private var selectedFileForOrgCryptSave: String? {

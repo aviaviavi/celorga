@@ -664,6 +664,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     webView.underPageBackgroundColor = .clear
     webView.allowsMagnification = true
     webView.setAccessibilityLabel("Rendered Org document")
+    context.coordinator.hideUntilFirstPaint(webView)
     return webView
   }
 
@@ -909,6 +910,57 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       }
     }
 
+    // MARK: First paint
+
+    /// A new web view (for example, after Save & Done closes the editor)
+    /// would otherwise show an empty page, then the content at the top, then
+    /// jump to the restored position. It stays transparent until the first
+    /// page has painted at its final scroll offset.
+    private var isAwaitingFirstPaint = false
+
+    func hideUntilFirstPaint(_ webView: WKWebView) {
+      isAwaitingFirstPaint = true
+      webView.alphaValue = 0
+      // Never leave the page invisible if the first load stalls.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self, weak webView] in
+        guard let self, let webView else { return }
+        self.revealFirstPaint(webView)
+      }
+    }
+
+    private func revealAfterNextPaint(_ webView: WKWebView) {
+      guard isAwaitingFirstPaint else { return }
+      webView.callAsyncJavaScript(
+        "await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))); return true;",
+        arguments: [:],
+        in: nil,
+        in: .page
+      ) { [weak self, weak webView] _ in
+        MainActor.assumeIsolated {
+          guard let self, let webView else { return }
+          self.revealFirstPaint(webView)
+        }
+      }
+    }
+
+    private func revealFirstPaint(_ webView: WKWebView) {
+      guard isAwaitingFirstPaint else { return }
+      isAwaitingFirstPaint = false
+      webView.alphaValue = 1
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation?, withError error: Error) {
+      revealFirstPaint(webView)
+    }
+
+    func webView(
+      _ webView: WKWebView,
+      didFailProvisionalNavigation navigation: WKNavigation?,
+      withError error: Error
+    ) {
+      revealFirstPaint(webView)
+    }
+
     private func showFreezeFrame(_ image: NSImage, over webView: WKWebView) {
       removeFreezeFrame(animated: false)
       let view = NSImageView(frame: webView.bounds)
@@ -986,6 +1038,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
         }
         removeFreezeFrame(animated: true)
       }
+      revealAfterNextPaint(webView)
     }
 
     func userContentController(
