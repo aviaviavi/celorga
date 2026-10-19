@@ -43,6 +43,12 @@ const displayName = process.env.ORG2_WORKSPACE_DISPLAY_NAME ?? "Celorga";
 const appPath = resolve(
   process.env.ORG2_WORKSPACE_APP_PATH ?? join(homedir(), "Applications", `${appName}.app`)
 );
+// The Dock, Cmd-Tab and Finder label an app by its bundle file name, not
+// CFBundleName. The bundle stays OpenOrg.app so Sparkle updates keep working,
+// so Info.plist names match the file name and en.lproj/InfoPlist.strings
+// supplies the localized display name, which macOS then shows everywhere.
+const bundleFileName = basename(appPath, ".app");
+const usesLocalizedDisplayName = bundleFileName !== displayName;
 const bundleIdentifier = process.env.ORG2_WORKSPACE_BUNDLE_ID ?? "org.org2.workspace";
 const requestedSigningIdentity = process.env.ORG2_WORKSPACE_CODE_SIGN_IDENTITY?.trim();
 const executableName = "Org2Workspace";
@@ -532,7 +538,7 @@ function writeInfoPlist(bundlePath) {
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>${xmlEscape(displayName)}</string>
+  <string>${xmlEscape(usesLocalizedDisplayName ? bundleFileName : displayName)}</string>
   <key>CFBundleExecutable</key>
   <string>${xmlEscape(executableName)}</string>
   <key>CFBundleIdentifier</key>
@@ -542,7 +548,7 @@ function writeInfoPlist(bundlePath) {
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
   <key>CFBundleName</key>
-  <string>${xmlEscape(displayName)}</string>
+  <string>${xmlEscape(usesLocalizedDisplayName ? bundleFileName : displayName)}</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
@@ -551,7 +557,9 @@ function writeInfoPlist(bundlePath) {
   <string>${xmlEscape(packageVersion)}</string>${sparkleConfiguration}${googleOAuthConfiguration}
   <key>Org2BuildConfiguration</key>
   <string>${xmlEscape(swiftBuildConfiguration)}</string>
-  <key>LSMinimumSystemVersion</key>
+${usesLocalizedDisplayName ? `  <key>LSHasLocalizedDisplayName</key>
+  <true/>
+` : ""}  <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
@@ -567,6 +575,15 @@ function writeInfoPlist(bundlePath) {
 </plist>
 `;
   writeFileSync(join(contentsDir, "Info.plist"), plist);
+  if (usesLocalizedDisplayName) {
+    const localizedDir = join(contentsDir, "Resources", "en.lproj");
+    mkdirSync(localizedDir, { recursive: true });
+    const name = JSON.stringify(displayName);
+    writeFileSync(
+      join(localizedDir, "InfoPlist.strings"),
+      `"CFBundleDisplayName" = ${name};\n"CFBundleName" = ${name};\n`
+    );
+  }
 }
 
 function copySparkleFramework(buildProductsDir, contentsDir) {
