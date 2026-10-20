@@ -9711,7 +9711,7 @@ Flags:
   --date-from DATE   Filter by file/heading date (YYYY-MM-DD)
   --date-to DATE     Filter by file/heading date (YYYY-MM-DD)
   --file-zone TEXT   Require TEXT in the file path
-  --sort MODE        scan|relevance|date-desc|date-asc
+  --sort MODE        scan|relevance|best|date-desc|date-asc
   --format text|json Output format`;
   } else if (command === "query") {
     text = `celorga query
@@ -9745,7 +9745,7 @@ Flags:
   --date-from DATE  Filter by file/heading date (YYYY-MM-DD)
   --date-to DATE    Filter by file/heading date (YYYY-MM-DD)
   --file-zone TEXT  Require TEXT in the file path
-  --sort MODE       scan|relevance|date-desc|date-asc
+  --sort MODE       scan|relevance|best|date-desc|date-asc
   --format text|json Output format`;
   } else if (command === "compile") {
     text = `celorga compile corpus

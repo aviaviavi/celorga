@@ -12430,12 +12430,111 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertEqual(displayResults.map(\.heading), ["Active item", "Plain note", "Done item"])
   }
 
+  func testWorkspaceTextSearchRanksAcrossResultKindsWithRecencyBias() {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let day: TimeInterval = 86_400
+    let isoDay: (Date) -> String = { date in
+      let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+      return String(format: "%04d-%02d-%02d", components.year!, components.month!, components.day!)
+    }
+    let oldExactHeading = SearchResult(
+      file: "/tmp/2024-archive.org2",
+      line: 4,
+      lineEnd: nil,
+      heading: "Orbitwave",
+      headingLine: 4,
+      headingLevel: 1,
+      headingAncestry: nil,
+      idValue: nil,
+      todo: "TODO",
+      tags: [],
+      snippet: "* TODO Orbitwave",
+      sourceRange: nil,
+      matchedLines: nil,
+      date: isoDay(now.addingTimeInterval(-400 * day))
+    )
+    let recentBodyMention = SearchResult(
+      file: "/tmp/daily.org2",
+      line: 9,
+      lineEnd: nil,
+      heading: "Standup",
+      headingLine: 7,
+      headingLevel: 1,
+      headingAncestry: nil,
+      idValue: nil,
+      todo: nil,
+      tags: [],
+      snippet: "Orbitwave came up again",
+      sourceRange: nil,
+      matchedLines: nil,
+      date: isoDay(now.addingTimeInterval(-3 * day))
+    )
+    let sameEntryMention = SearchResult(
+      file: "/tmp/daily.org2",
+      line: 10,
+      lineEnd: nil,
+      heading: "Standup",
+      headingLine: 7,
+      headingLevel: 1,
+      headingAncestry: nil,
+      idValue: nil,
+      todo: nil,
+      tags: [],
+      snippet: "More orbitwave notes",
+      sourceRange: nil,
+      matchedLines: nil,
+      date: isoDay(now.addingTimeInterval(-3 * day))
+    )
+    let staleFile = CorpusFile(
+      path: "/tmp/orbitwave-notes.org2",
+      relativePath: "orbitwave-notes.org2",
+      modifiedAt: now.addingTimeInterval(-700 * day),
+      byteCount: 100
+    )
+    let latestChat = AIChatSearchResult(
+      threadID: UUID(),
+      messageID: UUID(),
+      matchKind: .messageText,
+      title: "Weekly planning",
+      snippet: "Let's post about Orbitwave",
+      messageCount: 12,
+      updatedAt: now.addingTimeInterval(-60),
+      matchedAt: now.addingTimeInterval(-60)
+    )
+    let olderChat = AIChatSearchResult(
+      threadID: UUID(),
+      messageID: UUID(),
+      matchKind: .messageText,
+      title: "Earlier planning",
+      snippet: "Orbitwave idea",
+      messageCount: 3,
+      updatedAt: now.addingTimeInterval(-90 * day),
+      matchedAt: now.addingTimeInterval(-90 * day)
+    )
+
+    let items = WorkspaceStore.rankedWorkspaceSearchItems(
+      corpusResults: [oldExactHeading, recentBodyMention, sameEntryMention],
+      files: [staleFile],
+      chats: [olderChat, latestChat],
+      agentWork: [],
+      pages: [],
+      query: "orbitwave",
+      now: now
+    )
+
+    XCTAssertEqual(items.map(\.id), [
+      "chat-message:\(latestChat.id)",
+      "entry:\(recentBodyMention.id)",
+      "todo:\(oldExactHeading.id)",
+      "file:\(staleFile.id)",
+      "chat-message:\(olderChat.id)",
+    ])
+  }
+
   @MainActor
-  func testWorkspaceTextSearchSectionsUseExplicitPriorityOrder() throws {
+  func testWorkspaceTextSearchItemsMergeEverySource() throws {
     let store = try WorkspaceStore(cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()))
     let active = searchResult(file: "/tmp/action.org2", line: 4, heading: "Active item", todo: "TODO")
-    let entry = searchResult(file: "/tmp/entry.org2", line: 8, heading: "Finished entry", todo: "DONE")
-    let corpusText = searchResult(file: "/tmp/prose.org2", line: 2, heading: nil, todo: nil)
     let file = CorpusFile(
       path: "/tmp/project.org2",
       relativePath: "project.org2",
@@ -12449,22 +12548,12 @@ final class Org2ModelsTests: XCTestCase {
       line: 1,
       isPageNode: true
     )
-    let threadID = UUID()
     let chatThread = AIChatSearchResult(
-      threadID: threadID,
+      threadID: UUID(),
       messageID: nil,
       matchKind: .threadTitle,
       title: "Project chat",
       snippet: "Thread title match",
-      messageCount: 2,
-      updatedAt: Date()
-    )
-    let chatMessage = AIChatSearchResult(
-      threadID: threadID,
-      messageID: UUID(),
-      matchKind: .messageText,
-      title: "Another chat",
-      snippet: "Message body match",
       messageCount: 2,
       updatedAt: Date()
     )
@@ -12479,27 +12568,18 @@ final class Org2ModelsTests: XCTestCase {
       sourceReference: "Run run-1"
     )
 
-    store.searchResults = [corpusText, entry, active]
+    store.searchResults = [active]
     store.workspaceFileSearchResults = [file]
-    store.aiChatSearchResults = [chatMessage, chatThread]
+    store.aiChatSearchResults = [chatThread]
     store.workspaceAgentWorkSearchResults = [approval]
     store.workspacePageSearchResults = [page]
 
-    XCTAssertEqual(store.workspaceTextSearchSections.map(\.category), [
-      .activeTodos,
-      .files,
-      .chatThreads,
-      .approvals,
-      .pages,
-      .entries,
-      .chatMessages,
-      .corpusText
-    ])
-    XCTAssertEqual(store.workspaceTextSearchResultCount, 8)
-    guard case .entry(let terminalTodo) = store.workspaceTextSearchSections[5].items[0] else {
-      return XCTFail("Expected terminal TODO under Entries")
-    }
-    XCTAssertEqual(terminalTodo.todo, "DONE")
+    XCTAssertEqual(store.workspaceTextSearchResultCount, 5)
+    XCTAssertEqual(store.workspaceTextSearchItems.first?.category, .chatThreads)
+    XCTAssertEqual(
+      Set(store.workspaceTextSearchItems.map(\.category)),
+      [.activeTodos, .files, .chatThreads, .approvals, .pages]
+    )
   }
 
   @MainActor
@@ -12571,7 +12651,9 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertEqual(store.selectedAgentRunID, payload.runs.first?.id)
   }
 
-  func testWorkspaceChatSearchSeparatesThreadTitlesFromMessageText() {
+  func testWorkspaceChatSearchReturnsOneResultPerThreadAtItsLatestMatch() {
+    let older = AIChatMessage(role: .user, content: "Review the billing reconciliation details.")
+    let latest = AIChatMessage(role: .assistant, content: "Billing is reconciled now.")
     let thread = AIChatThread(
       id: UUID(),
       title: "Billing reconciliation",
@@ -12579,7 +12661,9 @@ final class Org2ModelsTests: XCTestCase {
       updatedAt: Date(),
       sessionKey: "search-test",
       messages: [
-        AIChatMessage(role: .user, content: "Review the billing reconciliation details.")
+        older,
+        AIChatMessage(role: .user, content: "Unrelated follow-up."),
+        latest
       ]
     )
 
@@ -12589,9 +12673,36 @@ final class Org2ModelsTests: XCTestCase {
       limit: 10
     )
 
-    XCTAssertEqual(results.map(\.matchKind), [.threadTitle, .messageText])
-    XCTAssertNil(results[0].messageID)
-    XCTAssertNotNil(results[1].messageID)
+    XCTAssertEqual(results.map(\.matchKind), [.threadTitle])
+    XCTAssertEqual(results.first?.messageID, latest.id)
+    XCTAssertEqual(results.first?.matchedAt, latest.createdAt)
+    XCTAssertEqual(results.first?.snippet, "Billing is reconciled now.")
+  }
+
+  func testWorkspaceChatSearchPrefersTheMostRecentConversation() {
+    let now = Date()
+    func thread(_ title: String, _ text: String, daysAgo: Double) -> AIChatThread {
+      let date = now.addingTimeInterval(-daysAgo * 86_400)
+      return AIChatThread(
+        id: UUID(),
+        title: title,
+        createdAt: date,
+        updatedAt: date,
+        sessionKey: "recency-\(title)",
+        messages: [AIChatMessage(role: .user, content: text, createdAt: date)]
+      )
+    }
+    // A short old message used to win the fuzzy score; recency now leads,
+    // and subsequence-only matches ("r...e...d...d...i...t") never match.
+    let threads = [
+      thread("Old", "reddit", daysAgo: 200),
+      thread("Spurious", "read the docs, did it work?", daysAgo: 0),
+      thread("Recent", "We should post the launch on Reddit and Hacker News this week.", daysAgo: 1)
+    ]
+
+    let results = WorkspaceStore.searchAIChatThreads(threads, query: "reddit", limit: 10)
+
+    XCTAssertEqual(results.map(\.title), ["Recent", "Old"])
   }
 
   func testWorkspaceChatSearchDoesNotExposeHiddenAutomaticPromptText() {

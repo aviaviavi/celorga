@@ -1040,6 +1040,7 @@ Use =search= for literal, case-insensitive full-text lookup over =.org= files, a
 #+begin_src sh
 celorga search "Chris Martin" --dir ~/notes --recursive --context 3 --sort date-desc
 celorga search "Mercor" --dir ~/notes --recursive --sort relevance
+celorga search "launch" --dir ~/notes --recursive --sort best
 celorga index --dir ~/notes --recursive --file ~/notes/inbox.org --incremental --format json
 celorga query "Chris Martin" --dir ~/notes --recursive --subtree --sort date-desc --format json
 celorga query "Sentra" --dir ~/notes --recursive --format json
@@ -1051,6 +1052,7 @@ Useful flags:
 - =--context N= includes surrounding source lines.
 - =--limit N= caps returned matches.
 - =--sort relevance= puts active TODO matches first, then heading matches before raw text; exact heading matches lead heading substrings and deeper body matches.
+- =--sort best= blends match quality with a strong recency bias: a recent mention can outrank an old exact heading match. Dates written in the note (date-named files and heading timestamps) count fully; a file's modification time is a weaker fallback. The macOS app uses this mode and merges the results with chats, files, pages, and agent work in one ranked list.
 - =--sort date-desc= is useful for “when did I last...” style questions over date-named daily files and heading timestamps.
 - =--subtree= deduplicates matches to cited heading/subtree sections with =sourceRange=, =headingAncestry=, =matchedLines=, and full subtree context.
 - =--answer-context= adds a plain subtree text block for downstream local LLM prompts.

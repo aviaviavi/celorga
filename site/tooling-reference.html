@@ -917,6 +917,7 @@ celorga compile corpus --dir ~/notes --recursive --incremental --out compiled/co
 <p>Use <code>search</code> for literal, case-insensitive full-text lookup over <code>.org</code> files, and <code>query</code> when you want cited context suitable for answering factual questions from notes. Directory scans are non-recursive unless <code>--recursive</code> is set. The <a href="llm-consumers.html">External LLM consumer pattern</a> page shows how provider-agnostic agents can turn this JSON into cited model context without adding LLM calls to Celorga core.</p>
 <pre class="org2-src language-sh" style="padding: 0.9rem 1rem; border: 1px solid rgba(127,127,127,0.28); border-radius: 0.6rem; background: rgba(127,127,127,0.11); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 0.92rem; line-height: 1.28;"><code class="language-sh">celorga search &quot;Chris Martin&quot; --dir ~/notes --recursive --context 3 --sort date-desc
 celorga search &quot;Mercor&quot; --dir ~/notes --recursive --sort relevance
+celorga search &quot;launch&quot; --dir ~/notes --recursive --sort best
 celorga index --dir ~/notes --recursive --file ~/notes/inbox.org --incremental --format json
 celorga query &quot;Chris Martin&quot; --dir ~/notes --recursive --subtree --sort date-desc --format json
 celorga query &quot;Sentra&quot; --dir ~/notes --recursive --format json
@@ -926,6 +927,7 @@ celorga query actions --object 'id:PERSON-ID' --dir ~/notes --recursive --recent
 <li><p><code>--context N</code> includes surrounding source lines.</p></li>
 <li><p><code>--limit N</code> caps returned matches.</p></li>
 <li><p><code>--sort relevance</code> puts active TODO matches first, then heading matches before raw text; exact heading matches lead heading substrings and deeper body matches.</p></li>
+<li><p><code>--sort best</code> blends match quality with a strong recency bias: a recent mention can outrank an old exact heading match. Dates written in the note (date-named files and heading timestamps) count fully; a file's modification time is a weaker fallback. The macOS app uses this mode and merges the results with chats, files, pages, and agent work in one ranked list.</p></li>
 <li><p><code>--sort date-desc</code> is useful for “when did I last...” style questions over date-named daily files and heading timestamps.</p></li>
 <li><p><code>--subtree</code> deduplicates matches to cited heading/subtree sections with <code>sourceRange</code>, <code>headingAncestry</code>, <code>matchedLines</code>, and full subtree context.</p></li>
 <li><p><code>--answer-context</code> adds a plain subtree text block for downstream local LLM prompts.</p></li>

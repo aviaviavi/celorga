@@ -2314,8 +2314,9 @@ public final class WorkspaceStore {
   nonisolated public static let sourceAutoSyncCheckIntervalNanoseconds: UInt64 = 60_000_000_000
   nonisolated public static let automationScheduleCheckIntervalNanoseconds: UInt64 = 60_000_000_000
   nonisolated public static let applicationActivationRefreshDelayNanoseconds: UInt64 = 250_000_000
-  nonisolated static let workspaceSearchCandidateLimit = 100
+  nonisolated static let workspaceSearchCandidateLimit = 200
   nonisolated static let workspaceSearchDisplayLimit = 50
+  nonisolated static let workspaceSearchMergedDisplayLimit = 100
   nonisolated static let agendaRangeDays = 30
 
   public private(set) var workspaceTabs: [WorkspaceTab]
@@ -2603,7 +2604,10 @@ public final class WorkspaceStore {
   public var workspaceAgentWorkSearchResults: [WorkspaceAgentWorkSearchResult] = [] {
     didSet { rebuildWorkspaceTextSearchDisplayCache() }
   }
-  public private(set) var workspaceTextSearchSections: [WorkspaceTextSearchSection] = []
+  /// Every kind of workspace search result in one list, best first.
+  public private(set) var workspaceTextSearchItems: [WorkspaceTextSearchItem] = []
+  /// The query the current results answer; the draft may already differ.
+  private var workspaceSearchRankingQuery: String?
   public private(set) var corpusSearchResultGroups: [SearchResultGroup] = []
   public private(set) var searchNodes: [OrgRoamNodeReference] = []
   public var renderedSearchHighlightQuery: String?
@@ -11092,20 +11096,16 @@ extension WorkspaceStore {
     }
 
     let started = Date()
-    let chatThreadMetadata = aiChatThreads
-    let chatTranscriptURL = aiChatTranscriptURL
     let requestedCorpusRoot = corpusRoot?.standardizedFileURL
-    let chatResults = await Task.detached(priority: .userInitiated) {
-      let threads = AIChatTranscriptStore.shared.loadAllThreads(
-        replacingMetadata: chatThreadMetadata,
-        legacyURL: chatTranscriptURL
-      )
-      return Self.searchAIChatThreads(threads, query: query, limit: 25)
-    }.value
-    guard !Task.isCancelled,
-          isCurrentWorkspaceSearchRequest(request)
-    else { return }
+    // Every source runs concurrently; chat search reuses cached transcript
+    // text and reads only threads that changed since the last search.
+    let chatSearchTask = aiChatWorkspaceSearchTask(query: query)
     guard let corpusRoot = requestedCorpusRoot else {
+      let chatResults = await chatSearchTask.value
+      guard !Task.isCancelled,
+            isCurrentWorkspaceSearchRequest(request)
+      else { return }
+      workspaceSearchRankingQuery = query
       searchResults = []
       aiChatSearchResults = chatResults
       workspaceFileSearchResults = []
@@ -11157,7 +11157,7 @@ extension WorkspaceStore {
         "--limit", String(Self.workspaceSearchCandidateLimit),
         "--context", "1",
         "--index", federates ? "auto" : "current",
-        "--sort", "relevance",
+        "--sort", "best",
         "--format", "json"
       ]
       let payload: SearchPayload
@@ -11174,19 +11174,27 @@ extension WorkspaceStore {
             isCurrentWorkspaceSearchRequest(request)
       else { return }
       let agentWorkResults = await agentWorkSearchTask.value
+      let chatResults = await chatSearchTask.value
       guard !Task.isCancelled,
             isCurrentWorkspaceSearchRequest(request)
       else { return }
+      let resultPaths = Set(payload.results.map(\.file))
+      var modifiedAtByPath: [String: Date] = [:]
+      for file in files where resultPaths.contains(file.path) {
+        modifiedAtByPath[file.path] = file.modifiedAt
+      }
       let prioritizedResults = Self.prioritizedSearchResultsForDisplay(
         payload.results,
         query: query,
-        limit: Self.workspaceSearchDisplayLimit
+        limit: Self.workspaceSearchDisplayLimit,
+        modifiedAtByPath: modifiedAtByPath
       )
       let totalCount = prioritizedResults.count
         + chatResults.count
         + fileResults.count
         + pageResults.count
         + agentWorkResults.count
+      workspaceSearchRankingQuery = query
       searchResults = prioritizedResults
       aiChatSearchResults = chatResults
       workspaceFileSearchResults = fileResults
@@ -11198,12 +11206,43 @@ extension WorkspaceStore {
       markWorkspaceSurfaceCleanIfUnchanged(.search, generation: dirtyGeneration)
     } catch {
       let agentWorkResults = await agentWorkSearchTask.value
+      let chatResults = await chatSearchTask.value
       guard !Task.isCancelled,
             isCurrentWorkspaceSearchRequest(request)
       else { return }
+      workspaceSearchRankingQuery = query
+      aiChatSearchResults = chatResults
       workspaceAgentWorkSearchResults = agentWorkResults
       errorText = error.localizedDescription
       statusText = "Search failed"
+    }
+  }
+
+  private func aiChatWorkspaceSearchTask(query: String) -> Task<[AIChatSearchResult], Never> {
+    let metadata = aiChatThreads
+    let transcriptURL = aiChatTranscriptURL
+    return Task.detached(priority: .userInitiated) {
+      let documents = Self.aiChatSearchDocuments(metadata: metadata, transcriptURL: transcriptURL)
+      return Self.searchAIChatDocuments(documents, query: query, limit: 25)
+    }
+  }
+
+  /// Loads chat text into the search cache ahead of the first query, so
+  /// opening search does not pay for decoding every transcript on Return.
+  public func warmAIChatSearchIndex() {
+    let metadata = aiChatThreads
+    let transcriptURL = aiChatTranscriptURL
+    Task.detached(priority: .utility) {
+      _ = Self.aiChatSearchDocuments(metadata: metadata, transcriptURL: transcriptURL)
+    }
+  }
+
+  nonisolated private static func aiChatSearchDocuments(
+    metadata: [AIChatThread],
+    transcriptURL: URL
+  ) -> [AIChatSearchDocument] {
+    AIChatSearchIndex.shared.documents(for: metadata, transcriptURL: transcriptURL) { thread in
+      AIChatTranscriptStore.shared.loadThread(id: thread.id, metadata: thread, legacyURL: transcriptURL)
     }
   }
 
@@ -20525,6 +20564,7 @@ extension WorkspaceStore {
   public func focusSearchSurface() {
     makeSurfacePrimary(.search)
     searchFocusToken += 1
+    warmAIChatSearchIndex()
   }
 
   public func presentAIChatThreadFind() {
@@ -20624,34 +20664,130 @@ extension WorkspaceStore {
   }
 
   private func rebuildWorkspaceTextSearchDisplayCache() {
-    let categorizedItems: [WorkspaceTextSearchItem] =
-      searchResults.filter(\.isActiveTodo).map(WorkspaceTextSearchItem.activeTodo)
-      + workspaceFileSearchResults.map(WorkspaceTextSearchItem.file)
-      + aiChatSearchResults
-        .filter { $0.matchKind == .threadTitle }
-        .map(WorkspaceTextSearchItem.chatThread)
-      + workspaceAgentWorkSearchResults.map(WorkspaceTextSearchItem.agentWork)
-      + workspacePageSearchResults.map(WorkspaceTextSearchItem.page)
-      + searchResults
-        .filter { !$0.isActiveTodo && $0.heading?.isEmpty == false }
-        .map(WorkspaceTextSearchItem.entry)
-      + aiChatSearchResults
-        .filter { $0.matchKind == .messageText }
-        .map(WorkspaceTextSearchItem.chatMessage)
-      + searchResults
-        .filter { !$0.isActiveTodo && $0.heading?.isEmpty != false }
-        .map(WorkspaceTextSearchItem.corpusText)
-
-    let grouped = Dictionary(grouping: categorizedItems, by: \.category)
-    workspaceTextSearchSections = WorkspaceTextSearchCategory.allCases.compactMap { category in
-      guard let items = grouped[category], !items.isEmpty else { return nil }
-      return WorkspaceTextSearchSection(category: category, items: items)
+    let query = workspaceSearchRankingQuery ?? searchQuery
+    var modifiedAtByPath: [String: Date] = [:]
+    let referencedPaths = Set(searchResults.map(\.file) + workspacePageSearchResults.map(\.file))
+    if !referencedPaths.isEmpty {
+      for file in corpusFiles where referencedPaths.contains(file.path) {
+        modifiedAtByPath[file.path] = file.modifiedAt
+      }
     }
+    workspaceTextSearchItems = Self.rankedWorkspaceSearchItems(
+      corpusResults: searchResults,
+      files: workspaceFileSearchResults,
+      chats: aiChatSearchResults,
+      agentWork: workspaceAgentWorkSearchResults,
+      pages: workspacePageSearchResults,
+      query: query,
+      modifiedAtByPath: modifiedAtByPath,
+      now: Date()
+    )
     corpusSearchResultGroups = Self.groupedSearchResultsForDisplay(searchResults)
   }
 
   public var workspaceTextSearchResultCount: Int {
-    workspaceTextSearchSections.reduce(0) { $0 + $1.items.count }
+    workspaceTextSearchItems.count
+  }
+
+  /// Merges every search source into one list ordered by match quality plus
+  /// a strong recency bias, rather than by result type.
+  nonisolated static func rankedWorkspaceSearchItems(
+    corpusResults: [SearchResult],
+    files: [CorpusFile],
+    chats: [AIChatSearchResult],
+    agentWork: [WorkspaceAgentWorkSearchResult],
+    pages: [OrgRoamNodeReference],
+    query rawQuery: String,
+    modifiedAtByPath: [String: Date] = [:],
+    now: Date = Date(),
+    limit: Int = workspaceSearchMergedDisplayLimit
+  ) -> [WorkspaceTextSearchItem] {
+    let query = WorkspaceSearchQuery(rawQuery)
+    var ranked: [(item: WorkspaceTextSearchItem, score: Double, date: Date?)] = []
+    ranked.reserveCapacity(corpusResults.count + files.count + chats.count + agentWork.count + pages.count)
+
+    // One row per heading: further matches inside the same entry add noise.
+    var seenEntries = Set<String>()
+    for result in corpusResults {
+      if result.headingLine != nil,
+         !seenEntries.insert(corpusEntrySearchIdentity(result)).inserted {
+        continue
+      }
+      let recency = WorkspaceSearchRanking.corpusResultRecency(
+        result,
+        modifiedAt: modifiedAtByPath[result.file],
+        now: now
+      )
+      let item: WorkspaceTextSearchItem = result.isActiveTodo
+        ? .activeTodo(result)
+        : result.heading?.isEmpty == false ? .entry(result) : .corpusText(result)
+      ranked.append((
+        item,
+        WorkspaceSearchRanking.corpusResultQuality(result, query: query) + recency.boost,
+        recency.date
+      ))
+    }
+
+    for file in files {
+      let quality = query.flatMap { WorkspaceSearchRanking.fileQuality(file, query: $0) }
+        ?? WorkspaceSearchRanking.pathOnlyQuality
+      let recency = WorkspaceSearchRanking.fileRecency(file, now: now)
+      ranked.append((.file(file), quality + recency.boost, recency.date))
+    }
+
+    var seenThreads = Set<UUID>()
+    for chat in chats where seenThreads.insert(chat.threadID).inserted {
+      let quality = chat.matchKind == .threadTitle
+        ? query.flatMap { $0.titleQuality(chat.title) } ?? WorkspaceSearchRanking.substringTitleQuality
+        : WorkspaceSearchRanking.bodyPhraseQuality
+      let item: WorkspaceTextSearchItem = chat.matchKind == .threadTitle ? .chatThread(chat) : .chatMessage(chat)
+      ranked.append((
+        item,
+        quality + WorkspaceSearchRanking.recencyBoost(chat.matchedAt, now: now),
+        chat.matchedAt
+      ))
+    }
+
+    for result in agentWork {
+      let quality = query.flatMap { $0.titleQuality(result.title) } ?? WorkspaceSearchRanking.bodyPhraseQuality
+      ranked.append((
+        .agentWork(result),
+        quality + WorkspaceSearchRanking.recencyBoost(result.updatedAt, now: now),
+        result.updatedAt
+      ))
+    }
+
+    for node in pages {
+      let quality = query.flatMap { WorkspaceSearchRanking.pageQuality(node, query: $0) }
+        ?? WorkspaceSearchRanking.substringTitleQuality
+      let modifiedAt = modifiedAtByPath[node.file]
+      ranked.append((
+        .page(node),
+        quality + WorkspaceSearchRanking.recencyBoost(
+          modifiedAt,
+          now: now,
+          factor: WorkspaceSearchRanking.modifiedTimeRecencyFactor
+        ),
+        modifiedAt
+      ))
+    }
+
+    let ordered = ranked.enumerated().sorted { lhs, rhs in
+      if lhs.element.score != rhs.element.score { return lhs.element.score > rhs.element.score }
+      let lhsDate = lhs.element.date ?? .distantPast
+      let rhsDate = rhs.element.date ?? .distantPast
+      if lhsDate != rhsDate { return lhsDate > rhsDate }
+      return lhs.offset < rhs.offset
+    }
+    return ordered.prefix(max(0, limit)).map(\.element.item)
+  }
+
+  nonisolated private static func corpusEntrySearchIdentity(_ result: SearchResult) -> String {
+    [
+      result.corpus?.id ?? "",
+      result.file,
+      String(result.headingLine ?? result.line)
+    ].joined(separator: "\u{1F}")
   }
 
   nonisolated static func searchAgentWorkForWorkspace(
@@ -20726,7 +20862,8 @@ extension WorkspaceStore {
           title: approval.title,
           snippet: "\(run.goal) · \(detail)",
           status: approval.status,
-          sourceReference: "Run \(run.id.prefix(8))"
+          sourceReference: "Run \(run.id.prefix(8))",
+          updatedAt: WorkspaceSearchRanking.isoDate(approval.decidedAt ?? approval.requestedAt)
         ))
       }
 
@@ -20742,7 +20879,8 @@ extension WorkspaceStore {
             ?? run.blockedReason?.nilIfBlank
             ?? run.progressText,
           status: run.status,
-          sourceReference: "Run \(run.id.prefix(8))"
+          sourceReference: "Run \(run.id.prefix(8))",
+          updatedAt: WorkspaceSearchRanking.isoDate(run.updatedAt)
         ))
       }
     }
@@ -20780,7 +20918,8 @@ extension WorkspaceStore {
         snippet: approval.runGoal?.nilIfBlank ?? approval.body,
         status: approval.status,
         sourceReference: approval.runId.map { "Run \($0.prefix(8))" }
-          ?? "\(fileLabel(approval.file)):\(max(1, approval.line))"
+          ?? "\(fileLabel(approval.file)):\(max(1, approval.line))",
+        updatedAt: WorkspaceSearchRanking.isoDate(approval.requestedAt)
       ))
     }
 
@@ -20867,14 +21006,14 @@ extension WorkspaceStore {
   nonisolated static func searchCorpusFilesForWorkspace(
     _ files: [CorpusFile],
     query rawQuery: String,
-    limit: Int
+    limit: Int,
+    now: Date = Date()
   ) -> [CorpusFile] {
-    let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !query.isEmpty else { return [] }
+    guard let query = WorkspaceSearchQuery(rawQuery), limit > 0 else { return [] }
     return files
-      .compactMap { file -> (CorpusFile, Int)? in
-        guard let score = fuzzyScore(query: query, candidate: file.relativePath) else { return nil }
-        return (file, score)
+      .compactMap { file -> (CorpusFile, Double)? in
+        guard let quality = WorkspaceSearchRanking.fileQuality(file, query: query) else { return nil }
+        return (file, quality + WorkspaceSearchRanking.fileRecency(file, now: now).boost)
       }
       .sorted { lhs, rhs in
         if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
@@ -20889,22 +21028,12 @@ extension WorkspaceStore {
     query rawQuery: String,
     limit: Int
   ) -> [OrgRoamNodeReference] {
-    let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !query.isEmpty else { return [] }
-    let normalizedQuery = query.lowercased()
+    guard let query = WorkspaceSearchQuery(rawQuery), limit > 0 else { return [] }
     return nodes
       .filter(\.isPageNode)
-      .compactMap { node -> (OrgRoamNodeReference, Int)? in
-        let candidates = [node.title] + node.aliases
-        guard let score = candidates.compactMap({
-          fuzzyScore(query: query, candidate: $0)
-        }).max() else {
-          return nil
-        }
-        let exactBoost = candidates.contains {
-          $0.lowercased().contains(normalizedQuery)
-        } ? 50 : 0
-        return (node, score + exactBoost)
+      .compactMap { node -> (OrgRoamNodeReference, Double)? in
+        guard let quality = WorkspaceSearchRanking.pageQuality(node, query: query) else { return nil }
+        return (node, quality)
       }
       .sorted { lhs, rhs in
         if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
@@ -20916,20 +21045,34 @@ extension WorkspaceStore {
       .map(\.0)
   }
 
+  /// Orders corpus matches by match quality plus recency and keeps one row
+  /// per active TODO.
   nonisolated static func prioritizedSearchResultsForDisplay(
     _ results: [SearchResult],
-    query: String = "",
-    limit: Int? = nil
+    query rawQuery: String = "",
+    limit: Int? = nil,
+    modifiedAtByPath: [String: Date] = [:],
+    now: Date = Date()
   ) -> [SearchResult] {
-    let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let query = WorkspaceSearchQuery(rawQuery)
     let ranked = results.enumerated()
+      .map { offset, result in
+        let recency = WorkspaceSearchRanking.corpusResultRecency(
+          result,
+          modifiedAt: modifiedAtByPath[result.file],
+          now: now
+        )
+        return (
+          offset: offset,
+          result: result,
+          score: WorkspaceSearchRanking.corpusResultQuality(result, query: query) + recency.boost
+        )
+      }
       .sorted { lhs, rhs in
-        let lhsRank = searchResultDisplayRank(lhs.element, query: normalizedQuery)
-        let rhsRank = searchResultDisplayRank(rhs.element, query: normalizedQuery)
-        if lhsRank != rhsRank { return lhsRank < rhsRank }
+        if lhs.score != rhs.score { return lhs.score > rhs.score }
         return lhs.offset < rhs.offset
       }
-      .map(\.element)
+      .map(\.result)
 
     var seenActiveTodos: Set<String> = []
     let deduplicated = ranked.filter { result in
@@ -20955,23 +21098,6 @@ extension WorkspaceStore {
     return fileOrder.compactMap { file in
       SearchResultGroup(file: file, results: grouped[file] ?? [])
     }
-  }
-
-  nonisolated private static func searchResultDisplayRank(_ result: SearchResult, query: String) -> Int {
-    let resultKind = result.isActiveTodo ? 0 : result.isTerminalTodo ? 2 : 1
-    let heading = result.heading?
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-      .lowercased() ?? ""
-    let headingMatch: Int
-    if !query.isEmpty && heading == query {
-      headingMatch = 0
-    } else if !query.isEmpty && heading.contains(query) {
-      headingMatch = 1
-    } else {
-      headingMatch = 2
-    }
-    let matchedHeadingLine = result.headingLine == result.line ? 0 : 1
-    return (resultKind * 100) + (headingMatch * 10) + matchedHeadingLine
   }
 
   nonisolated private static func activeTodoSearchIdentity(_ result: SearchResult) -> String {
@@ -35785,64 +35911,88 @@ extension WorkspaceStore {
   nonisolated static func searchAIChatThreads(
     _ threads: [AIChatThread],
     query rawQuery: String,
-    limit: Int
+    limit: Int,
+    now: Date = Date()
   ) -> [AIChatSearchResult] {
-    let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !query.isEmpty else { return [] }
+    searchAIChatDocuments(
+      threads.map { AIChatSearchDocument(thread: $0, messages: AIChatSearchIndex.searchMessages($0)) },
+      query: rawQuery,
+      limit: limit,
+      now: now
+    )
+  }
 
-    return threads
-      .flatMap { thread -> [(AIChatSearchResult, Int)] in
-        var matches: [(AIChatSearchResult, Int)] = []
-        if let titleScore = fuzzyScore(query: query, candidate: thread.title) {
-          matches.append((
-            AIChatSearchResult(
-              threadID: thread.id,
-              messageID: nil,
-              matchKind: .threadTitle,
-              title: thread.title,
-              snippet: chatSearchSnippet(
-                message: thread.messages.first.map(visibleAIChatMessageText) ?? thread.title,
-                query: query
-              ),
-              messageCount: thread.messageCount,
-              updatedAt: thread.updatedAt
-            ),
-            titleScore
-          ))
-        }
+  /// Returns at most one result per thread, ordered by match quality plus a
+  /// strong recency bias. The snippet and date come from the most recent
+  /// matching message, so the latest conversation about a topic leads.
+  nonisolated static func searchAIChatDocuments(
+    _ documents: [AIChatSearchDocument],
+    query rawQuery: String,
+    limit: Int,
+    now: Date = Date()
+  ) -> [AIChatSearchResult] {
+    guard let query = WorkspaceSearchQuery(rawQuery), limit > 0 else { return [] }
 
-        let messageMatches = thread.messages.compactMap {
-          message -> (message: AIChatMessage, visibleText: String, score: Int)? in
-          let visibleText = visibleAIChatMessageText(message)
-          guard let score = fuzzyScore(query: query, candidate: visibleText) else { return nil }
-          return (message, visibleText, score)
-        }
-        if let bestMessage = messageMatches.max(by: { lhs, rhs in lhs.score < rhs.score }) {
-          matches.append((
-            AIChatSearchResult(
-              threadID: thread.id,
-              messageID: bestMessage.message.id,
-              matchKind: .messageText,
-              title: thread.title,
-              snippet: chatSearchSnippet(message: bestMessage.visibleText, query: query),
-              messageCount: thread.messageCount,
-              updatedAt: thread.updatedAt
-            ),
-            bestMessage.score
-          ))
-        }
+    struct Candidate {
+      let document: AIChatSearchDocument
+      let latestMatch: AIChatSearchMessage?
+      let isTitleMatch: Bool
+      let matchedAt: Date
+      let score: Double
+    }
 
-        return matches
+    var candidates: [Candidate] = []
+    for document in documents {
+      let thread = document.thread
+      let titleQuality = query.titleQuality(thread.title)
+      var latestMatch: AIChatSearchMessage?
+      var latestMatchQuality: Double?
+      for message in document.messages.reversed() {
+        if let quality = query.bodyQuality(message.text) {
+          latestMatch = message
+          latestMatchQuality = quality
+          break
+        }
       }
+      guard let quality = titleQuality ?? latestMatchQuality else { continue }
+      let matchedAt = latestMatch?.createdAt ?? thread.updatedAt
+      candidates.append(Candidate(
+        document: document,
+        latestMatch: latestMatch,
+        isTitleMatch: titleQuality != nil,
+        matchedAt: matchedAt,
+        score: quality + WorkspaceSearchRanking.recencyBoost(matchedAt, now: now)
+      ))
+    }
+
+    // Build snippets only for the results that will be shown.
+    return candidates
       .sorted { lhs, rhs in
-        if lhs.0.matchKind != rhs.0.matchKind {
-          return lhs.0.matchKind == .threadTitle
-        }
-        if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
-        return lhs.0.updatedAt > rhs.0.updatedAt
+        if lhs.score != rhs.score { return lhs.score > rhs.score }
+        return lhs.matchedAt > rhs.matchedAt
       }
       .prefix(limit)
-      .map(\.0)
+      .map { candidate in
+        let thread = candidate.document.thread
+        let snippetSource = candidate.latestMatch?.text
+          ?? candidate.document.messages.first?.text
+          ?? thread.title
+        return AIChatSearchResult(
+          threadID: thread.id,
+          messageID: candidate.latestMatch?.id,
+          matchKind: candidate.isTitleMatch ? .threadTitle : .messageText,
+          title: thread.title,
+          snippet: chatSearchSnippet(message: snippetSource, query: query),
+          messageCount: thread.messageCount,
+          updatedAt: thread.updatedAt,
+          matchedAt: candidate.matchedAt
+        )
+      }
+  }
+
+  nonisolated private static func chatSearchSnippet(message: String, query: WorkspaceSearchQuery) -> String {
+    let needle = query.match(message) == .phrase ? query.phrase : query.terms[0]
+    return chatSearchSnippet(message: message, query: needle)
   }
 
   nonisolated private static func chatSearchSnippet(message: String, query: String) -> String {

@@ -115,6 +115,29 @@ assert.equal(relevanceSearch.results[0].todo, "TODO");
 assert.equal(relevanceSearch.results[0].line, relevanceSearch.results[0].headingLine);
 assert.equal(relevanceSearch.results[2].heading, "Mercor account notes");
 
+// `best` blends match quality with a strong recency bias: a passing mention
+// today outranks an exact heading match from years ago.
+const bestRoot = fs.mkdtempSync(path.join(os.tmpdir(), "org2-search-best-"));
+const isoDay = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const today = isoDay(new Date());
+const yearsAgo = isoDay(new Date(Date.now() - 900 * 24 * 60 * 60 * 1000));
+fs.writeFileSync(path.join(bestRoot, `${yearsAgo}.org2`), `* TODO Zephyrine\nOld exact heading match.\n`, "utf8");
+fs.writeFileSync(path.join(bestRoot, `${today}.org2`), `* Standup\nWe mentioned zephyrine in passing today.\n`, "utf8");
+fs.writeFileSync(path.join(bestRoot, "links.org2"), `* [[https://zephyrine.example][Bookmarks]]\nA hidden link target only.\n`, "utf8");
+fs.utimesSync(path.join(bestRoot, "links.org2"), new Date(0), new Date(0));
+for (const indexMode of ["rebuild", "never"]) {
+  const bestSearch = JSON.parse(run(
+    "search", "zephyrine", "--dir", bestRoot, "--recursive", "--index", indexMode, "--sort", "best", "--format", "json",
+  ));
+  assert.equal(bestSearch.sort, "best");
+  assert.deepEqual(
+    bestSearch.results.map((result) => path.basename(result.file)),
+    [`${today}.org2`, `${yearsAgo}.org2`, "links.org2"],
+    `best ranking with --index ${indexMode}`,
+  );
+}
+fs.rmSync(bestRoot, { recursive: true, force: true });
+
 fs.appendFileSync(file, "\nIndexed freshness marker.\n", "utf8");
 const staleIndexSearch = JSON.parse(run("search", "freshness marker", "--dir", tmp, "--recursive", "--index", "auto", "--format", "json"));
 assert.equal(staleIndexSearch.index.used, false);

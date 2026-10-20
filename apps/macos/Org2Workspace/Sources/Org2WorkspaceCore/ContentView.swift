@@ -9606,6 +9606,7 @@ private struct SearchView: View {
     }
     .onAppear {
       searchDraft = store.searchQuery
+      store.warmAIChatSearchIndex()
     }
     .task(id: store.searchFocusToken) {
       guard store.selectedSurface == .search else { return }
@@ -9635,7 +9636,7 @@ private struct SearchView: View {
   private var searchResultsBody: some View {
     switch store.searchMode {
     case .text:
-      if store.workspaceTextSearchSections.isEmpty {
+      if store.workspaceTextSearchItems.isEmpty {
         if store.isSearching {
           Spacer()
           WorkspaceLoadingStateView("Searching")
@@ -9646,17 +9647,11 @@ private struct SearchView: View {
           }
         }
       } else {
+        // One list, best match first: quality plus recency decides the
+        // order, not the kind of result.
         WorkspaceLazyCollection {
-          ForEach(store.workspaceTextSearchSections) { section in
-            Section {
-              ForEach(section.items) { item in
-                workspaceSearchRow(item)
-              }
-            } header: {
-              WorkspaceLazySectionHeader {
-                Text(section.category.title)
-              }
-            }
+          ForEach(store.workspaceTextSearchItems) { item in
+            workspaceSearchRow(item)
           }
         }
       }
@@ -9898,7 +9893,7 @@ private struct ChatSearchRow: View {
           .font(.callout)
           .foregroundStyle(.secondary)
           .lineLimit(2)
-        Text(Self.relativeDate(result.updatedAt))
+        Text(Self.relativeDate(result.matchedAt))
           .font(.caption)
           .foregroundStyle(.tertiary)
           .lineLimit(1)

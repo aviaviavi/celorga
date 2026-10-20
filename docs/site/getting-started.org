@@ -168,7 +168,7 @@ Open *Agent Work* to inspect cited inputs, artifacts, validation, pending decisi
 
 * Find and connect what you know
 
-Use =Command-K= to quickly open any file or heading. Global search finds text, tasks, agent work, and other indexed workspace records.
+Use =Command-K= to quickly open any file or heading. Global search finds text, tasks, chats, agent work, and other indexed workspace records, and lists them in one ranking with the best and most recent matches first.
 
 When two ideas belong together, add a link. Celorga keeps source locations and backlinks, so a person, project, meeting, or decision stays connected to the work that came from it.
 

@@ -114,11 +114,11 @@ final class WorkspaceLazyCollectionTests: XCTestCase {
       .init(name: "ApprovalsView", nextName: "ApprovalControls"),
       .init(name: "AgendaItemListView", nextName: "AssignedAgendaListView", expectsSectionHeader: true),
       .init(name: "AssignedAgendaListView", nextName: "AgendaBulkActionBar", expectsSectionHeader: true),
+      // Workspace search is one ranked list; result kinds are not sections.
       .init(
         name: "SearchView",
         nextName: "AgentWorkSearchRow",
-        minimumLazyShellCount: 2,
-        expectsSectionHeader: true
+        minimumLazyShellCount: 2
       ),
       .init(name: "MeetingsView", nextName: "MeetingTranscriptionProgressView", expectsSectionHeader: true),
     ]

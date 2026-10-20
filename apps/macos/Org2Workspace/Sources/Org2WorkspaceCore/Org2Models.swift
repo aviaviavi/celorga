@@ -1640,6 +1640,9 @@ public struct AIChatSearchResult: Identifiable, Hashable, Sendable {
   public let snippet: String
   public let messageCount: Int
   public let updatedAt: Date
+  /// When the matched text was written: the most recent matching message,
+  /// or the thread's last update for a title-only match.
+  public let matchedAt: Date
 
   public init(
     threadID: UUID,
@@ -1648,7 +1651,8 @@ public struct AIChatSearchResult: Identifiable, Hashable, Sendable {
     title: String,
     snippet: String,
     messageCount: Int,
-    updatedAt: Date
+    updatedAt: Date,
+    matchedAt: Date? = nil
   ) {
     self.threadID = threadID
     self.messageID = messageID
@@ -1657,6 +1661,7 @@ public struct AIChatSearchResult: Identifiable, Hashable, Sendable {
     self.snippet = snippet
     self.messageCount = messageCount
     self.updatedAt = updatedAt
+    self.matchedAt = matchedAt ?? updatedAt
   }
 
   public var id: String {
@@ -1735,6 +1740,7 @@ public struct WorkspaceAgentWorkSearchResult: Identifiable, Hashable, Sendable {
   public let snippet: String
   public let status: String
   public let sourceReference: String
+  public let updatedAt: Date?
 
   public init(
     id: String,
@@ -1744,8 +1750,10 @@ public struct WorkspaceAgentWorkSearchResult: Identifiable, Hashable, Sendable {
     title: String,
     snippet: String,
     status: String,
-    sourceReference: String
+    sourceReference: String,
+    updatedAt: Date? = nil
   ) {
+    self.updatedAt = updatedAt
     self.id = id
     self.kind = kind
     self.recordID = recordID
@@ -1792,13 +1800,6 @@ public enum WorkspaceTextSearchItem: Identifiable, Hashable, Sendable {
     case .corpusText: .corpusText
     }
   }
-}
-
-public struct WorkspaceTextSearchSection: Identifiable, Hashable, Sendable {
-  public let category: WorkspaceTextSearchCategory
-  public let items: [WorkspaceTextSearchItem]
-
-  public var id: WorkspaceTextSearchCategory { category }
 }
 
 public struct HeadingRef: Decodable, Hashable, Sendable {

@@ -397,7 +397,8 @@ export function searchIndexedCorpus(index: Org2SearchIndex, options: Org2SearchO
     if (hits.length >= options.limit && normalizedSort(options.sort) === "scan") break;
   }
 
-  return sortAndLimitSearchHits(hits, options.sort, options.limit, options.query);
+  const modifiedMsByFile = new Map(index.files.map((file) => [file.path, file.modifiedMs]));
+  return sortAndLimitSearchHits(hits, options.sort, options.limit, options.query, modifiedMsByFile);
 }
 
 export function searchFilesByScan(files: string[], options: Org2SearchOptions): { hits: Org2SearchHit[]; skippedFileCount: number } {
@@ -405,6 +406,8 @@ export function searchFilesByScan(files: string[], options: Org2SearchOptions): 
   const subtreeHits = new Map<string, Org2SearchHit>();
   const matcher = literalCaseInsensitiveMatcher(options.query);
   const fileZoneFilters = options.fileZoneFilters.map((zone) => zone.toLowerCase()).filter(Boolean);
+  const modifiedMsByFile = new Map<string, number>();
+  const ranksByRecency = normalizedSort(options.sort) === "best";
   let skippedFileCount = 0;
 
   for (const filePath of files) {
@@ -413,7 +416,11 @@ export function searchFilesByScan(files: string[], options: Org2SearchOptions): 
       if (fileZoneFilters.length && !fileZoneFilters.some((zone) => normalizedFile.includes(zone))) continue;
       const raw = fs.readFileSync(filePath, "utf8").replace(/\r\n/g, "\n");
       const fileHits: Org2SearchHit[] = [];
+      const subtreeCount = subtreeHits.size;
       collectSearchHitsForLines(filePath, raw.split("\n"), matcher, options, fileHits, subtreeHits);
+      if (ranksByRecency && (fileHits.length > 0 || subtreeHits.size > subtreeCount)) {
+        modifiedMsByFile.set(filePath, fs.statSync(filePath).mtimeMs);
+      }
       hits.push(...fileHits);
     } catch {
       skippedFileCount += 1;
@@ -426,6 +433,7 @@ export function searchFilesByScan(files: string[], options: Org2SearchOptions): 
       options.sort,
       options.limit,
       options.query,
+      modifiedMsByFile,
     ),
     skippedFileCount,
   };
@@ -649,8 +657,23 @@ function matchesCaseInsensitiveLiteral(line: string, matcher: LiteralCaseInsensi
   return line.toLowerCase().includes(matcher.needle);
 }
 
-function sortAndLimitSearchHits(hits: Org2SearchHit[], sort: string, limit: number, query: string): Org2SearchHit[] {
+function sortAndLimitSearchHits(
+  hits: Org2SearchHit[],
+  sort: string,
+  limit: number,
+  query: string,
+  modifiedMsByFile: ReadonlyMap<string, number> = new Map(),
+): Org2SearchHit[] {
   const normalized = normalizedSort(sort);
+  if (normalized === "best") {
+    const needle = query.trim().toLowerCase();
+    const now = Date.now();
+    return hits
+      .map((hit, index) => ({ hit, index, score: bestSearchScore(hit, needle, now, modifiedMsByFile.get(hit.file)) }))
+      .sort((a, b) => b.score - a.score || a.index - b.index)
+      .slice(0, limit)
+      .map(({ hit }) => hit);
+  }
   if (["date-desc", "newest", "recent"].includes(normalized)) {
     hits.sort((a, b) => (b.sortDate || "").localeCompare(a.sortDate || "") || a.file.localeCompare(b.file) || a.line - b.line);
   } else if (["date-asc", "oldest"].includes(normalized)) {
@@ -660,6 +683,66 @@ function sortAndLimitSearchHits(hits: Org2SearchHit[], sort: string, limit: numb
     hits.sort((a, b) => compareSearchRelevance(a, b, needle));
   }
   return hits.slice(0, limit);
+}
+
+// `best` blends match quality with a strong recency bias so the most recently
+// relevant material leads. Keep the weights aligned with the macOS app's
+// WorkspaceSearchRanking, which reranks these candidates alongside chats,
+// files, and pages.
+const BEST_RECENCY_WEIGHT = 60;
+const BEST_RECENCY_HALF_LIFE_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// A file's modification time is a weaker signal than a date written in the
+// note: catch-all files change often while the matching line may be old.
+const BEST_MODIFIED_TIME_RECENCY_FACTOR = 0.5;
+
+function bestSearchScore(hit: Org2SearchHit, needle: string, now: number, modifiedMs: number | undefined): number {
+  const writtenDate = bestSearchWrittenTimestamp(hit);
+  const recency = writtenDate !== undefined
+    ? bestRecencyBoost(writtenDate, now)
+    : bestRecencyBoost(modifiedMs, now) * BEST_MODIFIED_TIME_RECENCY_FACTOR;
+  return bestSearchQuality(hit, needle) + recency;
+}
+
+function bestSearchQuality(hit: Org2SearchHit, needle: string): number {
+  // Match the visible heading, not hidden link targets such as URLs.
+  const heading = (hit.heading || "").replace(/\[\[[^\]]*\]\[([^\]]*)\]\]/g, "$1").trim().toLowerCase();
+  const isHeadingLine = hit.headingLine !== undefined && hit.headingLine === hit.line;
+  let quality = 10;
+  if (needle && heading) {
+    if (heading === needle) quality = 50;
+    else if (heading.startsWith(needle) || wordBoundaryIncludes(heading, needle)) quality = 35;
+    else if (heading.includes(needle)) quality = 30;
+    if (quality > 10 && !isHeadingLine) quality -= 5;
+  }
+  const todo = (hit.todo || "").trim().toUpperCase();
+  if (todo) {
+    const terminal = hit.todoTerminal ?? !isActiveTodoKeyword(todo);
+    quality += terminal ? -5 : 10;
+  }
+  return quality;
+}
+
+function wordBoundaryIncludes(text: string, needle: string): boolean {
+  let index = text.indexOf(needle);
+  while (index > 0) {
+    if (!/[\p{L}\p{N}]/u.test(text[index - 1] || "")) return true;
+    index = text.indexOf(needle, index + 1);
+  }
+  return index === 0;
+}
+
+function bestSearchWrittenTimestamp(hit: Org2SearchHit): number | undefined {
+  const date = hit.sortDate || hit.date;
+  const match = date ? /^(\d{4})-(\d{2})-(\d{2})/.exec(date) : null;
+  return match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12).getTime() : undefined;
+}
+
+function bestRecencyBoost(timestamp: number | undefined, now: number): number {
+  if (timestamp === undefined || !Number.isFinite(timestamp)) return 0;
+  const ageDays = Math.max(0, now - timestamp) / DAY_MS;
+  return BEST_RECENCY_WEIGHT * Math.pow(0.5, ageDays / BEST_RECENCY_HALF_LIFE_DAYS);
 }
 
 function compareSearchRelevance(a: Org2SearchHit, b: Org2SearchHit, needle: string): number {
