@@ -1806,21 +1806,66 @@ enum OrgHTMLRichCopy {
     const selectedText = selection.toString();
     if (!selectedText) return null;
 
+    // A cell counts as selected only when the selection covers some of its
+    // text. Double- and triple-click selections inside one cell end at the
+    // start of the next cell, which `intersectsNode` alone reports as a
+    // second selected cell.
+    const selectedCellRange = (cell) => {
+      const cellRange = document.createRange();
+      cellRange.selectNodeContents(cell);
+      try {
+        if (cellRange.comparePoint(range.startContainer, range.startOffset) === 0) {
+          cellRange.setStart(range.startContainer, range.startOffset);
+        }
+        if (cellRange.comparePoint(range.endContainer, range.endOffset) === 0) {
+          cellRange.setEnd(range.endContainer, range.endOffset);
+        }
+        if (!range.intersectsNode(cell)) return null;
+      } catch (_) { return null; }
+      return cellRange.toString().trim() ? cellRange : null;
+    };
+
     const tables = Array.from(document.querySelectorAll('table')).filter((table) => {
       try { return range.intersectsNode(table); } catch (_) { return false; }
     });
-    const selectedTable = tables.find((table) => {
-      const cells = Array.from(table.querySelectorAll('th, td')).filter((cell) => {
-        try { return range.intersectsNode(cell); } catch (_) { return false; }
+    for (const selectedTable of tables) {
+      const visibleRows = Array.from(selectedTable.rows).filter((row) => !row.hidden);
+      const selectedCells = [];
+      visibleRows.forEach((row, rowIndex) => {
+        Array.from(row.cells).forEach((cell, columnIndex) => {
+          const cellRange = selectedCellRange(cell);
+          if (cellRange) selectedCells.push({ rowIndex, columnIndex, cellRange });
+        });
       });
-      return cells.length >= 2;
-    });
+      if (selectedCells.length === 0) continue;
 
-    if (selectedTable) {
-      const clone = selectedTable.cloneNode(true);
-      clone.removeAttribute('id');
+      // Text inside one cell copies as that text, not as a table. A
+      // selection that also covers prose outside the table copies normally.
+      if (selectedCells.length === 1) {
+        if (selectedCells[0].cellRange.toString().trim() !== selectedText.trim()) break;
+        const cellRange = selectedCells[0].cellRange;
+        const container = document.createElement('div');
+        container.appendChild(cellRange.cloneContents());
+        container.querySelectorAll('.org2-column-resizer, .org2-table-sort-button').forEach((element) => element.remove());
+        return { html: container.innerHTML, text: cellRange.toString().trim() };
+      }
+
+      // Several cells copy as the rectangle of rows and columns they span.
+      const firstRow = Math.min(...selectedCells.map((cell) => cell.rowIndex));
+      const lastRow = Math.max(...selectedCells.map((cell) => cell.rowIndex));
+      const firstColumn = Math.min(...selectedCells.map((cell) => cell.columnIndex));
+      const lastColumn = Math.max(...selectedCells.map((cell) => cell.columnIndex));
+      const clone = document.createElement('table');
+      const body = document.createElement('tbody');
+      clone.appendChild(body);
+      visibleRows.slice(firstRow, lastRow + 1).forEach((row) => {
+        const rowClone = document.createElement('tr');
+        Array.from(row.cells).slice(firstColumn, lastColumn + 1).forEach((cell) => {
+          rowClone.appendChild(cell.cloneNode(true));
+        });
+        body.appendChild(rowClone);
+      });
       clone.querySelectorAll('.org2-column-resizer, .org2-table-sort-button').forEach((element) => element.remove());
-      clone.querySelectorAll('tr[hidden]').forEach((row) => row.remove());
       clone.style.borderCollapse = 'collapse';
       clone.style.borderSpacing = '0';
       clone.style.fontFamily = '-apple-system, BlinkMacSystemFont, sans-serif';
@@ -1828,6 +1873,7 @@ enum OrgHTMLRichCopy {
       clone.style.color = '#1f2328';
       clone.style.backgroundColor = '#ffffff';
       clone.querySelectorAll('th, td').forEach((cell) => {
+        cell.removeAttribute('id');
         cell.style.border = '1px solid #c8cdd3';
         cell.style.padding = '6px 10px';
         cell.style.textAlign = 'left';
@@ -1838,7 +1884,7 @@ enum OrgHTMLRichCopy {
         cell.style.backgroundColor = '#f2f4f7';
       });
       const text = Array.from(clone.rows).map((row) =>
-        Array.from(row.cells).map((cell) => cell.innerText.trim()).join('\t')
+        Array.from(row.cells).map((cell) => cell.textContent.trim()).join('\t')
       ).join('\n');
       return { html: clone.outerHTML, text };
     }
@@ -1847,6 +1893,8 @@ enum OrgHTMLRichCopy {
     container.appendChild(range.cloneContents());
     return { html: container.innerHTML, text: selectedText };
     };
+
+    window.__org2RichCopyPayload = copyPayload;
 
     document.addEventListener('copy', (event) => {
       const payload = copyPayload();

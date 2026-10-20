@@ -2756,7 +2756,7 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertTrue(script.contains("event.clipboardData.setData('text/plain'"))
     XCTAssertTrue(script.contains("clone.style.borderCollapse = 'collapse'"))
     XCTAssertTrue(script.contains(".org2-table-sort-button"))
-    XCTAssertTrue(script.contains("tr[hidden]"))
+    XCTAssertTrue(script.contains("!row.hidden"))
     XCTAssertTrue(script.contains("Array.from(clone.rows)"))
     XCTAssertTrue(script.contains("join('\\t')"))
   }
