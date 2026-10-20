@@ -11782,7 +11782,7 @@ extension WorkspaceStore {
         meetingStatusText = completionText
       }
       statusText = completionText
-      await refreshAfterMeetingWrite(selecting: bundle.item, context: context)
+      await refreshAfterMeetingWrite(completed: bundle.item, context: context)
     } catch {
       guard isCurrentAIChatCorpusContext(context) else { return }
       errorText = error.localizedDescription
@@ -11907,7 +11907,7 @@ extension WorkspaceStore {
         meetingStatusText = completionText
       }
       statusText = completionText
-      await refreshAfterMeetingWrite(selecting: bundle.item, context: context)
+      await refreshAfterMeetingWrite(completed: bundle.item, context: context)
     } catch {
       guard isCurrentAIChatCorpusContext(context) else { return }
       errorText = error.localizedDescription
@@ -11994,7 +11994,7 @@ extension WorkspaceStore {
         ? "Imported \(bundle.noteURL.lastPathComponent)"
         : "Imported \(bundle.noteURL.lastPathComponent); transcription \(transcript.status.label)"
       statusText = meetingStatusText
-      await refreshAfterMeetingWrite(selecting: bundle.item, context: context)
+      await refreshAfterMeetingWrite(completed: bundle.item, context: context)
     } catch {
       guard isCurrentAIChatCorpusContext(context) else { return }
       errorText = error.localizedDescription
@@ -49458,7 +49458,7 @@ extension WorkspaceStore {
   }
 
   private func refreshAfterMeetingWrite(
-    selecting item: MeetingWorkspaceItem,
+    completed item: MeetingWorkspaceItem,
     context: AIChatCorpusContextToken
   ) async {
     guard isCurrentAIChatCorpusContext(context) else { return }
@@ -49469,7 +49469,13 @@ extension WorkspaceStore {
     }
     meetingTranscriptionDidComplete(item)
     guard isCurrentAIChatCorpusContext(context) else { return }
-    selectMeeting(item)
+    // A finished transcription is a background event. Refresh the meeting if
+    // it is already on screen, but never navigate away from what the user is
+    // doing; the meeting list and status text announce the new item.
+    if case .meeting(let selected) = selectedLocation, selected.file == item.file {
+      selectedLocation = .meeting(item)
+      selectedMeetingID = item.id
+    }
     // The file watcher incrementally updates indexes and marks dependent
     // surfaces dirty. Avoid immediately repeating full meeting, agenda, and
     // chat scans after the artifact writer has already produced the item.

@@ -366,6 +366,45 @@ final class MeetingReadyAutomationTests: XCTestCase {
     }))
   }
 
+  @MainActor
+  func testFinishedTranscriptionDoesNotNavigateAwayFromCurrentPage() async throws {
+    let base = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-meeting-no-jump-\(UUID().uuidString)", isDirectory: true)
+    let corpus = base.appendingPathComponent("corpus", isDirectory: true)
+    try FileManager.default.createDirectory(at: corpus, withIntermediateDirectories: true)
+    let sourceAudio = base.appendingPathComponent("source.m4a")
+    try Data("audio".utf8).write(to: sourceAudio)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let suiteName = "MeetingReadyAutomationTests.NoJump.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let gate = SuspendedMeetingTranscription()
+    let store = WorkspaceStore(
+      defaults: defaults,
+      aiChatFallbackTranscriptURL: base.appendingPathComponent("fallback.json"),
+      legacyDefaultsDomains: [],
+      automaticStarterCorpusURL: nil
+    )
+    store.setCorpusRoot(corpus, persistsDefault: false)
+    await store.waitForAIChatTranscriptLoadForTesting()
+    store.meetingTranscriptionForTesting = { _ in await gate.transcribe() }
+    let importTask = Task {
+      await store.importMeetingAudio(url: sourceAudio, title: "Background planning")
+    }
+    await gate.waitUntilStarted()
+
+    // The user moves on while the transcription runs.
+    store.selectedSurface = .aiChat
+    let locationBeforeCompletion = store.selectedLocation
+    await gate.finish()
+    await importTask.value
+
+    XCTAssertEqual(store.selectedSurface, .aiChat)
+    XCTAssertEqual(store.selectedLocation?.file, locationBeforeCompletion?.file)
+    XCTAssertNil(store.selectedMeetingID)
+    XCTAssertTrue(store.meetings.contains(where: { $0.title.contains("Background planning") }))
+  }
+
   private func meeting(
     title: String,
     file: String,
