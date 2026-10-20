@@ -20666,6 +20666,18 @@ extension WorkspaceStore {
     warmAIChatSearchIndex()
   }
 
+  /// Hand a quick-open query to full workspace search: show Search in text
+  /// mode with the query and run it.
+  public func searchWorkspace(for query: String) {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    isQuickOpenPresented = false
+    searchMode = .text
+    searchQuery = trimmed
+    focusSearchSurface()
+    guard !trimmed.isEmpty else { return }
+    Task { await runSearch() }
+  }
+
   public func presentAIChatThreadFind() {
     guard selectedSurface == .home || selectedSurface == .aiChat else { return }
     aiChatFindRequestGeneration &+= 1

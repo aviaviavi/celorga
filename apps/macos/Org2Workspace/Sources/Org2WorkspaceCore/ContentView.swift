@@ -4693,9 +4693,29 @@ private struct QuickOpenView: View {
         }
       }
 
-      Text("Return opens  ·  ⌘Return opens in a new tab  ·  Recent files are listed first")
-        .font(.caption)
-        .foregroundStyle(.tertiary)
+      HStack(spacing: 8) {
+        Text("Return opens  ·  ⌘Return opens in a new tab")
+          .font(.caption)
+          .foregroundStyle(.tertiary)
+          .lineLimit(1)
+        Spacer(minLength: 8)
+        Button {
+          searchEverywhere()
+        } label: {
+          HStack(spacing: 6) {
+            Image(systemName: "text.magnifyingglass")
+            Text(trimmedQuery.isEmpty ? "Search Workspace" : "Search Workspace for “\(trimmedQuery)”")
+              .lineLimit(1)
+              .truncationMode(.middle)
+            Text("⇧↩")
+              .foregroundStyle(.tertiary)
+          }
+          .font(.caption)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help("Search headings, text, chats, and agent work across the workspace (⇧Return)")
+      }
     }
     .padding(16)
     .frame(width: 720, height: 480)
@@ -4727,11 +4747,26 @@ private struct QuickOpenView: View {
     dismiss()
   }
 
+  private var trimmedQuery: String {
+    query.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  /// Quick open matches names; full Search matches content everywhere.
+  private func searchEverywhere() {
+    store.usageLog.record(.quickOpenDismiss, ["query_length": .int(query.count)])
+    store.searchWorkspace(for: query)
+    dismiss()
+  }
+
   private func handleKeyDown(_ event: NSEvent) -> Bool {
     let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
     if modifiers == .command, event.keyCode == 36 || event.keyCode == 76 {
       guard let item = store.selectedQuickOpenItem else { return false }
       open(item, inNewTab: true)
+      return true
+    }
+    if modifiers == .shift, event.keyCode == 36 || event.keyCode == 76 {
+      searchEverywhere()
       return true
     }
     guard modifiers.isEmpty else { return false }
@@ -9547,15 +9582,11 @@ private struct SearchView: View {
   @FocusState private var isSearchFocused: Bool
   @State private var searchDraft = ""
   @State private var pendingSearchUpdate: Task<Void, Never>?
+  @State private var selectedResultID: String?
 
   var body: some View {
-    @Bindable var store = store
     VStack(spacing: 0) {
       HeaderBar(title: "Search", subtitle: store.searchMode.subtitle, surface: .search) {
-        if store.isSearching {
-          WorkspaceActivityIndicator(size: .small)
-        }
-
         Button {
           store.promptAndCreateKnowledgeNode()
         } label: {
@@ -9563,56 +9594,17 @@ private struct SearchView: View {
         }
       }
 
-      HStack(spacing: 8) {
-        Picker("Search mode", selection: $store.searchMode) {
-          ForEach(WorkspaceSearchMode.allCases) { mode in
-            Text(mode.title).tag(mode)
-          }
-        }
-        .pickerStyle(.segmented)
-        .frame(width: 180)
+      searchControls
 
-        if store.searchMode == .text {
-          Picker("Scope", selection: $store.searchReadScope) {
-            ForEach(WorkspaceReadScope.allCases) { scope in
-              Text(scope.title).tag(scope)
-            }
-          }
-          .frame(width: 135)
-          .help("Search the active corpus or every mounted corpus")
-        }
-
-        TextField(store.searchMode.placeholder, text: $searchDraft)
-          .textFieldStyle(.roundedBorder)
-          .focused($isSearchFocused)
-          .onChange(of: searchDraft) {
-            if store.searchMode == .nodes { scheduleSearchUpdate() }
-          }
-          .onSubmit {
-            runSearchIfNeeded()
-          }
-
-        if store.searchMode == .text {
-          Button {
-            runSearchIfNeeded()
-          } label: {
-            Label("Search", systemImage: "magnifyingglass")
-          }
-          .disabled(searchDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isSearching)
-        }
-      }
-      .padding(.horizontal, WorkspaceDesign.contentInset)
-
-      Text(store.searchMode.helpText)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, WorkspaceDesign.contentInset)
-        .padding(.top, 4)
-        .padding(.bottom, 12)
+      Rectangle()
+        .fill(WorkspaceDesign.hairline)
+        .frame(height: 0.5)
 
       searchResultsBody
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
+    .background(WorkspaceDesign.surfaceBackground)
+    .modifier(QuickOpenKeyboardEventMonitor(handler: handleKeyDown))
     .onAppear {
       searchDraft = store.searchQuery
       store.warmAIChatSearchIndex()
@@ -9629,78 +9621,251 @@ private struct SearchView: View {
         searchDraft = store.searchQuery
       }
     }
+    .onChange(of: searchDraft) {
+      selectedResultID = nil
+      scheduleSearchUpdate()
+    }
     .onChange(of: store.searchMode) {
-      applySearchImmediately()
+      selectedResultID = nil
+      // A draft still waiting on the debounce belongs to the new mode too.
+      // Without one, the store's query is current (it may have just been
+      // set by Quick Open) and must not be replaced by an older draft.
+      if pendingSearchUpdate != nil {
+        applySearchImmediately()
+      }
+      runTextSearchIfNeeded()
     }
     .onChange(of: store.searchReadScope) {
-      guard store.searchMode == .text,
-            !store.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      else { return }
-      Task { await store.runSearch() }
+      runTextSearchIfNeeded()
+    }
+    .onChange(of: visibleResultIDs) { _, ids in
+      if let selectedResultID, !ids.contains(selectedResultID) {
+        self.selectedResultID = nil
+      }
     }
     .onDisappear { pendingSearchUpdate?.cancel() }
   }
+
+  // MARK: Controls
+
+  private var searchControls: some View {
+    @Bindable var store = store
+    return VStack(alignment: .leading, spacing: 10) {
+      searchField
+
+      HStack(spacing: 8) {
+        Picker("Search mode", selection: $store.searchMode) {
+          ForEach(WorkspaceSearchMode.allCases) { mode in
+            Text(mode.title).tag(mode)
+          }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("Text searches everything in the workspace; Nodes matches node titles, aliases, IDs, and paths")
+
+        // Scope only matters when another corpus is mounted.
+        if store.searchMode == .text, !store.mountedCorpora.isEmpty {
+          Picker("Scope", selection: $store.searchReadScope) {
+            ForEach(WorkspaceReadScope.allCases) { scope in
+              Text(scope.title).tag(scope)
+            }
+          }
+          .pickerStyle(.menu)
+          .labelsHidden()
+          .fixedSize()
+          .help("Search the active corpus or every mounted corpus")
+        }
+
+        Spacer(minLength: 8)
+
+        if let resultSummary {
+          Text(resultSummary)
+            .font(.caption)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+      }
+      .controlSize(.small)
+    }
+    .padding(.horizontal, WorkspaceDesign.contentInset)
+    .padding(.top, 12)
+    .padding(.bottom, 10)
+  }
+
+  private var searchField: some View {
+    HStack(spacing: 7) {
+      Image(systemName: "magnifyingglass")
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(.secondary)
+        .accessibilityHidden(true)
+
+      TextField(store.searchMode.placeholder, text: $searchDraft)
+        .textFieldStyle(.plain)
+        .font(.system(size: 14))
+        .focused($isSearchFocused)
+        .onSubmit {
+          submitSearch()
+        }
+
+      if store.isSearching {
+        WorkspaceActivityIndicator(size: .mini)
+          .accessibilityLabel("Searching")
+      }
+
+      if !searchDraft.isEmpty {
+        Button {
+          clearSearch()
+        } label: {
+          Image(systemName: "xmark.circle.fill")
+            .font(.system(size: 13))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tertiary)
+        .help("Clear search")
+        .accessibilityLabel("Clear search")
+      }
+    }
+    .padding(.horizontal, 10)
+    .frame(height: 32)
+    .background(WorkspaceDesign.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .strokeBorder(
+          isSearchFocused ? WorkspaceDesign.structuralAccent.opacity(0.5) : WorkspaceDesign.hairline,
+          lineWidth: isSearchFocused ? 1 : 0.5
+        )
+    )
+    .contentShape(Rectangle())
+    .onTapGesture { isSearchFocused = true }
+  }
+
+  // MARK: Results
 
   @ViewBuilder
   private var searchResultsBody: some View {
     switch store.searchMode {
     case .text:
-      if store.workspaceTextSearchItems.isEmpty {
-        if store.isSearching {
-          Spacer()
-          WorkspaceLoadingStateView("Searching")
-          Spacer()
+      let items = store.workspaceTextSearchItems
+      if items.isEmpty {
+        if trimmedDraft.isEmpty {
+          SearchPlaceholderView(
+            systemImage: "magnifyingglass",
+            title: store.corpusRoot == nil ? "No Corpus Open" : "Search Your Workspace",
+            detail: store.corpusRoot == nil
+              ? "Open a corpus to search its org files."
+              : "Find TODOs, headings, text, files, pages, AI chats, and agent work.",
+            hint: "↑ ↓ to move  ·  Return to open"
+          )
+        } else if store.isSearching || pendingSearchUpdate != nil {
+          SearchPlaceholderView(systemImage: nil, title: "Searching…", detail: nil)
         } else {
-          EmptyStateView(title: "No Results", detail: searchEmptyStateDetail, action: "Search") {
-            runSearchIfNeeded()
+          SearchPlaceholderView(
+            systemImage: "text.magnifyingglass",
+            title: "No Results for “\(trimmedDraft)”",
+            detail: noResultsDetail
+          ) {
+            if store.searchReadScope == .activeCorpus, !store.mountedCorpora.isEmpty {
+              Button("Search All Corpora") {
+                store.searchReadScope = .allCorpora
+              }
+              .buttonStyle(WorkspaceActionButtonStyle())
+            }
           }
         }
       } else {
         // One list, best match first: quality plus recency decides the
         // order, not the kind of result.
-        WorkspaceLazyCollection {
-          ForEach(store.workspaceTextSearchItems) { item in
-            workspaceSearchRow(item)
+        ScrollViewReader { proxy in
+          WorkspaceLazyCollection {
+            ForEach(items) { item in
+              workspaceSearchRow(item)
+            }
+          }
+          .opacity(resultsAreStale ? 0.6 : 1)
+          .onChange(of: selectedResultID) { _, selected in
+            if let selected { proxy.scrollTo(selected) }
           }
         }
       }
     case .nodes:
       let nodes = store.searchNodes
       if nodes.isEmpty {
-        EmptyStateView(title: "No Nodes", detail: "\(nodeEmptyStateDetail) Use the toolbar Refresh to rebuild the corpus index.")
+        SearchPlaceholderView(
+          systemImage: "doc.richtext",
+          title: "No Nodes",
+          detail: "\(nodeEmptyStateDetail) Use the toolbar Refresh to rebuild the corpus index."
+        )
       } else {
-        WorkspaceLazyCollection {
-          ForEach(nodes) { node in
-            NodeSearchRow(
-              node: node,
-              sourceReference: store.relativePath(node.file) + ":\(node.line)"
-            )
-            .contentShape(Rectangle())
-            .onTapGesture {
-              store.selectSearchNode(node)
+        ScrollViewReader { proxy in
+          WorkspaceLazyCollection {
+            ForEach(nodes) { node in
+              NodeSearchRow(
+                node: node,
+                sourceReference: store.relativePath(node.file) + ":\(node.line)",
+                isSelected: selectedResultID == node.id
+              )
+              .contentShape(Rectangle())
+              .onTapGesture {
+                selectedResultID = node.id
+                store.selectSearchNode(node)
+              }
+              .workspaceAccessibleCollectionRow(
+                kind: "search-node",
+                id: node.id,
+                label: Org2Display.cleanInline(node.title),
+                isSelected: selectedResultID == node.id,
+                open: { store.selectSearchNode(node) }
+              )
+              .contextMenu {
+                NodeSearchContextMenu(node: node)
+              }
+              .workspaceLazyRow(id: node.id)
             }
-            .workspaceAccessibleCollectionRow(
-              kind: "search-node",
-              id: node.id,
-              label: Org2Display.cleanInline(node.title),
-              open: { store.selectSearchNode(node) }
-            )
-            .contextMenu {
-              NodeSearchContextMenu(node: node)
-            }
-            .workspaceLazyRow(id: node.id)
+          }
+          .onChange(of: selectedResultID) { _, selected in
+            if let selected { proxy.scrollTo(selected) }
           }
         }
       }
     }
   }
 
-  private var searchEmptyStateDetail: String {
-    if store.corpusRoot == nil { return "Open a corpus to search its org files." }
-    if searchDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      return "Enter text to search the corpus."
+  private var trimmedDraft: String {
+    searchDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  /// Results on screen still answer an earlier query while a new one runs.
+  private var resultsAreStale: Bool {
+    store.isSearching && trimmedDraft != store.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private var visibleResultIDs: [String] {
+    switch store.searchMode {
+    case .text: store.workspaceTextSearchItems.map(\.id)
+    case .nodes: store.searchNodes.map(\.id)
     }
-    return store.statusText
+  }
+
+  private var resultSummary: String? {
+    switch store.searchMode {
+    case .text:
+      guard !trimmedDraft.isEmpty, !store.isSearching else { return nil }
+      let count = store.workspaceTextSearchItems.count
+      guard count > 0 else { return nil }
+      return "\(count) result\(count == 1 ? "" : "s")"
+    case .nodes:
+      let count = store.searchNodes.count
+      guard count > 0 else { return nil }
+      return "\(count) node\(count == 1 ? "" : "s")"
+    }
+  }
+
+  private var noResultsDetail: String {
+    if store.corpusRoot == nil { return "Open a corpus to search its org files." }
+    if let error = store.errorText, !error.isEmpty { return error }
+    return "Try fewer or different words."
   }
 
   private var nodeEmptyStateDetail: String {
@@ -9711,20 +9876,43 @@ private struct SearchView: View {
     return "No indexed node matched this query."
   }
 
-  private func runSearchIfNeeded() {
+  // MARK: Querying
+
+  private func submitSearch() {
+    if let selectedResultID, openResult(id: selectedResultID) { return }
     applySearchImmediately()
     guard store.searchMode == .text else { return }
     Task { await store.runSearch() }
   }
 
+  private func clearSearch() {
+    searchDraft = ""
+    applySearchImmediately()
+    runTextSearchIfNeeded(includingEmpty: true)
+    isSearchFocused = true
+  }
+
+  /// Search as the user types. Text search waits for a short pause and at
+  /// least two characters; Return searches any query immediately.
   private func scheduleSearchUpdate() {
     pendingSearchUpdate?.cancel()
+    pendingSearchUpdate = nil
     let nextQuery = searchDraft
     guard nextQuery != store.searchQuery else { return }
+    let isText = store.searchMode == .text
+    let trimmed = nextQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    if isText, !trimmed.isEmpty, trimmed.count < WorkspaceSearchInput.liveSearchMinimumLength {
+      return
+    }
     pendingSearchUpdate = Task { @MainActor in
-      do { try await Task.sleep(nanoseconds: 120_000_000) } catch { return }
+      let delay = isText ? WorkspaceSearchInput.liveTextSearchDelay : WorkspaceSearchInput.liveNodeSearchDelay
+      do { try await Task.sleep(nanoseconds: delay) } catch { return }
       guard !Task.isCancelled else { return }
+      pendingSearchUpdate = nil
       store.searchQuery = nextQuery
+      if isText, store.searchMode == .text {
+        await store.runSearch()
+      }
     }
   }
 
@@ -9736,59 +9924,154 @@ private struct SearchView: View {
     }
   }
 
+  private func runTextSearchIfNeeded(includingEmpty: Bool = false) {
+    guard store.searchMode == .text else { return }
+    let query = store.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard includingEmpty || !query.isEmpty else { return }
+    Task { await store.runSearch() }
+  }
+
+  // MARK: Keyboard
+
+  private func handleKeyDown(_ event: NSEvent) -> Bool {
+    guard isSearchFocused,
+          store.selectedSurface == .search,
+          !store.isQuickOpenPresented,
+          event.window?.attachedSheet == nil,
+          event.window?.sheetParent == nil
+    else { return false }
+    let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+    guard modifiers.isEmpty else { return false }
+    switch event.keyCode {
+    case 125:
+      moveSelection(by: 1)
+      return true
+    case 126:
+      moveSelection(by: -1)
+      return true
+    case 53:
+      if selectedResultID != nil {
+        selectedResultID = nil
+        return true
+      }
+      guard !searchDraft.isEmpty else { return false }
+      clearSearch()
+      return true
+    default:
+      return false
+    }
+  }
+
+  private func moveSelection(by offset: Int) {
+    selectedResultID = WorkspaceSearchInput.movedSelection(
+      from: selectedResultID,
+      by: offset,
+      in: visibleResultIDs
+    )
+  }
+
+  @discardableResult
+  private func openResult(id: String) -> Bool {
+    switch store.searchMode {
+    case .text:
+      guard let item = store.workspaceTextSearchItems.first(where: { $0.id == id }) else { return false }
+      selectSearchItem(item)
+    case .nodes:
+      guard let node = store.searchNodes.first(where: { $0.id == id }) else { return false }
+      store.selectSearchNode(node)
+    }
+    return true
+  }
+
+  // MARK: Rows
+
   @ViewBuilder
   private func workspaceSearchRow(_ item: WorkspaceTextSearchItem) -> some View {
+    let isSelected = selectedResultID == item.id
+    let query = store.searchQuery
     Group {
       switch item {
       case .activeTodo(let result), .entry(let result), .corpusText(let result):
-        corpusSearchRow(result)
+        corpusSearchRow(result, item: item, query: query, isSelected: isSelected)
       case .file(let file):
-        CorpusFileRow(file: file)
-          .padding(.horizontal, WorkspaceDesign.contentInset)
-          .contextMenu {
-            CorpusFileContextMenu(file: file)
-          }
+        SearchResultRowLayout(
+          systemImage: "doc.text",
+          title: file.name,
+          snippet: nil,
+          query: query,
+          metadata: "File · \(file.relativePath)",
+          isSelected: isSelected
+        )
+        .contextMenu {
+          CorpusFileContextMenu(file: file)
+        }
       case .chatThread(let result), .chatMessage(let result):
-        ChatSearchRow(result: result)
+        ChatSearchRow(result: result, query: query, isSelected: isSelected)
       case .agentWork(let result):
-        AgentWorkSearchRow(result: result)
+        AgentWorkSearchRow(result: result, query: query, isSelected: isSelected)
       case .page(let node):
         NodeSearchRow(
           node: node,
-          sourceReference: store.relativePath(node.file) + ":\(node.line)"
+          sourceReference: store.relativePath(node.file) + ":\(node.line)",
+          isSelected: isSelected,
+          kindLabel: "Page"
         )
-          .contextMenu {
-            NodeSearchContextMenu(node: node)
-          }
+        .contextMenu {
+          NodeSearchContextMenu(node: node)
+        }
       }
     }
     .contentShape(Rectangle())
     .onTapGesture {
+      selectedResultID = item.id
       selectSearchItem(item)
     }
     .workspaceAccessibleCollectionRow(
       kind: "search-result",
       id: item.id,
       label: searchAccessibilityLabel(item),
+      isSelected: isSelected,
       open: { selectSearchItem(item) }
     )
     .workspaceLazyRow(id: item.id)
   }
 
-  private func corpusSearchRow(_ result: SearchResult) -> some View {
-    SearchRow(
-      result: result,
-      sourceReference: store.corpusQualifiedPath(result.file, corpus: result.corpus) + ":\(result.lineForEditor)"
+  private func corpusSearchRow(
+    _ result: SearchResult,
+    item: WorkspaceTextSearchItem,
+    query: String,
+    isSelected: Bool
+  ) -> some View {
+    let title = Org2Display.cleanInline(result.title)
+    let snippet = WorkspaceSearchHighlight.displaySnippet(
+      Org2Display.cleanInline(result.snippet),
+      title: title,
+      todo: result.todo
     )
-      .contextMenu {
-        WorkspaceLocationContextMenu(
-          location: .search(result),
-          showsHeadingActions: result.todo != nil && store.isResultInActiveCorpus(result.corpus),
-          select: { store.selectSearchResult(result) }
-        ) {
-          Label("Open", systemImage: "magnifyingglass")
-        }
+    let kind: (icon: String, label: String) = switch item {
+    case .activeTodo: ("checkmark.circle", "TODO")
+    case .entry: ("number", "Heading")
+    default: result.todo == nil ? ("text.alignleft", "Text") : ("checkmark.circle", "TODO")
+    }
+    let location = store.corpusQualifiedPath(result.file, corpus: result.corpus) + ":\(result.lineForEditor)"
+    return SearchResultRowLayout(
+      systemImage: kind.icon,
+      title: title,
+      status: result.todo,
+      snippet: snippet,
+      query: query,
+      metadata: "\(kind.label) · \(location)",
+      isSelected: isSelected
+    )
+    .contextMenu {
+      WorkspaceLocationContextMenu(
+        location: .search(result),
+        showsHeadingActions: result.todo != nil && store.isResultInActiveCorpus(result.corpus),
+        select: { store.selectSearchResult(result) }
+      ) {
+        Label("Open", systemImage: "magnifyingglass")
       }
+    }
   }
 
   private func selectSearchItem(_ item: WorkspaceTextSearchItem) {
@@ -9824,40 +10107,21 @@ private struct SearchView: View {
 
 private struct AgentWorkSearchRow: View {
   let result: WorkspaceAgentWorkSearchResult
+  let query: String
+  let isSelected: Bool
 
   var body: some View {
-    HStack(alignment: .top, spacing: 8) {
-      WorkspaceIconBadge(
-        systemImage: systemImage,
-        tint: tint,
-        fill: tint.opacity(0.10)
-      )
-      VStack(alignment: .leading, spacing: 5) {
-        HStack(spacing: 8) {
-          Text(result.title)
-            .font(.body.weight(.medium))
-            .lineLimit(1)
-          Spacer(minLength: 0)
-          Text(result.status.replacingOccurrences(of: "-", with: " ").uppercased())
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(tint.opacity(0.10), in: Capsule())
-        }
-        if !result.snippet.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-          Text(result.snippet)
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .lineLimit(2)
-        }
-        Text("\(result.kind.label) · \(result.sourceReference)")
-          .font(.caption)
-          .foregroundStyle(.tertiary)
-          .lineLimit(1)
-      }
+    let snippet = result.snippet.trimmingCharacters(in: .whitespacesAndNewlines)
+    SearchResultRowLayout(
+      systemImage: systemImage,
+      title: result.title,
+      snippet: snippet.isEmpty ? nil : snippet,
+      query: query,
+      metadata: "\(result.kind.label) · \(result.sourceReference)",
+      isSelected: isSelected
+    ) {
+      StatusPill(text: result.status.replacingOccurrences(of: "-", with: " ").uppercased())
     }
-    .padding(.vertical, WorkspaceDesign.rowVerticalPadding)
   }
 
   private var systemImage: String {
@@ -9869,46 +10133,22 @@ private struct AgentWorkSearchRow: View {
     case .agent: "person.crop.circle.badge.checkmark"
     }
   }
-
-  private var tint: Color {
-    switch result.kind {
-    case .approval: .orange
-    case .run: .accentColor
-    case .workflow: .purple
-    case .goal: .green
-    case .agent: .blue
-    }
-  }
 }
 
 private struct ChatSearchRow: View {
   let result: AIChatSearchResult
+  let query: String
+  let isSelected: Bool
 
   var body: some View {
-    HStack(alignment: .top, spacing: 8) {
-      WorkspaceIconBadge(systemImage: "bubble.left.and.bubble.right", tint: .accentColor, fill: Color.accentColor.opacity(0.10))
-      VStack(alignment: .leading, spacing: 5) {
-        HStack(spacing: 8) {
-          Text(result.title)
-            .font(.body.weight(.medium))
-            .lineLimit(1)
-          Spacer(minLength: 0)
-          Text("\(result.messageCount) message\(result.messageCount == 1 ? "" : "s")")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-        }
-        Text(result.snippet)
-          .font(.callout)
-          .foregroundStyle(.secondary)
-          .lineLimit(2)
-        Text(Self.relativeDate(result.matchedAt))
-          .font(.caption)
-          .foregroundStyle(.tertiary)
-          .lineLimit(1)
-      }
-    }
-    .padding(.vertical, WorkspaceDesign.rowVerticalPadding)
+    SearchResultRowLayout(
+      systemImage: "bubble.left.and.bubble.right",
+      title: result.title,
+      snippet: WorkspaceSearchHighlight.displaySnippet(result.snippet, title: result.title),
+      query: query,
+      metadata: "AI Chat · \(result.messageCount) message\(result.messageCount == 1 ? "" : "s") · \(Self.relativeDate(result.matchedAt))",
+      isSelected: isSelected
+    )
   }
 
   private static func relativeDate(_ date: Date) -> String {
@@ -9918,126 +10158,172 @@ private struct ChatSearchRow: View {
   }
 }
 
-private struct SearchRow: View {
-  let result: SearchResult
-  let sourceReference: String
-  var isNested = false
-  var matchCount: Int?
-  var isExpanded: Bool?
-  var toggleExpansion: (() -> Void)?
-
-  var body: some View {
-    HStack(alignment: .top, spacing: 8) {
-      if let isExpanded {
-        Button {
-          toggleExpansion?()
-        } label: {
-          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-            .font(.caption.weight(.semibold))
-            .frame(width: 16, height: 24)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .help(isExpanded ? "Collapse file matches" : "Show file matches")
-      } else if isNested {
-        Spacer()
-          .frame(width: 16)
-      }
-      WorkspaceIconBadge(systemImage: "magnifyingglass")
-      VStack(alignment: .leading, spacing: 5) {
-        HStack(spacing: 8) {
-          if let todo = result.todo {
-            StatusPill(text: todo)
-          }
-          Text(Org2Display.cleanInline(result.title))
-            .font(.body.weight(.medium))
-            .lineLimit(1)
-          Spacer(minLength: 0)
-          if result.idValue != nil {
-            Image(systemName: "link")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-          if let corpus = result.corpus {
-            Text(corpus.name)
-              .font(.caption2.weight(.semibold))
-              .foregroundStyle(.secondary)
-              .padding(.horizontal, 6)
-              .padding(.vertical, 2)
-              .background(WorkspaceDesign.subtleFill, in: Capsule())
-          }
-          if let matchCount {
-            Text("\(matchCount) matches")
-              .font(.caption.weight(.medium))
-              .foregroundStyle(.secondary)
-              .padding(.horizontal, 6)
-              .padding(.vertical, 2)
-              .background(WorkspaceDesign.subtleFill, in: Capsule())
-          }
-        }
-        Text(Org2Display.cleanInline(result.snippet))
-          .font(.callout)
-          .foregroundStyle(.secondary)
-          .lineLimit(2)
-          Text(sourceReference)
-            .font(.caption)
-            .foregroundStyle(.tertiary)
-            .lineLimit(1)
-            .truncationMode(.middle)
-      }
-    }
-    .padding(.leading, WorkspaceDesign.contentInset + (isNested ? 24 : 0))
-    .padding(.trailing, WorkspaceDesign.contentInset)
-    .padding(.vertical, WorkspaceDesign.rowVerticalPadding)
-  }
-}
-
 private struct NodeSearchRow: View {
   let node: OrgRoamNodeReference
   let sourceReference: String
+  var isSelected = false
+  var kindLabel = "Node"
 
   var body: some View {
-    HStack(alignment: .top, spacing: 8) {
-      WorkspaceIconBadge(systemImage: "link")
-      VStack(alignment: .leading, spacing: 5) {
-        HStack(spacing: 8) {
-          Text(Org2Display.cleanInline(node.title))
-            .font(.body.weight(.medium))
-            .lineLimit(1)
-          if node.idValue != nil {
-            Image(systemName: "number")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-          Spacer(minLength: 0)
-        }
+    let aliases = node.aliases.joined(separator: ", ")
+    SearchResultRowLayout(
+      systemImage: "doc.richtext",
+      title: Org2Display.cleanInline(node.title),
+      snippet: aliases.isEmpty ? nil : aliases,
+      query: "",
+      metadata: "\(kindLabel) · \(sourceReference)",
+      isSelected: isSelected
+    )
+  }
+}
 
-        if !node.aliases.isEmpty {
-          Text(node.aliases.joined(separator: ", "))
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-        }
+/// The one layout every search result shares, so icons, titles, and
+/// metadata line up no matter what kind of result a row shows.
+private struct SearchResultRowLayout<Accessory: View>: View {
+  let systemImage: String
+  let title: String
+  var status: String?
+  let snippet: String?
+  let query: String
+  let metadata: String
+  let isSelected: Bool
+  let accessory: Accessory
 
-        HStack(spacing: 8) {
-          Text(sourceReference)
-            .lineLimit(1)
-            .truncationMode(.middle)
-          if let idValue = node.idValue {
-            Text(shortID(idValue))
-              .fixedSize(horizontal: true, vertical: false)
-          }
-        }
-        .font(.caption)
-        .foregroundStyle(.tertiary)
-      }
-    }
-    .padding(.horizontal, WorkspaceDesign.contentInset)
-    .padding(.vertical, WorkspaceDesign.rowVerticalPadding)
+  init(
+    systemImage: String,
+    title: String,
+    status: String? = nil,
+    snippet: String?,
+    query: String,
+    metadata: String,
+    isSelected: Bool,
+    @ViewBuilder accessory: () -> Accessory = { EmptyView() }
+  ) {
+    self.systemImage = systemImage
+    self.title = title
+    self.status = status
+    self.snippet = snippet
+    self.query = query
+    self.metadata = metadata
+    self.isSelected = isSelected
+    self.accessory = accessory()
   }
 
-  private func shortID(_ idValue: String) -> String {
-    idValue.count > 12 ? String(idValue.prefix(12)) + "..." : idValue
+  var body: some View {
+    HStack(alignment: .top, spacing: 10) {
+      WorkspaceIconBadge(systemImage: systemImage)
+        .accessibilityHidden(true)
+
+      VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .center, spacing: 6) {
+          if let status {
+            StatusPill(text: status)
+          }
+          Text(title)
+            .font(.body.weight(.medium))
+            .foregroundStyle(.primary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+          Spacer(minLength: 4)
+          accessory
+        }
+        // Center the title line on the 24-point icon badge.
+        .frame(minHeight: 24)
+
+        if let snippet, !snippet.isEmpty {
+          Text(highlighted(snippet))
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+
+        Text(metadata)
+          .font(.caption)
+          .foregroundStyle(.tertiary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+      }
+    }
+    .padding(.vertical, 7)
+    .workspaceSelectableRow(
+      isSelected: isSelected,
+      showsSelectionMarker: false,
+      leadingPadding: 8,
+      trailingPadding: 10
+    )
+  }
+
+  private func highlighted(_ text: String) -> AttributedString {
+    var attributed = AttributedString(text)
+    for range in WorkspaceSearchHighlight.ranges(in: text, query: query) {
+      guard let lower = AttributedString.Index(range.lowerBound, within: attributed),
+            let upper = AttributedString.Index(range.upperBound, within: attributed)
+      else { continue }
+      attributed[lower..<upper].inlinePresentationIntent = .stronglyEmphasized
+      attributed[lower..<upper].foregroundColor = WorkspaceDesign.primaryText
+    }
+    return attributed
+  }
+}
+
+/// Top-weighted empty, loading, and no-result states for Search, so the
+/// message sits near the search field instead of floating mid-pane.
+private struct SearchPlaceholderView<Actions: View>: View {
+  let systemImage: String?
+  let title: String
+  let detail: String?
+  var hint: String?
+  let actions: Actions
+
+  init(
+    systemImage: String?,
+    title: String,
+    detail: String?,
+    hint: String? = nil,
+    @ViewBuilder actions: () -> Actions = { EmptyView() }
+  ) {
+    self.systemImage = systemImage
+    self.title = title
+    self.detail = detail
+    self.hint = hint
+    self.actions = actions()
+  }
+
+  var body: some View {
+    VStack(spacing: 10) {
+      if let systemImage {
+        Image(systemName: systemImage)
+          .font(.system(size: 22, weight: .regular))
+          .foregroundStyle(.tertiary)
+          .accessibilityHidden(true)
+      } else {
+        WorkspaceActivityIndicator(size: .small)
+      }
+      Text(title)
+        .font(.headline)
+        .multilineTextAlignment(.center)
+        .lineLimit(2)
+      if let detail, !detail.isEmpty {
+        Text(detail)
+          .font(.callout)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+          .textSelection(.enabled)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      actions
+      if let hint {
+        Text(hint)
+          .font(.caption)
+          .foregroundStyle(.tertiary)
+          .padding(.top, 4)
+      }
+    }
+    .frame(maxWidth: 340)
+    .padding(.horizontal, 24)
+    .padding(.top, 56)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
   }
 }
 

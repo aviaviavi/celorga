@@ -525,7 +525,8 @@ final class WorkspaceListSelectionTests: XCTestCase {
     XCTAssertTrue(source.contains("var verticalPadding: CGFloat = 0"))
     XCTAssertEqual(
       source.components(separatedBy: ".workspaceSelectableRow(").count - 1,
-      7,
+      // Includes Search's shared result row, which aligns with its query field.
+      8,
       "Every selected-row implementation should use the shared gutter and marker chrome"
     )
     XCTAssertFalse(source.contains("WorkspaceSelectionMarker()"))

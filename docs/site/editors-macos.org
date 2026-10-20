@@ -283,13 +283,14 @@ Back up or sync the corpus with a file-oriented tool you understand, such as Git
 * Keyboard essentials
 
 - =Cmd-1= through =Cmd-6= open the main workspace surfaces. Every other Workspace sidebar entry has one too: =Cmd-0= Sources, =Cmd-Shift-K= Skills, =Cmd-Shift-R= Review Queue, =Cmd-Option-A= Automations, =Cmd-Option-E= External Threads, =Cmd-Option-V= Saved Views, and =Cmd-Option-C= Canvases (with Experimental Features on). Saved Views and Canvases are listed last in the Workspace section.
-- =Cmd-P= opens Quick Open. =Cmd-K= also opens Quick Open outside the Source editor; inside it, =Cmd-K= inserts a link. With an empty query, files you open often and recently are listed first; while searching, they win close matches. =Cmd-Return= opens the selection in a new tab. Recent-file history is kept per corpus on this Mac and is never written to the corpus.
+- =Cmd-P= opens Quick Open. =Cmd-K= also opens Quick Open outside the Source editor; inside it, =Cmd-K= inserts a link. With an empty query, files you open often and recently are listed first; while searching, they win close matches. =Cmd-Return= opens the selection in a new tab, and =Shift-Return= hands the query to the full Search surface. Recent-file history is kept per corpus on this Mac and is never written to the corpus.
 - =Cmd-[= and =Cmd-]= go back and forward through the documents and views you visited in the current tab.
 - Hover a link in a rendered document to preview the target heading or file; =Cmd=-click a link to open it in a new tab.
 - =Cmd-Ctrl-Return= opens global capture.
 - =Cmd-7=, =Cmd-8=, and =Cmd-9= open today's, yesterday's, and tomorrow's daily notes in the document pane. The Daily sidebar links and *Choose Date…* (=Cmd-Shift-7=) use the same behavior: they preserve the current first pane, including the selected AI chat and its draft, and do not open the Files list. If the document pane is closed, it reopens; an already closed first pane stays closed. With automatic daily note creation disabled for the workspace, a missing target shows an explicit creation button instead of writing a file.
 - =Cmd-A= selects visible items in Agenda, Files, Runs, or Review; =Shift-Up/Down= extends the selection.
 - =Cmd-F= searches the active pane.
+- In Search, text results update as you type (two or more characters); =Return= searches a shorter query immediately. =Up= and =Down= move through results from the search field, =Return= opens the highlighted result, and =Escape= clears the selection, then the query.
 - =Cmd-R= refreshes the workspace when you need a manual reconciliation. Full refreshes of large corpora may take longer than 15 seconds; Celorga lets them continue without reporting a timeout error. Press =Cmd-R= again or click the stop control to cancel. Actual refresh errors are still reported.
 - =Cmd-T= opens a tab; =Cmd-Shift-[= and =Cmd-Shift-]= move between tabs.
 
