@@ -103,6 +103,7 @@ import {
 import { queueAIChatInboxMessage } from "./aiChatInbox.js";
 import { runAIChatRepair } from "./aiChatRepairCli.js";
 import { auditAgenticWorkspace, renderAgenticDoctorReport } from "./agenticWorkspaceDoctor.js";
+import { traceAgentRun } from "./runTrace.js";
 import {
   WORK_LEDGER_ACCOUNT_STATES,
   acquireWorkLedgerMutationLock,
@@ -230,6 +231,8 @@ const HELP = `Agentic workspace commands:
   celorga run show ID --with-revision --json
   celorga run wait ID --until approval|blocked|needs-you|running|completed|failed|terminal|status:STATUS [--timeout SECONDS] [--json]
   celorga run list|show|wait|validate|start|resume|retry|cancel|complete|complete-external|reopen-external|fail|block|fork|normalize|reconcile-source|artifact-review
+  celorga run retry ID [--actor NAME] [--force]
+    Refuses when the run trace shows a live or unconfirmed executor, a queued request, or an unrecorded result; --force records why.
   celorga run block ID --reason "Specific clarification needed" [--separate-from-approval]
   celorga run complete ID --summary "What happened" [--highlight TEXT] [--next-action TEXT]
   celorga run complete-external ID [--summary "Where or how it was completed"] --actor NAME
@@ -1374,7 +1377,14 @@ async function runCommand(parsed: ParsedArgs): Promise<void> {
     actor: required(flag(parsed, "actor"), "--actor is required"),
   });
   else if (action === "retry") {
-    const retried = transitionAgentRun(existing, "queued", { actor: flag(parsed, "actor") });
+    // Re-queuing work that an executor is still running, or whose result already
+    // exists, would execute it twice. Refuse unless the caller forces it.
+    const trace = traceAgentRun(corpus, existing);
+    if (!trace.retry.safe && !enabled(parsed, "force")) {
+      throw new Error(`refusing to retry ${id}: ${trace.retry.reason} (verdict ${trace.verdict}: ${trace.reason.summary}). Inspect with \`celorga activity trace --run ${id}\`; pass --force to retry anyway.`);
+    }
+    const base = trace.retry.safe ? existing : addAgentRunComment(existing, flag(parsed, "actor") ?? "celorga", `Retry forced despite trace verdict ${trace.verdict} (${trace.reason.code}): ${trace.retry.reason}`);
+    const retried = transitionAgentRun(base, "queued", { actor: flag(parsed, "actor") });
     run = existing.approvals.some((approval) => approval.status === "pending")
       ? transitionAgentRun(retried, "waiting-approval", { actor: flag(parsed, "actor") })
       : retried;

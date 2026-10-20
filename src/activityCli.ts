@@ -1,6 +1,7 @@
 import path from "node:path";
 import process from "node:process";
 import { activityHosts, describeAge, explainActivity, renderActivityExplanationText } from "./activityState.js";
+import { renderRunTraceText, traceRun } from "./runTrace.js";
 import {
   ACTIVITY_EVENT_TYPES,
   RUN_WAIT_CONDITIONS,
@@ -17,13 +18,21 @@ import {
   type ThreadWaitCondition,
 } from "./activityEvents.js";
 
-const HELP = `Usage: celorga activity <explain|hosts|events> [options]
+const HELP = `Usage: celorga activity <explain|trace|hosts|events> [options]
 
   celorga activity explain [--thread ID | --run ID | --workflow ID] [--all] [--dir DIR] [--json]
       Explain why each thread, run, and workflow is working or needs attention:
       the reporting host/runtime, last heartbeat or transition, whether the
       state is live, cached, or uncertain, and the exact blocking approval or
       question. Derived from structured presence, transcript, and run records.
+
+  celorga activity trace --run ID [--dir DIR] [--json]
+      Trace one run through dispatch -> executor -> tools -> result -> delivery
+      with evidence for each stage. The verdict is queued, running, waiting,
+      failed, completed, completed-undelivered, canceled, or unknown, and can
+      differ from the run record (for example, a run marked failed whose
+      executor is still live). Reports slow tools, shell errors, stale or
+      mismatched hosts, uncertain delivery, and whether a retry is safe.
 
   celorga activity hosts [--dir DIR] [--json]
       List Celorga app hosts sharing this corpus with online/reconnecting/
@@ -120,6 +129,13 @@ export async function runActivityCommand(args: string[]): Promise<void> {
       all: enabled(parsed, "all"),
     });
     process.stdout.write(json(parsed) ? `${JSON.stringify(result, null, 2)}\n` : `${renderActivityExplanationText(result)}\n`);
+    return;
+  }
+  if (action === "trace") {
+    const run = flag(parsed, "run") ?? parsed.positional[1];
+    if (!run) throw new Error("activity trace requires --run ID");
+    const trace = traceRun(corpus, run);
+    process.stdout.write(json(parsed) ? `${JSON.stringify(trace, null, 2)}\n` : `${renderRunTraceText(trace)}\n`);
     return;
   }
   if (action === "hosts") {

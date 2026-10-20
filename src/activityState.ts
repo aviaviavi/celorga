@@ -83,6 +83,8 @@ export interface ActivityLiveTurn {
   startedAt?: string;
   statusText?: string;
   latestActivity?: ActivityLiveActivity;
+  /** The most recent activities (oldest first, at most 20) so traces can spot slow or failing tools. */
+  recentActivities?: ActivityLiveActivity[];
 }
 
 /** One host's presence file in `.org2/openclaw-chat.store/live/`. */
@@ -296,6 +298,14 @@ export function loadActivityHosts(corpusRoot: string, now = new Date()): Activit
         if (!isRecord(turn) || !str(turn.threadID)) return [];
         const activities = Array.isArray(turn.activities) ? turn.activities.filter(isRecord) : [];
         const latest = activities.at(-1);
+        const summarize = (activity: JSONRecord): ActivityLiveActivity => ({
+          ...(str(activity.id) ? { id: String(activity.id) } : {}),
+          ...(str(activity.kind) ? { kind: String(activity.kind) } : {}),
+          ...(str(activity.title) ? { title: String(activity.title).slice(0, 200) } : {}),
+          ...(str(activity.detail) ? { detail: String(activity.detail).slice(0, 400) } : {}),
+          ...(str(activity.status) ? { status: String(activity.status) } : {}),
+          ...(str(activity.updatedAt) ? { updatedAt: String(activity.updatedAt) } : {}),
+        });
         return [{
           threadID: String(turn.threadID),
           ...(str(turn.userMessageID) ? { userMessageID: String(turn.userMessageID) } : {}),
@@ -303,16 +313,7 @@ export function loadActivityHosts(corpusRoot: string, now = new Date()): Activit
           ...(str(turn.destinationName) ? { destinationName: String(turn.destinationName) } : {}),
           ...(str(turn.startedAt) ? { startedAt: String(turn.startedAt) } : {}),
           ...(str(turn.statusText) ? { statusText: String(turn.statusText) } : {}),
-          ...(latest ? {
-            latestActivity: {
-              ...(str(latest.id) ? { id: String(latest.id) } : {}),
-              ...(str(latest.kind) ? { kind: String(latest.kind) } : {}),
-              ...(str(latest.title) ? { title: String(latest.title).slice(0, 200) } : {}),
-              ...(str(latest.detail) ? { detail: String(latest.detail).slice(0, 400) } : {}),
-              ...(str(latest.status) ? { status: String(latest.status) } : {}),
-              ...(str(latest.updatedAt) ? { updatedAt: String(latest.updatedAt) } : {}),
-            },
-          } : {}),
+          ...(latest ? { latestActivity: summarize(latest), recentActivities: activities.slice(-20).map(summarize) } : {}),
         }];
       });
       hosts.push({
@@ -425,7 +426,8 @@ function liveTurnsByThread(hosts: ActivityHost[]): Map<string, LiveTurnMatch> {
 
 const THREAD_COMMENT_PATTERN = /AI chat thread:?\s+([0-9A-Fa-f-]{36})/u;
 
-function linkedThreadID(run: AgentRun): string | undefined {
+/** The AI chat thread a run reports through, from its "AI chat thread <id>" comments. */
+export function linkedThreadID(run: AgentRun): string | undefined {
   for (const comment of [...run.comments].reverse()) {
     const match = THREAD_COMMENT_PATTERN.exec(comment.body);
     if (match) return normalizedID(match[1]!);
@@ -706,6 +708,12 @@ export function explainThread(thread: OpenClawChatThreadRecord, context: ThreadC
     evidence.push({ source: "inbox", ref: newest.file, at: newest.createdAt, detail: `${inbox.length} background message(s) waiting to be imported${newest.authorLabel ? ` from ${newest.authorLabel}` : ""}` });
     blocking.push({ kind: "reply", summary: `${newest.authorLabel ?? "A background worker"} posted a reply`, messageId: newest.id });
     return result("your-turn", "background-reply", `${newest.authorLabel ?? "A background worker"} reported into this chat`, "cached", "Read from the AI chat inbox", signal("message", Date.parse(newest.createdAt), now));
+  }
+
+  // A stopped turn is not idle: its reply, if any, is partial.
+  if (latest?.deliveryStatus === "interrupted") {
+    if (latest.id) blocking.push({ kind: "reply", summary: "The latest turn was stopped before it finished", messageId: String(latest.id) });
+    return result("your-turn", "turn-interrupted", "The latest turn was stopped before it finished; any partial reply is incomplete", "cached", "Read from the committed chat transcript", transcriptSignal);
   }
 
   if (isOpenClawThreadSettled(thread)) {

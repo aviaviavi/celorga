@@ -694,6 +694,7 @@ celorga activity explain --dir ~/notes                 # everything working or w
 celorga activity explain --run RUN_ID --dir ~/notes --json
 celorga activity explain --thread THREAD_ID --dir ~/notes --json
 celorga activity explain --workflow WORKFLOW_ID --dir ~/notes
+celorga activity trace --run RUN_ID --dir ~/notes        # why did this run stop?
 celorga activity hosts --dir ~/notes --json
 celorga activity events --since 2h --type run.*,approval.* --dir ~/notes --json
 celorga activity events --follow --json --dir ~/notes  # NDJSON stream until interrupted
@@ -702,6 +703,15 @@ celorga run wait RUN_ID --until approval|blocked|completed --timeout 3600 --dir 
 #+end_src
 
 Each =celorga:activity-explanation:v1= item names its =state= (=working=, =queued=, =needs-you=, =your-turn=, =failed=, =scheduled=, =due=, =paused=, =idle=, =settled=, or =done=), a stable =reason.code= with a one-sentence summary, =reportedBy= (host, host kind and connection state, runtime, destination, model, last actor), =lastSignal= (heartbeat, transition, message, or trigger attempt with its age), =confidence= (=live= while the reporting host's presence is fresh, =cached= for committed records, =uncertain= when presence is stale or a delivery is unresolved) with a reason, and =blocking= entries for the exact approval (run, approval ID, action, risk class, fingerprint, and the decision command), clarification question, delivery failure, artifact review, or unread reply. Explanations never decide approvals.
+
+=activity trace --run RUN_ID= follows one run through five stages: /dispatch/ (creation, start transition, the request message with its receiving and executing hosts, queued send requests), /executor/ (the host presence reporting its turn), /tools/ (recent tool activity while the turn is live), /result/ (the executor's reply, the run's completion or failure), and /delivery/ (whether the reply reached the conversation and the run record). Each stage has a status (=ok=, =active=, =pending=, =warning=, =failed=, =unknown=, or =not-applicable=) and evidence references to run events, transcript messages, presence files, or inbox envelopes. The =org2:run-trace:v1= verdict describes what is happening, which can differ from the run record:
+
+- =queued=, =waiting= (approval or question), =failed=, =completed=, and =canceled= agree with the record when no executor evidence contradicts it.
+- =running= requires a fresh heartbeat or a run event from the last 15 minutes. A run marked failed or canceled whose executor still reports a live turn is =running= (=executor-active-after-terminal=).
+- =completed-undelivered= means the executor produced a result that has not reached its destination: an automation reply never recorded on the run (=result-unrecorded=), a reply after the run was marked failed (=result-after-failure=), or a completed run whose reply failed or is only queued. A chat reply alone never makes a run =completed=.
+- =unknown= covers stale or missing presence, idle executors on open runs, and silent runs. It is reported with =uncertain= confidence rather than guessed.
+
+Findings name slow tools (running without an update for five minutes), shell errors in failed tool calls (such as =command not found= or =no matches found=), stale hosts, a turn reported by a host other than the one it was dispatched to, unrecorded results, and queued deliveries. =retry= states whether re-queuing is safe and recommends =retry=, =wait=, =record-result=, =redeliver=, =decide=, =inspect=, or =none=. =celorga run retry= runs the same check and refuses unless the verdict is =failed= or =canceled=; =--force= retries anyway and records the overridden verdict as a run comment.
 
 =activity hosts= classifies each Celorga host as =online= (heartbeat within 150 seconds), =authentication-needed= (online, but a destination reports that it needs sign-in), =reconnecting= (missed heartbeats for up to 15 minutes), =stale= (silent longer), or =offline= (signed off cleanly). Silent hosts keep their last-known turns as cached state. =failoverHostRefs= lists online hosts that have one of the same destinations enabled.
 
