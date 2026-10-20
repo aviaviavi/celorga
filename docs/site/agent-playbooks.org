@@ -1,0 +1,50 @@
+#+TITLE: Agent playbooks
+
+Some work is variable: diagnosing a broken install, onboarding a new machine, reviewing stalled work, or preparing a release. No fixed script covers every case, but every case relies on the same dependable operations. Celorga splits the two. Typed, preview-first commands gather evidence and own state, approvals, cancellation, and durable runs. A *playbook* tells the agent you chose how to investigate on top of those commands and which boundaries to keep.
+
+Playbooks are product assets shipped with Celorga (=src/agentPlaybooks.ts=, schema =celorga:agent-playbook:v1=). They are not tied to any agent runtime and are not runtime skills. A handoff carries one playbook, plus bounded evidence, to the runtime you select.
+
+* Troubleshooting handoff
+
+The first available playbook is =troubleshoot=. It is reached through =celorga doctor=, so it works from a terminal even when the Celorga app will not open:
+
+#+begin_src sh
+celorga doctor --machine --dir ~/notes            # bounded evidence only
+celorga doctor --handoff opencode --dir ~/notes   # preview the handoff
+celorga doctor --handoff codex --apply --dir ~/notes
+celorga doctor --handoff claude --launch --dir ~/notes
+celorga doctor --agent-ref support-helper --dir ~/notes
+#+end_src
+
+- =--machine= prints the read-only =celorga:doctor-machine-evidence:v1= report. It covers host and OS, CLI and Node versions, corpus identity, a summary of the workspace audit with at most 20 findings, installed app bundle names and whether the app is running, which supported runtimes are installed, the five most recent =raw/diagnostics/= incident directories, and the names of the five most recent matching macOS crash reports. It never includes environment values, note contents, resolved executable paths, or absolute paths outside the corpus. If the workspace audit itself fails, the report records the error instead of aborting.
+- =--handoff RUNTIME= builds a =celorga:doctor-handoff:v1= packet for =codex=, =claude=, =opencode=, =pi=, or =openclaw=. The packet contains the playbook prompt, the evidence, the runtime's permission posture, and the exact launch argv. Without =--apply= it previews and writes nothing.
+- =--agent-ref ID= selects a portable agent profile. Its default runtime is used unless =--handoff= names one, and the profile ID is carried in the packet.
+- =--apply= writes the packet to =views/diagnostics/handoffs/TIMESTAMP-RUNTIME.json=. That is a review zone, and the =.json= extension keeps the packet out of Org projections. The stored copy replaces the absolute corpus root with =.=, so a synced packet carries no machine-local path.
+- =--launch= starts the selected runtime once, in the foreground, attached to the current terminal, and returns its exit status. Each runtime starts in its most restrictive interactive posture: Codex =--sandbox read-only=, Claude Code =--permission-mode plan=, OpenCode with edit, bash, and external-directory permissions set to =ask=, and Pi with the =read,grep,find,ls= tool allowlist. OpenClaw is prepare-only because it has no supported interactive CLI launch; deliver the packet to the selected OpenClaw agent instead.
+
+Executables are resolved from the same =ORG2_<RUNTIME>_EXECUTABLE= (or =CELORGA_...=) variables the app honors, then =PATH=. A missing runtime is reported as =unavailableReason=; Celorga never substitutes another runtime. A handoff never creates an automation, LaunchAgent, cron entry, or scheduled job: =recurring= is always =false=. The plain =celorga doctor= report and its exit status are unchanged.
+
+* Extension points
+
+The following playbooks are registered with status =extension-point=. They list the operations they will compose but cannot yet be handed off. =--playbook ID= rejects them until they ship with steps and a focused test.
+
+| Playbook | Intended entry | Dependable operations |
+|----------+----------------+-----------------------|
+| =onboarding= | after =corpus init/validate= | =corpus=, =agent capabilities=, =agent-profile resolve=, =source doctor=, =doctor --machine= |
+| =stalled-work-review= | evidence from =review list= and doctor run findings | =review list=, =approvals=, =run list=, =doctor=, preview-first =run block/resume/cancel= |
+| =release-preparation= | the preview plan from =npm run release:openorg= | release preview, =npm test=, =docs:check=, =check:generated=; never =--execute= |
+
+To add a playbook:
+
+1. Add or promote its record in =AGENT_PLAYBOOKS= with =status: "available"=, ordered =steps=, and the shared boundaries.
+2. Gather its evidence through existing typed commands. Add a new bounded collector beside =collectMachineEvidence= only when no command provides the evidence.
+3. Reuse =buildDoctorHandoff=, or a sibling entry point that produces the same =celorga:doctor-handoff:v1= shape, so runtime selection, permission posture, review-zone writes, and one-shot launch stay shared.
+4. Keep consequential actions behind existing approvals. A playbook may propose =run approval-request= or a preview command, but it never applies one itself.
+5. Add a focused test that uses a fake runtime executable and proves the playbook writes nothing outside its review zone and schedules nothing.
+
+* Shared interfaces
+
+Other Celorga surfaces can consume these contracts without depending on the doctor's internals:
+
+- =celorga:doctor-machine-evidence:v1= is the input for a coordinator, a failure explanation, or a view that needs machine state.
+- =celorga:doctor-handoff:v1= is a self-contained, credential-free packet. Durable delegated work can attach it to an existing run with =celorga run artifact=. For a recorded execution state, start the run with =celorga run start= before launching.

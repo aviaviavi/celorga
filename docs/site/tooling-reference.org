@@ -822,6 +822,15 @@ celorga doctor --dir ~/notes --json
 
 The versioned =celorga:agentic-doctor:v1= JSON report distinguishes errors, warnings, and informational migration findings. It detects terminal runs with pending decisions, waiting runs without a decision, duplicate provider keys, conflicting workflow attempt identities, ungrouped OpenClaw cron series, broken run/approval links, direct readable-header drift, and likely duplicate open projections. Hard contradictions produce a nonzero exit status. The command never repairs or normalizes files: review the cited evidence, then use the canonical lifecycle command or an explicit source edit to settle the underlying state.
 
+When Celorga misbehaves, or the app will not open, the doctor can hand bounded evidence to an agent you choose:
+
+#+begin_src sh
+celorga doctor --machine --dir ~/notes --json
+celorga doctor --handoff opencode --dir ~/notes [--agent-ref ID] [--apply] [--launch] [--json]
+#+end_src
+
+=--machine= returns read-only =celorga:doctor-machine-evidence:v1= output: host, versions, corpus identity, at most 20 audit findings, app bundle and process state, installed runtimes, and the most recent incident and crash-report names. =--handoff= builds a =celorga:doctor-handoff:v1= packet that carries the =troubleshoot= playbook prompt and the launch argv for =codex=, =claude=, =opencode=, =pi=, or the prepare-only =openclaw= runtime. =--apply= writes the packet to =views/diagnostics/handoffs/=. =--launch= starts the runtime once in this terminal in its most restrictive interactive posture and returns its exit status. No handoff creates a recurring job. See [[file:agent-playbooks.org][agent playbooks]] for permission postures and extension points.
+
 Every CLI and MCP run mutation uses a short local write lock, an atomic durable rename, and the SHA-256 revision read with the run. Workflow updates use the same guarded file primitive while retaining their documented visible-field authoring behavior. If another client or text editor changes a file first, the mutation fails rather than overwriting it. New run and workflow IDs also require the target to be absent. Long-lived clients can make the run boundary explicit:
 
 #+begin_src sh

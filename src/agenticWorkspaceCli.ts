@@ -73,6 +73,17 @@ import {
 } from "./agentWorkflow.js";
 import { artifactRebuildPlan, buildArtifactGraph, loadArtifactDeclarations, MEETING_TO_CONTROLLED_EXECUTION_WORKFLOW, saveArtifactGraph } from "./artifactPipeline.js";
 import { discoverMcpClient, loadMcpClients, saveMcpClients, serveMcp, writeMcpSnapshot } from "./mcpRuntime.js";
+import {
+  HANDOFF_RUNTIMES,
+  buildDoctorHandoff,
+  collectMachineEvidence,
+  launchDoctorHandoff,
+  parseHandoffRuntime,
+  renderDoctorHandoff,
+  renderMachineEvidence,
+  runtimeForAgentProfile,
+  writeDoctorHandoff,
+} from "./doctorHandoff.js";
 import { loadRuntimePolicy, runtimePolicyPath, saveRuntimePolicy, selectRuntime, validateRuntimePaths } from "./runtimePolicy.js";
 import { evaluateRun, loadEvalExpectation, loadWorkflowReplayFixture, replayWorkflowFixture, sanitizeRunFixture, saveEvalResult } from "./workflowEval.js";
 import { ORG2_CORPUS_KINDS, corpusIdentityStatus, initializeCorpusIdentity } from "./corpusIdentity.js";
@@ -174,6 +185,9 @@ function syncLinkedArtifactReviewStatus(corpus: string, artifactPath: string, re
 
 const HELP = `Agentic workspace commands:
   celorga doctor [--dir CORPUS] [--json]
+  celorga doctor --machine [--dir CORPUS] [--json]
+  celorga doctor --handoff codex|claude|opencode|pi|openclaw [--agent-ref ID] [--apply] [--launch] [--dir CORPUS] [--json]
+    Bounded troubleshooting handoff to the selected agent; works without the app. --apply writes views/diagnostics/handoffs/; --launch starts the runtime once in this terminal. Never schedules.
   celorga ledger list LEDGER [--eligible] [--state STATE] [--field KEY=VALUE] [--as-of ISO] [--cooldown-days N] [--json]
   celorga ledger resolve LEDGER --identity KEY [--identity KEY] [--json]
   celorga ledger show LEDGER ACCOUNT [--with-revision] [--json]
@@ -240,9 +254,40 @@ Writes are local, inspectable files under .org2/ or reviewable corpus zones. Con
 
 function doctorCommand(parsed: ParsedArgs): void {
   if (parsed.positional.length > 0) throw new Error(`unknown doctor arguments: ${parsed.positional.join(" ")}`);
+  const handoffRuntime = flag(parsed, "handoff");
+  const agentRef = flag(parsed, "agent-ref");
+  if (handoffRuntime !== undefined || agentRef !== undefined) {
+    doctorHandoffCommand(parsed, handoffRuntime, agentRef);
+    return;
+  }
+  if (enabled(parsed, "launch") || enabled(parsed, "apply")) throw new Error("--launch and --apply require --handoff RUNTIME or --agent-ref ID");
+  if (enabled(parsed, "machine")) {
+    const evidence = collectMachineEvidence(root(parsed));
+    output(parsed, evidence, renderMachineEvidence(evidence));
+    return;
+  }
   const report = auditAgenticWorkspace(root(parsed));
   output(parsed, report, renderAgenticDoctorReport(report));
   if (!report.ok) process.exitCode = 1;
+}
+
+function doctorHandoffCommand(parsed: ParsedArgs, handoffRuntime: string | undefined, agentRef: string | undefined): void {
+  const corpus = root(parsed);
+  if (handoffRuntime === "true") throw new Error(`--handoff requires a runtime: ${HANDOFF_RUNTIMES.join(", ")}`);
+  const runtime = handoffRuntime !== undefined
+    ? parseHandoffRuntime(handoffRuntime)
+    : runtimeForAgentProfile(corpus, required(agentRef, "--agent-ref is required"));
+  let handoff = buildDoctorHandoff({ corpusRoot: corpus, runtime, ...(agentRef ? { agentRef } : {}), playbookId: flag(parsed, "playbook") });
+  const applied = enabled(parsed, "apply");
+  const launching = enabled(parsed, "launch");
+  if (applied) handoff = writeDoctorHandoff(corpus, handoff);
+  if (launching) {
+    if (!handoff.launch || !handoff.runtime.found) throw new Error(handoff.unavailableReason ?? "launch unavailable");
+    process.stderr.write(`${renderDoctorHandoff(handoff, { applied, launching })}\n\nStarting ${handoff.runtime.name} once in this terminal…\n`);
+    process.exitCode = launchDoctorHandoff(handoff);
+    return;
+  }
+  output(parsed, { applied, launched: false, handoff }, renderDoctorHandoff(handoff, { applied, launching }));
 }
 
 function keyValueFlags(parsed: ParsedArgs, name: string): Record<string, string> {

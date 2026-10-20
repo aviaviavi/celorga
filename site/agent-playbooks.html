@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent playbooks</title>
+<link rel="icon" type="image/png" href="assets/favicon.png" />
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+<script type="module" src="assets/shiki-vscode.js"></script>
+<script defer src="assets/nav.js"></script>
+<meta name="description" content="Some work is variable: diagnosing a broken install, onboarding a new machine, reviewing stalled work, or preparing a release. No fixed script covers every case, but every case relies on the same…" />
+<link rel="canonical" href="https://celorga.io/agent-playbooks.html" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Celorga" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:title" content="Agent playbooks" />
+<meta property="og:description" content="Some work is variable: diagnosing a broken install, onboarding a new machine, reviewing stalled work, or preparing a release. No fixed script covers every case, but every case relies on the same…" />
+<meta property="og:url" content="https://celorga.io/agent-playbooks.html" />
+<meta property="og:image" content="https://celorga.io/assets/og/agent-playbooks.png" />
+<meta property="og:image:secure_url" content="https://celorga.io/assets/og/agent-playbooks.png" />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Agent playbooks: Some work is variable: diagnosing a broken install, onboarding a new machine, reviewing stalled work, or preparing a release. No fixed script covers every case, but every case relies on the same…" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Agent playbooks" />
+<meta name="twitter:description" content="Some work is variable: diagnosing a broken install, onboarding a new machine, reviewing stalled work, or preparing a release. No fixed script covers every case, but every case relies on the same…" />
+<meta name="twitter:url" content="https://celorga.io/agent-playbooks.html" />
+<meta name="twitter:image" content="https://celorga.io/assets/og/agent-playbooks.png" />
+<meta name="twitter:image:alt" content="Agent playbooks: Some work is variable: diagnosing a broken install, onboarding a new machine, reviewing stalled work, or preparing a release. No fixed script covers every case, but every case relies on the same…" />
+<link rel="stylesheet" href="assets/site.css" />
+<style>
+:root { color-scheme: light dark; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem auto; max-width: 860px; padding: 0 1rem; line-height: 1.5; }
+main { display: grid; gap: 0.75rem; }
+section.org2-headline { margin: 0.5rem 0 1rem; }
+h1,h2,h3,h4,h5,h6 { margin: 1rem 0 0.5rem; line-height: 1.25; }
+.org2-todo { display: inline-block; font-size: 0.8em; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; opacity: 0.9; }
+.org2-headline .org2-headline-done { opacity: 0.65; }
+.org2-headline .org2-headline-canceled { opacity: 0.45; text-decoration: line-through; }
+.org2-tags { font-size: 0.8em; opacity: 0.8; }
+.org2-tag { border: 1px solid currentColor; border-radius: 999px; padding: 0 0.35em; }
+.org2-planning { font-size: 0.95em; opacity: 0.9; }
+.org2-planning-kind { font-weight: 600; }
+.org2-properties { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 0.75rem; margin: 0.5rem 0; }
+.org2-properties dt { font-weight: 600; }
+.org2-properties dd { margin: 0; }
+.org2-src, .org2-example, .org2-verse, .org2-comment, .org2-directive, pre { overflow-x: auto; padding: 0.75rem; border-radius: 0.5rem; background: rgba(127,127,127,0.12); }
+.org2-center { text-align: center; }
+.org2-underline { text-decoration: underline; }
+table { border-collapse: collapse; width: 100%; margin: 0.5rem 0 1rem; }
+th, td { border: 1px solid rgba(127,127,127,0.35); padding: 0.35rem 0.5rem; text-align: left; }
+thead th { background: rgba(127,127,127,0.16); }
+a { text-decoration-thickness: 0.08em; text-underline-offset: 0.15em; }
+</style>
+<style>
+#content { max-width: 60em; margin: auto; line-height: 1.35; }
+#content li > p { margin: 0; }
+#content li + li { margin-top: 0.2rem; }
+</style>
+</head>
+<body>
+<div id="content" class="content">
+<main class="org2-document">
+<div class="celorga-nav"><details class="celorga-nav-menu" open><summary>Menu</summary><nav aria-label="Celorga"><a href="index.html">Celorga</a><a href="features.html">How it works</a><a href="getting-started.html">Getting started</a><a href="downloads.html">Downloads</a><a href="architecture.html">Architecture</a><details class="celorga-nav-dropdown"><summary>Developer docs</summary><div class="celorga-nav-dropdown-menu"><a href="reference.html">Overview</a><a href="corpus-flow.html">Corpus flow</a><a href="language-reference.html">Language reference</a><a href="tooling-reference.html">Tooling reference</a><a href="mcp-and-skills.html">MCP and agent skills</a><a href="maintenance-workflows.html">Maintenance and health</a><a href="agent-quickstart.html">Agents and models</a><a href="semantics-status.html">Semantics and status</a><a href="migration.html">Practical migration</a></div></details><details class="celorga-nav-dropdown"><summary>Editors</summary><div class="celorga-nav-dropdown-menu"><a href="editors.html">Overview</a><a href="editors-macos.html">Celorga for macOS</a><a href="editors-vscode.html">VS Code</a><a href="editors-vim.html">Vim / Neovim</a><a href="editors-emacs.html">Emacs</a></div></details><details class="celorga-nav-dropdown"><summary>Compare</summary><div class="celorga-nav-dropdown-menu"><a href="celorga-vs-org-mode.html">For Org mode users</a><a href="celorga-vs-obsidian.html">vs Obsidian</a><a href="celorga-vs-markdown.html">vs Markdown</a></div></details><a class="celorga-nav-github" href="https://github.com/aviaviavi/celorga" target="_blank" rel="noopener noreferrer"><svg class="celorga-nav-github-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8a8.013 8.013 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.57 7.57 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.19 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg> GitHub</a><form class="celorga-site-search" role="search"><button class="celorga-site-search-toggle" type="button" aria-label="Open site search" aria-expanded="false">⌕</button><label class="sr-only" for="celorga-site-search-input">Search Celorga docs</label><input id="celorga-site-search-input" type="search" placeholder="Search docs" autocomplete="off" aria-label="Search Celorga docs" aria-expanded="false"/><div class="celorga-site-search-results" hidden></div></form></nav></details></div>
+<header class="org2-document-header">
+<h1 class="org2-document-title">Agent playbooks</h1>
+</header>
+<p>Some work is variable: diagnosing a broken install, onboarding a new machine, reviewing stalled work, or preparing a release. No fixed script covers every case, but every case relies on the same dependable operations. Celorga splits the two. Typed, preview-first commands gather evidence and own state, approvals, cancellation, and durable runs. A <strong>playbook</strong> tells the agent you chose how to investigate on top of those commands and which boundaries to keep.</p>
+<p>Playbooks are product assets shipped with Celorga (<code>src/agentPlaybooks.ts</code>, schema <code>celorga:agent-playbook:v1</code>). They are not tied to any agent runtime and are not runtime skills. A handoff carries one playbook, plus bounded evidence, to the runtime you select.</p>
+<section class="org2-headline level-1">
+<h1 id="troubleshooting-handoff">Troubleshooting handoff</h1>
+<p>The first available playbook is <code>troubleshoot</code>. It is reached through <code>celorga doctor</code>, so it works from a terminal even when the Celorga app will not open:</p>
+<pre class="org2-src language-sh" style="padding: 0.9rem 1rem; border: 1px solid rgba(127,127,127,0.28); border-radius: 0.6rem; background: rgba(127,127,127,0.11); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 0.92rem; line-height: 1.28;"><code class="language-sh">celorga doctor --machine --dir ~/notes            # bounded evidence only
+celorga doctor --handoff opencode --dir ~/notes   # preview the handoff
+celorga doctor --handoff codex --apply --dir ~/notes
+celorga doctor --handoff claude --launch --dir ~/notes
+celorga doctor --agent-ref support-helper --dir ~/notes</code></pre>
+<ul>
+<li><p><code>--machine</code> prints the read-only <code>celorga:doctor-machine-evidence:v1</code> report. It covers host and OS, CLI and Node versions, corpus identity, a summary of the workspace audit with at most 20 findings, installed app bundle names and whether the app is running, which supported runtimes are installed, the five most recent <code>raw/diagnostics/</code> incident directories, and the names of the five most recent matching macOS crash reports. It never includes environment values, note contents, resolved executable paths, or absolute paths outside the corpus. If the workspace audit itself fails, the report records the error instead of aborting.</p></li>
+<li><p><code>--handoff RUNTIME</code> builds a <code>celorga:doctor-handoff:v1</code> packet for <code>codex</code>, <code>claude</code>, <code>opencode</code>, <code>pi</code>, or <code>openclaw</code>. The packet contains the playbook prompt, the evidence, the runtime's permission posture, and the exact launch argv. Without <code>--apply</code> it previews and writes nothing.</p></li>
+<li><p><code>--agent-ref ID</code> selects a portable agent profile. Its default runtime is used unless <code>--handoff</code> names one, and the profile ID is carried in the packet.</p></li>
+<li><p><code>--apply</code> writes the packet to <code>views/diagnostics/handoffs/TIMESTAMP-RUNTIME.json</code>. That is a review zone, and the <code>.json</code> extension keeps the packet out of Org projections. The stored copy replaces the absolute corpus root with <code>.</code>, so a synced packet carries no machine-local path.</p></li>
+<li><p><code>--launch</code> starts the selected runtime once, in the foreground, attached to the current terminal, and returns its exit status. Each runtime starts in its most restrictive interactive posture: Codex <code>--sandbox read-only</code>, Claude Code <code>--permission-mode plan</code>, OpenCode with edit, bash, and external-directory permissions set to <code>ask</code>, and Pi with the <code>read,grep,find,ls</code> tool allowlist. OpenClaw is prepare-only because it has no supported interactive CLI launch; deliver the packet to the selected OpenClaw agent instead.</p></li>
+</ul>
+<p>Executables are resolved from the same <code>ORG2_&lt;RUNTIME&gt;_EXECUTABLE</code> (or <code>CELORGA_...</code>) variables the app honors, then <code>PATH</code>. A missing runtime is reported as <code>unavailableReason</code>; Celorga never substitutes another runtime. A handoff never creates an automation, LaunchAgent, cron entry, or scheduled job: <code>recurring</code> is always <code>false</code>. The plain <code>celorga doctor</code> report and its exit status are unchanged.</p>
+</section>
+<section class="org2-headline level-1">
+<h1 id="extension-points">Extension points</h1>
+<p>The following playbooks are registered with status <code>extension-point</code>. They list the operations they will compose but cannot yet be handed off. <code>--playbook ID</code> rejects them until they ship with steps and a focused test.</p>
+<table>
+<thead>
+<tr><th>Playbook</th><th>Intended entry</th><th>Dependable operations</th></tr>
+</thead>
+<tbody>
+<tr><td><code>onboarding</code></td><td>after <code>corpus init/validate</code></td><td><code>corpus</code>, <code>agent capabilities</code>, <code>agent-profile resolve</code>, <code>source doctor</code>, <code>doctor --machine</code></td></tr>
+<tr><td><code>stalled-work-review</code></td><td>evidence from <code>review list</code> and doctor run findings</td><td><code>review list</code>, <code>approvals</code>, <code>run list</code>, <code>doctor</code>, preview-first <code>run block/resume/cancel</code></td></tr>
+<tr><td><code>release-preparation</code></td><td>the preview plan from <code>npm run release:openorg</code></td><td>release preview, <code>npm test</code>, <code>docs:check</code>, <code>check:generated</code>; never <code>--execute</code></td></tr>
+</tbody>
+</table>
+<p>To add a playbook:</p>
+<ol>
+<li><p>Add or promote its record in <code>AGENT_PLAYBOOKS</code> with <code>status: &quot;available&quot;</code>, ordered <code>steps</code>, and the shared boundaries.</p></li>
+<li><p>Gather its evidence through existing typed commands. Add a new bounded collector beside <code>collectMachineEvidence</code> only when no command provides the evidence.</p></li>
+<li><p>Reuse <code>buildDoctorHandoff</code>, or a sibling entry point that produces the same <code>celorga:doctor-handoff:v1</code> shape, so runtime selection, permission posture, review-zone writes, and one-shot launch stay shared.</p></li>
+<li><p>Keep consequential actions behind existing approvals. A playbook may propose <code>run approval-request</code> or a preview command, but it never applies one itself.</p></li>
+<li><p>Add a focused test that uses a fake runtime executable and proves the playbook writes nothing outside its review zone and schedules nothing.</p></li>
+</ol>
+</section>
+<section class="org2-headline level-1">
+<h1 id="shared-interfaces">Shared interfaces</h1>
+<p>Other Celorga surfaces can consume these contracts without depending on the doctor's internals:</p>
+<ul>
+<li><p><code>celorga:doctor-machine-evidence:v1</code> is the input for a coordinator, a failure explanation, or a view that needs machine state.</p></li>
+<li><p><code>celorga:doctor-handoff:v1</code> is a self-contained, credential-free packet. Durable delegated work can attach it to an existing run with <code>celorga run artifact</code>. For a recorded execution state, start the run with <code>celorga run start</code> before launching.</p></li>
+</ul>
+</section>
+</main>
+</div>
+<footer class="celorga-footer"><div class="celorga-footer-incubator"><span>Incubated at</span><a href="https://scarf.sh" target="_blank" rel="noopener noreferrer"><img class="celorga-footer-scarf-logo" src="assets/scarf-logo.svg" alt="Scarf" /></a></div><p class="celorga-footer-tagline">Build your knowledge locally and put it to work.</p><img referrerpolicy="no-referrer-when-downgrade" src="https://static.scarf.sh/a.png?x-pxid=e39e0a38-773e-4446-b8b0-804f923e3dc3" alt="" /></footer>
+</body>
+</html>
