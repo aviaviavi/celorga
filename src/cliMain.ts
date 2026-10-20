@@ -9397,6 +9397,7 @@ Roam / IDs:
   celorga compile corpus --dir DIR [--recursive] [--out FILE] [--format json|jsonl]
   celorga render-chart --file FILE [--block-id ID|--line N] [--out FILE] [--format svg|json]
   celorga property-view list|query|save|edit --dir CORPUS [--help]
+  celorga view list|create|show|refresh|state|action|undo|bridge --dir CORPUS [--help]
   celorga query-data (--file FILE|--stdin) [--results NAME|--line N] [--out FILE|--apply] [--format org|json]
   celorga table recalculate --file FILE [--line N] [--formula-index N] [--apply] [--format text|diff|json]
   celorga agent capabilities

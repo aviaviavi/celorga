@@ -75,6 +75,11 @@ async function main(): Promise<void> {
     await runPropertyViewsCommand(args.slice(1));
     return;
   }
+  if (args[0] === "view") {
+    const { runInteractiveViewCommand } = await import("./interactiveViewsCli.js");
+    await runInteractiveViewCommand(args.slice(1));
+    return;
+  }
   if (args[0] === "embed") {
     const { runEmbedCommand } = await import("./liveEmbeds.js");
     await runEmbedCommand(args.slice(1));

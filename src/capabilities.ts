@@ -91,6 +91,12 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
         writes: "preview-by-default",
       },
       {
+        id: "interactive-workspace-views",
+        purpose: "Save a refreshable daily-plan view with remembered choices and source-linked tasks; sandboxed controls request choice saves or previews, and the schedule action applies only with the preview fingerprint and source revision and can be undone while the source is unchanged.",
+        commands: ["celorga view create", "celorga view refresh", "celorga view state", "celorga view action", "celorga view undo", "celorga view bridge"],
+        writes: "preview-by-default",
+      },
+      {
         id: "live-embeds",
         purpose: "Resolve portable note and stable-ID heading embeds with source navigation, bounded live rendering, and reference-only exports.",
         commands: ["celorga embed resolve"],
