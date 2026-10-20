@@ -177,6 +177,8 @@ export interface ActivityExplainOptions {
   workflow?: string;
   /** Include idle, settled, and finished subjects in a full listing. */
   all?: boolean;
+  /** Runs already listed by the caller (for example the workspace coordinator), to avoid a second corpus scan. */
+  runs?: AgentRun[];
 }
 
 export interface ActivityExplainResult {
@@ -1098,7 +1100,7 @@ export function explainActivity(corpusRootRaw: string, options: ActivityExplainO
   const now = options.now ?? new Date();
   const hosts = loadActivityHosts(corpusRoot, now);
   const targeted = Boolean(options.thread || options.run || options.workflow);
-  const runs = safeRuns(corpusRoot);
+  const runs = options.runs ?? safeRuns(corpusRoot);
   const contexts = buildContexts(corpusRoot, now, runs, hosts);
   const items: ActivityExplanation[] = [];
 

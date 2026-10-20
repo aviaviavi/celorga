@@ -1,5 +1,6 @@
 import { createProjectNote, listProjectNotes, updateProjectNote } from "./project.js";
 import { workspaceAgentState, workspaceRunList, workspaceWorkflowList, workspaceGoalList, workspaceProfileList } from "./workspaceAgentState.js";
+import { continueWorkspaceOffer, coordinateWorkspace, renderWorkspaceCoordinationText } from "./workspaceCoordinator.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -198,6 +199,12 @@ const HELP = `Agentic workspace commands:
   celorga workspace agent-state --dir CORPUS --json
   celorga workspace agenda --mount CORPUS [--mount CORPUS ...] [--from DATE --to DATE]
   celorga workspace search QUERY --mount CORPUS [--mount CORPUS ...] [--limit N]
+  celorga workspace coordinate [--mount CORPUS ...|--dir CORPUS] [--since DURATION] [--quiet-minutes N] [--json]
+    Read-only: what needs you, what is stuck, what is working, and what shipped across mounted corpora and every
+    host publishing presence into them, with evidence links and guarded continuation offers. Invents no execution state.
+  celorga workspace continue OFFER_ID [--mount CORPUS ...|--dir CORPUS] [--actor NAME] [--apply] [--json]
+    Re-derives the offer, refuses it if stale or any guard fails, then delegates to an idempotent thread send or a
+    revision-guarded run retry. Preview by default. Queuing does not confirm that a turn started.
   celorga thread list|show|post|send|wait|settle|reopen|configure|auto-settle|repair [--dir CORPUS] [--apply]
   celorga thread repair [--dir CORPUS] [--apply] [--if-revision SHA256] [--watch --interval SECONDS] [--executable PATH] [--json]
   celorga thread post THREAD --message TEXT --author NAME [--agent-ref ID] [--source REF] [--idempotency-key KEY] [--request-turn AGENT ...] [--dir CORPUS] [--apply]
@@ -538,6 +545,13 @@ function ledgerCommand(parsed: ParsedArgs): void {
   }
 }
 
+function durationSeconds(raw: string): number {
+  const match = /^(\d+)([smhdw])$/u.exec(raw.trim());
+  if (!match) throw new Error(`invalid duration ${raw}; use forms like 90m, 24h, or 7d`);
+  const unit = { s: 1, m: 60, h: 3600, d: 86400, w: 604800 }[match[2] as "s" | "m" | "h" | "d" | "w"];
+  return Number(match[1]) * unit;
+}
+
 function forwardedArgs(parsed: ParsedArgs, excluded: Set<string>): string[] {
   const result: string[] = [];
   for (const [name, values] of parsed.flags) {
@@ -555,6 +569,31 @@ async function workspaceCommand(parsed: ParsedArgs): Promise<void> {
   if (action === "agent-state") {
     if (flags(parsed, "mount").length) throw new Error("workspace agent-state reads one --dir corpus; --mount is not supported");
     output(parsed, workspaceAgentState(root(parsed)));
+    return;
+  }
+  if (action === "coordinate" || action === "continue") {
+    const mountRoots = flags(parsed, "mount");
+    if (mountRoots.length && parsed.flags.has("dir")) throw new Error(`workspace ${action} reads either --mount CORPUS ... or one --dir CORPUS, not both`);
+    const shippedWindowSeconds = durationSeconds(flag(parsed, "since", "24h")!);
+    const rawQuiet = flag(parsed, "quiet-minutes");
+    if (rawQuiet !== undefined && !/^\d+$/u.test(rawQuiet)) throw new Error("--quiet-minutes must be a non-negative integer");
+    const options = {
+      mounts: mountRoots,
+      root: root(parsed),
+      shippedWindowSeconds,
+      ...(rawQuiet !== undefined ? { quietSeconds: Number(rawQuiet) * 60 } : {}),
+    };
+    if (action === "coordinate") {
+      const result = coordinateWorkspace(options);
+      output(parsed, result, renderWorkspaceCoordinationText(result));
+      return;
+    }
+    const offerId = required(parsed.positional[1], "continuation offer id is required; run celorga workspace coordinate first");
+    const result = continueWorkspaceOffer(offerId, { ...options, apply: enabled(parsed, "apply"), actor: flag(parsed, "actor") });
+    const verb = result.offer.kind === "thread-send"
+      ? `${result.applied ? "queued" : result.delivery?.status === "preview" ? "would queue" : `already ${result.delivery?.status}`} continuation for run ${result.offer.runId} to thread ${result.offer.threadId} via ${result.offer.route?.hostName ?? "?"}`
+      : `${result.applied ? "requeued" : "would requeue"} run ${result.offer.runId}`;
+    output(parsed, result, `${verb}\n${result.unconfirmed}\nCheck: ${result.verify}`);
     return;
   }
   const mounts = flags(parsed, "mount");

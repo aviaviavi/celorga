@@ -127,6 +127,12 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
         writes: "read-only",
       },
       {
+        id: "workspace-coordinator",
+        purpose: "Review agent work across mounted corpora and every host publishing presence into them: what needs you, what is stuck, what is working, and what shipped, with run, task, artifact, and validation evidence. Offer continuation only when guards pass (open run, no pending approval, linked single-agent chat, no active turn or queued request, quiet period, live route to the last executor or a failover host); `workspace continue` re-derives the offer and delegates to an idempotent `thread send` or a revision-guarded `run retry`, preview-first, never claiming a turn started. MCP: `celorga_workspace_coordinate`, `celorga_workspace_continue`.",
+        commands: ["celorga workspace coordinate", "celorga workspace continue"],
+        writes: "preview-by-default",
+      },
+      {
         id: "explainable-activity",
         purpose: "Explain why every chat thread, durable run, and workflow is working or needs attention (reporting host/runtime, last heartbeat or transition, live/cached/uncertain confidence, exact blocking approval or question), list multi-host presence with failover candidates, stream local activity events, and wait race-free on thread or run conditions.",
         commands: ["celorga activity explain", "celorga activity hosts", "celorga activity events", "celorga thread wait", "celorga run wait"],

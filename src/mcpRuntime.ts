@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { continueWorkspaceOffer, coordinateWorkspace } from "./workspaceCoordinator.js";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
@@ -407,6 +408,8 @@ function legacyMcpTools(readOnly: boolean) {
     { name: "org2_run_transition", description: "Transition a durable Celorga run. Completion requires a concise, human-readable summary.", inputSchema: { type: "object", required: ["run", "status"], properties: { run: { type: "string" }, status: { type: "string" }, actor: { type: "string" }, reason: { type: "string" }, summary: { type: "string" }, highlights: { type: "array", items: { type: "string" } }, nextActions: { type: "array", items: { type: "string" } } } }, annotations: writeAnnotations },
     { name: "org2_thread_list", description: "List Celorga AI chats (newest first) with each thread's ID, title, state, runtime, destination, and whether it is a shared room. Use the ID with thread_send or thread_post", inputSchema: { type: "object", properties: { state: { type: "string", enum: ["all", "active", "settled"], default: "active" }, limit: { type: "integer", minimum: 1, maximum: 200, default: 50 } } }, annotations: readOnlyAnnotations },
     { name: "org2_thread_send", description: "Message the agent in an existing single-agent Celorga AI chat and start its turn, as if the user sent it (a follow-up if it is busy). Use this, not a new automation or scheduled job, to hand work to another agent. For a shared room use thread_post with requestTurn", inputSchema: { type: "object", required: ["threadId", "message"], properties: { threadId: { type: "string" }, message: { type: "string" }, author: { type: "string" }, idempotencyKey: { type: "string" } } }, annotations: writeAnnotations },
+    { name: "org2_workspace_coordinate", description: "Review this corpus's agent work across hosts: what needs you, what is stuck, what is working, what shipped (with evidence links), and guarded continuation offers. Read-only; derived from durable runs, chats, and host presence", inputSchema: { type: "object", properties: { sinceHours: { type: "number", minimum: 1, maximum: 720, default: 24 }, quietMinutes: { type: "integer", minimum: 0, maximum: 10080, default: 15 } } }, annotations: readOnlyAnnotations },
+    { name: "org2_workspace_continue", description: "Execute one current continuation offer from workspace_coordinate after re-checking every guard. Preview unless apply is true. Queues an idempotent single-agent send or a revision-guarded run retry; never confirms a turn started", inputSchema: { type: "object", required: ["offerId"], properties: { offerId: { type: "string" }, apply: { type: "boolean", default: false }, actor: { type: "string" } } }, annotations: writeAnnotations },
     { name: "org2_thread_post", description: "Post an attributed background message to an existing Celorga AI chat. It is context only unless requestTurn names shared-room agents (destination IDs or @mentions) that should each take a turn in response", inputSchema: { type: "object", required: ["threadId", "message", "author"], properties: { threadId: { type: "string" }, message: { type: "string" }, author: { type: "string" }, agentRef: { type: "string" }, source: { type: "string" }, idempotencyKey: { type: "string" }, requestTurn: { type: "array", items: { type: "string" }, maxItems: 8 } } }, annotations: writeAnnotations },
   ];
 }
@@ -459,8 +462,15 @@ async function handle(root: string, request: JsonRpcRequest, options: McpServerO
       const resolved = resolveAgentProfile(root, requiredString(args.runtime, "runtime"), requiredString(args.runtimeAgentId, "runtimeAgentId"));
       return result(toolResult(resolved));
     }
-    if (readOnly && ["org2_run_create", "org2_run_transition", "org2_thread_list", "org2_thread_send", "org2_thread_post"].includes(String(name))) {
+    if (readOnly && ["org2_run_create", "org2_run_transition", "org2_thread_list", "org2_thread_send", "org2_thread_post", "org2_workspace_coordinate", "org2_workspace_continue"].includes(String(name))) {
       throw new Error("tool is unavailable on the read-only MCP endpoint");
+    }
+    if (name === "org2_workspace_coordinate" || name === "org2_workspace_continue") {
+      const sinceHours = typeof args.sinceHours === "number" && Number.isFinite(args.sinceHours) ? Math.min(720, Math.max(1, args.sinceHours)) : 24;
+      const quietMinutes = Number.isInteger(args.quietMinutes) ? Math.min(10080, Math.max(0, Number(args.quietMinutes))) : undefined;
+      const options = { root, shippedWindowSeconds: sinceHours * 3600, ...(quietMinutes !== undefined ? { quietSeconds: quietMinutes * 60 } : {}) };
+      if (name === "org2_workspace_coordinate") return result(toolResult(coordinateWorkspace(options)));
+      return result(toolResult(continueWorkspaceOffer(requiredString(args.offerId, "offerId"), { ...options, apply: args.apply === true, actor: optionalString(args.actor, "actor") })));
     }
     if (name === "org2_thread_list") {
       const filter = optionalString(args.state, "state") ?? "active";
