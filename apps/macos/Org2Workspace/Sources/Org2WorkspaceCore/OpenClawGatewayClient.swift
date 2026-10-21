@@ -885,12 +885,17 @@ public actor OpenClawGatewayClient {
     return OpenClawWorkflowContinuation(runID: returnedRunID, sessionKey: sessionKey, prompt: prompt)
   }
 
+  /// `expectedUpdatedAt` is the run's `updatedAt` as this workspace last wrote
+  /// it. The Gateway may run on another machine with a file-synced corpus; it
+  /// waits until its copy is at least this new before checking run state.
   public func resumeApprovedRun(
     runID: String,
-    corpusID: String?
+    corpusID: String?,
+    expectedUpdatedAt: String? = nil
   ) async throws -> OpenClawApprovedRunContinuation {
     var params: [String: Any] = ["runId": runID]
     if let corpusID, !corpusID.isEmpty { params["corpusId"] = corpusID }
+    if let expectedUpdatedAt, !expectedUpdatedAt.isEmpty { params["expectedUpdatedAt"] = expectedUpdatedAt }
     let payload = try await requestPayload(method: "org2.run.resumeApproved", params: params)
     guard let run = Self.dictionary(payload["run"]),
           let returnedRunID = Self.string(run["id"]), !returnedRunID.isEmpty,
@@ -913,10 +918,12 @@ public actor OpenClawGatewayClient {
   public func replyAndResumeRun(
     runID: String,
     response: String,
-    corpusID: String?
+    corpusID: String?,
+    expectedUpdatedAt: String? = nil
   ) async throws -> OpenClawRunContinuation {
     var params: [String: Any] = ["runId": runID, "response": response]
     if let corpusID, !corpusID.isEmpty { params["corpusId"] = corpusID }
+    if let expectedUpdatedAt, !expectedUpdatedAt.isEmpty { params["expectedUpdatedAt"] = expectedUpdatedAt }
     let payload = try await requestPayload(method: "org2.run.replyAndResume", params: params)
     guard let run = Self.dictionary(payload["run"]),
           let returnedRunID = Self.string(run["id"]), !returnedRunID.isEmpty,

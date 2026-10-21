@@ -936,3 +936,53 @@ test("fails closed when the canonical approval does not match the live draft", a
   assert.equal(decision.allowed, false);
   assert.match(decision.reason, /No matching Celorga approval/);
 });
+
+test("waits for a replicated run copy to catch up before continuing", async () => {
+  // The app recorded an approval on another machine; this host's copy arrives later.
+  const copies = [
+    { id: "run-sync-1", status: "waiting-approval", updatedAt: "2026-08-06T16:00:00.000Z" },
+    { id: "run-sync-1", status: "waiting-approval", updatedAt: "2026-08-06T16:00:00.000Z" },
+    { id: "run-sync-1", status: "blocked", updatedAt: "2026-08-06T16:05:01.000Z" },
+  ];
+  let reads = 0;
+  const sleeps = [];
+  const lifecycle = newTestLifecycle({
+    syncPollMs: 5,
+    sleep: async (ms) => { sleeps.push(ms); },
+    exec: async (args) => {
+      if (args[0] === "run" && args[1] === "show") return JSON.stringify(copies[Math.min(reads++, copies.length - 1)]);
+      throw new Error(`unexpected command: ${args.join(" ")}`);
+    },
+  });
+
+  const run = await lifecycle.awaitRunSync("run-sync-1", { expectedUpdatedAt: "2026-08-06T16:05:00.000Z" });
+  assert.equal(run.status, "blocked");
+  assert.equal(reads, 3);
+  assert.deepEqual(sleeps, [5, 5]);
+});
+
+test("reports an unsynced run copy instead of a misleading status error", async () => {
+  const stale = { id: "run-sync-2", status: "waiting-approval", updatedAt: "2026-08-06T16:00:00.000Z" };
+  const lifecycle = newTestLifecycle({
+    syncWaitSeconds: 0,
+    sleep: async () => {},
+    exec: async (args) => {
+      if (args[0] === "run" && args[1] === "show") return JSON.stringify(stale);
+      throw new Error(`unexpected command: ${args.join(" ")}`);
+    },
+  });
+
+  await assert.rejects(
+    () => lifecycle.awaitRunSync(stale.id, { expectedUpdatedAt: "2026-08-06T16:05:00.000Z" }),
+    /has not synced to the OpenClaw host yet: its copy here is waiting-approval/,
+  );
+});
+
+test("does not wait for sync when the app sends no expectation", async () => {
+  let reads = 0;
+  const lifecycle = newTestLifecycle({
+    exec: async () => { reads += 1; return "{}"; },
+  });
+  assert.equal(await lifecycle.awaitRunSync("run-sync-3", {}), undefined);
+  assert.equal(reads, 0);
+});

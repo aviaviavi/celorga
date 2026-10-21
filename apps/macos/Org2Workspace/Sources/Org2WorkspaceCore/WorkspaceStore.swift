@@ -8899,7 +8899,8 @@ extension WorkspaceStore {
     do {
       return try await gateway.resumeApprovedRun(
         runID: run.id,
-        corpusID: activeCorpusIdentity?.id
+        corpusID: activeCorpusIdentity?.id,
+        expectedUpdatedAt: run.updatedAt
       )
     } catch {
       guard Self.shouldUseLocalApprovalContinuationFallback(for: error) else { throw error }
@@ -9249,7 +9250,8 @@ extension WorkspaceStore {
           continuation = try await gateway.replyAndResumeRun(
             runID: run.id,
             response: response,
-            corpusID: activeCorpusIdentity?.id
+            corpusID: activeCorpusIdentity?.id,
+            expectedUpdatedAt: run.updatedAt
           )
         }
       } catch {

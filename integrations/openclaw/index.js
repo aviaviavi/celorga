@@ -97,6 +97,7 @@ export default definePluginEntry({
         const runId = String(params?.runId || "").trim();
         if (!runId) return respond(false, undefined, { code: "INVALID_REQUEST", message: "runId is required" });
         const expectedCorpusId = String(params?.corpusId || "").trim() || undefined;
+        await lifecycle.awaitRunSync(runId, { expectedUpdatedAt: params?.expectedUpdatedAt });
         respond(true, await lifecycle.serialize(() => lifecycle.resumeApprovedRun(runId, { expectedCorpusId })));
       } catch (error) {
         respond(false, undefined, { code: "ORG2_RUN_ERROR", message: error.message });
@@ -110,6 +111,7 @@ export default definePluginEntry({
         if (!runId) return respond(false, undefined, { code: "INVALID_REQUEST", message: "runId is required" });
         if (!response) return respond(false, undefined, { code: "INVALID_REQUEST", message: "response is required" });
         const expectedCorpusId = String(params?.corpusId || "").trim() || undefined;
+        await lifecycle.awaitRunSync(runId, { expectedUpdatedAt: params?.expectedUpdatedAt });
         respond(true, await lifecycle.serialize(() => lifecycle.replyAndResumeRun(runId, response, { expectedCorpusId })));
       } catch (error) {
         respond(false, undefined, { code: "ORG2_RUN_ERROR", message: error.message });

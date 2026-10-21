@@ -15,7 +15,8 @@
       "trackSubagents": { "type": "boolean" },
       "trackDraftApprovals": { "type": "boolean" },
       "enforceSafeGmailDrafts": { "type": "boolean" },
-      "safeGmailDraftCommand": { "type": "string" }
+      "safeGmailDraftCommand": { "type": "string" },
+      "syncWaitSeconds": { "type": "number", "minimum": 0 }
     }
   }
 }

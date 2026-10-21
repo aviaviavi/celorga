@@ -61,6 +61,13 @@ deterministic run-scoped OpenClaw thread carrying the existing run ID. If the
 app cannot attach or dispatch the continuation, it durably blocks the same run
 with a retry instruction instead of leaving a misleading `running` status.
 
+The app and the Gateway may run on different machines with a file-synced
+corpus. `celorga.run.resumeApproved` and `celorga.run.replyAndResume` accept an
+optional `expectedUpdatedAt`, the run's `updatedAt` from the app's own write.
+Before checking run state, the plugin waits until its local copy is at least
+that new (`syncWaitSeconds`, default 180), then reports an unsynced copy rather
+than a misleading status error.
+
 OpenClaw is the runtime adapter, not the portable worker identity. Before it
 creates or attaches a run, the plugin derives the configured OpenClaw agent ID
 from the hook/session identity and calls `celorga agent-profile resolve --runtime

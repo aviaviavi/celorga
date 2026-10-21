@@ -259,6 +259,40 @@ export class Org2Lifecycle {
     this.state = { version: 4, mappings: {}, workflowJobs: {}, drafts: {}, approvalContinuations: {} };
     this.cron = options.cron;
     this.queue = Promise.resolve();
+    const syncWaitSeconds = Number(options.syncWaitSeconds);
+    this.syncWaitMs = Number.isFinite(syncWaitSeconds) && syncWaitSeconds >= 0 ? syncWaitSeconds * 1000 : 180_000;
+    this.syncPollMs = Number.isFinite(options.syncPollMs) && options.syncPollMs > 0 ? options.syncPollMs : 1000;
+    this.sleep = options.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  }
+
+  /**
+   * Wait until this host's copy of a run reflects the workspace's latest write.
+   *
+   * The Celorga app can run on a different machine than the Gateway, with the
+   * corpus replicated by a file-sync tool. The app records a decision locally
+   * and then asks the Gateway to continue, so the Gateway's copy can briefly
+   * predate that decision. Callers pass the run's `updatedAt` as the app saw
+   * it; we poll until the local copy is at least that new. Without an
+   * expectation (older apps) this is a single read. Run outside `serialize`
+   * so a slow sync does not stall unrelated lifecycle work.
+   */
+  async awaitRunSync(runId, details = {}) {
+    const expected = Date.parse(String(details.expectedUpdatedAt || ""));
+    if (!Number.isFinite(expected)) return undefined;
+    const deadline = Date.now() + this.syncWaitMs;
+    for (;;) {
+      const run = JSON.parse(await this.exec(["run", "show", runId, "--json"]));
+      const local = Date.parse(String(run.updatedAt || ""));
+      if (Number.isFinite(local) && local >= expected) return run;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `${runId} has not synced to the OpenClaw host yet: its copy here is ${run.status}`
+          + ` (updated ${run.updatedAt || "unknown"}), but Celorga recorded a change at`
+          + ` ${details.expectedUpdatedAt}. Wait for corpus sync to finish, then try again.`,
+        );
+      }
+      await this.sleep(this.syncPollMs);
+    }
   }
 
   async init() {
