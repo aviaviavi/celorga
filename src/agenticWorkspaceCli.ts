@@ -24,6 +24,7 @@ import {
   forkAgentRun,
   listAgentRuns,
   listAgentRunSnapshots,
+  listAgentRunsWithApprovals,
   loadAgentRun,
   loadAgentRunSnapshot,
   normalizeLegacyAgentRuns,
@@ -789,6 +790,38 @@ function runSnapshotMap(corpus: string, preferred?: AgentRunSnapshot): Map<strin
   return snapshots;
 }
 
+/**
+ * Loads only the runs whose approvals share a provider decision key.
+ *
+ * Correlating a single approval decision or request used to reread and hash
+ * every durable run record, which took tens of seconds on a large run history
+ * and left the desktop Request Changes / Approve actions spinning. The
+ * machine-local approval index already fingerprints every run file and
+ * retains parsed runs that carry approvals, so it can pick the few candidates
+ * cheaply. Candidates are then reread as guarded snapshots, so any write still
+ * fails closed if a record changed underneath us.
+ */
+function correlatedRunSnapshotMap(
+  corpus: string,
+  keys: string[],
+  preferred: AgentRunSnapshot,
+): Map<string, AgentRunSnapshot> {
+  const snapshots = new Map<string, AgentRunSnapshot>();
+  for (const run of listAgentRunsWithApprovals(corpus)) {
+    if (run.id === preferred.run.id) continue;
+    const overlaps = run.approvals.some((approval) =>
+      approvalKeysOverlap(agentRunApprovalDecisionKeys(approval), keys));
+    if (!overlaps) continue;
+    try {
+      snapshots.set(run.id, loadAgentRunSnapshot(corpus, run.id));
+    } catch {
+      // A run removed since the index was read cannot carry a competing decision.
+    }
+  }
+  snapshots.set(preferred.run.id, preferred);
+  return snapshots;
+}
+
 function saveRunFromSnapshot(
   corpus: string,
   run: AgentRun,
@@ -875,7 +908,7 @@ function correlatedApprovalRequest(
   const keys = agentRunApprovalDecisionKeys(input);
   if (keys.length === 0) return null;
 
-  const snapshots = runSnapshotMap(corpus, targetSnapshot);
+  const snapshots = correlatedRunSnapshotMap(corpus, keys, targetSnapshot);
   const runs = [...snapshots.values()].map((snapshot) => snapshot.run);
   const references = approvalReferences(runs, keys);
   const targetOwnsDecision = target.approvals.some((approval) =>
@@ -965,7 +998,7 @@ function correlatedApprovalDecision(
   const keys = agentRunApprovalDecisionKeys(approval);
   if (keys.length === 0) return null;
 
-  const snapshots = runSnapshotMap(corpus, targetSnapshot);
+  const snapshots = correlatedRunSnapshotMap(corpus, keys, targetSnapshot);
   const references = approvalReferences([...snapshots.values()].map((snapshot) => snapshot.run), keys);
   for (const key of keys) {
     const latest = references

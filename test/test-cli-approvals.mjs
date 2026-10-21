@@ -514,4 +514,44 @@ assert.equal(remainingRunApproval.runDecisionEffect, "This is the last pending a
   assert.throws(() => requestAgentRunApproval(base, { ...material, priority: "asap" }), /invalid approval priority/);
 }
 
+// A provider-backed decision (Request Changes on a Gmail draft, for example)
+// correlates only runs that share its decision key. It must not reread the
+// whole run history, which made desktop decisions spin for tens of seconds on
+// large corpora. An unrelated run that the approval index can skip from its
+// readable summary is never parsed, so even an unreadable one cannot block it.
+{
+  const scoped = fs.mkdtempSync(path.join(os.tmpdir(), "org2-approvals-scoped-decision-"));
+  try {
+    cli(["run", "create", "--id", "scoped-draft", "--goal", "Send scoped provider draft", "--dir", scoped, "--json"]);
+    cli(["run", "start", "scoped-draft", "--dir", scoped, "--json"]);
+    const requested = JSON.parse(cli([
+      "run", "approval-request", "scoped-draft",
+      "--title", "Approve scoped provider draft",
+      "--action", "Send exact reviewed content\nProvider draft: gmail:gog:r-scoped-provider-draft",
+      "--risk", "external-action", "--role", "owner", "--dir", scoped, "--json",
+    ]));
+    const approval = requested.approvals.at(-1);
+    const runsDir = path.dirname(fs.readdirSync(path.join(scoped, ".org2", "runs"), { recursive: true })
+      .map((entry) => path.join(scoped, ".org2", "runs", String(entry)))
+      .find((entry) => entry.includes("scoped-draft")));
+    fs.writeFileSync(
+      path.join(runsDir, "unrelated-history.org2"),
+      "#+TITLE: Unrelated archived run\n** Approvals [0/0 pending]\nNo machine-state block.\n",
+      "utf8",
+    );
+    const feedback = "Send an actual quote. ".repeat(60).trim();
+    const decided = JSON.parse(cli([
+      "run", "approval-decide", "scoped-draft", approval.id,
+      "--decision", "revised", "--actor", "Org2Workspace", "--role", "owner",
+      "--fingerprint", approval.fingerprint, "--note", feedback,
+      "--dir", scoped, "--json",
+    ]));
+    const revised = decided.approvals.find((candidate) => candidate.id === approval.id);
+    assert.equal(revised.status, "revised");
+    assert.equal(revised.decisionNote, feedback);
+  } finally {
+    fs.rmSync(scoped, { recursive: true, force: true });
+  }
+}
+
 console.log("✓ cli approvals");

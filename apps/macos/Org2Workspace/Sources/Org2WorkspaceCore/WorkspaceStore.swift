@@ -3725,6 +3725,7 @@ public final class WorkspaceStore {
   ) async throws -> AgentRunItem)?
   var agentRunSourceReconciliationForTesting: ((_ runID: String) async throws -> Void)?
   var agentRunListLoaderForTesting: (() async throws -> [AgentRunItem])?
+  var approvalQueueLoaderForTesting: (() async throws -> (items: [ApprovalItem], runDetails: [AgentRunItem]))?
   @ObservationIgnored var activityExplanationLoaderForTesting: (([String]) async throws -> WorkspaceActivityExplanationPayload)?
   var workspaceSearchLoaderForTesting: ((String, [String]) async throws -> SearchPayload)?
   var runReviewPageRefreshOperationForTesting: ((RunsAndReviewPage) async -> Void)?
@@ -3842,6 +3843,12 @@ public final class WorkspaceStore {
   var isRefreshingAgendaForTesting: Bool { isRefreshingAgenda }
   private var isRefreshingApprovals = false
   private var approvalRefreshRequestedAfterCurrent = false
+  private var approvalRefreshFollowUpUpdatesStatus = false
+  /// Bumped whenever a local approval decision lands. An approvals scan that
+  /// started before the bump read pre-decision files, so its result must not
+  /// resurrect the decided item; a fresh scan replaces it instead.
+  private var approvalMutationGeneration = 0
+  private var agentRunsRefreshRequestedAfterCurrent = false
   private var isRefreshingAgentRuns = false
   private var isRefreshingAgentWorkflows = false
   private var isRefreshingAgentGoals = false
@@ -5200,7 +5207,9 @@ extension WorkspaceStore {
     isRefreshingAgenda = false
     isRefreshingApprovals = false
     approvalRefreshRequestedAfterCurrent = false
+    approvalRefreshFollowUpUpdatesStatus = false
     isRefreshingAgentRuns = false
+    agentRunsRefreshRequestedAfterCurrent = false
     isRefreshingAgentWorkflows = false
     isRefreshingAgentGoals = false
     isRefreshingAgentProfiles = false
@@ -7269,8 +7278,11 @@ extension WorkspaceStore {
 
   public func refreshApprovals(updatesStatus: Bool = false, clearsError: Bool = true) async {
     guard !isRefreshingApprovals else {
+      // Never drop a refresh request. The in-flight scan may have read the
+      // corpus before a decision was written, so a follow-up scan must run.
+      approvalRefreshRequestedAfterCurrent = true
       if updatesStatus {
-        approvalRefreshRequestedAfterCurrent = true
+        approvalRefreshFollowUpUpdatesStatus = true
         isLoadingApprovals = true
         statusText = "Refreshing approvals next..."
       }
@@ -7286,6 +7298,7 @@ extension WorkspaceStore {
     guard let refreshContext = captureRunReviewPageRefresh(.review) else { return }
 
     isRefreshingApprovals = true
+    let mutationGenerationAtStart = approvalMutationGeneration
     approvalLoadErrorText = nil
     let showsLoading = updatesStatus
       || (approvalItems.isEmpty && !runReviewPageLoadState(for: .review).isLoaded)
@@ -7296,14 +7309,20 @@ extension WorkspaceStore {
     defer {
       if isCurrentRunReviewPageRefresh(refreshContext) {
         let shouldRefreshAgain = approvalRefreshRequestedAfterCurrent
+        let followUpUpdatesStatus = approvalRefreshFollowUpUpdatesStatus
         approvalRefreshRequestedAfterCurrent = false
+        approvalRefreshFollowUpUpdatesStatus = false
         isRefreshingApprovals = false
         hasCompletedApprovalsLoad = true
         markRunReviewPageRefreshTerminal(refreshContext)
         if shouldRefreshAgain {
-          isLoadingApprovals = true
+          if followUpUpdatesStatus {
+            isLoadingApprovals = true
+          } else if showsLoading {
+            isLoadingApprovals = false
+          }
           Task { @MainActor [weak self] in
-            await self?.refreshApprovals(updatesStatus: true)
+            await self?.refreshApprovals(updatesStatus: followUpUpdatesStatus)
           }
         } else if showsLoading {
           isLoadingApprovals = false
@@ -7326,10 +7345,20 @@ extension WorkspaceStore {
         for runID in runDetailIDsBeforeRefresh.sorted() {
           arguments.append(contentsOf: ["--run-detail", runID])
         }
-        let payload: ApprovalPayload = try await cli.runJSON(arguments)
+        let payload: ApprovalPayload
+        if let approvalQueueLoaderForTesting {
+          let loaded = try await approvalQueueLoaderForTesting()
+          payload = ApprovalPayload(count: loaded.items.count, items: loaded.items, runDetails: loaded.runDetails)
+        } else {
+          payload = try await cli.runJSON(arguments)
+        }
         guard !Task.isCancelled,
               isCurrentRunReviewPageRefresh(refreshContext)
         else { return }
+        guard approvalMutationGeneration == mutationGenerationAtStart else {
+          requestApprovalRefreshAfterStaleScan(updatesStatus: updatesStatus)
+          return
+        }
         let nextApprovalItems = Self.sortedApprovalItems(payload.items)
         let currentApprovalItems = approvalItems
         let approvalsChanged = await Task.detached(priority: .utility) {
@@ -7338,6 +7367,10 @@ extension WorkspaceStore {
         guard !Task.isCancelled,
               isCurrentRunReviewPageRefresh(refreshContext)
         else { return }
+        guard approvalMutationGeneration == mutationGenerationAtStart else {
+          requestApprovalRefreshAfterStaleScan(updatesStatus: updatesStatus)
+          return
+        }
         if approvalsChanged {
           approvalItems = nextApprovalItems
         }
@@ -7451,6 +7484,10 @@ extension WorkspaceStore {
       guard !Task.isCancelled,
             isCurrentRunReviewPageRefresh(refreshContext)
       else { return }
+      guard approvalMutationGeneration == mutationGenerationAtStart else {
+        requestApprovalRefreshAfterStaleScan(updatesStatus: updatesStatus)
+        return
+      }
       if approvalsChanged {
         approvalItems = nextApprovalItems
       }
@@ -7543,6 +7580,9 @@ extension WorkspaceStore {
     var nextRuns = agentRuns
     for refreshedRun in refreshedRuns {
       if let index = nextRuns.firstIndex(where: { $0.id == refreshedRun.id }) {
+        // Keep a newer local copy (for example, the run returned by a decision
+        // that landed while this scan was reading older files).
+        guard !Self.isAgentRun(nextRuns[index], newerThan: refreshedRun) else { continue }
         nextRuns[index] = refreshedRun
       } else {
         nextRuns.insert(refreshedRun, at: 0)
@@ -7661,6 +7701,7 @@ extension WorkspaceStore {
         : nil
     }
     if !removedQueueItemIDs.isEmpty {
+      noteApprovalDecisionLanded()
       approvalItems.removeAll { removedQueueItemIDs.contains($0.id) }
     }
     if let (selectedID, visibleIndex) = removedSelection {
@@ -7709,7 +7750,11 @@ extension WorkspaceStore {
   }
 
   public func refreshAgentRuns(updatesStatus: Bool = false, prefetched: WorkspaceAgentStateSection<AgentRunListPayload>? = nil) async {
-    guard !isRefreshingAgentRuns else { return }
+    guard !isRefreshingAgentRuns else {
+      // The in-flight list may predate a decision; scan again when it ends.
+      if prefetched == nil { agentRunsRefreshRequestedAfterCurrent = true }
+      return
+    }
     guard let corpusRoot else {
       if updatesStatus { statusText = "No corpus selected" }
       return
@@ -7730,13 +7775,19 @@ extension WorkspaceStore {
           isLoadingAgentRuns = false
         }
         markRunReviewPageRefreshTerminal(refreshContext)
+        if agentRunsRefreshRequestedAfterCurrent {
+          agentRunsRefreshRequestedAfterCurrent = false
+          Task { @MainActor [weak self] in
+            await self?.refreshAgentRuns()
+          }
+        }
       }
     }
 
     do {
-      let nextRuns: [AgentRunItem]
+      let nextRunsFromList: [AgentRunItem]
       if let agentRunListLoaderForTesting {
-        nextRuns = try await agentRunListLoaderForTesting()
+        nextRunsFromList = try await agentRunListLoaderForTesting()
       } else {
         let payload: AgentRunListPayload
         if let prefetched {
@@ -7746,11 +7797,12 @@ extension WorkspaceStore {
             "run", "list", "--dir", corpusRoot.path, "--json"
           ])
         }
-        nextRuns = payload.runs
+        nextRunsFromList = payload.runs
       }
       guard !Task.isCancelled,
             isCurrentRunReviewPageRefresh(refreshContext)
       else { return }
+      let nextRuns = mergingNewerLocalRuns(into: nextRunsFromList)
       let currentRuns = agentRuns
       let runsChanged = await Task.detached(priority: .utility) {
         currentRuns != nextRuns
@@ -8853,6 +8905,7 @@ extension WorkspaceStore {
       } else {
         agentRuns.insert(updated, at: 0)
       }
+      noteApprovalDecisionLanded()
       approvalItems.removeAll { $0.id == queueItemID }
       if selectedApprovalItemID == queueItemID {
         selectedApprovalItemID = nil
@@ -10387,6 +10440,7 @@ extension WorkspaceStore {
     let originalVisibleIndex = visibleApprovalItems.firstIndex(where: { $0.id == item.id })
     beginApprovalAction(item, kind: .reject)
     defer { endApprovalAction(item, kind: .reject) }
+    statusText = "Requesting changes: \(Org2Display.cleanInline(item.title))…"
     do {
       let updated = try await decideRunApprovalItem(item, decision: "revised", note: feedback)
       removeApprovalItemOptimistically(item.id, originalVisibleIndex: originalVisibleIndex)
@@ -10710,7 +10764,46 @@ extension WorkspaceStore {
     }
   }
 
+  private func requestApprovalRefreshAfterStaleScan(updatesStatus: Bool) {
+    approvalRefreshRequestedAfterCurrent = true
+    if updatesStatus { approvalRefreshFollowUpUpdatesStatus = true }
+  }
+
+  private func noteApprovalDecisionLanded() {
+    approvalMutationGeneration &+= 1
+  }
+
+  nonisolated static func isAgentRun(_ lhs: AgentRunItem, newerThan rhs: AgentRunItem) -> Bool {
+    guard let lhsDate = agentRunTimestamp(lhs.updatedAt),
+          let rhsDate = agentRunTimestamp(rhs.updatedAt)
+    else { return false }
+    return lhsDate > rhsDate
+  }
+
+  nonisolated private static func agentRunTimestamp(_ value: String) -> Date? {
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractional.date(from: value) { return date }
+    return ISO8601DateFormatter().date(from: value)
+  }
+
+  /// Keeps local runs that are newer than a refreshed list. A list scan can
+  /// start before a decision is written and finish after it; without this the
+  /// run inspector would briefly (or until the next scan) show the decided
+  /// approval as pending again.
+  private func mergingNewerLocalRuns(into refreshedRuns: [AgentRunItem]) -> [AgentRunItem] {
+    guard !agentRuns.isEmpty else { return refreshedRuns }
+    let localByID = Dictionary(agentRuns.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    return refreshedRuns.map { refreshed in
+      guard let local = localByID[refreshed.id], Self.isAgentRun(local, newerThan: refreshed) else {
+        return refreshed
+      }
+      return local
+    }
+  }
+
   private func removeApprovalItemOptimistically(_ id: ApprovalItem.ID, originalVisibleIndex: Int?) {
+    noteApprovalDecisionLanded()
     bulkSelectedApprovalItemIDs.remove(id)
     approvalItems.removeAll { $0.id == id }
     preserveApprovalSelectionAfterMutation(mutatedID: id, originalVisibleIndex: originalVisibleIndex)
