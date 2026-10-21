@@ -406,6 +406,14 @@ function auditRuns(
   findings: AgenticDoctorFinding[],
 ): void {
   const workflowIds = new Set(workflows.map((workflow) => workflow.id));
+  const workflowsById = new Map(workflows.map((workflow) => [workflow.id, workflow]));
+  // Scheduled attempts may overlap by default; they compete for one slot only
+  // when their schedule trigger opts in with `whenRunning: "wait"`.
+  const attemptMayOverlap = (run: AgentRun): boolean => {
+    if (run.attempt?.triggerType !== "schedule" || !run.workflowId) return false;
+    const trigger = workflowsById.get(run.workflowId)?.triggers.find((item) => item.id === run.attempt?.triggerId);
+    return trigger?.type === "schedule" && trigger.whenRunning !== "wait";
+  };
   const approvalKeys = new Map<string, Array<{ run: AgentRun; approval: AgentRunApproval }>>();
   const attemptsByNumber = new Map<string, AgentRun[]>();
   const activeAttemptsByLogicalWork = new Map<string, AgentRun[]>();
@@ -524,8 +532,8 @@ function auditRuns(
       attemptsByNumber.set(attemptNumberKey, [...(attemptsByNumber.get(attemptNumberKey) || []), run]);
       // A blocked attempt is parked on a person and, by default, intentionally
       // lets the next scheduled attempt start, so only slot-holding attempts
-      // count as overlap.
-      if (AGENT_RUN_SCHEDULE_SLOT_STATUSES.has(run.status)) activeAttemptsByLogicalWork.set(run.logicalWorkId, [...(activeAttemptsByLogicalWork.get(run.logicalWorkId) || []), run]);
+      // count as overlap, and only for schedules that run a single instance.
+      if (AGENT_RUN_SCHEDULE_SLOT_STATUSES.has(run.status) && !attemptMayOverlap(run)) activeAttemptsByLogicalWork.set(run.logicalWorkId, [...(activeAttemptsByLogicalWork.get(run.logicalWorkId) || []), run]);
     }
     const cronKey = openClawCronSeries(run);
     if (cronKey && !run.workflowId && !run.logicalWorkId && !run.attempt) {

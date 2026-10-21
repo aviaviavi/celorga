@@ -345,6 +345,11 @@ public struct AgentWorkflowTriggerItem: Decodable, Hashable, Sendable, Identifia
   public let enabled: Bool
   public let schedule: String?
   public let timezone: String?
+  /// `wait` runs one instance at a time; absent or `continue` lets
+  /// occurrences overlap with earlier attempts that are still open.
+  public let whenRunning: String?
+
+  public var skipsWhileRunning: Bool { whenRunning == "wait" }
 }
 
 public struct AgentWorkflowDueListPayload: Decodable, Sendable {

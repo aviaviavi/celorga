@@ -797,8 +797,9 @@ try {
     "--now", "2026-09-07T16:00:30Z", "--dir", automationRoot, "--json",
   ], { encoding: "utf8" });
   assert.equal(overlappingAutomation.status, 0, overlappingAutomation.stderr || overlappingAutomation.stdout);
-  assert.equal(JSON.parse(overlappingAutomation.stdout).due.length, 0);
-  assert.equal(JSON.parse(overlappingAutomation.stdout).skipped[0].activeRunId, dispatchedAutomationPayload.run.id);
+  // Overlapping attempts are allowed by default; an open attempt does not stall the next occurrence.
+  assert.equal(JSON.parse(overlappingAutomation.stdout).due[0].scheduledFor, "2026-09-07T16:00:00.000Z");
+  assert.equal(JSON.parse(overlappingAutomation.stdout).skipped.length, 0);
   const clearedAutomationConfiguration = spawnSync(process.execPath, [
     path.resolve("dist/cli.js"), "workflow", "schedule", "weekly-product-update",
     "--cron", "0 9 * * 1", "--clear-model", "--clear-reasoning-effort",

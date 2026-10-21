@@ -6435,6 +6435,7 @@ private struct WorkflowScheduleSheet: View {
   @State private var destinationID: String
   @State private var model: String
   @State private var reasoningEffort: String
+  @State private var skipWhileRunning: Bool
   @State private var isSaving = false
   @State private var saveError: String?
 
@@ -6447,6 +6448,7 @@ private struct WorkflowScheduleSheet: View {
     _destinationID = State(initialValue: workflow.destinationRef ?? "")
     _model = State(initialValue: workflow.model ?? "")
     _reasoningEffort = State(initialValue: workflow.reasoningEffort ?? "")
+    _skipWhileRunning = State(initialValue: trigger?.skipsWhileRunning == true)
   }
 
   var body: some View {
@@ -6462,6 +6464,12 @@ private struct WorkflowScheduleSheet: View {
       Toggle("Enable schedule", isOn: $enabled)
       if enabled {
         AutomationScheduleEditor(expression: $cron, timezone: $timezone)
+        VStack(alignment: .leading, spacing: 2) {
+          Toggle("Skip while a previous run is still active", isOn: $skipWhileRunning)
+          Text("Off by default: each occurrence starts a new run, so a run that hangs cannot hold up the schedule.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
       }
       if let saveError {
         Label(saveError, systemImage: "exclamationmark.triangle.fill")
@@ -6485,7 +6493,8 @@ private struct WorkflowScheduleSheet: View {
               destinationID: destinationID,
               model: model,
               reasoningEffort: reasoningEffort,
-              enabled: enabled
+              enabled: enabled,
+              skipWhileRunning: skipWhileRunning
             )
             isSaving = false
             if saved {

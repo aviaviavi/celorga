@@ -1572,7 +1572,7 @@ final class AgentRunModelsTests: XCTestCase {
         "reasoningEffort": "high",
         "capabilities": ["agent-context"],
         "inputs": [{"id":"week","description":"Week","required":true,"default":"current"}],
-        "triggers": [{"id":"schedule","type":"schedule","enabled":true,"schedule":"0 9 * * 1","timezone":"America/Los_Angeles"}],
+        "triggers": [{"id":"schedule","type":"schedule","enabled":true,"schedule":"0 9 * * 1","timezone":"America/Los_Angeles","whenRunning":"wait"}],
         "file": "/tmp/workflows/weekly-review.org2",
         "legacyLocation": false,
         "createdAt": "2026-07-17T00:00:00.000Z",
@@ -1588,6 +1588,7 @@ final class AgentRunModelsTests: XCTestCase {
     XCTAssertEqual(workflow.model, "claude-opus-4-1")
     XCTAssertEqual(workflow.reasoningEffort, "high")
     XCTAssertEqual(workflow.scheduleSummary, "0 9 * * 1 · America/Los_Angeles")
+    XCTAssertEqual(workflow.scheduleTrigger?.skipsWhileRunning, true)
     XCTAssertFalse(workflow.legacyLocation)
   }
 
@@ -1644,6 +1645,7 @@ final class AgentRunModelsTests: XCTestCase {
     """#.utf8)
     let legacy = try XCTUnwrap(JSONDecoder().decode(AgentWorkflowListPayload.self, from: legacyData).workflows.first)
     XCTAssertEqual(legacy.scheduleSummary, "every 4h")
+    XCTAssertEqual(legacy.scheduleTrigger?.skipsWhileRunning, false, "schedules overlap by default")
   }
 
   func testAutomationIdentifierIsReadableAndAvoidsCollisions() {

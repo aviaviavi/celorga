@@ -39,8 +39,10 @@ try {
   assert.equal(second.logicalWorkId, first.logicalWorkId);
   assert.equal(second.attempt.number, 2);
   assert.deepEqual(due("09").failures, [], "a newer attempt supersedes an old failure warning");
-  assert.equal(due("10").skipped[0].activeRunId, second.id, "queued work still prevents overlap");
-  assert.equal(dispatch("10").activeRunId, second.id);
+  // Overlap is the default: an attempt that never settles must not stall
+  // later occurrences (the Scarf engineering loop hung for days this way).
+  assert.equal(due("10").skipped.length, 0, "a queued attempt must not hold the schedule slot by default");
+  assert.equal(due("10").due[0].scheduledFor, occurrence("10"));
 
   command("run", "fail", second.id, "--reason", "Second day's dispatch failed.");
   assert.equal(due("10").failures[0].runId, second.id);
@@ -62,14 +64,36 @@ try {
   const fifth = dispatch("12").run;
   assert.equal(fifth.attempt.number, 5);
   assert.equal(command("run", "show", fourth.id).status, "blocked", "the blocked attempt stays open for review");
-  assert.equal(due("13").skipped[0].activeRunId, fifth.id, "a running attempt still prevents overlap");
+  command("run", "start", fifth.id);
+  assert.equal(due("13").skipped.length, 0, "a running attempt must not hold the schedule slot by default");
+  const sixth = dispatch("13").run;
+  assert.equal(sixth.attempt.number, 6, "overlapping attempts still get distinct, increasing attempt numbers");
+  command("run", "start", sixth.id);
+  assert.equal(dispatch("13").activeRunId, sixth.id, "each occurrence is still dispatched only once");
   assert.equal(command("doctor").findings.some((item) => item.rule === "overlapping-active-attempts"), false,
-    "a blocked attempt beside a newer running attempt is expected, not an overlap");
-
-  // Approval-waiting attempts still hold the slot so a gated action cannot be requested twice.
+    "concurrent running attempts are expected by default, not an overlap");
   command("run", "approval-request", fifth.id, "--title", "Send batch", "--action", "Post the batch");
   assert.equal(command("run", "show", fifth.id).status, "waiting-approval");
-  assert.equal(due("13").skipped[0].activeRunId, fifth.id, "waiting-approval still prevents overlap");
+  assert.equal(due("14").skipped.length, 0, "an approval-waiting attempt must not hold the slot by default");
+
+  // Opting in with --when-running wait restores single-instance execution;
+  // re-saving only the cron keeps it, and continue restores the default.
+  const single = command("workflow", "schedule", "daily-repair", "--cron", "45 23 * * *",
+    "--timezone", "America/Los_Angeles", "--when-running", "wait");
+  assert.equal(single.workflow.triggers.find((item) => item.type === "schedule").whenRunning, "wait");
+  const singleDue = () => command("workflow", "due", "--now", "2099-01-01T07:00:00Z");
+  assert.equal(singleDue().due.length, 0);
+  assert.ok([fifth.id, sixth.id].includes(singleDue().skipped[0].activeRunId), "whenRunning=wait holds the slot for open attempts");
+  assert.equal(command("doctor").findings.some((item) => item.rule === "overlapping-active-attempts"), true,
+    "two open attempts on a single-instance schedule are flagged");
+  command("run", "cancel", sixth.id);
+  assert.equal(singleDue().skipped[0].activeRunId, fifth.id, "waiting-approval holds a single-instance schedule");
+  const resavedSingle = command("workflow", "schedule", "daily-repair", "--cron", "45 23 * * *", "--timezone", "America/Los_Angeles");
+  assert.equal(resavedSingle.workflow.triggers.find((item) => item.type === "schedule").whenRunning, "wait");
+  const concurrent = command("workflow", "schedule", "daily-repair", "--cron", "45 23 * * *",
+    "--timezone", "America/Los_Angeles", "--when-running", "continue");
+  assert.equal(concurrent.workflow.triggers.find((item) => item.type === "schedule").whenRunning, undefined, "continue is the default and is not written");
+  assert.equal(singleDue().due.length, 1, "continue releases the open attempt's hold again");
   command("run", "cancel", fifth.id);
 
   // Opting in with --when-blocked wait restores the hold, and re-saving only the cron keeps it.
@@ -81,7 +105,7 @@ try {
   const waiting = farDue();
   assert.equal(waiting.due.length, 0);
   assert.equal(waiting.skipped[0].activeRunId, fourth.id, "whenBlocked=wait holds the schedule for the blocked attempt");
-  assert.equal(dispatch("13").activeRunId, fourth.id);
+  assert.equal(dispatch("15").activeRunId, fourth.id);
   const resaved = command("workflow", "schedule", "daily-repair", "--cron", "45 23 * * *", "--timezone", "America/Los_Angeles");
   assert.equal(resaved.workflow.triggers.find((item) => item.type === "schedule").whenBlocked, "wait");
   const restored = command("workflow", "schedule", "daily-repair", "--cron", "45 23 * * *",

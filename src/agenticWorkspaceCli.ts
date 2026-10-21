@@ -71,6 +71,7 @@ import {
   workflowAttemptHoldsScheduleSlot,
   workflowScheduleOccurrences,
   WORKFLOW_SCHEDULE_WHEN_BLOCKED,
+  WORKFLOW_SCHEDULE_WHEN_RUNNING,
 } from "./agentWorkflow.js";
 import { artifactRebuildPlan, buildArtifactGraph, loadArtifactDeclarations, MEETING_TO_CONTROLLED_EXECUTION_WORKFLOW, saveArtifactGraph } from "./artifactPipeline.js";
 import { discoverMcpClient, loadMcpClients, saveMcpClients, serveMcp, writeMcpSnapshot } from "./mcpRuntime.js";
@@ -253,7 +254,7 @@ const HELP = `Agentic workspace commands:
   celorga workflow list|show|validate|create|save|run|due|triggers|signal|gate|activate|pause|draft|schedule|delete|migrate|package|corpus-template|install-builtin
   celorga workflow create ID --title TEXT --prompt TEXT --destination-ref ID [--model ID] [--reasoning-effort LEVEL] [--agent-ref ID] [--schedule EXPR --timezone IANA]
   celorga workflow due [--host-ref HOST] [--now ISO_TIMESTAMP] [--dir CORPUS] [--json]
-  celorga workflow schedule ID --cron EXPR [--timezone IANA] [--destination-ref ID] [--model ID|--clear-model] [--reasoning-effort LEVEL|--clear-reasoning-effort] [--when-blocked continue|wait] | --disable
+  celorga workflow schedule ID --cron EXPR [--timezone IANA] [--destination-ref ID] [--model ID|--clear-model] [--reasoning-effort LEVEL|--clear-reasoning-effort] [--when-blocked continue|wait] [--when-running continue|wait] | --disable
   celorga workflow delete ID [--apply]
   celorga artifact graph --manifest FILE | celorga artifact rebuild --manifest FILE
   celorga runtime init|show|select|verify-paths
@@ -1591,15 +1592,17 @@ function workflowCommand(parsed: ParsedArgs): void {
     );
     const gatePaths = flags(parsed, "gate-path");
     const whenBlockedFlag = optionalChoice(flag(parsed, "when-blocked"), WORKFLOW_SCHEDULE_WHEN_BLOCKED, "workflow schedule --when-blocked");
+    const whenRunningFlag = optionalChoice(flag(parsed, "when-running"), WORKFLOW_SCHEDULE_WHEN_RUNNING, "workflow schedule --when-running");
     if (!disabled && !cron) throw new Error("workflow schedule requires --cron EXPR or --disable");
     if (model && clearModel) throw new Error("workflow schedule accepts either --model or --clear-model, not both");
     if (reasoningEffort && clearReasoningEffort) throw new Error("workflow schedule accepts either --reasoning-effort or --clear-reasoning-effort, not both");
     const updated = updateWorkflow(corpus, id, (item) => {
       const scheduleIds = new Set<string>([WORKFLOW_SCHEDULE_TRIGGER_ID, ...LEGACY_WORKFLOW_SCHEDULE_TRIGGER_IDS]);
       const triggers = item.triggers.filter((trigger) => !scheduleIds.has(trigger.id));
-      // Keep an explicit blocked-attempt policy when the app re-saves only the cron.
-      const whenBlocked = whenBlockedFlag
-        ?? item.triggers.find((trigger) => scheduleIds.has(trigger.id))?.whenBlocked;
+      // Keep explicit overlap policies when the app re-saves only the cron.
+      const previous = item.triggers.find((trigger) => scheduleIds.has(trigger.id));
+      const whenBlocked = whenBlockedFlag ?? previous?.whenBlocked;
+      const whenRunning = whenRunningFlag ?? previous?.whenRunning;
       if (!disabled) {
         triggers.push({
           id: WORKFLOW_SCHEDULE_TRIGGER_ID,
@@ -1608,6 +1611,7 @@ function workflowCommand(parsed: ParsedArgs): void {
           schedule: cron!,
           ...(timezone ? { timezone } : {}),
           ...(whenBlocked === "wait" ? { whenBlocked } : {}),
+          ...(whenRunning === "wait" ? { whenRunning } : {}),
           ...((gateEvents.length || gatePaths.length) ? {
             gate: {
               ...(gateEvents.length ? { events: gateEvents } : {}),

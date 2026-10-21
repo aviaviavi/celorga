@@ -8327,7 +8327,8 @@ extension WorkspaceStore {
     destinationID: String?,
     model: String?,
     reasoningEffort: String?,
-    enabled: Bool
+    enabled: Bool,
+    skipWhileRunning: Bool? = nil
   ) async -> Bool {
     guard let corpusRoot else {
       errorText = "Choose a corpus before scheduling an automation."
@@ -8346,6 +8347,9 @@ extension WorkspaceStore {
         arguments += ["--cron", cron.trimmingCharacters(in: .whitespacesAndNewlines)]
         let timezone = timezone.trimmingCharacters(in: .whitespacesAndNewlines)
         if !timezone.isEmpty { arguments += ["--timezone", timezone] }
+        if let skipWhileRunning {
+          arguments += ["--when-running", skipWhileRunning ? "wait" : "continue"]
+        }
       } else {
         arguments.append("--disable")
       }

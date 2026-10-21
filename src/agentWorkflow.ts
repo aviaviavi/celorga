@@ -21,6 +21,9 @@ export const WORKFLOW_TRIGGER_TYPES = ["manual", "schedule", "file-change", ...W
 /** How a schedule treats an earlier attempt that is blocked on a person. */
 export const WORKFLOW_SCHEDULE_WHEN_BLOCKED = ["continue", "wait"] as const;
 export type WorkflowScheduleWhenBlocked = typeof WORKFLOW_SCHEDULE_WHEN_BLOCKED[number];
+/** How a schedule treats an earlier attempt that is still queued, running, or awaiting approval. */
+export const WORKFLOW_SCHEDULE_WHEN_RUNNING = ["continue", "wait"] as const;
+export type WorkflowScheduleWhenRunning = typeof WORKFLOW_SCHEDULE_WHEN_RUNNING[number];
 
 export type AgentWorkflowState = "draft" | "active" | "paused";
 export type WorkflowEventTriggerType = typeof WORKFLOW_EVENT_TRIGGER_TYPES[number];
@@ -69,18 +72,27 @@ export interface WorkflowTrigger {
    * schedule until the blocked attempt is resumed, completed, or canceled.
    */
   whenBlocked?: WorkflowScheduleWhenBlocked;
+  /**
+   * Schedule triggers only. `continue` (the default when absent) starts each
+   * occurrence even while earlier attempts are still queued, running, or
+   * awaiting approval, so a hung attempt can never stall the schedule. `wait`
+   * skips occurrences until the earlier attempt settles.
+   */
+  whenRunning?: WorkflowScheduleWhenRunning;
 }
 
 /**
  * Whether an existing attempt prevents a schedule trigger from starting a new
- * one. Queued, running, and approval-waiting attempts always do; a blocked
- * attempt does only when the trigger declares `whenBlocked: "wait"`.
+ * one. By default nothing does: overlapping attempts are allowed. Queued,
+ * running, and approval-waiting attempts hold the slot only when the trigger
+ * declares `whenRunning: "wait"`; a blocked attempt only when it declares
+ * `whenBlocked: "wait"`.
  */
 export function workflowAttemptHoldsScheduleSlot(
   run: Pick<AgentRun, "status">,
-  trigger?: Pick<WorkflowTrigger, "whenBlocked">,
+  trigger?: Pick<WorkflowTrigger, "whenBlocked" | "whenRunning">,
 ): boolean {
-  if (AGENT_RUN_SCHEDULE_SLOT_STATUSES.has(run.status)) return true;
+  if (AGENT_RUN_SCHEDULE_SLOT_STATUSES.has(run.status)) return trigger?.whenRunning === "wait";
   return run.status === "blocked" && trigger?.whenBlocked === "wait";
 }
 
@@ -294,6 +306,10 @@ export function validateWorkflow(workflow: AgentWorkflow): WorkflowValidationRes
     if (trigger.whenBlocked !== undefined) {
       if (trigger.type !== "schedule") issues.push({ path: `triggers[${index}].whenBlocked`, message: "applies only to schedule triggers" });
       else if (!WORKFLOW_SCHEDULE_WHEN_BLOCKED.includes(trigger.whenBlocked)) issues.push({ path: `triggers[${index}].whenBlocked`, message: "must be continue or wait" });
+    }
+    if (trigger.whenRunning !== undefined) {
+      if (trigger.type !== "schedule") issues.push({ path: `triggers[${index}].whenRunning`, message: "applies only to schedule triggers" });
+      else if (!WORKFLOW_SCHEDULE_WHEN_RUNNING.includes(trigger.whenRunning)) issues.push({ path: `triggers[${index}].whenRunning`, message: "must be continue or wait" });
     }
     if (trigger.type === "file-change" && !trigger.path) issues.push({ path: `triggers[${index}].path`, message: "is required for file-change triggers" });
     if (trigger.gate && !(trigger.gate.events?.length || trigger.gate.paths?.length)) {
