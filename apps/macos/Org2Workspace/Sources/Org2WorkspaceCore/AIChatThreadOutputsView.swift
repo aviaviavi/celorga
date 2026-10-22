@@ -1,31 +1,73 @@
 import AppKit
 import SwiftUI
 
+/// What the outputs chip shows. The compact form drops the folder name and
+/// words so a narrow chat header keeps its actions inside the pane.
+private struct WorkspaceHeaderIsCompactKey: EnvironmentKey {
+  static let defaultValue = false
+}
+
+extension EnvironmentValues {
+  /// True when a pane header has fallen back to its icon-only layout, so
+  /// header controls with their own labels should shrink as well.
+  var workspaceHeaderIsCompact: Bool {
+    get { self[WorkspaceHeaderIsCompactKey.self] }
+    set { self[WorkspaceHeaderIsCompactKey.self] = newValue }
+  }
+}
+
+struct AIChatThreadOutputsChipPresentation: Equatable {
+  let systemImage: String
+  let folderName: String?
+  let countText: String
+  let staleText: String?
+  let accessibilityLabel: String
+
+  init(outputs: AIChatThreadOutputs, compact: Bool) {
+    let count = outputs.groupsInFolder.count
+    let countValue = "\(count)\(outputs.isTruncated ? "+" : "")"
+    let fullCount = "\(countValue) output\(count == 1 && !outputs.isTruncated ? "" : "s")"
+    let stale = outputs.staleCount
+    systemImage = outputs.folder == nil ? "doc.on.doc" : "folder"
+    folderName = compact ? nil : outputs.folder.map { ($0 as NSString).lastPathComponent }
+    countText = compact ? countValue : fullCount
+    if stale > 0 {
+      staleText = compact ? "\(stale)" : "\(stale) stale"
+    } else {
+      staleText = nil
+    }
+    accessibilityLabel = stale > 0 ? "\(fullCount), \(stale) stale" : fullCount
+  }
+}
+
 /// Header chip for the files a chat thread edited or linked. Stays visible
 /// however long the thread gets; clicking it opens the Outputs popover.
 struct AIChatThreadOutputsChip: View {
   let outputs: AIChatThreadOutputs
   let onJumpToMessage: (UUID) -> Void
+  /// Narrow chat headers show only icons and counts.
+  @Environment(\.workspaceHeaderIsCompact) private var compact
   @State private var isPresented = false
 
   var body: some View {
+    let presentation = AIChatThreadOutputsChipPresentation(outputs: outputs, compact: compact)
     Button {
       isPresented.toggle()
     } label: {
-      HStack(spacing: 5) {
-        Image(systemName: outputs.folder == nil ? "doc.on.doc" : "folder")
-        if let folder = outputs.folder {
-          Text((folder as NSString).lastPathComponent)
+      HStack(spacing: compact ? 3 : 5) {
+        Image(systemName: presentation.systemImage)
+        if let folderName = presentation.folderName {
+          Text(folderName)
             .lineLimit(1)
             .truncationMode(.middle)
             .frame(maxWidth: 180, alignment: .leading)
           Text("·").foregroundStyle(.secondary)
         }
-        Text(countText)
-          .foregroundStyle(outputs.folder == nil ? .primary : .secondary)
+        Text(presentation.countText)
+          .foregroundStyle(outputs.folder == nil || compact ? .primary : .secondary)
           .lineLimit(1)
-        if outputs.staleCount > 0 {
-          Label("\(outputs.staleCount) stale", systemImage: "exclamationmark.triangle.fill")
+        if let staleText = presentation.staleText {
+          Label(staleText, systemImage: "exclamationmark.triangle.fill")
             .labelStyle(.titleAndIcon)
             .foregroundStyle(.orange)
             .lineLimit(1)
@@ -35,6 +77,7 @@ struct AIChatThreadOutputsChip: View {
       .fixedSize(horizontal: true, vertical: false)
     }
     .help(helpText)
+    .accessibilityLabel(presentation.accessibilityLabel)
     .accessibilityIdentifier("ai-chat-thread-outputs-chip")
     .popover(isPresented: $isPresented, arrowEdge: .bottom) {
       AIChatThreadOutputsPanel(
@@ -46,11 +89,6 @@ struct AIChatThreadOutputsChip: View {
         }
       )
     }
-  }
-
-  private var countText: String {
-    let count = outputs.groupsInFolder.count
-    return "\(count)\(outputs.isTruncated ? "+" : "") output\(count == 1 && !outputs.isTruncated ? "" : "s")"
   }
 
   private var helpText: String {

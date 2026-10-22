@@ -11337,7 +11337,10 @@ private struct AIChatView: View {
   }
 
   var body: some View {
-    VStack(spacing: 0) {
+    // Leading alignment keeps the transcript and composer pinned to the pane's
+    // leading edge. With center alignment, a header wider than a narrow pane
+    // pushed the whole chat column right and clipped the composer.
+    VStack(alignment: .leading, spacing: 0) {
       header
 
       if let recoveryNotice = store.aiChatTranscriptRecoveryNotice {
@@ -15753,6 +15756,7 @@ private struct HeaderBar<Trailing: View>: View {
       if compact {
         trailing
           .labelStyle(.iconOnly)
+          .environment(\.workspaceHeaderIsCompact, true)
       } else {
         trailing
           .labelStyle(.titleAndIcon)

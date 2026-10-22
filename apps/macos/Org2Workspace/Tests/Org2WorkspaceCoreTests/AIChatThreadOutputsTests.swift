@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 @testable import Org2WorkspaceCore
 
@@ -236,5 +238,60 @@ final class AIChatThreadOutputsTests: XCTestCase {
     XCTAssertEqual(report.files.map(\.path), ["room/report.org", "room/report.pdf"])
     XCTAssertEqual(report.files.map(\.isStale), [false, true])
     XCTAssertEqual(report.files.map(\.isSibling), [false, true])
+  }
+
+  private func chipOutputs(count: Int, stale: Int) -> AIChatThreadOutputs {
+    let groups = (0..<count).map { index in
+      AIChatThreadOutputGroup(
+        directory: room,
+        stem: "liquibase-pricing-option-\(index)",
+        files: [AIChatThreadOutputFile(
+          path: "\(room)/liquibase-pricing-option-\(index).org",
+          editCount: 1, linkCount: 0, wasCreated: false, wasDeleted: false,
+          lastMessageID: UUID(), lastMessageIndex: index
+        )],
+        staleFormats: index < stale ? ["PDF"] : []
+      )
+    }
+    return AIChatThreadOutputs(groups: groups, folder: room, corpusRoot: root)
+  }
+
+  func testCompactOutputsChipKeepsOnlyIconsAndCounts() {
+    let outputs = chipOutputs(count: 2, stale: 1)
+
+    let full = AIChatThreadOutputsChipPresentation(outputs: outputs, compact: false)
+    XCTAssertEqual(full.folderName, "acme")
+    XCTAssertEqual(full.countText, "2 outputs")
+    XCTAssertEqual(full.staleText, "1 stale")
+
+    let compact = AIChatThreadOutputsChipPresentation(outputs: outputs, compact: true)
+    XCTAssertNil(compact.folderName, "a narrow header drops the folder name")
+    XCTAssertEqual(compact.countText, "2")
+    XCTAssertEqual(compact.staleText, "1")
+    XCTAssertEqual(compact.accessibilityLabel, "2 outputs, 1 stale", "VoiceOver keeps the full wording")
+    XCTAssertNil(AIChatThreadOutputsChipPresentation(outputs: chipOutputs(count: 1, stale: 0), compact: true).staleText)
+  }
+
+  /// Regression for 2026-10-21: in a narrow chat pane the compact header still
+  /// rendered "folder · 2 outputs ⚠ 1 stale", so the header overflowed, pushed
+  /// the transcript and composer right, and clipped them at the trailing edge.
+  @MainActor
+  func testCompactHeaderEnvironmentShrinksTheOutputsChip() {
+    let outputs = chipOutputs(count: 2, stale: 1)
+    func fittingWidth(compact: Bool) -> CGFloat {
+      let host = NSHostingView(rootView:
+        AIChatThreadOutputsChip(outputs: outputs, onJumpToMessage: { _ in })
+          .environment(\.workspaceHeaderIsCompact, compact)
+          .controlSize(.small)
+          .fixedSize()
+      )
+      host.layoutSubtreeIfNeeded()
+      return host.fittingSize.width
+    }
+    let full = fittingWidth(compact: false)
+    let compact = fittingWidth(compact: true)
+    XCTAssertGreaterThan(full, 0)
+    XCTAssertLessThanOrEqual(compact, 72, "compact chip must fit beside the header's icon buttons")
+    XCTAssertLessThan(compact, full * 0.6)
   }
 }
