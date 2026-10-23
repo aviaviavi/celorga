@@ -128,6 +128,20 @@ struct AIChatSettingsView: View {
         Text("Selected, pinned, unread, pending, or currently failed/interrupted threads stay active.")
           .font(.callout)
           .foregroundStyle(.secondary)
+        Picker("Agent turns in a row", selection: $store.aiChatDefaultRoomAgentTurnLimit) {
+          ForEach(
+            AIChatThread.roomAgentTurnLimitOptions(including: store.aiChatDefaultRoomAgentTurnLimit),
+            id: \.self
+          ) { limit in
+            Text(AIChatThread.roomAgentTurnLimitTitle(limit)
+              + (limit == AIChatThread.defaultRoomAgentTurnLimit ? " (default)" : "")
+            ).tag(limit)
+          }
+        }
+        .accessibilityIdentifier("ai-chat-settings-room-agent-turn-limit")
+        Text("In shared rooms, how many turns agents can start for each other by @mentioning before you need to reply. A room can choose its own limit from its Default menu.")
+          .font(.callout)
+          .foregroundStyle(.secondary)
         Picker("Check synced chat history", selection: $store.aiChatRepairIntervalSeconds) {
           ForEach(AIChatTranscriptRepair.intervalChoices, id: \.self) { seconds in
             Text(AIChatTranscriptRepair.intervalTitle(seconds)).tag(seconds)

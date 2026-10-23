@@ -239,6 +239,43 @@ final class AIChatAgentTurnRequestTests: XCTestCase {
     XCTAssertEqual(afterReset.count, 5 + 1 + 4)
   }
 
+  /// Settings → AI Chat sets the limit for every room without its own; a
+  /// room's own choice still wins, and choosing Default follows the app again.
+  @MainActor
+  func testAppWideDefaultLimitAppliesToRoomsWithoutTheirOwn() async throws {
+    let root = try makeRoot()
+    let recorder = AgentTurnRecorder()
+    let store = try makeStore(
+      root: root,
+      recorder: recorder,
+      codexReply: { _ in "@openclaw over to you" },
+      openClawReply: { _ in "@codex back to you" }
+    )
+    store.aiChatDefaultRoomAgentTurnLimit = 2
+    store.createAIChatSharedRoom()
+    let threadID = try XCTUnwrap(store.selectedAIChatThreadID)
+    XCTAssertTrue(store.selectedAIChatRoomUsesDefaultAgentTurnLimit)
+    XCTAssertEqual(store.selectedAIChatRoomAgentTurnLimit, 2)
+
+    await store.sendAIChatMessage(text: "@codex go")
+    try await waitUntil { !store.isAIChatThreadRunning(threadID) }
+    let limited = await recorder.calls
+    XCTAssertEqual(limited, ["codex", "openClaw", "codex"])
+    let notice = try XCTUnwrap(store.aiChatThreads.first(where: { $0.id == threadID })?.messages.last)
+    XCTAssertTrue(notice.content.contains("2 turns in a row"), notice.content)
+    XCTAssertTrue(notice.content.contains("Settings → AI Chat"), notice.content)
+
+    store.setSelectedAIChatRoomAgentTurnLimit(6)
+    store.aiChatDefaultRoomAgentTurnLimit = 1
+    XCTAssertFalse(store.selectedAIChatRoomUsesDefaultAgentTurnLimit)
+    XCTAssertEqual(store.selectedAIChatRoomAgentTurnLimit, 6)
+    store.setSelectedAIChatRoomAgentTurnLimit(nil)
+    XCTAssertEqual(store.selectedAIChatRoomAgentTurnLimit, 1)
+
+    store.aiChatDefaultRoomAgentTurnLimit = 500
+    XCTAssertEqual(store.aiChatDefaultRoomAgentTurnLimit, AIChatThread.maxRoomAgentTurnLimit)
+  }
+
   @MainActor
   func testRoomLimitIsConfigurableAndZeroTurnsHandoffsOff() async throws {
     let root = try makeRoot()

@@ -2796,6 +2796,18 @@ public final class WorkspaceStore {
     }
   }
   public private(set) var aiChatRepairError: String?
+  /// How many turns agents may start for each other in a shared room before a
+  /// person must reply, for every room that has not chosen its own limit.
+  public var aiChatDefaultRoomAgentTurnLimit: Int = AIChatThread.defaultRoomAgentTurnLimit {
+    didSet {
+      let clamped = min(max(aiChatDefaultRoomAgentTurnLimit, 0), AIChatThread.maxRoomAgentTurnLimit)
+      if clamped != aiChatDefaultRoomAgentTurnLimit {
+        aiChatDefaultRoomAgentTurnLimit = clamped
+        return
+      }
+      defaults.set(clamped, forKey: aiChatDefaultRoomAgentTurnLimitKey)
+    }
+  }
   public var appearanceMode: WorkspaceAppearanceMode = .system {
     didSet {
       defaults.set(appearanceMode.rawValue, forKey: appearanceModeKey)
@@ -3272,6 +3284,7 @@ public final class WorkspaceStore {
   private let codexSandboxAccessKey = "Org2Workspace.aiChat.codexSandboxAccess.v1"
   private let aiChatMessageSoundKey = "Org2Workspace.aiChat.messageSound.v1"
   private let aiChatRepairIntervalKey = "Org2Workspace.aiChat.repairIntervalSeconds.v1"
+  private let aiChatDefaultRoomAgentTurnLimitKey = "Org2Workspace.aiChat.defaultRoomAgentTurnLimit.v1"
   private let appearanceModeKey = "Org2Workspace.appearance.mode.v1"
   private let lightThemeIDKey = "Org2Workspace.appearance.lightTheme.v1"
   private let darkThemeIDKey = "Org2Workspace.appearance.darkTheme.v1"
@@ -4081,6 +4094,9 @@ public final class WorkspaceStore {
     aiChatRepairIntervalSeconds = repairInterval.isFinite && (repairInterval == 0 || (10...86_400).contains(repairInterval))
       ? repairInterval : AIChatTranscriptRepair.defaultIntervalSeconds
     aiChatIncomingMessageSoundPlayer = Self.messageSoundPlayer(for: aiChatMessageSound)
+    if let storedTurnLimit = defaults.object(forKey: aiChatDefaultRoomAgentTurnLimitKey) as? Int {
+      aiChatDefaultRoomAgentTurnLimit = storedTurnLimit
+    }
     appearanceMode = defaults.string(forKey: appearanceModeKey)
       .flatMap(WorkspaceAppearanceMode.init(rawValue:)) ?? .system
     lightThemeID = WorkspaceThemeCatalog.theme(id: defaults.string(forKey: lightThemeIDKey), for: .light).id
@@ -24636,7 +24652,17 @@ extension WorkspaceStore {
 
   public var selectedAIChatRoomAgentTurnLimit: Int? {
     guard let thread = selectedAIChatThread, thread.isSharedRoom else { return nil }
-    return thread.effectiveRoomAgentTurnLimit
+    return aiChatRoomAgentTurnLimit(for: thread)
+  }
+
+  /// Whether the open room follows the app-wide limit rather than its own.
+  public var selectedAIChatRoomUsesDefaultAgentTurnLimit: Bool {
+    selectedAIChatThread?.roomAgentTurnLimit == nil
+  }
+
+  /// The room's own limit, or the app-wide default from Settings → AI Chat.
+  public func aiChatRoomAgentTurnLimit(for thread: AIChatThread) -> Int {
+    thread.roomAgentTurnLimit ?? aiChatDefaultRoomAgentTurnLimit
   }
 
   /// Sets how many agent-requested turns may run back to back in the open
@@ -24653,7 +24679,7 @@ extension WorkspaceStore {
       roomAgentTurnLimit: .some(stored)
     )
     persistAIChatTranscript()
-    let effective = aiChatThreads[index].effectiveRoomAgentTurnLimit
+    let effective = aiChatRoomAgentTurnLimit(for: aiChatThreads[index])
     aiChatStatusText = effective == 0
       ? "Agents can no longer start each other's turns in this room"
       : "Agents can start up to \(effective) turn\(effective == 1 ? "" : "s") in a row"
@@ -24701,7 +24727,7 @@ extension WorkspaceStore {
     }
     guard !requestedIDs.isEmpty || !notices.isEmpty else { return (messages, []) }
 
-    let limit = thread.effectiveRoomAgentTurnLimit
+    let limit = aiChatRoomAgentTurnLimit(for: thread)
     let used = AIChatAgentTurnRequests.consecutiveRequestedTurnCount(in: messages)
     let admitted = AIChatAgentTurnRequests.admittedCount(
       requested: requestedIDs.count,
@@ -24716,7 +24742,7 @@ extension WorkspaceStore {
       let names = refused.map(aiChatDestinationTitle).joined(separator: " + ")
       notices.append(limit == 0
         ? "\(requesterLabel) asked \(names) to respond, but agent hand-offs are off in this room."
-        : "\(requesterLabel) asked \(names) to respond, but agents already started \(limit) turn\(limit == 1 ? "" : "s") in a row here. Reply to let them continue, or raise the limit in the room menu.")
+        : "\(requesterLabel) asked \(names) to respond, but agents already started \(limit) turn\(limit == 1 ? "" : "s") in a row here. Reply to let them continue, or raise the limit in the room's Default menu or Settings → AI Chat.")
     }
 
     var nextMessages = messages
@@ -29643,7 +29669,7 @@ extension WorkspaceStore {
             uniqueKeysWithValues: enabledAIChatDestinations.map { ($0.id, $0.name) }
           ),
           handoffMentions: aiChatRoomHandoffMentions(in: thread, excluding: destination.id),
-          agentTurnLimit: thread.effectiveRoomAgentTurnLimit,
+          agentTurnLimit: aiChatRoomAgentTurnLimit(for: thread),
           through: userMessage.id
         )
       : messages
@@ -29793,7 +29819,7 @@ extension WorkspaceStore {
             uniqueKeysWithValues: enabledAIChatDestinations.map { ($0.id, $0.name) }
           ),
           handoffMentions: aiChatRoomHandoffMentions(in: thread, excluding: destinationID),
-          agentTurnLimit: thread.effectiveRoomAgentTurnLimit,
+          agentTurnLimit: aiChatRoomAgentTurnLimit(for: thread),
           through: userMessage.id
         )
       : messages
@@ -29888,7 +29914,7 @@ extension WorkspaceStore {
             uniqueKeysWithValues: enabledAIChatDestinations.map { ($0.id, $0.name) }
           ),
           handoffMentions: aiChatRoomHandoffMentions(in: thread, excluding: destinationID),
-          agentTurnLimit: thread.effectiveRoomAgentTurnLimit,
+          agentTurnLimit: aiChatRoomAgentTurnLimit(for: thread),
           through: userMessage.id
         )
       : messages
@@ -29991,7 +30017,7 @@ extension WorkspaceStore {
             uniqueKeysWithValues: enabledAIChatDestinations.map { ($0.id, $0.name) }
           ),
           handoffMentions: aiChatRoomHandoffMentions(in: thread, excluding: destinationID),
-          agentTurnLimit: thread.effectiveRoomAgentTurnLimit,
+          agentTurnLimit: aiChatRoomAgentTurnLimit(for: thread),
           through: userMessage.id
         )
       : messages
@@ -30236,7 +30262,7 @@ extension WorkspaceStore {
             uniqueKeysWithValues: enabledAIChatDestinations.map { ($0.id, $0.name) }
           ),
           handoffMentions: aiChatRoomHandoffMentions(in: thread, excluding: destinationID),
-          agentTurnLimit: thread.effectiveRoomAgentTurnLimit,
+          agentTurnLimit: aiChatRoomAgentTurnLimit(for: thread),
           through: userMessage.id
         )
       : messages
@@ -31662,8 +31688,8 @@ extension WorkspaceStore {
           handoffMentions: threadConfiguration.map {
             aiChatRoomHandoffMentions(in: $0, excluding: destinationID)
           } ?? [],
-          agentTurnLimit: threadConfiguration?.effectiveRoomAgentTurnLimit
-            ?? AIChatThread.defaultRoomAgentTurnLimit,
+          agentTurnLimit: threadConfiguration.map(aiChatRoomAgentTurnLimit(for:))
+            ?? aiChatDefaultRoomAgentTurnLimit,
           through: originalUserMessage.id
         )
       : expandedMessages

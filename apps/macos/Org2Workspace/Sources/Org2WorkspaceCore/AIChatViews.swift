@@ -3780,10 +3780,6 @@ struct AIChatComposerView: View {
     .help("Add this new chat to a project before the first message")
   }
 
-  static func roomAgentTurnLimitOptions(including current: Int) -> [Int] {
-    Array(Set([0, 1, 2, 3, 4, 6, 8, 12, current])).sorted()
-  }
-
   /// Picks the agent that receives un-mentioned messages in a shared room.
   private func roomDefaultDestinationPicker(iconOnly: Bool = false) -> some View {
     let defaultID = store.selectedAIChatRoomDefaultDestinationID
@@ -3807,17 +3803,17 @@ struct AIChatComposerView: View {
           Label("No agent (post context only)", systemImage: defaultID == nil ? "checkmark" : "text.bubble")
         }
       }
-      let turnLimit = store.selectedAIChatRoomAgentTurnLimit ?? AIChatThread.defaultRoomAgentTurnLimit
+      let appDefault = store.aiChatDefaultRoomAgentTurnLimit
+      let turnLimit = store.selectedAIChatRoomAgentTurnLimit ?? appDefault
+      let selection: Int? = store.selectedAIChatRoomUsesDefaultAgentTurnLimit ? nil : turnLimit
       Section("Agents can @mention each other") {
         Picker("Agent turns in a row", selection: Binding(
-          get: { turnLimit },
+          get: { selection },
           set: { store.setSelectedAIChatRoomAgentTurnLimit($0) }
         )) {
-          ForEach(Self.roomAgentTurnLimitOptions(including: turnLimit), id: \.self) { limit in
-            Text(limit == 0
-              ? "Off"
-              : "Up to \(limit) in a row\(limit == AIChatThread.defaultRoomAgentTurnLimit ? " (default)" : "")"
-            ).tag(limit)
+          Text("Default (\(AIChatThread.roomAgentTurnLimitTitle(appDefault)))").tag(Int?.none)
+          ForEach(AIChatThread.roomAgentTurnLimitOptions(including: turnLimit), id: \.self) { limit in
+            Text(AIChatThread.roomAgentTurnLimitTitle(limit)).tag(Int?.some(limit))
           }
         }
         .accessibilityIdentifier("ai-chat-room-agent-turn-limit")

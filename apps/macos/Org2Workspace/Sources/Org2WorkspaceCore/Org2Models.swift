@@ -3998,6 +3998,15 @@ public struct AIChatThread: Identifiable, Hashable, Codable, Sendable {
   public static let maxRoomAgentTurnLimit = 50
 
   /// The agent-requested turn limit this room enforces.
+  /// Choices offered for a room's agent-turn limit, including `current`.
+  public static func roomAgentTurnLimitOptions(including current: Int) -> [Int] {
+    Array(Set([0, 1, 2, 3, 4, 6, 8, 12, 20, current])).sorted()
+  }
+
+  public static func roomAgentTurnLimitTitle(_ limit: Int) -> String {
+    limit == 0 ? "Off" : "Up to \(limit) in a row"
+  }
+
   public var effectiveRoomAgentTurnLimit: Int {
     roomAgentTurnLimit ?? Self.defaultRoomAgentTurnLimit
   }
