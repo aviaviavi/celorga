@@ -215,6 +215,107 @@ final class AIChatDetachedTurnTests: XCTestCase {
     XCTAssertEqual(persisted?.messages.first?.deliveryStatus, .interrupted)
   }
 
+  /// The reported bug: an agent-requested hand-off in a room lost its delivery
+  /// confirmation. Its dispatch copy has no bubble, so the room said Working,
+  /// queued every new message, and showed neither activity nor Stop.
+  @MainActor
+  func testUnconfirmedRoomHandOffIsVisibleAndStoppable() async throws {
+    let transcriptURL = root.appendingPathComponent("chat.json")
+    let hostRef = AIChatHostIdentity.desktop(writer: AIChatTranscriptStore.shared.writerIdentity).ref
+    let earlier = Date().addingTimeInterval(-1_800)
+    let codex = AIChatDestinationConfiguration.localCodexID
+    let request = AIChatMessage(
+      role: .assistant,
+      content: "@codex please resume",
+      createdAt: earlier,
+      authorRuntime: .codex,
+      authorDestinationID: AIChatDestinationConfiguration.openClawID
+    )
+    let attemptID = UUID()
+    let handOff = AIChatMessage(
+      id: attemptID,
+      role: .user,
+      content: "@codex please resume",
+      createdAt: earlier,
+      deliveryStatus: .sending,
+      audience: .codex,
+      targetRuntime: .codex,
+      audienceDestinationIDs: [codex],
+      targetDestinationID: codex,
+      isRoomDispatchCopy: true,
+      roomRoundID: UUID(),
+      provenance: AIChatMessageProvenance(
+        executionHostRef: hostRef,
+        executionHostName: "AiroPress",
+        acceptedAt: earlier,
+        requestedByLabel: "OpenClaw",
+        requestedByDestinationID: AIChatDestinationConfiguration.openClawID,
+        requestedByMessageID: request.id
+      )
+    ).replacingDeliveryAttempt(
+      attemptID,
+      status: .sending,
+      sendFailure: WorkspaceStore.aiChatUnknownSendFailureText,
+      attemptState: .unconfirmed
+    )
+    let room = AIChatThread(
+      title: "Room with a lost hand-off",
+      runtime: .codex,
+      destinationID: codex,
+      sessionKey: "lost-hand-off",
+      messages: [request, handOff],
+      isSharedRoom: true,
+      roomDestinationIDs: [codex, AIChatDestinationConfiguration.openClawID]
+    )
+    try AIChatTranscriptStore.shared.flush(
+      AIChatTranscriptSnapshot(
+        threads: [room],
+        selectedThreadID: room.id,
+        settlementSettings: AIChatThreadSettlementSettings()
+      ),
+      legacyURL: transcriptURL
+    )
+
+    let store = try makeStore(transcriptURL: transcriptURL)
+    await store.waitForAIChatTranscriptLoadForTesting()
+
+    XCTAssertTrue(store.isAIChatThreadRunning(room.id))
+    XCTAssertTrue(
+      AIChatRoomTranscriptPresentation.items(
+        messages: store.aiChatMessages,
+        isSharedRoom: true
+      ).allSatisfy { $0.id != handOff.id },
+      "The hand-off has no bubble, so only the unobserved-turn row can show it"
+    )
+    let unobserved = try XCTUnwrap(store.aiChatUnobservedTurn(for: room.id))
+    XCTAssertEqual(unobserved.messageID, handOff.id)
+    XCTAssertTrue(unobserved.canRecheck)
+    XCTAssertEqual(
+      AIChatTranscriptHTML.Stalled(unobserved).recheck,
+      handOff.id.uuidString.lowercased()
+    )
+
+    let didStop = await store.stopAIChatRemoteRun(threadID: room.id)
+    XCTAssertTrue(didStop)
+    XCTAssertEqual(store.aiChatStatusText, "Codex stopped")
+    XCTAssertFalse(store.isAIChatThreadRunning(room.id))
+    XCTAssertNil(store.aiChatUnobservedTurn(for: room.id))
+    let stopped = try XCTUnwrap(
+      store.aiChatThreads.first(where: { $0.id == room.id })?.messages.first(where: { $0.id == handOff.id })
+    )
+    XCTAssertEqual(stopped.deliveryStatus, .interrupted)
+    XCTAssertFalse(
+      stopped.deliveryIsUnconfirmed,
+      "A stopped attempt left fenced is re-queued on load and blocks the room again"
+    )
+    try await store.waitForAIChatTranscriptPersistenceForTesting()
+
+    let relaunched = try makeStore(transcriptURL: transcriptURL)
+    await relaunched.waitForAIChatTranscriptLoadForTesting()
+    XCTAssertFalse(relaunched.isAIChatThreadRunning(room.id))
+    XCTAssertNil(relaunched.aiChatUnobservedTurn(for: room.id))
+  }
+
   /// Threads outside the eager working set load without messages, so the
   /// launch repair cannot see their stale sends until they are opened.
   @MainActor

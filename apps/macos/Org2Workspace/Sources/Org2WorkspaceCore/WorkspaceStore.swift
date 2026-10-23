@@ -23855,6 +23855,76 @@ extension WorkspaceStore {
       || aiChatRecoveryTasksByThreadID[threadID] != nil
   }
 
+  /// The persisted send that keeps a chat counted as running, mirroring the
+  /// message clauses of `isAIChatThreadRunning`. Room dispatch copies are
+  /// included: an agent-requested hand-off has no visible bubble of its own.
+  private func aiChatBlockingSend(in threadID: UUID) -> AIChatMessage? {
+    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else { return nil }
+    let preferredIDs = [activeAIChatUserMessageIDByThreadID[threadID], thread.pendingTurn?.userMessageID]
+      .compactMap { $0 }
+    for id in preferredIDs {
+      if let message = thread.messages.first(where: {
+        $0.id == id && $0.role == .user && $0.deliveryStatus == .sending
+      }) {
+        return message
+      }
+    }
+    return thread.messages.first { message in
+      message.role == .user
+        && message.deliveryStatus == .sending
+        && message.deliveryKind != .followUp
+        && isAIChatMessageActiveOnRemoteHost(message, in: threadID) != false
+    }
+  }
+
+  /// What a chat that counts as running is waiting on when nothing streams:
+  /// no send this process presents and no host reporting the turn live.
+  /// New messages queue behind such a turn, so it must stay visible and
+  /// stoppable. Without this the sidebar said Working while the transcript
+  /// showed no activity and offered no way to stop it.
+  public func aiChatUnobservedTurn(for threadID: UUID) -> AIChatUnobservedTurn? {
+    guard isAIChatThreadRunning(threadID),
+          !aiChatSendingThreadIDs.contains(threadID),
+          aiChatRemoteLiveTurn(for: threadID) == nil,
+          let thread = aiChatThreads.first(where: { $0.id == threadID })
+    else { return nil }
+    let blocking = aiChatBlockingSend(in: threadID)
+    let destination = aiChatDestinationTitle(
+      blocking?.targetDestinationID
+        ?? activeSharedRoomDestinationByThreadID[threadID]
+        ?? thread.destinationID
+    )
+    guard let blocking else {
+      return AIChatUnobservedTurn(
+        messageID: nil,
+        title: "\(destination) is working",
+        detail: "Celorga is preparing this turn.",
+        canRecheck: false
+      )
+    }
+    if blocking.deliveryIsUnconfirmed {
+      return AIChatUnobservedTurn(
+        messageID: blocking.id,
+        title: "\(destination) delivery is unconfirmed",
+        detail: "Celorga lost track of whether \(destination) started this turn. "
+          + "Recheck follows it without sending it again; Stop releases the chat.",
+        canRecheck: true
+      )
+    }
+    let startingHost = blocking.provenance.flatMap { provenance -> String? in
+      guard let ref = provenance.executionHostRef, ref != aiChatHostIdentity.ref else { return nil }
+      return provenance.executionHostName ?? ref
+    }
+    return AIChatUnobservedTurn(
+      messageID: blocking.id,
+      title: "Waiting for \(destination)",
+      detail: startingHost.map {
+        "This turn started on \($0), which is not reporting progress. Stop releases the chat."
+      } ?? "No Celorga host is reporting progress for this turn. Stop releases the chat.",
+      canRecheck: false
+    )
+  }
+
   public func aiChatConnectionState(for threadID: UUID) -> OpenClawGatewayConnectionState {
     guard isAIChatRuntimeStateVisible(for: threadID) else { return .disconnected }
     return openClawGatewayStateByThreadID[threadID] ?? .disconnected
@@ -25364,6 +25434,73 @@ extension WorkspaceStore {
 
   @discardableResult
   public func stopAIChatRemoteRun(threadID: UUID) async -> Bool {
+    // Captured first: a stop can drop these from the queue before they are
+    // resolved, and they may never have been queued in this process.
+    let untrackedSendIDs = untrackedAIChatSendIDs(in: threadID)
+    let stopped = await stopTrackedAIChatRun(threadID: threadID)
+    if stopped {
+      releaseUntrackedAIChatSends(untrackedSendIDs, in: threadID)
+    }
+    return stopped
+  }
+
+  /// Persisted `sending` messages that keep the chat busy but that no task in
+  /// this process drives and no fresh host reports: a lost delivery
+  /// confirmation, a send from an earlier process, or an agent hand-off.
+  private func untrackedAIChatSendIDs(in threadID: UUID) -> Set<UUID> {
+    guard isAIChatRuntimeStateVisible(for: threadID),
+          let thread = aiChatThreads.first(where: { $0.id == threadID })
+    else { return [] }
+    let activeMessageID = activeAIChatUserMessageIDByThreadID[threadID]
+    return Set(thread.messages.lazy.filter { message in
+      message.role == .user
+        && message.deliveryStatus == .sending
+        && message.id != activeMessageID
+        && self.isAIChatMessageActiveOnRemoteHost(message, in: threadID) != true
+    }.map(\.id))
+  }
+
+  /// Stopping a turn also releases sends the stop itself could not reach.
+  /// Their uncertainty fence is cleared as well: a stopped attempt left
+  /// `.unconfirmed` is restored to the head of the queue on the next load and
+  /// holds every later message behind it again. A retry of a managed remote
+  /// attempt still reconciles it rather than submitting a second turn.
+  private func releaseUntrackedAIChatSends(_ messageIDs: Set<UUID>, in threadID: UUID) {
+    guard !messageIDs.isEmpty else { return }
+    let stoppedSendFailureText = aiChatStoppedSendFailureText(for: threadID)
+    var messages = aiChatMessages(for: threadID)
+    var changed = false
+    for index in messages.indices where messageIDs.contains(messages[index].id) {
+      let message = messages[index]
+      guard message.role == .user,
+            message.deliveryStatus == .sending || message.deliveryIsUnconfirmed
+      else { continue }
+      messages[index] = message.replacingDeliveryAttempt(
+        message.effectiveDeliveryAttemptID ?? message.id,
+        status: message.deliveryStatus == .sending ? .interrupted : message.deliveryStatus,
+        sendFailure: message.deliveryStatus == .sending
+          ? stoppedSendFailureText
+          : message.sendFailure,
+        attemptState: nil
+      )
+      changed = true
+    }
+    guard changed else { return }
+    aiChatForeignPendingMessageIDs.subtract(messageIDs)
+    aiChatDispatchedUserMessageIDs.subtract(messageIDs)
+    updateAIChatThread(threadID, messages: messages, shouldPersist: true)
+    if var pending = aiChatPendingUserMessageIDsByThreadID[threadID] {
+      pending.removeAll { messageIDs.contains($0) }
+      if pending.isEmpty {
+        aiChatPendingUserMessageIDsByThreadID.removeValue(forKey: threadID)
+      } else {
+        aiChatPendingUserMessageIDsByThreadID[threadID] = pending
+      }
+    }
+    syncSelectedAIChatSendState()
+  }
+
+  private func stopTrackedAIChatRun(threadID: UUID) async -> Bool {
     guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else {
       return false
     }
@@ -25376,7 +25513,15 @@ extension WorkspaceStore {
       }
       return false
     }
+    // A room with nothing in flight here has no active destination; the
+    // persisted send that keeps it busy names the agent being waited on.
+    let untrackedRoomDestinationID = thread.isSharedRoom
+      && activeSharedRoomDestinationByThreadID[threadID] == nil
+      && codexActiveTurnsByThreadID[threadID] == nil
+      ? aiChatBlockingSend(in: threadID)?.targetDestinationID
+      : nil
     let activeDestinationID = activeSharedRoomDestinationByThreadID[threadID]
+      ?? untrackedRoomDestinationID
       ?? thread.destinationID
     if aiChatDestination(id: activeDestinationID)?.adapter.isDirectProvider == true {
       guard isAIChatThreadRunning(threadID) else {
@@ -25394,7 +25539,9 @@ extension WorkspaceStore {
     }
     let activeRuntime = thread.isSharedRoom
       ? (activeSharedRoomDestinationByThreadID[threadID].map(aiChatDestinationRuntime)
-          ?? (codexActiveTurnsByThreadID[threadID] == nil ? .openClaw : .codex))
+          ?? (codexActiveTurnsByThreadID[threadID] != nil ? AIChatRuntime.codex : nil)
+          ?? untrackedRoomDestinationID.map(aiChatDestinationRuntime)
+          ?? .openClaw)
       : thread.runtime
     if activeRuntime == .codex {
       let destinationName = aiChatDestinationTitle(activeDestinationID)

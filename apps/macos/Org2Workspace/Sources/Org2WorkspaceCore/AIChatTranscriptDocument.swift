@@ -317,7 +317,12 @@ struct AIChatTranscriptDocument: View {
         initialPosition: store.aiChatScrollPosition(isAssistantPanel: compact) ?? 1,
         compact: compact,
         live: liveInput.map(livePayload),
-        mentions: AIChatDestinationRouting.recognizedMentionTokens(destinations: store.aiChatDestinations)
+        mentions: AIChatDestinationRouting.recognizedMentionTokens(destinations: store.aiChatDestinations),
+        stalled: liveInput == nil
+          ? store.selectedAIChatThreadID
+            .flatMap(store.aiChatUnobservedTurn(for:))
+            .map(AIChatTranscriptHTML.Stalled.init)
+          : nil
       ), attachments: messages.flatMap(\.attachments),
       sourcePath: sourcePath, corpusRoot: store.corpusRoot,
       linkResolver: linkResolver, openFileReference: openFileReference,
@@ -581,6 +586,11 @@ struct AIChatTranscriptDocument: View {
     if action == "restored" { store.completeAIChatScrollRestoration(threadID: store.selectedAIChatThreadID); return }
     if action == "earlier" { onEarlier(); return }
     if action == "stop" { Task { await store.stopAIChatRun() }; return }
+    if action == "recheck" {
+      // The message may be a hidden room dispatch copy, so it is not in `messages`.
+      if let id, let uuid = UUID(uuidString: id) { Task { await store.retryAIChatMessage(uuid) } }
+      return
+    }
     if action == "liveTextToggle" { showsAllLiveText.toggle(); return }
     if action == "liveActivityToggle" { showsLiveActivity.toggle(); return }
     guard let id, let uuid = UUID(uuidString: id), let message = messages.first(where: { $0.id == uuid }) else { return }
@@ -841,6 +851,29 @@ enum AIChatTranscriptHTML {
     let live: Live?
     /// Lowercased agent mention tokens (without `@`) to highlight.
     var mentions: [String] = []
+    /// A turn the chat counts as running with no live progress to stream.
+    var stalled: Stalled? = nil
+  }
+
+  struct Stalled: Codable, Equatable {
+    let title: String
+    let detail: String?
+    /// The message to reconcile when Recheck is offered.
+    let recheck: String?
+
+    init(title: String, detail: String?, recheck: String?) {
+      self.title = title
+      self.detail = detail
+      self.recheck = recheck
+    }
+
+    init(_ turn: AIChatUnobservedTurn) {
+      self.init(
+        title: turn.title,
+        detail: turn.detail,
+        recheck: turn.canRecheck ? turn.messageID?.uuidString.lowercased() : nil
+      )
+    }
   }
 
   static let style = AIChatDocumentHTML.style + """
@@ -964,6 +997,11 @@ enum AIChatTranscriptHTML {
   .live-text-toggle .glyph,.live-activity-toggle .glyph { flex-basis:var(--live-gutter); width:var(--live-gutter); height:16px; }
   #status { display:flex; align-items:center; gap:8px; min-height:22px; padding:16px 0; color:light-dark(#777,#aaa); font-size:11px; }
   #status.working::before { content:''; display:block; flex:0 0 5px; width:5px; height:5px; border-radius:50%; background:currentColor; animation:pulse 1.2s ease-in-out infinite; }
+  #status.stalled { align-items:flex-start; }
+  #status.stalled::before { margin-top:5px; }
+  .stalled-copy { display:grid; gap:2px; flex:1 1 auto; min-width:0; }
+  .stalled-copy strong { font-weight:600; color:light-dark(#555,#ccc); }
+  .stalled-detail { overflow-wrap:anywhere; }
   #status button { display:inline-flex; align-items:center; justify-content:center; flex:none; white-space:nowrap; line-height:1.25; }
   @keyframes pulse { from { opacity:.55; transform:scale(.78); } to { opacity:1; transform:scale(1); } }
   @keyframes placeholder-pulse { from { opacity:.11; } to { opacity:.24; } }
@@ -1348,8 +1386,18 @@ enum AIChatTranscriptHTML {
       const status=document.getElementById('status'); status.replaceChildren();
       document.body.classList.toggle('compact',data.compact);
       current=data; renderLive(data.live||null);
-      status.classList.toggle('working',data.sending && !data.live);
-      if(data.sending && !data.live) { status.append(document.createTextNode('Working…'),button('Stop','stop')); }
+      const stalled=!data.live && data.stalled;
+      status.classList.toggle('working',(data.sending || !!stalled) && !data.live);
+      status.classList.toggle('stalled',!!stalled);
+      if(stalled) {
+        const copy=document.createElement('span'); copy.className='stalled-copy';
+        const title=document.createElement('strong'); title.textContent=stalled.title; copy.append(title);
+        if(stalled.detail) { const detail=document.createElement('span'); detail.className='stalled-detail'; detail.textContent=stalled.detail; copy.append(detail); }
+        status.append(copy);
+        if(stalled.recheck) status.append(button('Recheck','recheck',stalled.recheck));
+        status.append(button('Stop','stop'));
+      }
+      else if(data.sending && !data.live) { status.append(document.createTextNode('Working…'),button('Stop','stop')); }
       else if(!data.entries.length) status.textContent=data.status;
       pending=null; hasPendingLive=false;
       if(changedThread && !data.search) scrollTo(0,maxScroll()*data.initialPosition);
@@ -1447,6 +1495,7 @@ struct AIChatTranscriptWebView: NSViewRepresentable {
       && lhs.searchGeneration == rhs.searchGeneration
       && lhs.initialPosition == rhs.initialPosition
       && lhs.compact == rhs.compact
+      && lhs.stalled == rhs.stalled
   }
   static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
     AIChatDocumentWebView.dismantleNSView(view, coordinator: coordinator)
