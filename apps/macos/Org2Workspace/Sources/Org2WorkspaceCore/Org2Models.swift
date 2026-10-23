@@ -534,6 +534,22 @@ public struct AgentRunItem: Identifiable, Decodable, Hashable, Sendable {
       }
       .max { ($0.decidedAt ?? "") < ($1.decidedAt ?? "") }
   }
+  /// The block reason the runtime records when a decided approval boundary needs revision.
+  public static let approvalBoundaryBlockReason = "One or more approvals were not approved"
+  /// The block reason recorded when a requested revision could not be handed to an agent.
+  public static let revisionDispatchFailureReason =
+    "Changes were requested, but the revision could not be handed to an agent. After restoring the OpenClaw connection, choose Send Requested Changes on this run; do not request changes again."
+  /// A revised approval whose note still has to reach an agent: the run is blocked only
+  /// because of that revision (or a failed hand-off of it), not for a separate clarification.
+  public var revisionAwaitingHandoff: AgentRunApprovalItem? {
+    guard let revision = resumableRevisionApproval else { return nil }
+    let reason = blockedReason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard reason.isEmpty
+            || reason == Self.approvalBoundaryBlockReason
+            || reason == Self.revisionDispatchFailureReason
+    else { return nil }
+    return revision
+  }
   public var openClawExecApprovalID: String? {
     for comment in comments.reversed() {
       for line in comment.body.split(whereSeparator: \.isNewline) {

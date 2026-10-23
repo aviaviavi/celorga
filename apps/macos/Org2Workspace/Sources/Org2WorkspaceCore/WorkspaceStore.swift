@@ -3742,6 +3742,15 @@ public final class WorkspaceStore {
     _ run: AgentRunItem,
     _ reason: String
   ) async throws -> AgentRunItem)?
+  var agentRunRevisionResumeForTesting: ((
+    _ run: AgentRunItem
+  ) async throws -> AgentRunItem)?
+  var agentRunRevisionDispatchForTesting: ((
+    _ run: AgentRunItem,
+    _ approval: AgentRunApprovalItem,
+    _ prompt: String,
+    _ sessionKey: String
+  ) async throws -> Void)?
   var agentRunExternalCompletionForTesting: ((
     _ runID: String,
     _ summary: String
@@ -9099,13 +9108,22 @@ extension WorkspaceStore {
     }
   }
 
+  /// Sends a run's recorded Request Changes note to an agent when the run is still
+  /// blocked on that revision, for example after an earlier hand-off failed.
+  public func continueRequestedRevision(_ run: AgentRunItem) async {
+    guard run.revisionAwaitingHandoff != nil, !mutatingAgentRunIDs.contains(run.id) else { return }
+    mutatingAgentRunIDs.insert(run.id)
+    defer { mutatingAgentRunIDs.remove(run.id) }
+    await continueOpenClawAfterApprovalBoundary(run)
+  }
+
   private func recordAgentRunApprovalContinuationFailure(
-    _ run: AgentRunItem
+    _ run: AgentRunItem,
+    reason: String = WorkspaceStore.agentRunApprovalContinuationFailureReason
   ) async throws -> AgentRunItem {
     guard let corpusRoot else {
       throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "No corpus is selected."])
     }
-    let reason = Self.agentRunApprovalContinuationFailureReason
     let updated: AgentRunItem
     if let agentRunApprovalContinuationFailureForTesting {
       updated = try await agentRunApprovalContinuationFailureForTesting(run, reason)
@@ -9214,7 +9232,10 @@ extension WorkspaceStore {
         }
       }
     }
-    guard run.workflowId != nil else { return nil }
+    guard run.workflowId != nil else {
+      guard let revision = run.revisionAwaitingHandoff else { return nil }
+      return await continueAgentRunAfterRevision(run, approval: revision)
+    }
     guard let revision = run.resumableRevisionApproval else { return nil }
     do {
       guard try await continueOpenClawWorkflowAfterRevision(run, approval: revision) else {
@@ -9227,6 +9248,121 @@ extension WorkspaceStore {
       errorText = error.localizedDescription
       statusText = "Changes recorded; OpenClaw continuation pending"
       return .continuationFailed
+    }
+  }
+
+  /// Hands a Request Changes note on a run that is not a workflow back to an agent.
+  /// The run returns to `running`, the note goes to the run's correlated OpenClaw
+  /// session (or a per-run session) in a "Revision" chat thread, and the agent is told
+  /// to request a replacement approval on the same run. If the hand-off fails, the run
+  /// is durably blocked with a reason that says so.
+  private func continueAgentRunAfterRevision(
+    _ run: AgentRunItem,
+    approval: AgentRunApprovalItem
+  ) async -> MobileRemoteApprovalContinuation? {
+    let resumed: AgentRunItem
+    do {
+      resumed = try await resumeAgentRunForRevision(run)
+    } catch {
+      errorText = error.localizedDescription
+      statusText = "Changes recorded; \(run.goal) could not be resumed for revision"
+      return .continuationFailed
+    }
+    if let index = agentRuns.firstIndex(where: { $0.id == resumed.id }) {
+      agentRuns[index] = resumed
+    } else {
+      agentRuns.insert(resumed, at: 0)
+    }
+    let sessionKey = run.openClawSessionKey ?? Self.approvedRunContinuationSessionKey(
+      runID: run.id,
+      agentID: openClawAgentID
+    )
+    let prompt = Self.agentRunRevisionContinuationPrompt(run: run, approval: approval)
+    do {
+      try await dispatchAgentRunRevision(
+        resumed,
+        approval: approval,
+        prompt: prompt,
+        sessionKey: sessionKey
+      )
+      statusText = "Changes requested; the agent is revising \(run.goal)"
+      return .revisionContinuing
+    } catch {
+      errorText = error.localizedDescription
+      do {
+        let blocked = try await recordAgentRunApprovalContinuationFailure(
+          resumed,
+          reason: Self.agentRunRevisionDispatchFailureReason
+        )
+        statusText = "Changes recorded; \(blocked.goal) is blocked because the revision could not be handed to an agent"
+        return .continuationFailedBlocked
+      } catch {
+        statusText = "Changes recorded; the revision could not be handed to an agent or durably blocked"
+        return .continuationFailed
+      }
+    }
+  }
+
+  private func resumeAgentRunForRevision(_ run: AgentRunItem) async throws -> AgentRunItem {
+    if let agentRunRevisionResumeForTesting {
+      return try await agentRunRevisionResumeForTesting(run)
+    }
+    guard let corpusRoot else {
+      throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "No corpus is selected."])
+    }
+    return try await cli.runJSON([
+      "run", "resume", run.id,
+      "--actor", "Org2Workspace",
+      "--dir", corpusRoot.path,
+      "--json"
+    ])
+  }
+
+  private func dispatchAgentRunRevision(
+    _ run: AgentRunItem,
+    approval: AgentRunApprovalItem,
+    prompt: String,
+    sessionKey: String
+  ) async throws {
+    if let agentRunRevisionDispatchForTesting {
+      try await agentRunRevisionDispatchForTesting(run, approval, prompt, sessionKey)
+      return
+    }
+    let thread: AIChatThread
+    if let existing = aiChatThreads.first(where: { $0.sessionKey == sessionKey }) {
+      if existing.isSettled { reopenAIChatThread(existing.id) }
+      thread = aiChatThreads.first(where: { $0.id == existing.id }) ?? existing
+    } else {
+      thread = createAIChatThread(
+        title: "Revision: \(run.goal)",
+        statusText: "Revising after requested changes",
+        sessionKey: sessionKey
+      )
+    }
+    guard let pointer = aiChatContextPointer(for: run, requiresExistingRecord: false) else {
+      throw CocoaError(.fileReadCorruptFile, userInfo: [
+        NSLocalizedDescriptionKey: "The run could not be attached to its revision thread."
+      ])
+    }
+    let actionText = automaticAIChatActionText(
+      pointer,
+      prompt: prompt,
+      userText: approval.decisionNote?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    )
+    let context = captureAIChatCorpusContext()
+    let outcome = await awaitAIChatEnqueueAndImmediateDrain(
+      enqueueAIChatMessage(
+        actionText,
+        attachments: [],
+        in: thread.id,
+        context: context
+      )
+    )
+    switch outcome {
+    case .enqueued:
+      return
+    case .superseded, .rejected:
+      throw AIChatEnqueueFailure.rejected
     }
   }
 
@@ -9446,6 +9582,34 @@ extension WorkspaceStore {
       "Record external receipts and the final outcome on this durable run, or record the next specific blocker if the work cannot continue."
     ].joined(separator: "\n")
   }
+
+  nonisolated static func agentRunRevisionContinuationPrompt(
+    run: AgentRunItem,
+    approval: AgentRunApprovalItem
+  ) -> String {
+    let note = approval.decisionNote?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return [
+      "ORG2_RUN_ID: \(run.id)",
+      "ORG2_RUN_RESUME: revision-requested",
+      "ORG2_REVISION_APPROVAL_ID: \(approval.id)",
+      "",
+      "Revise the existing Celorga run “\(run.goal)”. The reviewer requested changes instead of approving “\(approval.title)”.",
+      "Requested changes:",
+      note,
+      "",
+      "Material that was not approved:",
+      approval.action.trimmingCharacters(in: .whitespacesAndNewlines),
+      "",
+      "Re-read the durable run with the Celorga CLI (`celorga run show \(run.id) --json`). The run is running again; do not create a replacement run.",
+      "Do not perform the protected action. A revision request is not approval, and the earlier approval stays revised as history.",
+      "Address every requested change and prepare new review material. If a provider draft is still the right vehicle, update it and keep the exact `Provider draft: PROVIDER:TOOL:DRAFT_ID` line; otherwise create the material the reviewer asked for.",
+      "When the revision is ready, request a replacement approval on this run with `celorga run approval-request \(run.id) --title TEXT --action TEXT` containing the exact revised material. That puts the run back in the reviewer's queue.",
+      "If the requested changes cannot be addressed, record the specific blocker with `celorga run block \(run.id) --reason TEXT`."
+    ].joined(separator: "\n")
+  }
+
+  nonisolated static let agentRunRevisionDispatchFailureReason =
+    AgentRunItem.revisionDispatchFailureReason
 
   nonisolated static let agentRunApprovalContinuationFailureReason =
     "Approved actions are recorded, but OpenClaw did not accept the continuation. After restoring the OpenClaw connection, choose Resume and then Continue approved work; do not repeat the approval or create a replacement run."

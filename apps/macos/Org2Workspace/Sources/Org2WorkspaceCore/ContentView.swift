@@ -8003,7 +8003,20 @@ private struct RunCenterDetail: View {
     return HStack(spacing: 4) {
       if isMutating { WorkspaceActivityIndicator(size: .mini) }
       if run.status == "queued" { actionButton("Start", "play.fill", "start") }
-      if run.status == "blocked" { actionButton("Resume", "play.fill", "resume") }
+      if run.status == "blocked" {
+        if run.revisionAwaitingHandoff != nil {
+          Button {
+            Task { await store.continueRequestedRevision(run) }
+          } label: {
+            Label("Send Requested Changes", systemImage: "arrow.uturn.forward")
+          }
+          .buttonStyle(WorkspaceActionButtonStyle())
+          .disabled(isMutating)
+          .help("Resume this run and send your requested changes to an agent, which will request a new approval")
+        } else {
+          actionButton("Resume", "play.fill", "resume")
+        }
+      }
       if run.canContinueApprovedWork {
         Button {
           Task { await store.continueApprovedAgentRun(run) }
@@ -8926,7 +8939,7 @@ private struct ApprovalRevisionSheet: View {
             .stroke(WorkspaceDesign.hairline)
         )
 
-      Text("The current material will remain unapproved. Your feedback will be saved in the run; a correlated workflow will continue by preparing replacement material for approval.")
+      Text("The current material will remain unapproved. Your feedback is saved on the run and sent to an agent, which revises the material and asks for your approval again.")
         .font(.caption)
         .foregroundStyle(.secondary)
 

@@ -1180,7 +1180,7 @@ function approvalCandidatesFromRuns(rootDir: string, runs: AgentRun[]): Approval
         : remainingAfterThis > 0
           ? `Approving this leaves ${remainingAfterThis} other pending approval${remainingAfterThis === 1 ? "" : "s"} before the run can resume.`
           : hasRequestedRevision
-            ? "This is the last pending approval, but another decision requested revision, so the run will remain blocked for replacement material."
+            ? "This is the last pending approval, but another decision requested changes, so the run goes back for revision and a new approval instead of resuming."
             : hasDeclinedAction
               ? "This is the last pending approval; deciding it resumes the run with rejected or canceled actions excluded."
               : "This is the last pending approval; approving it resumes the run.";
