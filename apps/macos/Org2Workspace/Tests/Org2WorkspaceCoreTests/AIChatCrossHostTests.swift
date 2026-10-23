@@ -344,6 +344,92 @@ final class AIChatCrossHostTests: XCTestCase {
     XCTAssertEqual(try storedBytes(url), before)
   }
 
+  func testChatSavesCommitWhileAPeriodicRepairIsVerifying() throws {
+    let url = root.appendingPathComponent("laptop.json")
+    let question = AIChatMessage(role: .user, content: "question")
+    let thread = AIChatThread(title: "Shared", sessionKey: "shared", messages: [question])
+    try flush([thread], to: url)
+
+    let verifying = DispatchSemaphore(value: 0)
+    let release = DispatchSemaphore(value: 0)
+    AIChatTranscriptStore.repairVerificationHookForTesting = {
+      verifying.signal()
+      _ = release.wait(timeout: .now() + 10)
+    }
+    defer { AIChatTranscriptStore.repairVerificationHookForTesting = nil }
+    let repaired = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async {
+      _ = try? AIChatTranscriptStore.shared.repair(legacyURL: url, apply: true, onlyIfChanged: true)
+      repaired.signal()
+    }
+    XCTAssertEqual(verifying.wait(timeout: .now() + 10), .success)
+
+    // A phone message arriving now must commit without waiting for repair.
+    let reply = AIChatMessage(role: .assistant, content: "acknowledged")
+    let saved = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async { [settings] in
+      try? AIChatTranscriptStore.shared.flush(
+        AIChatTranscriptSnapshot(
+          threads: [thread.replacingMessages([question, reply])],
+          selectedThreadID: thread.id,
+          settlementSettings: settings,
+          knownThreadIDs: [thread.id]
+        ),
+        legacyURL: url
+      )
+      saved.signal()
+    }
+    let savedInTime = saved.wait(timeout: .now() + 5)
+    release.signal()
+    XCTAssertEqual(savedInTime, .success, "Repair verification must not hold the chat save queue")
+    XCTAssertEqual(repaired.wait(timeout: .now() + 10), .success)
+    if savedInTime != .success { _ = saved.wait(timeout: .now() + 10) }
+    XCTAssertEqual(
+      AIChatTranscriptStore.shared.loadCommittedIfAvailable(legacyURL: url)?.snapshot.threads.first?.messages.map(\.id),
+      [question.id, reply.id]
+    )
+  }
+
+  func testRepairSkipsAWriterHeadWhoseManifestNeverArrived() throws {
+    let url = root.appendingPathComponent("laptop.json")
+    let thread = AIChatThread(title: "Shared", sessionKey: "shared", messages: [
+      AIChatMessage(role: .assistant, content: "reply")
+    ])
+    try flush([thread], to: url)
+    let heads = storeURL(url).appendingPathComponent("heads")
+    func writeHead(_ name: String, updatedAt: Date) throws {
+      let head: [String: Any] = [
+        "schema": "org2:ai-chat-transcript-head:v1",
+        "version": 1,
+        "writerID": name,
+        "writerLabel": "Deterministic chat repair",
+        "currentManifest": "recovered-\(name).json",
+        "currentDigest": String(repeating: "a", count: 64),
+        "currentGeneration": 1,
+        "updatedAt": updatedAt.timeIntervalSinceReferenceDate,
+      ]
+      try JSONSerialization.data(withJSONObject: head).write(to: heads.appendingPathComponent("\(name).json"))
+    }
+
+    // A head whose manifest is still in flight keeps repair waiting for sync.
+    try writeHead("repair-in-flight", updatedAt: Date())
+    XCTAssertThrowsError(try AIChatTranscriptStore.shared.repair(legacyURL: url, apply: true, onlyIfChanged: true))
+    try FileManager.default.removeItem(at: heads.appendingPathComponent("repair-in-flight.json"))
+
+    // One that never arrived no longer fails every periodic pass.
+    try writeHead("repair-abandoned", updatedAt: Date().addingTimeInterval(-3 * 60 * 60))
+    let before = try storedBytes(url)
+    let report = try AIChatTranscriptStore.shared.repair(legacyURL: url, apply: true, onlyIfChanged: true)
+    XCTAssertTrue(report.checked)
+    XCTAssertFalse(report.changed)
+    XCTAssertTrue(report.warnings.contains { $0.contains("recovered-repair-abandoned.json") })
+    XCTAssertEqual(try storedBytes(url), before, "The abandoned head's bytes are retained")
+    XCTAssertFalse(
+      try AIChatTranscriptStore.shared.repair(legacyURL: url, apply: true, onlyIfChanged: true).checked,
+      "A stable pass is cached instead of repeating every interval"
+    )
+  }
+
   @MainActor
   func testRepairIntervalIsRestoredAndCanBeDisabled() throws {
     let defaults = UserDefaults(suiteName: "org2-repair-test-\(UUID().uuidString)")!

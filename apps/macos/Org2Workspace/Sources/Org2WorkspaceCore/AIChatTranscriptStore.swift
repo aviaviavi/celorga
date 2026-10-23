@@ -169,17 +169,26 @@ final class AIChatTranscriptStore: @unchecked Sendable {
   /// a replica's concurrent messages are kept and local deletions are honored.
   private var adoptedBases: [String: [UUID: AdoptedThreadBase]] = [:]
   private var adoptionSequence: UInt64 = 0
+  /// Serializes repairs and guards their caches. Never held by saves.
+  private let repairLock = NSLock()
   private var repairFingerprints: [String: String] = [:]
   private var repairReports: [String: AIChatTranscriptRepairReport] = [:]
 
   private init() {}
 
-  /// Serial with this process's saves. A machine-local advisory lock also
-  /// prevents two headless invocations from replacing the same repair head.
+  /// Repairs in this process run one at a time, and a machine-local advisory
+  /// lock prevents two headless invocations from replacing the same repair
+  /// head. Verification reads every live commit, which takes seconds on a
+  /// large store, so it does not hold the save queue: holding it stalled every
+  /// chat commit on this host (sends, replies, hand-off acceptance) for that
+  /// long on each periodic pass. Only publishing a repair is serialized with
+  /// saves, and it still refuses when storage changed after verification.
   func repair(
     legacyURL: URL, apply: Bool, expectedRevision: String? = nil, onlyIfChanged: Bool = false
   ) throws -> AIChatTranscriptRepairReport {
-    try queue.sync {
+    repairLock.lock()
+    defer { repairLock.unlock() }
+    return try { () throws -> AIChatTranscriptRepairReport in
       let storeURL = Self.storeDirectory(for: legacyURL)
       let lockName = "openorg-chat-repair-\(Self.digest(Data(storeURL.resolvingSymlinksInPath().path.utf8))).lock"
       let lockURL = FileManager.default.temporaryDirectory.appendingPathComponent(lockName)
@@ -199,7 +208,10 @@ final class AIChatTranscriptStore: @unchecked Sendable {
           changed: false, checked: false, revision: revision, threadCount: prior?.threadCount ?? 0,
           mergedShardCount: 0, warnings: prior?.warnings ?? [])
       }
-      let report = try Self.repairCommittedHeads(legacyURL: legacyURL, apply: apply, revision: revision)
+      let report = try Self.repairCommittedHeads(
+        legacyURL: legacyURL, apply: apply, revision: revision,
+        serializedWithSaves: { [queue] work in try queue.sync(execute: work) }
+      )
       if apply {
         // Cache only a stable, read-only pass. A sync may arrive while a
         // repair publishes its files; never cache unexamined arriving heads
@@ -215,7 +227,7 @@ final class AIChatTranscriptStore: @unchecked Sendable {
       validatedStoreStates.removeValue(forKey: legacyURL.standardizedFileURL.path)
       condition.unlock()
       return report
-    }
+    }()
   }
 
   /// A cheap fingerprint of committed chat storage. It changes whenever any
@@ -253,8 +265,22 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     var files: [URL: Data] = [:]
   }
 
+  /// A head whose manifest has not arrived for this long is treated as
+  /// abandoned by repair (its writer's commit was lost or collected), rather
+  /// than as a sync still in flight.
+  static let abandonedRepairHeadInterval: TimeInterval = 60 * 60
+
+  /// Shards and manifests repair has already verified. Both are immutable and
+  /// content-addressed, so a periodic pass only re-reads what is new.
+  private static let repairVerifiedFiles = ShardValidationCache()
+
+  /// Runs while repair verifies committed heads, before it publishes.
+  nonisolated(unsafe) static var repairVerificationHookForTesting: (() -> Void)?
+
   private static func repairCommittedHeads(
-    legacyURL: URL, apply: Bool, revision: String
+    legacyURL: URL, apply: Bool, revision: String,
+    serializedWithSaves: (() throws -> Void) throws -> Void = { try $0() },
+    now: Date = Date()
   ) throws -> AIChatTranscriptRepairReport {
     let storeURL = storeDirectory(for: legacyURL)
     var pointers = headPointers(storeURL: storeURL)
@@ -271,6 +297,25 @@ final class AIChatTranscriptStore: @unchecked Sendable {
         legacyPointer(at: storeURL.appendingPathComponent($0))
       }
     }
+    // A head that has named a missing manifest for over an hour is not a sync
+    // in flight. Waiting for it made every periodic repair fail after a full
+    // verification pass, so it never cached and repeated forever. Keep the
+    // head's bytes, report it, and reconcile the remaining heads.
+    let abandoned = pointers.filter { pointer in
+      guard let updatedAt = pointer.updatedAt,
+            now.timeIntervalSince(updatedAt) > abandonedRepairHeadInterval
+      else { return false }
+      return !FileManager.default.fileExists(
+        atPath: manifestsDirectory(storeURL: storeURL).appendingPathComponent(pointer.currentManifest).path
+      )
+    }
+    if !abandoned.isEmpty, abandoned.count < pointers.count {
+      let names = Set(abandoned.map(\.currentManifest))
+      pointers.removeAll { names.contains($0.currentManifest) }
+      for name in names.sorted() {
+        warnings.append("A writer head names a chat version that never arrived; it was left unchanged and skipped: \(name)")
+      }
+    }
     var manifests: [Manifest] = []
     for pointer in pointers {
       let url = manifestsDirectory(storeURL: storeURL).appendingPathComponent(pointer.currentManifest)
@@ -278,8 +323,14 @@ final class AIChatTranscriptStore: @unchecked Sendable {
         expectedDigest: pointer.currentDigest, storeURL: storeURL) else {
         throw TranscriptStoreError.unrecoverableStore("A committed chat version is incomplete or corrupt; repair will retry after sync. No head was changed.")
       }
-      try ensureRepairUnderstands(data: Data(contentsOf: url), encoded: encoder.encode(manifest))
+      let manifestKey = "manifest|\(url.path)|\(pointer.currentDigest)"
+      if !repairVerifiedFiles.contains(manifestKey) {
+        try ensureRepairUnderstands(data: Data(contentsOf: url), encoded: encoder.encode(manifest))
+        repairVerifiedFiles.insert(manifestKey)
+      }
       for entry in manifest.threads {
+        let shardKey = shardValidationKey(entry, storeURL: storeURL).map { "repair|\($0)" }
+        if let shardKey, repairVerifiedFiles.contains(shardKey) { continue }
         guard let shard = loadThreadShard(entry, storeURL: storeURL) else {
           throw TranscriptStoreError.missingShard(entry.metadata.id)
         }
@@ -292,6 +343,7 @@ final class AIChatTranscriptStore: @unchecked Sendable {
             throw TranscriptStoreError.invalidAttachmentBlob(reference.blob)
           }
         }
+        if let shardKey { repairVerifiedFiles.insert(shardKey) }
       }
       manifests.append(manifest)
       if let previous = pointer.previousManifest,
@@ -299,6 +351,7 @@ final class AIChatTranscriptStore: @unchecked Sendable {
         warnings.append("A writer's prior manifest is unavailable; historical integrity is unverified: \(previous)")
       }
     }
+    repairVerificationHookForTesting?()
     // Reconcile live commit points, not every historic snapshot: old snapshots
     // must not resurrect intentional deletions. Originals are never modified.
     let candidates = Array(Dictionary(manifests.map { ($0.commitID, $0) },
@@ -312,29 +365,31 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     }
     let changed = !candidates.contains { $0.commitID == merged.commitID }
     if apply && changed {
-      guard try repairFingerprint(storeURL: storeURL) == revision else {
-        throw TranscriptStoreError.unrecoverableStore("Chat storage changed during repair; retry against the new commits.")
+      try serializedWithSaves {
+        guard try repairFingerprint(storeURL: storeURL) == revision else {
+          throw TranscriptStoreError.unrecoverableStore("Chat storage changed during repair; retry against the new commits.")
+        }
+        for (url, data) in staged.files { try publishRepairImmutable(data, to: url) }
+        let data = try encoder.encode(merged)
+        let name = "\(merged.commitID).json"
+        try publishRepairImmutable(data, to: manifestsDirectory(storeURL: storeURL).appendingPathComponent(name))
+        guard isComplete(merged, storeURL: storeURL) else {
+          throw TranscriptStoreError.unrecoverableStore("Reconciled chat failed validation; original heads were retained.")
+        }
+        let repairDefaults = UserDefaults(suiteName: "org.org2.transcript-repair") ?? .standard
+        let writer = AIChatTranscriptWriterIdentity.persistent(defaults: repairDefaults, label: "Deterministic chat repair")
+        let previous = candidates.max { ($0.generation, $0.commitID) < ($1.generation, $1.commitID) }
+        let previousURL = previous.map { manifestsDirectory(storeURL: storeURL).appendingPathComponent("\($0.commitID).json") }
+        let previousBytes = try previousURL.map { try Data(contentsOf: $0) }
+        let head = StoreHead(schema: StoreHead.schemaValue, version: 1, writerID: "repair-\(writer.id)",
+          writerLabel: writer.label, currentManifest: name, currentDigest: digest(data),
+          currentGeneration: merged.generation, previousManifest: previousURL?.lastPathComponent,
+          previousDigest: previousBytes.map(digest), updatedAt: Date())
+        try FileManager.default.createDirectory(at: headsDirectory(storeURL: storeURL),
+          withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try writeIfChanged(encoder.encode(head), to: headsDirectory(storeURL: storeURL)
+          .appendingPathComponent("repair-\(writer.id).json"))
       }
-      for (url, data) in staged.files { try publishRepairImmutable(data, to: url) }
-      let data = try encoder.encode(merged)
-      let name = "\(merged.commitID).json"
-      try publishRepairImmutable(data, to: manifestsDirectory(storeURL: storeURL).appendingPathComponent(name))
-      guard isComplete(merged, storeURL: storeURL) else {
-        throw TranscriptStoreError.unrecoverableStore("Reconciled chat failed validation; original heads were retained.")
-      }
-      let repairDefaults = UserDefaults(suiteName: "org.org2.transcript-repair") ?? .standard
-      let writer = AIChatTranscriptWriterIdentity.persistent(defaults: repairDefaults, label: "Deterministic chat repair")
-      let previous = candidates.max { ($0.generation, $0.commitID) < ($1.generation, $1.commitID) }
-      let previousURL = previous.map { manifestsDirectory(storeURL: storeURL).appendingPathComponent("\($0.commitID).json") }
-      let previousBytes = try previousURL.map { try Data(contentsOf: $0) }
-      let head = StoreHead(schema: StoreHead.schemaValue, version: 1, writerID: "repair-\(writer.id)",
-        writerLabel: writer.label, currentManifest: name, currentDigest: digest(data),
-        currentGeneration: merged.generation, previousManifest: previousURL?.lastPathComponent,
-        previousDigest: previousBytes.map(digest), updatedAt: Date())
-      try FileManager.default.createDirectory(at: headsDirectory(storeURL: storeURL),
-        withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-      try writeIfChanged(encoder.encode(head), to: headsDirectory(storeURL: storeURL)
-        .appendingPathComponent("repair-\(writer.id).json"))
     }
     return AIChatTranscriptRepairReport(schema: "org2:ai-chat-repair:v1", applied: apply && changed,
       changed: changed, checked: true, revision: revision, threadCount: merged.threads.count,
@@ -1585,6 +1640,8 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     let previousManifest: String?
     let previousDigest: String?
     let generation: UInt64
+    /// When the writer last committed; nil for the historical marker.
+    var updatedAt: Date? = nil
   }
 
   /// Valid writer heads, newest generation first.
@@ -1613,7 +1670,8 @@ final class AIChatTranscriptStore: @unchecked Sendable {
         currentDigest: head.currentDigest,
         previousManifest: head.previousManifest,
         previousDigest: head.previousDigest,
-        generation: head.currentGeneration
+        generation: head.currentGeneration,
+        updatedAt: head.updatedAt
       )
     }.sorted {
       if $0.generation != $1.generation { return $0.generation > $1.generation }
