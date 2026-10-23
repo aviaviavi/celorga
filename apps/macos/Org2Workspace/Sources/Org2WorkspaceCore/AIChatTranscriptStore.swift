@@ -1233,16 +1233,18 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     }
 
     let commitID = UUID().uuidString.lowercased()
+    let lineage = [priorManifest?.commitID].compactMap { $0 } + (priorManifest?.ancestorCommitIDs ?? [])
+    let ancestorCommitIDs = boundedCommitIDs(lineage)
     let manifest = Manifest(
       schema: Manifest.schemaValue,
       version: 2,
       generation: (priorManifest?.generation ?? 0) &+ 1,
       commitID: commitID,
       parentCommitID: priorManifest?.commitID,
-      ancestorCommitIDs: boundedCommitIDs(
-        [priorManifest?.commitID].compactMap { $0 } + (priorManifest?.ancestorCommitIDs ?? [])
+      ancestorCommitIDs: ancestorCommitIDs,
+      mergedCommitIDs: Self.recordingLineageOverflow(
+        lineage, beyond: ancestorCommitIDs, in: priorManifest?.mergedCommitIDs
       ),
-      mergedCommitIDs: priorManifest?.mergedCommitIDs,
       threads: entries,
       selectedThreadID: snapshot.selectedThreadID,
       settlementSettings: snapshot.settlementSettings
@@ -1956,7 +1958,9 @@ final class AIChatTranscriptStore: @unchecked Sendable {
       commitID: "recovered-\(UUID().uuidString.lowercased())",
       parentCommitID: completeBase.commitID,
       ancestorCommitIDs: ancestorCommitIDs,
-      mergedCommitIDs: mergedCommitIDs,
+      mergedCommitIDs: Array(Set(mergedCommitIDs).union(
+        Set([completeBase.commitID] + (completeBase.ancestorCommitIDs ?? [])).subtracting(ancestorCommitIDs)
+      )).sorted(),
       threads: entries,
       selectedThreadID: selectedThreadID,
       settlementSettings: context.settlementSettings
@@ -2464,6 +2468,23 @@ final class AIChatTranscriptStore: @unchecked Sendable {
 
   private static func digest(_ data: Data) -> String {
     SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+  }
+
+  /// A commit that falls out of the bounded ancestry window is still
+  /// subsumed. Recording it as merged keeps the next load from treating it as
+  /// an unseen sync branch. Without this, every commit pushed one ancestor out
+  /// of the window, so every load reconciled it again and every save
+  /// published an extra synthesized manifest beside its own.
+  static func recordingLineageOverflow(
+    _ lineage: [String],
+    beyond ancestors: [String],
+    in merged: [String]?
+  ) -> [String]? {
+    let retained = Set(ancestors)
+    var seen = Set(merged ?? [])
+    let overflow = lineage.filter { !retained.contains($0) && seen.insert($0).inserted }
+    guard !overflow.isEmpty else { return merged }
+    return (merged ?? []) + overflow
   }
 
   private static func boundedCommitIDs(_ values: [String]) -> [String] {

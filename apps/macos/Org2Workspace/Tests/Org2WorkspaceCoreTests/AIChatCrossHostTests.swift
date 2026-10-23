@@ -430,6 +430,46 @@ final class AIChatCrossHostTests: XCTestCase {
     )
   }
 
+  func testSuccessiveSavesDoNotReconcileAncestorsLeavingTheWindow() throws {
+    let url = root.appendingPathComponent("laptop.json")
+    let start = Date(timeIntervalSince1970: 1_800_000_000)
+    var messages = [AIChatMessage(role: .user, content: "question", createdAt: start)]
+    let thread = AIChatThread(
+      title: "Long turn", createdAt: start, updatedAt: start, sessionKey: "long", messages: messages
+    )
+    // More commits than the bounded ancestry window, as one streamed reply makes.
+    for index in 0..<45 {
+      messages.append(AIChatMessage(
+        role: .assistant, content: "part \(index)", createdAt: start.addingTimeInterval(Double(index + 1))
+      ))
+      try flush([thread.replacingMessages(messages)], to: url)
+    }
+    let manifests = try FileManager.default.contentsOfDirectory(
+      atPath: storeURL(url).appendingPathComponent("manifests").path
+    )
+    XCTAssertEqual(manifests.filter { $0.hasPrefix("recovered-") }, [],
+      "A single writer's linear history never needs a synthesized reconciliation")
+    XCTAssertEqual(manifests.count, 45)
+    let loaded = try XCTUnwrap(AIChatTranscriptStore.shared.loadCommittedIfAvailable(legacyURL: url))
+    XCTAssertEqual(loaded.recoveryStatus, .healthy)
+    XCTAssertEqual(loaded.snapshot.threads.first?.messages.count, 46)
+  }
+
+  func testLineageOverflowIsRecordedAsMerged() {
+    XCTAssertEqual(
+      AIChatTranscriptStore.recordingLineageOverflow(["c", "b", "a"], beyond: ["c", "b"], in: ["x"]),
+      ["x", "a"]
+    )
+    XCTAssertEqual(
+      AIChatTranscriptStore.recordingLineageOverflow(["c", "b"], beyond: ["c", "b"], in: nil),
+      nil
+    )
+    XCTAssertEqual(
+      AIChatTranscriptStore.recordingLineageOverflow(["c", "a"], beyond: ["c"], in: ["a"]),
+      ["a"]
+    )
+  }
+
   @MainActor
   func testRepairIntervalIsRestoredAndCanBeDisabled() throws {
     let defaults = UserDefaults(suiteName: "org2-repair-test-\(UUID().uuidString)")!
