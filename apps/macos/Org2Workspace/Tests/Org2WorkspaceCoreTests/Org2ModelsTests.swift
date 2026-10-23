@@ -11048,6 +11048,45 @@ final class Org2ModelsTests: XCTestCase {
     })
   }
 
+  /// Avi, 2026-10-23: approvals should come up in ⌘K, not only ⌘⇧F.
+  @MainActor
+  func testQuickOpenFindsAndOpensPendingApprovals() async throws {
+    let store = try WorkspaceStore(cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()))
+    store.corpusFiles = [
+      CorpusFile(path: "/tmp/notes.org2", relativePath: "notes.org2", modifiedAt: nil, byteCount: nil)
+    ]
+    let approval = ApprovalItem(
+      title: "Send the launch email to customers",
+      status: "waiting",
+      todo: "TODO",
+      level: 1,
+      file: "/tmp/approvals.org",
+      line: 3,
+      idValue: "approval-launch-email",
+      properties: [:],
+      body: "",
+      tags: [],
+      action: "Send Gmail draft 1234"
+    )
+    store.replaceApprovalItemsForTesting([approval])
+    store.selectedSurface = .files
+
+    store.quickOpenQuery = "launch email"
+    try await waitForCondition {
+      store.quickOpenItems.contains { $0.id == "approval:\(approval.id)" }
+    }
+    store.quickOpenQuery = "gmail draft"
+    try await waitForCondition {
+      store.quickOpenItems.contains { $0.id == "approval:\(approval.id)" }
+    }
+
+    let item = try XCTUnwrap(store.quickOpenItems.first { $0.id == "approval:\(approval.id)" })
+    store.selectQuickOpenItem(item)
+    XCTAssertEqual(store.selectedSurface, .approvals)
+    XCTAssertEqual(store.runsAndReviewPage, .review)
+    XCTAssertEqual(store.selectedApprovalItemID, approval.id)
+  }
+
   @MainActor
   func testQuickOpenFilePreservesCurrentWorkspaceSurface() throws {
     let store = try WorkspaceStore(cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()))

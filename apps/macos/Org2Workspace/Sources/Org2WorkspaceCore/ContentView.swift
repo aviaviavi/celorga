@@ -4674,6 +4674,14 @@ private struct QuickOpenView: View {
                 }
                 .modifier(ReadableListSelectionModifier(isSelected: store.selectedQuickOpenFileID == item.id))
                 .listRowBackground(Color.clear)
+            case .approval(let approval):
+              QuickOpenApprovalRow(approval: approval)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                  open(item)
+                }
+                .modifier(ReadableListSelectionModifier(isSelected: store.selectedQuickOpenFileID == item.id))
+                .listRowBackground(Color.clear)
             }
           }
         }
@@ -4813,6 +4821,35 @@ private struct QuickOpenChatThreadRow: View {
             Text("·")
             Text("Settled")
           }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+      }
+      Spacer(minLength: 0)
+    }
+    .padding(.vertical, WorkspaceDesign.rowVerticalPadding)
+  }
+}
+
+private struct QuickOpenApprovalRow: View {
+  let approval: ApprovalItem
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 8) {
+      WorkspaceIconBadge(
+        systemImage: "checkmark.seal",
+        tint: .orange,
+        fill: Color.orange.opacity(0.10)
+      )
+      VStack(alignment: .leading, spacing: 3) {
+        Text(Org2Display.cleanInline(approval.title))
+          .font(.body.weight(.medium))
+          .lineLimit(1)
+        HStack(spacing: 6) {
+          Text("Approval")
+          Text("·")
+          Text(approval.sourceLabel)
         }
         .font(.caption)
         .foregroundStyle(.secondary)

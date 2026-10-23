@@ -1443,6 +1443,7 @@ public enum QuickOpenSelectionDirection: Equatable, Sendable {
 public enum WorkspaceQuickOpenItem: Identifiable, Hashable, Sendable {
   case file(CorpusFile)
   case chatThread(AIChatThread)
+  case approval(ApprovalItem)
 
   public var id: String {
     switch self {
@@ -1450,6 +1451,8 @@ public enum WorkspaceQuickOpenItem: Identifiable, Hashable, Sendable {
       "file:\(file.id)"
     case .chatThread(let thread):
       "chat:\(thread.id.uuidString)"
+    case .approval(let approval):
+      "approval:\(approval.id)"
     }
   }
 }
@@ -1486,6 +1489,23 @@ private struct PublishedAIChatMessagesIdentity: Equatable {
 private enum QuickOpenSearchMatch: Sendable {
   case file(CorpusFile)
   case chatThread(UUID)
+  case approval(ApprovalItem)
+}
+
+/// A pending approval as Quick Open matches it: by title, then by what it
+/// asks for, so "deploy" finds "Approve production deploy".
+struct QuickOpenIndexedApproval: Sendable {
+  let item: ApprovalItem
+  let normalizedTitle: String
+  let normalizedDetail: String
+
+  init(_ item: ApprovalItem) {
+    self.item = item
+    normalizedTitle = WorkspaceStore.normalizedQuickOpenCandidate(item.title)
+    normalizedDetail = WorkspaceStore.normalizedQuickOpenCandidate(
+      [item.action, item.runGoal].compactMap { $0 }.joined(separator: " ")
+    )
+  }
 }
 
 private struct AssignedWorkSearchRow: Sendable {
@@ -21499,7 +21519,23 @@ extension WorkspaceStore {
       selectAIChatThread(thread.id)
       sidebarPromotedAIChatThreadID = thread.id
       statusText = "Opened \(thread.title)"
+    case .approval(let approval):
+      usageLog.record(.quickOpenSelect, [
+        "kind": "approval",
+        "rank": .int(quickOpenItems.firstIndex(of: item) ?? -1),
+        "query_length": .int(quickOpenQuery.count),
+      ])
+      openApprovalInReview(approval)
     }
+  }
+
+  /// Opens an approval where it is decided: its run (whose decision card
+  /// holds it) or, for a standalone approval, its entry in Agent Work → Review.
+  public func openApprovalInReview(_ approval: ApprovalItem) {
+    navigateToSurface(.approvals)
+    runsAndReviewPage = .review
+    approvalFilter = ""
+    selectApprovalItem(approval)
   }
 
   /// Corpus assignment is intentionally constant-time on the main actor. The
@@ -21907,11 +21943,13 @@ extension WorkspaceStore {
 
     let indexedFiles = quickOpenIndexedFiles
     let indexedChatThreads = quickOpenIndexedChatThreads
+    // The review queue is small; index it per search so it is never stale.
+    let indexedApprovals = approvalItems.map(QuickOpenIndexedApproval.init)
     let frecencyScores = currentFileFrecency().scores(now: Date())
     if !isFilteringQuickOpenFiles {
       isFilteringQuickOpenFiles = true
     }
-    quickOpenSearchTask = Task { [indexedFiles, indexedChatThreads, frecencyScores, query, generation, debounce] in
+    quickOpenSearchTask = Task { [indexedFiles, indexedChatThreads, indexedApprovals, frecencyScores, query, generation, debounce] in
       if debounce {
         try? await Task.sleep(nanoseconds: 80_000_000)
       }
@@ -21921,6 +21959,7 @@ extension WorkspaceStore {
         Self.filterQuickOpenItems(
           files: indexedFiles,
           chatThreads: indexedChatThreads,
+          approvals: indexedApprovals,
           query: query,
           limit: 80,
           frecencyScores: frecencyScores
@@ -21940,6 +21979,8 @@ extension WorkspaceStore {
                   self.aiChatThreads[index].id == id
             else { return nil }
             return .chatThread(self.aiChatThreads[index])
+          case .approval(let approval):
+            return .approval(approval)
           }
         }
         self.quickOpenItems = items
@@ -21988,6 +22029,7 @@ extension WorkspaceStore {
   nonisolated private static func filterQuickOpenItems(
     files: [QuickOpenIndexedFile],
     chatThreads: [QuickOpenIndexedChatThread],
+    approvals: [QuickOpenIndexedApproval] = [],
     query rawQuery: String,
     limit: Int,
     frecencyScores: [String: Double] = [:]
@@ -22020,8 +22062,17 @@ extension WorkspaceStore {
       }
       return (.chatThread(thread.id), score, thread.title)
     }
+    let approvalMatches = approvals.compactMap { approval -> (QuickOpenSearchMatch, Int, String)? in
+      // A title match ranks with files and chats; a match only on what the
+      // approval asks for still lists it, below them.
+      let score = fuzzyScore(normalizedQuery: normalizedQuery, normalizedCandidate: approval.normalizedTitle)
+        ?? fuzzyScore(normalizedQuery: normalizedQuery, normalizedCandidate: approval.normalizedDetail)
+          .map { $0 / 2 }
+      guard let score else { return nil }
+      return (.approval(approval.item), score, approval.item.title)
+    }
 
-    return (fileMatches + chatMatches)
+    return (fileMatches + chatMatches + approvalMatches)
       .sorted { lhs, rhs in
         if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
         return lhs.2.localizedStandardCompare(rhs.2) == .orderedAscending
@@ -51680,7 +51731,7 @@ extension WorkspaceStore {
     query.lowercased().filter { !$0.isWhitespace }
   }
 
-  nonisolated private static func normalizedQuickOpenCandidate(_ candidate: String) -> String {
+  nonisolated static func normalizedQuickOpenCandidate(_ candidate: String) -> String {
     candidate.lowercased()
   }
 
