@@ -2737,7 +2737,7 @@ private struct AIChatRoomAgentSlot: View {
   }
 
   private var deliveryIsUnconfirmed: Bool {
-    round.dispatch(forDestinationID: destinationID)?.deliveryIsUnconfirmed == true
+    round.dispatch(forDestinationID: destinationID)?.deliveryOutcomeIsUnknown == true
   }
 
   private var showsProgress: Bool {

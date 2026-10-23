@@ -3708,6 +3708,47 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertTrue(interrupted.latestDeliveryNeedsAttention)
   }
 
+  func testManagedRemoteInFlightFenceDoesNotNeedAttentionUntilOutcomeIsUnknown() {
+    let attemptID = UUID()
+    let fenced = AIChatMessage(
+      role: .user,
+      content: "Managed remote turn",
+      deliveryStatus: .sending
+    ).replacingDeliveryAttempt(
+      attemptID,
+      status: .sending,
+      sendFailure: nil,
+      attemptState: .unconfirmed
+    )
+    let working = AIChatThread(
+      title: "Working",
+      runtime: .codex,
+      sessionKey: "agent:main:managed-working",
+      messages: [fenced]
+    )
+    let lost = AIChatThread(
+      title: "Lost",
+      runtime: .codex,
+      sessionKey: "agent:main:managed-lost",
+      messages: [
+        fenced.replacingDeliveryAttempt(
+          attemptID,
+          status: .sending,
+          sendFailure: "Delivery is awaiting confirmation.",
+          attemptState: .unconfirmed
+        )
+      ]
+    )
+
+    XCTAssertTrue(fenced.deliveryIsUnconfirmed)
+    XCTAssertFalse(fenced.deliveryOutcomeIsUnknown)
+    XCTAssertTrue(working.hasUnresolvedLatestDelivery)
+    XCTAssertFalse(working.latestDeliveryNeedsAttention)
+    XCTAssertTrue(lost.messages[0].deliveryOutcomeIsUnknown)
+    XCTAssertTrue(lost.hasUnresolvedLatestDelivery)
+    XCTAssertTrue(lost.latestDeliveryNeedsAttention)
+  }
+
   func testManagedRemoteAttemptUsesOnlyStructuredFields() throws {
     let messageID = UUID()
     let attemptID = UUID()

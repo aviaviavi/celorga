@@ -2789,6 +2789,12 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     deliveryAttemptState == .unconfirmed
   }
 
+  /// An uncertainty fence whose owning send lost track of the provider
+  /// outcome. A fence without a recorded failure is a live, tracked turn.
+  public var deliveryOutcomeIsUnknown: Bool {
+    deliveryIsUnconfirmed && sendFailure != nil
+  }
+
   public var displayedSendFailure: String? {
     sendFailure
   }
@@ -4074,9 +4080,14 @@ public struct AIChatThread: Identifiable, Hashable, Codable, Sendable {
   public var latestDeliveryNeedsAttention: Bool {
     if let storedLatestDeliveryNeedsAttention { return storedLatestDeliveryNeedsAttention }
     guard let latestMessage = messages.last else { return false }
+    // A managed remote Codex turn persists an `.unconfirmed` fence for its
+    // whole lifetime so a crash can never resubmit it. That fence alone is
+    // in-flight work, like `.sending`. It needs the user only once the outcome
+    // is genuinely unknown (restart, orphaned send, or `turnStartUnknown`),
+    // and every one of those paths records a `sendFailure`.
     return latestMessage.deliveryStatus == .failed
       || latestMessage.deliveryStatus == .interrupted
-      || latestMessage.deliveryIsUnconfirmed
+      || latestMessage.deliveryOutcomeIsUnknown
       || latestMessage.sendFailure != nil
   }
 
