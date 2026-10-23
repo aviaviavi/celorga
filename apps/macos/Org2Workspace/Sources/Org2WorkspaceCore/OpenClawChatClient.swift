@@ -677,10 +677,29 @@ public struct AIChatWorkspaceContext: Sendable {
     )
   }
 
+  /// The Celorga instructions in ``localAgentSystemPrompt(runtime:runtimeTitle:runtimeFilesystemAccess:includesStandingInstructions:)``
+  /// that never depend on the turn. A runtime that keeps its agent
+  /// configuration warm across turns (OpenCode) carries these in the agent
+  /// prompt and sends the rest of the snapshot with each turn.
+  nonisolated public static let localAgentStandingInstructions = [
+    localAgentWorkingRules,
+    responseFormattingContract,
+    agentOperatingGuidance,
+  ].joined(separator: "\n\n---\n\n")
+
+  nonisolated static let localAgentWorkingRules = """
+    Celorga working rules
+
+    Celorga is a plain-text, org-mode-inspired knowledge workspace. Documents are .org files. Headings use leading stars; TODO state, priority, and tags live on headings. Planning metadata uses SCHEDULED, DEADLINE, and CLOSED lines. Stable node identity lives in :PROPERTIES: drawers using :ID:. Links commonly use [[id:<uuid>][label]].
+
+    Preserve the Org plaintext format, make the smallest useful edit, and cite exact file paths plus line numbers for concrete claims. Do not write generated Backlinks sections into note files; backlinks are computed views.
+    """
+
   public func localAgentSystemPrompt(
     runtime: String,
     runtimeTitle: String,
-    runtimeFilesystemAccess: Bool = false
+    runtimeFilesystemAccess: Bool = false,
+    includesStandingInstructions: Bool = true
   ) -> String {
     let fileAccessInstruction: String
     if runtime == "codex" && !runtimeFilesystemAccess {
@@ -700,18 +719,13 @@ public struct AIChatWorkspaceContext: Sendable {
       User's Celorga machine: \(Self.clientMachineName)\(runtimeFilesystemAccess ? " (may differ from the machine you run on; only the synced corpus is shared)" : "")
 
       This snapshot was supplied by Celorga. The selected source text may include unsaved editor changes and is authoritative for that visible draft. \(fileAccessInstruction)
-      """,
       """
-      Celorga working rules
-
-      Celorga is a plain-text, org-mode-inspired knowledge workspace. Documents are .org files. Headings use leading stars; TODO state, priority, and tags live on headings. Planning metadata uses SCHEDULED, DEADLINE, and CLOSED lines. Stable node identity lives in :PROPERTIES: drawers using :ID:. Links commonly use [[id:<uuid>][label]].
-
-      Preserve the Org plaintext format, make the smallest useful edit, and cite exact file paths plus line numbers for concrete claims. Do not write generated Backlinks sections into note files; backlinks are computed views.
-      """,
-      Self.responseFormattingContract
     ]
-
-    sections.append(Self.agentOperatingGuidance)
+    if includesStandingInstructions {
+      sections.append(Self.localAgentWorkingRules)
+      sections.append(Self.responseFormattingContract)
+      sections.append(Self.agentOperatingGuidance)
+    }
 
     sections.append(formatAuthorizedCorpora())
     sections.append(coordinationPrompt(

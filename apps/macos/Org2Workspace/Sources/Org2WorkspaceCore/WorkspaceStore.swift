@@ -29755,10 +29755,14 @@ extension WorkspaceStore {
         openOrgThreadID: threadID,
         existingSessionID: existingSessionID,
         message: turnMessage,
-        systemPrompt: workspaceContext.localAgentSystemPrompt(
+        // The standing instructions stay in the agent configuration so a warm
+        // OpenCode server can serve every turn; this turn's snapshot travels
+        // with the message, as it does for Codex.
+        turnContext: workspaceContext.localAgentSystemPrompt(
           runtime: "opencode",
           runtimeTitle: "OpenCode",
-          runtimeFilesystemAccess: destination.adapter == .openCodeRemote
+          runtimeFilesystemAccess: destination.adapter == .openCodeRemote,
+          includesStandingInstructions: false
         ),
         attachments: requestUserMessage.attachments,
         cwd: corpusRoot,

@@ -23,7 +23,22 @@ final class AIChatDetachedTurnTests: XCTestCase {
   }
 
   override func tearDownWithError() throws {
+    stopWarmServerKeepers()
     try? FileManager.default.removeItem(at: root)
+  }
+
+  /// Warm-server keepers run detached from the adapter; stop the ones a test
+  /// started so their fake servers do not outlive it.
+  private func stopWarmServerKeepers() {
+    let directory = root.appendingPathComponent("state/openorg/opencode-servers", isDirectory: true)
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+    for name in names where name.hasSuffix(".json") {
+      guard let data = try? Data(contentsOf: directory.appendingPathComponent(name)),
+            let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let pid = (record["pid"] as? NSNumber)?.int32Value, pid > 0
+      else { continue }
+      kill(pid, SIGTERM)
+    }
   }
 
   // MARK: Stale sends
@@ -595,6 +610,75 @@ final class AIChatDetachedTurnTests: XCTestCase {
     }
     XCTAssertFalse(run.process.isRunning, "stop must end the supervisor and its turn")
     if run.process.isRunning { run.process.terminate() }
+    // The session runs inside the shared warm server, which outlives the
+    // turn's client; stopping must interrupt the session there too.
+    let apiCalls = (try? String(
+      contentsOf: root.appendingPathComponent("api-calls"),
+      encoding: .utf8
+    )) ?? ""
+    XCTAssertTrue(apiCalls.contains("session.interrupt"), apiCalls)
+    XCTAssertTrue(apiCalls.contains("sessionID=ses_stop"), apiCalls)
+  }
+
+  /// A cold `opencode serve` costs about a second per turn. Turns with the
+  /// same configuration reuse one warm server; its password reaches the
+  /// client for steering. A different configuration gets its own server.
+  func testRemoteTurnsReuseOneWarmServerPerConfiguration() throws {
+    let python = try pythonExecutable()
+    let environment = try fakeOpenCodeEnvironment(runScript: """
+      echo '{"type":"step_start","sessionID":"ses_warm","part":{}}'
+      echo '{"type":"text","sessionID":"ses_warm","part":{"text":"ok"}}'
+      """)
+    func server(_ output: String) throws -> (url: String, password: String) {
+      let line = try XCTUnwrap(output.split(separator: "\n").first)
+      let object = try XCTUnwrap(
+        JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
+      )
+      XCTAssertEqual(object["type"] as? String, "openorg_server")
+      return (
+        try XCTUnwrap(object["url"] as? String),
+        try XCTUnwrap(object["password"] as? String)
+      )
+    }
+
+    let first = try runPython(
+      python,
+      source: OpenCodeClient.managedRemotePythonBootstrap,
+      input: runPayload(threadID: UUID().uuidString.lowercased(), token: "warm-1"),
+      environment: environment
+    )
+    let second = try runPython(
+      python,
+      source: OpenCodeClient.managedRemotePythonBootstrap,
+      input: runPayload(threadID: UUID().uuidString.lowercased(), token: "warm-2"),
+      environment: environment
+    )
+    XCTAssertEqual(first.status, 0)
+    XCTAssertEqual(second.status, 0)
+    XCTAssertTrue(second.output.contains("ok"))
+    let firstServer = try server(first.output)
+    let secondServer = try server(second.output)
+    XCTAssertEqual(firstServer.url, secondServer.url)
+    XCTAssertEqual(firstServer.password, secondServer.password)
+    XCTAssertGreaterThanOrEqual(firstServer.password.count, 32)
+    let serves = { (try? String(contentsOf: self.root.appendingPathComponent("serves"), encoding: .utf8)) ?? "" }
+    XCTAssertEqual(serves().split(separator: "\n").count, 1, "the second turn reused the warm server")
+
+    let other = try runPython(
+      python,
+      source: OpenCodeClient.managedRemotePythonBootstrap,
+      input: runPayload(
+        threadID: UUID().uuidString.lowercased(),
+        token: "warm-3",
+        configuration: "read-only sandbox"
+      ),
+      environment: environment
+    )
+    XCTAssertEqual(other.status, 0)
+    XCTAssertNotEqual(try server(other.output).url, firstServer.url)
+    XCTAssertEqual(serves().split(separator: "\n").count, 2)
+    let apiCalls = (try? String(contentsOf: root.appendingPathComponent("api-calls"), encoding: .utf8)) ?? ""
+    XCTAssertFalse(apiCalls.contains("session.interrupt"), "finished turns are not interrupted")
   }
 
   func testAttachReportsAMissingTurn() throws {
@@ -640,7 +724,10 @@ final class AIChatDetachedTurnTests: XCTestCase {
     throw XCTSkip("python3 is not available")
   }
 
+  /// `serve` really listens (the adapter probes a reused server) and logs each
+  /// launch to `$HOME/serves`; `api` logs its arguments to `$HOME/api-calls`.
   private func fakeOpenCodeEnvironment(runScript: String) throws -> [String: String] {
+    let python = try pythonExecutable()
     let bin = root.appendingPathComponent("bin", isDirectory: true)
     let workspace = root.appendingPathComponent("workspace", isDirectory: true)
     try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
@@ -648,10 +735,16 @@ final class AIChatDetachedTurnTests: XCTestCase {
     let opencode = bin.appendingPathComponent("opencode")
     try """
       #!/bin/sh
-      if [ "$1" = "serve" ]; then
-        echo "server listening on http://127.0.0.1:4096"
-        exec sleep 60
-      fi
+      case "$1" in
+        serve)
+          echo serve >> "$HOME/serves"
+          exec "\(python.path)" -c 'import socket, time; s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(8); print("server listening on http://127.0.0.1:%d" % s.getsockname()[1], flush=True); time.sleep(120)'
+          ;;
+        api)
+          echo "$*" >> "$HOME/api-calls"
+          exit 0
+          ;;
+      esac
       \(runScript)
       """.write(to: opencode, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: opencode.path)
@@ -662,9 +755,9 @@ final class AIChatDetachedTurnTests: XCTestCase {
     ]
   }
 
-  private func runPayload(threadID: String, token: String) -> String {
+  private func runPayload(threadID: String, token: String, configuration: String = "{}") -> String {
     let workspace = root.appendingPathComponent("workspace").path
-    return #"{"workspacePath":"\#(workspace)","threadID":"\#(threadID)","runToken":"\#(token)","arguments":["run","--format","json"],"message":"hi","configuration":"{}","serverPassword":"pw","attachments":[]}"#
+    return #"{"workspacePath":"\#(workspace)","threadID":"\#(threadID)","runToken":"\#(token)","arguments":["run","--format","json"],"message":"hi","configuration":"\#(configuration)","attachments":[]}"#
   }
 
   private func startPython(

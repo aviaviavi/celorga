@@ -161,7 +161,8 @@ public actor OpenCodeClient {
   private let eventHandler: EventHandler
   private struct ActiveRun {
     let process: Process
-    let serverProcess: Process?
+    /// The local warm server this turn runs on; nil for managed remote turns.
+    let warmServer: WarmServer?
     /// Nil while following a detached turn, which cannot be steered.
     let serverURL: String?
     let serverPassword: String
@@ -172,17 +173,29 @@ public actor OpenCodeClient {
   /// Set while OpenOrg quits: managed remote turns keep running on their host
   /// and are reattached by the next launch instead of being stopped.
   private var isDetachingForTermination = false
+  private var warmServers: [String: WarmServer] = [:]
+  private var warmServerReapTask: Task<Void, Never>?
+  private let warmServerIdleTimeout: TimeInterval
+  /// Distinct configurations kept warm at once (for example one per sandbox mode).
+  nonisolated static let warmServerLimit = 3
 
   public init(
     transport: OpenCodeTransport = .local,
     executableURL: URL? = OpenCodeClient.resolveExecutableURL(),
     environment: [String: String] = ProcessInfo.processInfo.environment,
+    warmServerIdleTimeout: TimeInterval = TimeInterval(OpenCodeClient.warmServerIdleSeconds),
     eventHandler: @escaping EventHandler
   ) {
     self.transport = transport
     self.executableURL = executableURL
     self.environment = environment
+    self.warmServerIdleTimeout = warmServerIdleTimeout
     self.eventHandler = eventHandler
+  }
+
+  deinit {
+    warmServerReapTask?.cancel()
+    for server in warmServers.values { server.stop() }
   }
 
   nonisolated public static func resolveExecutableURL(
@@ -263,7 +276,9 @@ public actor OpenCodeClient {
         ]
       ]
     ]
-    let data = try JSONSerialization.data(withJSONObject: configuration, options: [])
+    // Sorted keys keep identical settings byte-identical: the configuration
+    // is the key that lets later turns reuse a warm server.
+    let data = try JSONSerialization.data(withJSONObject: configuration, options: [.sortedKeys])
     return String(decoding: data, as: UTF8.self)
   }
 
@@ -483,6 +498,256 @@ def openorg_stop_previous_run(run):
     openorg_remove_run(run)
 """#
 
+  /// How long an unused warm OpenCode server stays up, locally and on a
+  /// managed remote host.
+  nonisolated public static let warmServerIdleSeconds = 600
+
+  /// Owns one warm `opencode serve` on a managed remote host. It runs
+  /// detached from any SSH session, publishes the server in a 0600 record,
+  /// and stops the server once no turn has held a lease for the idle period.
+  /// Arguments: state directory, server key, opencode path, idle seconds.
+  nonisolated static let managedRemoteWarmServerKeeperPython = #"""
+import fcntl
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+directory, key, opencode, idle_seconds = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
+base = os.path.join(directory, key)
+record_path = base + ".json"
+lease_directory = base + ".leases"
+signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
+def write_record(fields):
+    record = {"version": 1, "pid": os.getpid(), "updatedAt": time.time()}
+    record.update(fields)
+    temporary = "%s.%d.tmp" % (record_path, os.getpid())
+    with open(temporary, "w") as handle:
+        json.dump(record, handle)
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, record_path)
+
+def owns_record():
+    try:
+        with open(record_path, "r") as handle:
+            return json.load(handle).get("pid") == os.getpid()
+    except (OSError, ValueError, AttributeError):
+        return False
+
+def has_live_lease():
+    try:
+        names = os.listdir(lease_directory)
+    except OSError:
+        return False
+    live = False
+    for name in names:
+        try:
+            os.kill(int(name), 0)
+            live = True
+        except (OSError, ValueError):
+            try:
+                os.remove(os.path.join(lease_directory, name))
+            except OSError:
+                pass
+    return live
+
+log = open(base + ".log", "wb")
+server = subprocess.Popen(
+    [opencode, "serve", "--hostname", "127.0.0.1", "--port", "0"],
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.PIPE,
+    stderr=log,
+)
+
+def stop(*_):
+    if server.poll() is None:
+        server.terminate()
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server.kill()
+    if owns_record():
+        try:
+            os.remove(record_path)
+        except OSError:
+            pass
+    os._exit(0)
+
+signal.signal(signal.SIGTERM, stop)
+signal.signal(signal.SIGINT, stop)
+line = server.stdout.readline().decode("utf-8", "replace").strip()
+prefix = "server listening on "
+if not line.startswith(prefix):
+    write_record({"state": "failed", "detail": line or "OpenCode warm server did not start"})
+    if server.poll() is None:
+        server.terminate()
+    sys.exit(1)
+
+def drain():
+    for _ in iter(lambda: server.stdout.read(65536), b""):
+        pass
+threading.Thread(target=drain, daemon=True).start()
+write_record({
+    "state": "ready",
+    "serverPid": server.pid,
+    "url": line[len(prefix):],
+    "password": os.environ.get("OPENCODE_SERVER_PASSWORD", ""),
+})
+
+while server.poll() is None:
+    time.sleep(min(15.0, idle_seconds))
+    with open(base + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not owns_record():
+            break
+        try:
+            last_used = os.path.getmtime(record_path)
+        except OSError:
+            last_used = 0
+        if has_live_lease() or time.time() - last_used < idle_seconds:
+            continue
+        os.remove(record_path)
+        break
+stop()
+"""#
+
+  /// Adapter helpers that find or start the warm server for a configuration,
+  /// hold a lease on it for one turn, and stop a turn's session in it.
+  nonisolated static let managedRemoteWarmServerPython = #"""
+
+import fcntl
+import hashlib
+import secrets
+import socket
+
+OPENORG_SERVER_DIRECTORY = os.path.join(
+    os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"),
+    "openorg",
+    "opencode-servers",
+)
+OPENORG_WARM_SERVER_IDLE_SECONDS = \#(warmServerIdleSeconds)
+OPENORG_WARM_SERVER_KEEPER = base64.b64decode("\#(Data(managedRemoteWarmServerKeeperPython.utf8).base64EncodedString())").decode("utf-8")
+
+def openorg_read_json(path):
+    try:
+        with open(path, "r") as handle:
+            value = json.load(handle)
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+def openorg_server_reachable(url):
+    try:
+        port = int(url.rsplit(":", 1)[1].split("/")[0])
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            return True
+    except (OSError, ValueError, IndexError):
+        return False
+
+def openorg_warm_server_usable(record):
+    return (
+        record is not None
+        and record.get("state") == "ready"
+        and openorg_pid_alive(record.get("pid"))
+        and openorg_pid_alive(record.get("serverPid"))
+        and openorg_server_reachable(str(record.get("url") or ""))
+    )
+
+def openorg_acquire_warm_server(opencode, workspace, configuration):
+    os.makedirs(OPENORG_SERVER_DIRECTORY, mode=0o700, exist_ok=True)
+    executable = os.path.realpath(opencode)
+    try:
+        executable_stamp = os.stat(executable).st_mtime
+    except OSError:
+        executable_stamp = 0
+    key = hashlib.sha256(json.dumps(
+        ["openorg-opencode-server:v1", executable, executable_stamp, workspace, configuration]
+    ).encode("utf-8")).hexdigest()[:32]
+    base = os.path.join(OPENORG_SERVER_DIRECTORY, key)
+    record_path = base + ".json"
+    lease_directory = base + ".leases"
+    with open(base + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        record = openorg_read_json(record_path)
+        if not openorg_warm_server_usable(record):
+            if record and record.get("pid") and openorg_pid_alive(record.get("pid")):
+                try:
+                    os.kill(int(record["pid"]), signal.SIGTERM)
+                except (OSError, ValueError):
+                    pass
+            try:
+                os.remove(record_path)
+            except OSError:
+                pass
+            os.makedirs(lease_directory, mode=0o700, exist_ok=True)
+            environment = os.environ.copy()
+            environment["OPENCODE_CONFIG_CONTENT"] = configuration
+            environment["OPENCODE_SERVER_PASSWORD"] = secrets.token_hex(24)
+            keeper = subprocess.Popen(
+                [sys.executable, "-c", OPENORG_WARM_SERVER_KEEPER, OPENORG_SERVER_DIRECTORY,
+                 key, opencode, str(OPENORG_WARM_SERVER_IDLE_SECONDS)],
+                cwd=workspace,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+            deadline = time.time() + 120
+            while True:
+                record = openorg_read_json(record_path)
+                if record and record.get("state") in ("ready", "failed"):
+                    break
+                if keeper.poll() is not None or time.time() > deadline:
+                    raise RuntimeError("OpenCode server did not start")
+                time.sleep(0.02)
+            if record.get("state") != "ready":
+                try:
+                    os.remove(record_path)
+                except OSError:
+                    pass
+                raise RuntimeError(record.get("detail") or "OpenCode server did not start")
+        os.makedirs(lease_directory, mode=0o700, exist_ok=True)
+        lease = os.path.join(lease_directory, str(os.getpid()))
+        open(lease, "w").close()
+        try:
+            os.utime(record_path)
+        except OSError:
+            pass
+    return record, lease, record_path
+
+def openorg_release_warm_server(lease, record_path):
+    try:
+        os.remove(lease)
+    except OSError:
+        return
+    try:
+        os.utime(record_path)
+    except OSError:
+        pass
+
+def openorg_interrupt_session(opencode, environment, server_url, session_id):
+    if not session_id:
+        return
+    try:
+        subprocess.run(
+            [opencode, "api", "--server", server_url, "session.interrupt",
+             "--param", "sessionID=" + session_id],
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+"""#
+
   nonisolated static let managedRemotePythonBootstrap = #"""
 import base64
 import json
@@ -495,7 +760,7 @@ import sys
 import tempfile
 import threading
 
-"""# + managedRemoteRunRecordPython + #"""
+"""# + managedRemoteRunRecordPython + managedRemoteWarmServerPython + #"""
 
 payload = json.load(sys.stdin)
 workspace = os.path.expanduser(payload["workspacePath"])
@@ -523,29 +788,28 @@ try:
         attachment_paths.append(path)
 
     arguments = list(payload["arguments"])
+    session_id = [None]
+    if "--session" in arguments:
+        session_id[0] = arguments[arguments.index("--session") + 1]
     for path in attachment_paths:
         arguments.extend(["--file", path])
     arguments.extend(["--", payload["message"]])
+
+    # A cold `opencode serve` spends about a second loading config, providers,
+    # skills, and MCP servers before the model sees the prompt. Reuse a warm
+    # server with the same configuration; it stops itself once idle.
+    server, lease, server_record = openorg_acquire_warm_server(
+        opencode, workspace, payload["configuration"]
+    )
+    server_url = server["url"]
     environment = os.environ.copy()
     environment["OPENCODE_CONFIG_CONTENT"] = payload["configuration"]
-    environment["OPENCODE_SERVER_PASSWORD"] = payload["serverPassword"]
-
-    server = subprocess.Popen(
-        [opencode, "serve", "--hostname", "127.0.0.1", "--port", "0"],
-        cwd=workspace,
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    server_line = server.stdout.readline().strip()
-    server_prefix = "server listening on "
-    if not server_line.startswith(server_prefix):
-        detail = server.stderr.readline().strip()
-        raise RuntimeError(detail or server_line or "OpenCode private server did not start")
-    server_url = server_line[len(server_prefix):]
-    threading.Thread(target=server.stderr.read, daemon=True).start()
-    sys.stdout.write(json.dumps({"type": "openorg_server", "url": server_url}) + "\n")
+    environment["OPENCODE_SERVER_PASSWORD"] = server["password"]
+    sys.stdout.write(json.dumps({
+        "type": "openorg_server",
+        "url": server_url,
+        "password": server["password"],
+    }) + "\n")
     sys.stdout.flush()
 
     arguments[1:1] = ["--server", server_url]
@@ -568,12 +832,18 @@ try:
         stdout=subprocess.PIPE,
         start_new_session=True,
     )
-    def forward(signum, _frame):
+    stopping = [False]
+    def forward(_signum, _frame):
+        # The session runs inside the shared server, so only SIGINT (which
+        # `opencode run` turns into an abort) or an explicit interrupt stops
+        # it; SIGTERM would leave the turn running after its client exits.
+        stopping[0] = True
         if process.poll() is None:
             try:
-                os.killpg(process.pid, signum)
+                os.killpg(process.pid, signal.SIGINT)
             except OSError:
-                process.send_signal(signum)
+                process.send_signal(signal.SIGINT)
+        openorg_interrupt_session(opencode, environment, server_url, session_id[0])
     signal.signal(signal.SIGINT, forward)
     signal.signal(signal.SIGTERM, forward)
     # The durable copy never waits on the client: a sleeping client stops
@@ -582,6 +852,11 @@ try:
     outbound = queue.Queue()
     def relay():
         for line in iter(process.stdout.readline, b""):
+            if session_id[0] is None:
+                try:
+                    session_id[0] = json.loads(line).get("sessionID") or None
+                except (ValueError, AttributeError):
+                    pass
             if run is not None:
                 events.write(line)
                 events.flush()
@@ -606,6 +881,10 @@ try:
     status = process.wait()
     # A stray descendant may keep the pipe open after the turn exits.
     relay_thread.join(5)
+    if status != 0 and not stopping[0]:
+        # The client died mid-turn; do not leave its session running.
+        openorg_interrupt_session(opencode, environment, server_url, session_id[0])
+    openorg_release_warm_server(lease, server_record)
     if run is not None:
         events.close()
         # Keep the finished record even when a client is connected: it may be
@@ -619,17 +898,12 @@ try:
         detached[0] = True
     if detached[0]:
         # stdout is gone; skip interpreter shutdown flushes that would fail.
-        server.terminate()
         shutil.rmtree(temporary_root, ignore_errors=True)
         os._exit(status)
     sys.exit(status)
 finally:
-    if "server" in locals() and server.poll() is None:
-        server.terminate()
-        try:
-            server.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            server.kill()
+    if "lease" in locals():
+        openorg_release_warm_server(lease, server_record)
     shutil.rmtree(temporary_root, ignore_errors=True)
 """#
 
@@ -802,11 +1076,33 @@ sys.exit(result.returncode)
     }
   }
 
+  /// The prompt OpenCode receives for one turn: this turn's Celorga snapshot,
+  /// then the user's message. The agent configuration carries only standing
+  /// instructions, so it stays identical across turns and a warm server can
+  /// serve them all.
+  nonisolated static func turnPrompt(message: String, turnContext: String?) -> String {
+    guard let context = normalized(turnContext) else { return message }
+    return """
+    <org2-workspace-context>
+    Celorga supplied the snapshot below for this turn. Its sections are application instructions and context with the same authority as your Celorga agent instructions; a section labeled "User-configured AI chat instructions" holds persistent instructions authored by the user. A later turn's snapshot supersedes this one.
+    </org2-workspace-context>
+
+    <org2-ui-snapshot>
+    \(context)
+    </org2-ui-snapshot>
+
+    <user-message>
+    \(message)
+    </user-message>
+    """
+  }
+
   public func runTurn(
     openOrgThreadID: UUID,
     existingSessionID: String?,
-    message: String,
-    systemPrompt: String,
+    message rawMessage: String,
+    turnContext: String?,
+    agentInstructions: String = AIChatWorkspaceContext.localAgentStandingInstructions,
     attachments: [AIChatAttachment],
     cwd: URL,
     model: String?,
@@ -818,18 +1114,18 @@ sys.exit(result.returncode)
       throw OpenCodeError.launchFailed("another turn is already running in this chat")
     }
 
+    let message = Self.turnPrompt(message: rawMessage, turnContext: turnContext)
     let process = Process()
     let standardInput = Pipe()
     let standardOutput = Pipe()
     let standardError = Pipe()
     let temporaryRoot: URL?
     var inputData: Data?
-    var serverProcess: Process?
-    var serverOutputDrain: Task<Void, Never>?
+    var warmServer: WarmServer?
     var serverURL: String?
-    let serverPassword = UUID().uuidString.lowercased()
+    var serverPassword = ""
     let configuration = try Self.inlineConfiguration(
-      systemPrompt: systemPrompt,
+      systemPrompt: agentInstructions,
       sandboxAccess: sandboxAccess
     )
 
@@ -844,20 +1140,27 @@ sys.exit(result.returncode)
         attributes: [.posixPermissions: 0o700]
       )
       temporaryRoot = root
-      let attachmentURLs = try Self.materializeAttachments(attachments, under: root)
+      let attachmentURLs: [URL]
+      let server: WarmServer
+      do {
+        attachmentURLs = try Self.materializeAttachments(attachments, under: root)
+        server = try await acquireWarmServer(
+          executableURL: executableURL,
+          cwd: cwd.standardizedFileURL,
+          configuration: configuration
+        )
+      } catch {
+        try? FileManager.default.removeItem(at: root)
+        throw error
+      }
+      warmServer = server
+      serverURL = server.url
+      serverPassword = server.password
       let processEnvironment = Self.privateServerEnvironment(
         environment,
-        serverPassword: serverPassword,
+        serverPassword: server.password,
         configuration: configuration
       )
-      let server = try await Self.startServer(
-        executableURL: executableURL,
-        cwd: cwd.standardizedFileURL,
-        environment: processEnvironment
-      )
-      serverProcess = server.process
-      serverOutputDrain = server.outputDrain
-      serverURL = server.url
       process.executableURL = executableURL
       var arguments = Self.arguments(
         sessionID: existingSessionID,
@@ -894,7 +1197,6 @@ sys.exit(result.returncode)
         arguments: Array(remoteArguments.dropLast(2)),
         message: message,
         configuration: configuration,
-        serverPassword: serverPassword,
         attachments: try attachments.map {
           OpenCodeRemoteAttachment(
             fileName: $0.fileName,
@@ -907,8 +1209,7 @@ sys.exit(result.returncode)
     }
 
     defer {
-      serverOutputDrain?.cancel()
-      if let serverProcess, serverProcess.isRunning { serverProcess.terminate() }
+      if let warmServer { releaseWarmServer(warmServer) }
       if let temporaryRoot { try? FileManager.default.removeItem(at: temporaryRoot) }
     }
     process.standardInput = standardInput
@@ -921,20 +1222,23 @@ sys.exit(result.returncode)
       if let inputData { try standardInput.fileHandleForWriting.write(contentsOf: inputData) }
       try standardInput.fileHandleForWriting.close()
       if serverURL == nil {
-        serverURL = try await Self.readRemoteServerURL(from: standardOutput.fileHandleForReading)
+        let remote = try await Self.readRemoteServer(from: standardOutput.fileHandleForReading)
+        serverURL = remote.url
+        serverPassword = remote.password
       }
       guard let serverURL else {
         throw OpenCodeError.invalidResponse("the private server did not report its endpoint")
       }
       activeRuns[openOrgThreadID] = ActiveRun(
         process: process,
-        serverProcess: serverProcess,
+        warmServer: warmServer,
         serverURL: serverURL,
         serverPassword: serverPassword
       )
     } catch {
       if process.isRunning { process.terminate() }
       activeRuns.removeValue(forKey: openOrgThreadID)
+      if let warmServer { retireWarmServer(warmServer) }
       throw OpenCodeError.launchFailed(error.localizedDescription)
     }
 
@@ -943,7 +1247,168 @@ sys.exit(result.returncode)
       standardOutput: standardOutput,
       standardError: standardError,
       openOrgThreadID: openOrgThreadID,
-      mayOutliveConnection: transport != .local
+      mayOutliveConnection: transport != .local,
+      warmServer: warmServer
+    )
+  }
+
+  // MARK: Warm local servers
+
+  /// A local `opencode serve` kept running between turns. A cold server
+  /// spends about a second loading config, providers, skills, and MCP servers
+  /// before the model sees a prompt; reusing one removes that from each turn.
+  /// Mutated only on the client actor (and read by its deinit, which has
+  /// exclusive access), hence the unchecked conformance.
+  private final class WarmServer: @unchecked Sendable {
+    let key: String
+    let process: Process
+    let url: String
+    let password: String
+    let outputDrain: Task<Void, Never>
+    var activeTurns = 0
+    var lastUsed = Date()
+    /// No longer offered to new turns; stopped once its last turn ends.
+    var isRetired = false
+
+    init(key: String, process: Process, url: String, password: String, outputDrain: Task<Void, Never>) {
+      self.key = key
+      self.process = process
+      self.url = url
+      self.password = password
+      self.outputDrain = outputDrain
+    }
+
+    func stop() {
+      outputDrain.cancel()
+      if process.isRunning { process.terminate() }
+    }
+  }
+
+  nonisolated static func warmServerKey(
+    executablePath: String,
+    cwd: String,
+    configuration: String
+  ) -> String {
+    [executablePath, cwd, configuration].joined(separator: "\u{0}")
+  }
+
+  /// Number of warm servers currently offered to new turns.
+  public var warmServerCount: Int {
+    warmServers.values.filter { $0.process.isRunning }.count
+  }
+
+  private func acquireWarmServer(
+    executableURL: URL,
+    cwd: URL,
+    configuration: String
+  ) async throws -> WarmServer {
+    let key = Self.warmServerKey(
+      executablePath: executableURL.path,
+      cwd: cwd.path,
+      configuration: configuration
+    )
+    if let server = warmServers[key] {
+      if server.process.isRunning {
+        server.activeTurns += 1
+        server.lastUsed = Date()
+        return server
+      }
+      warmServers.removeValue(forKey: key)
+      server.stop()
+    }
+    let password = UUID().uuidString.lowercased()
+    let started = try await Self.startServer(
+      executableURL: executableURL,
+      cwd: cwd,
+      environment: Self.privateServerEnvironment(
+        environment,
+        serverPassword: password,
+        configuration: configuration
+      )
+    )
+    let server = WarmServer(
+      key: key,
+      process: started.process,
+      url: started.url,
+      password: password,
+      outputDrain: started.outputDrain
+    )
+    server.activeTurns = 1
+    if warmServers[key] == nil {
+      warmServers[key] = server
+      trimWarmServers()
+    } else {
+      // Another turn started the same server meanwhile; use this one once.
+      server.isRetired = true
+    }
+    return server
+  }
+
+  private func releaseWarmServer(_ server: WarmServer) {
+    server.activeTurns = max(0, server.activeTurns - 1)
+    server.lastUsed = Date()
+    if server.isRetired {
+      if server.activeTurns == 0 { server.stop() }
+      return
+    }
+    scheduleWarmServerReap()
+  }
+
+  /// Stops offering a server that may be unhealthy.
+  private func retireWarmServer(_ server: WarmServer) {
+    if warmServers[server.key] === server {
+      warmServers.removeValue(forKey: server.key)
+    }
+    server.isRetired = true
+    if server.activeTurns == 0 { server.stop() }
+  }
+
+  private func trimWarmServers() {
+    while warmServers.count > Self.warmServerLimit,
+          let oldest = warmServers.values
+            .filter({ $0.activeTurns == 0 })
+            .min(by: { $0.lastUsed < $1.lastUsed }) {
+      warmServers.removeValue(forKey: oldest.key)
+      oldest.stop()
+    }
+  }
+
+  private func scheduleWarmServerReap() {
+    guard warmServerReapTask == nil else { return }
+    let interval = max(0.05, min(30, warmServerIdleTimeout / 2))
+    warmServerReapTask = Task { [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(interval))
+        guard let self, await self.reapIdleWarmServers() else { return }
+      }
+    }
+  }
+
+  /// Stops servers idle past the timeout. Returns whether any remain.
+  private func reapIdleWarmServers(now: Date = Date()) -> Bool {
+    for server in warmServers.values where server.activeTurns == 0
+      && (now.timeIntervalSince(server.lastUsed) >= warmServerIdleTimeout || !server.process.isRunning) {
+      warmServers.removeValue(forKey: server.key)
+      server.stop()
+    }
+    if warmServers.isEmpty {
+      warmServerReapTask = nil
+      return false
+    }
+    return true
+  }
+
+  private func interruptSession(_ sessionID: String, on server: WarmServer) async {
+    guard let executableURL else { return }
+    _ = try? await Self.runCommand(
+      executableURL: executableURL,
+      arguments: [
+        "api", "--server", server.url,
+        "session.interrupt",
+        "--param", "sessionID=\(sessionID)"
+      ],
+      cwd: nil,
+      environment: Self.privateServerEnvironment(environment, serverPassword: server.password)
     )
   }
 
@@ -1052,7 +1517,7 @@ sys.exit(result.returncode)
     }
     activeRuns[openOrgThreadID] = ActiveRun(
       process: process,
-      serverProcess: nil,
+      warmServer: nil,
       serverURL: nil,
       serverPassword: ""
     )
@@ -1070,7 +1535,8 @@ sys.exit(result.returncode)
     standardOutput: Pipe,
     standardError: Pipe,
     openOrgThreadID: UUID,
-    mayOutliveConnection: Bool
+    mayOutliveConnection: Bool,
+    warmServer: WarmServer? = nil
   ) async throws -> OpenCodeTurnResult {
     let handler = eventHandler
     let outputTask = Task.detached(priority: .userInitiated) {
@@ -1105,6 +1571,16 @@ sys.exit(result.returncode)
       : false
     if activeRuns[openOrgThreadID]?.process === process {
       activeRuns.removeValue(forKey: openOrgThreadID)
+    }
+    if let warmServer, status != 0, !wasInterrupted, !Task.isCancelled {
+      if let sessionID = decoded.sessionID {
+        // The session lives in the shared server and keeps running after its
+        // client dies; stop it rather than leave an orphaned turn.
+        await interruptSession(sessionID, on: warmServer)
+      } else {
+        // Failing before any session suggests the server itself is unwell.
+        retireWarmServer(warmServer)
+      }
     }
 
     if mayOutliveConnection, isDetachingForTermination {
@@ -1221,11 +1697,13 @@ sys.exit(result.returncode)
   public func shutdown() {
     for run in activeRuns.values {
       if run.process.isRunning { run.process.terminate() }
-      if let serverProcess = run.serverProcess, serverProcess.isRunning {
-        serverProcess.terminate()
-      }
+      run.warmServer?.stop()
     }
     activeRuns.removeAll()
+    warmServerReapTask?.cancel()
+    warmServerReapTask = nil
+    for server in warmServers.values { server.stop() }
+    warmServers.removeAll()
   }
 
   nonisolated static func steerArguments(
@@ -1314,17 +1792,22 @@ sys.exit(result.returncode)
     }
   }
 
-  private nonisolated static func readRemoteServerURL(from handle: FileHandle) async throws -> String {
+  /// The remote host reports the warm server the turn runs on, including the
+  /// password steering needs: a reused server keeps the one it started with.
+  private nonisolated static func readRemoteServer(
+    from handle: FileHandle
+  ) async throws -> (url: String, password: String) {
     let line = try await readLine(from: handle)
     guard let data = line.data(using: .utf8),
           let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
           object["type"] as? String == "openorg_server",
           let url = object["url"] as? String,
-          isLoopbackServerURL(url)
+          isLoopbackServerURL(url),
+          let password = object["password"] as? String, !password.isEmpty
     else {
       throw OpenCodeError.invalidResponse("the remote private server did not report its endpoint")
     }
-    return url
+    return (url, password)
   }
 
   private nonisolated static func readLine(from handle: FileHandle) async throws -> String {
@@ -1476,7 +1959,6 @@ private struct OpenCodeRemotePayload: Encodable {
   let arguments: [String]
   let message: String
   let configuration: String
-  let serverPassword: String
   let attachments: [OpenCodeRemoteAttachment]
 }
 

@@ -160,11 +160,141 @@ final class OpenCodeClientTests: XCTestCase {
     XCTAssertEqual(environment["OPENCODE_SERVER_PASSWORD"], "per-run-secret")
     XCTAssertEqual(environment["OPENCODE_CONFIG_CONTENT"], "{\"agent\":{}}")
     XCTAssertTrue(OpenCodeClient.managedRemotePythonBootstrap.contains(
-      #"environment["OPENCODE_SERVER_PASSWORD"] = payload["serverPassword"]"#
+      #"environment["OPENCODE_SERVER_PASSWORD"] = server["password"]"#
     ))
     XCTAssertTrue(OpenCodeClient.managedRemoteSteerPythonBootstrap.contains(
       #"environment["OPENCODE_SERVER_PASSWORD"] = payload["serverPassword"]"#
     ))
+  }
+
+  func testInlineConfigurationIsByteStableForWarmServerReuse() throws {
+    let configurations = try (0..<20).map { _ in
+      try OpenCodeClient.inlineConfiguration(
+        systemPrompt: AIChatWorkspaceContext.localAgentStandingInstructions,
+        sandboxAccess: .workspaceWrite
+      )
+    }
+    XCTAssertEqual(Set(configurations).count, 1)
+  }
+
+  func testTurnPromptCarriesTheSnapshotWithTheMessage() {
+    let prompt = OpenCodeClient.turnPrompt(
+      message: "Summarize the open loops.",
+      turnContext: "Celorga workspace UI snapshot\n\nCurrent surface: Agenda"
+    )
+    XCTAssertTrue(prompt.hasPrefix("<org2-workspace-context>"))
+    XCTAssertTrue(prompt.contains("<org2-ui-snapshot>\nCelorga workspace UI snapshot\n\nCurrent surface: Agenda\n</org2-ui-snapshot>"))
+    XCTAssertTrue(prompt.hasSuffix("<user-message>\nSummarize the open loops.\n</user-message>"))
+    XCTAssertEqual(OpenCodeClient.turnPrompt(message: "plain", turnContext: "  "), "plain")
+  }
+
+  func testStandingInstructionsLeaveTheTurnSnapshotOut() {
+    let context = AIChatWorkspaceContext(
+      localCorpusRoot: "/tmp/fixture-corpus",
+      remoteCorpusRoot: nil,
+      selectedSurface: "Agenda",
+      selectedLocation: nil,
+      selectedEntrySource: nil,
+      backlinks: nil,
+      agenda: nil,
+      searchQuery: "",
+      searchResults: []
+    )
+    let full = context.localAgentSystemPrompt(runtime: "opencode", runtimeTitle: "OpenCode")
+    let turn = context.localAgentSystemPrompt(
+      runtime: "opencode",
+      runtimeTitle: "OpenCode",
+      includesStandingInstructions: false
+    )
+    let standing = AIChatWorkspaceContext.localAgentStandingInstructions
+    XCTAssertTrue(standing.contains("Celorga working rules"))
+    XCTAssertTrue(standing.contains("Celorga response formatting contract"))
+    XCTAssertFalse(standing.contains("Current surface"))
+    XCTAssertTrue(turn.contains("Current surface: Agenda"))
+    XCTAssertFalse(turn.contains("Celorga working rules"))
+    XCTAssertFalse(turn.contains("Celorga response formatting contract"))
+    // Nothing is lost: the full prompt is the turn snapshot plus the standing sections.
+    for section in standing.components(separatedBy: "\n\n---\n\n") {
+      XCTAssertTrue(full.contains(section))
+    }
+  }
+
+  /// A cold `opencode serve` costs about a second per turn. Turns reuse one
+  /// warm server whose configuration does not depend on the turn, and an
+  /// idle server stops itself.
+  func testLocalTurnsReuseAWarmServerUntilItIdles() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("OpenCodeWarmServer-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = root.appendingPathComponent("opencode")
+    try """
+    #!/bin/sh
+    case "$1" in
+      serve)
+        echo serve >> "\(root.path)/serves"
+        printf '%s' "$OPENCODE_CONFIG_CONTENT" > "\(root.path)/configuration"
+        echo "server listening on http://127.0.0.1:4096"
+        exec sleep 30
+        ;;
+      run)
+        for arg in "$@"; do last="$arg"; done
+        printf '%s' "$last" > "\(root.path)/prompt"
+        echo '{"type":"step_start","sessionID":"ses_warm","part":{}}'
+        echo '{"type":"text","sessionID":"ses_warm","part":{"text":"ok"}}'
+        ;;
+    esac
+    """.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+
+    let client = OpenCodeClient(
+      executableURL: executable,
+      environment: ["PATH": "/usr/bin:/bin"],
+      warmServerIdleTimeout: 0.4
+    ) { _, _ in }
+    func turn(_ context: String) async throws -> OpenCodeTurnResult {
+      try await client.runTurn(
+        openOrgThreadID: UUID(),
+        existingSessionID: nil,
+        message: "hello",
+        turnContext: context,
+        attachments: [],
+        cwd: root,
+        model: nil,
+        reasoningEffort: nil,
+        sandboxAccess: .workspaceWrite
+      )
+    }
+    func serveCount() -> Int {
+      ((try? String(contentsOf: root.appendingPathComponent("serves"), encoding: .utf8)) ?? "")
+        .split(separator: "\n").count
+    }
+
+    let first = try await turn("Current surface: Agenda")
+    XCTAssertEqual(first.reply, "ok")
+    let second = try await turn("Current surface: AI Chat")
+    XCTAssertEqual(second.sessionID, "ses_warm")
+    XCTAssertEqual(serveCount(), 1, "the second turn reused the warm server")
+    let warmCount = await client.warmServerCount
+    XCTAssertEqual(warmCount, 1)
+
+    let configuration = try String(contentsOf: root.appendingPathComponent("configuration"), encoding: .utf8)
+    XCTAssertTrue(configuration.contains("Celorga working rules"))
+    XCTAssertFalse(configuration.contains("Current surface"))
+    let prompt = try String(contentsOf: root.appendingPathComponent("prompt"), encoding: .utf8)
+    XCTAssertTrue(prompt.contains("Current surface: AI Chat"))
+    XCTAssertTrue(prompt.hasSuffix("<user-message>\nhello\n</user-message>"))
+
+    let deadline = Date().addingTimeInterval(5)
+    var remaining = await client.warmServerCount
+    while remaining > 0, Date() < deadline {
+      try await Task.sleep(for: .milliseconds(100))
+      remaining = await client.warmServerCount
+    }
+    XCTAssertEqual(remaining, 0, "an idle warm server stops")
+    _ = try await turn("Current surface: Agenda")
+    XCTAssertEqual(serveCount(), 2)
+    await client.shutdown()
   }
 
   func testModelCatalogParsingKeepsOnlyProviderModelIDs() {
