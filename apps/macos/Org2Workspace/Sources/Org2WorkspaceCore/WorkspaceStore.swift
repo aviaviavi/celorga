@@ -3529,6 +3529,9 @@ public final class WorkspaceStore {
   var aiChatDictationRecoveryDirectory = WorkspaceStore.defaultAIChatDictationRecoveryDirectory
   private(set) var aiChatFullDisplayRebuildCountForTesting = 0
   var aiChatTranscriptSaverForTesting: (() throws -> Void)?
+  /// Runs while an entry save is between formatting and persisting, where a
+  /// deferred editor publish can land.
+  var entrySaveDidFormatHookForTesting: (@MainActor () async -> Void)?
   var editorPersistenceDelayNanosecondsForTesting: UInt64 = 0
   var editorPersistenceFailureMessageForTesting: String?
   private var aiChatVisibleMessageCountCache: [UUID: (rawCount: Int, visibleCount: Int)] = [:]
@@ -17466,8 +17469,22 @@ extension WorkspaceStore {
 
   public func saveAndFinishActiveEdit() async {
     if isEditingEntry {
+      // The native editor publishes typing (and Vim commands) on a short
+      // delay. Without this capture, a publish landing while the save was
+      // formatting made the save stand down for the newer text, and Save &
+      // Done then stayed in the editor with nothing visibly wrong.
+      await publishPendingNativeEditorState()
       if entryEditorHasUnsavedChanges {
-        await saveEditedEntry()
+        var attempts = 0
+        while isEditingEntry, entryEditorHasUnsavedChanges, attempts < 3 {
+          attempts += 1
+          let generation = sourceEditorDraftGeneration
+          await saveEditedEntry()
+          // A failed save leaves the draft as it was; keep the editor open.
+          // Only newer text arriving mid-save is worth saving again.
+          guard sourceEditorDraftGeneration != generation else { break }
+          await publishPendingNativeEditorState()
+        }
         guard isEditingEntry, !entryEditorHasUnsavedChanges else { return }
         // Saving starts a re-render of the page. Leaving the editor before it
         // publishes swaps in the loading view, then the native preview, then
@@ -17551,6 +17568,7 @@ extension WorkspaceStore {
     let draftGeneration = sourceEditorDraftGeneration
     let formatResult = await formattedEntryTextForSave(draft, source: source)
     let replacement = formatResult.text
+    await entrySaveDidFormatHookForTesting?()
     guard selectedEntrySource?.id == source.id,
           isEditingEntry,
           sourceEditorDraftGeneration == draftGeneration
