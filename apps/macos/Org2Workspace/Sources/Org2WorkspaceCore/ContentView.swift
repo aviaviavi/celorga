@@ -2092,7 +2092,7 @@ private struct ExternalThreadsView: View {
     VStack(spacing: 0) {
       HeaderBar(
         title: "External Threads",
-        subtitle: "Read-only tasks from Codex and other agent harnesses",
+        subtitle: "Read-only tasks from Codex",
         surface: .externalThreads
       ) {
         if store.isRefreshingExternalThreads {

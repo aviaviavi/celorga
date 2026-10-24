@@ -17,11 +17,22 @@ enum CodexRolloutTranscriptError: LocalizedError, Sendable {
 /// A long-running Codex task can have a rollout hundreds of megabytes larger
 /// than its visible conversation. Asking App Server to decode every turn first
 /// makes read-only browsing unnecessarily slow and memory-intensive.
+///
+/// Two rollout layouts are supported. Older Codex releases record visible text
+/// as `user_message` and `agent_message` events. Newer releases record it as
+/// `item_completed` events whose item is a `UserMessage` or `AgentMessage` with
+/// a list of content parts.
 struct CodexRolloutTranscriptReader: Sendable {
   private static let readChunkSize = 4 * 1_024 * 1_024
   private static let eventPrefixLimit = 512
   private static let maximumEventLineSize = 16 * 1_024 * 1_024
   private static let eventMarker = Data(#""type":"event_msg""#.utf8)
+  private static let messageMarkers = [
+    #""type":"user_message""#,
+    #""type":"agent_message""#,
+    #""type":"UserMessage""#,
+    #""type":"AgentMessage""#
+  ].map { Data($0.utf8) }
   private static let newlineMarker = Data([0x0A])
 
   static func messages(at url: URL) async throws -> [ExternalThreadMessage] {
@@ -34,7 +45,8 @@ struct CodexRolloutTranscriptReader: Sendable {
     let handle = try FileHandle(forReadingFrom: url)
     defer { try? handle.close() }
 
-    var messages: [ExternalThreadMessage] = []
+    var legacyMessages: [ExternalThreadMessage] = []
+    var itemMessages: [ExternalThreadMessage] = []
     var lineBuffer = Data()
     var discardingLine = false
     var lineNumber = 0
@@ -51,10 +63,10 @@ struct CodexRolloutTranscriptReader: Sendable {
           lineBuffer.append(contentsOf: bytes.prefix(prefixByteCount))
         }
         if lineBuffer.count >= eventPrefixLimit,
-           lineBuffer.range(of: eventMarker) == nil {
-          // The top-level record type appears near the start of every JSONL
-          // record. Once it is absent from the prefix, stop retaining what may
-          // be a multi-megabyte tool payload until its newline arrives.
+           !mayContainVisibleMessage(lineBuffer) {
+          // The record and payload types appear near the start of every JSONL
+          // record. Once they are absent from the prefix, stop retaining what
+          // may be a multi-megabyte tool payload until its newline arrives.
           lineBuffer.removeAll(keepingCapacity: false)
           discardingLine = true
         } else {
@@ -71,14 +83,18 @@ struct CodexRolloutTranscriptReader: Sendable {
       guard endsLine else { return }
       lineNumber += 1
       if !discardingLine,
-         lineBuffer.range(of: eventMarker) != nil,
+         mayContainVisibleMessage(lineBuffer),
          let message = message(
            from: lineBuffer,
            lineNumber: lineNumber,
            fractionalTimestampFormatter: fractionalTimestampFormatter,
            timestampFormatter: timestampFormatter
          ) {
-        messages.append(message)
+        if message.isItem {
+          itemMessages.append(message.message)
+        } else {
+          legacyMessages.append(message.message)
+        }
       }
       lineBuffer.removeAll(keepingCapacity: true)
       discardingLine = false
@@ -109,7 +125,14 @@ struct CodexRolloutTranscriptReader: Sendable {
     if !lineBuffer.isEmpty || discardingLine {
       consume(Data.SubSequence(), endsLine: true)
     }
-    return messages
+    // A rollout uses one layout, but prefer the item layout if a transitional
+    // release ever wrote both so the transcript never shows each turn twice.
+    return itemMessages.isEmpty ? legacyMessages : itemMessages
+  }
+
+  private nonisolated static func mayContainVisibleMessage(_ prefix: Data) -> Bool {
+    guard prefix.range(of: eventMarker) != nil else { return false }
+    return messageMarkers.contains { prefix.range(of: $0) != nil }
   }
 
   private nonisolated static func message(
@@ -117,27 +140,55 @@ struct CodexRolloutTranscriptReader: Sendable {
     lineNumber: Int,
     fractionalTimestampFormatter: ISO8601DateFormatter,
     timestampFormatter: ISO8601DateFormatter
-  ) -> ExternalThreadMessage? {
+  ) -> (message: ExternalThreadMessage, isItem: Bool)? {
     guard let event = try? JSONDecoder().decode(RolloutEvent.self, from: data),
-          event.type == "event_msg",
-          let content = normalized(event.payload.message)
+          event.type == "event_msg"
     else { return nil }
 
     let role: ExternalThreadMessage.Role
+    let rawContent: String?
+    let id: String?
+    let isItem: Bool
     switch event.payload.type {
     case "user_message":
       role = .user
+      rawContent = event.payload.message
+      id = event.payload.clientID
+      isItem = false
     case "agent_message":
       role = .assistant
+      rawContent = event.payload.message
+      id = event.payload.clientID
+      isItem = false
+    case "item_completed":
+      guard let item = event.payload.item else { return nil }
+      switch item.type {
+      case "UserMessage":
+        role = .user
+      case "AgentMessage":
+        role = .assistant
+      default:
+        return nil
+      }
+      rawContent = item.content?
+        .filter { $0.type.lowercased() == "text" }
+        .compactMap { normalized($0.text) }
+        .joined(separator: "\n\n")
+      id = item.id.flatMap(normalized) ?? item.clientID
+      isItem = true
     default:
       return nil
     }
+    guard let content = normalized(rawContent) else { return nil }
 
     let createdAt = fractionalTimestampFormatter.date(from: event.timestamp)
       ?? timestampFormatter.date(from: event.timestamp)
       ?? Date(timeIntervalSince1970: 0)
-    let id = event.payload.clientID.flatMap(normalized) ?? "rollout-line-\(lineNumber)"
-    return ExternalThreadMessage(id: id, role: role, content: content, createdAt: createdAt)
+    let messageID = id.flatMap(normalized) ?? "rollout-line-\(lineNumber)"
+    return (
+      ExternalThreadMessage(id: messageID, role: role, content: content, createdAt: createdAt),
+      isItem
+    )
   }
 
   private nonisolated static func normalized(_ value: String?) -> String? {
@@ -156,12 +207,33 @@ struct CodexRolloutTranscriptReader: Sendable {
       let type: String
       let clientID: String?
       let message: String?
+      let item: Item?
 
       enum CodingKeys: String, CodingKey {
         case type
         case clientID = "client_id"
         case message
+        case item
       }
+    }
+
+    struct Item: Decodable {
+      let type: String
+      let id: String?
+      let clientID: String?
+      let content: [ContentPart]?
+
+      enum CodingKeys: String, CodingKey {
+        case type
+        case id
+        case clientID = "client_id"
+        case content
+      }
+    }
+
+    struct ContentPart: Decodable {
+      let type: String
+      let text: String?
     }
   }
 }

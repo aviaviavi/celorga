@@ -3177,6 +3177,38 @@ final class CodexAppServerClientTests: XCTestCase {
     XCTAssertEqual(messages[2].createdAt.timeIntervalSince1970, 1_786_795_204.4, accuracy: 0.001)
   }
 
+  func testCodexRolloutTranscriptReaderReadsItemCompletedMessages() throws {
+    let transcript = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-codex-rollout-items-\(UUID().uuidString).jsonl")
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let ignoredOutput = String(repeating: "command output ", count: 100_000)
+    let contents = [
+      #"{"timestamp":"2026-10-01T12:00:00.100Z","ordinal":0,"type":"session_meta","payload":{"id":"thread"}}"#,
+      #"{"timestamp":"2026-10-01T12:00:00.200Z","ordinal":1,"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}"#,
+      #"{"timestamp":"2026-10-01T12:00:01.100Z","ordinal":2,"type":"event_msg","payload":{"type":"item_completed","thread_id":"thread","turn_id":"turn-1","item":{"type":"UserMessage","id":"user-item","client_id":"user-client","content":[{"type":"text","text":"What shipped?"},{"type":"image","url":"file:///tmp/screen.png"},{"type":"text","text":"Include the date."}]}}}"#,
+      #"{"timestamp":"2026-10-01T12:00:02.200Z","ordinal":3,"type":"event_msg","payload":{"type":"item_completed","thread_id":"thread","turn_id":"turn-1","item":{"type":"CommandExecution","id":"cmd","aggregated_output":"\#(ignoredOutput)"}}}"#,
+      #"{"timestamp":"2026-10-01T12:00:02.300Z","ordinal":4,"type":"event_msg","payload":{"type":"item_completed","thread_id":"thread","turn_id":"turn-1","item":{"type":"Reasoning","id":"reasoning","summary":[]}}}"#,
+      #"{"timestamp":"2026-10-01T12:00:03.300Z","ordinal":5,"type":"event_msg","payload":{"type":"item_completed","thread_id":"thread","turn_id":"turn-1","item":{"type":"AgentMessage","id":"msg-1","content":[{"type":"Text","text":"I’m checking now."}],"phase":"commentary"}}}"#,
+      #"{"timestamp":"2026-10-01T12:00:04.400Z","ordinal":6,"type":"event_msg","payload":{"type":"item_completed","thread_id":"thread","turn_id":"turn-1","item":{"type":"AgentMessage","id":"msg-2","content":[{"type":"Text","text":"Version 0.4.1 shipped on October 1."}],"phase":"final_answer"}}}"#,
+      #"{"timestamp":"2026-10-01T12:00:05.500Z","ordinal":7,"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"Version 0.4.1 shipped on October 1."}}"#
+    ].joined(separator: "\n")
+    try contents.write(to: transcript, atomically: true, encoding: .utf8)
+
+    let messages = try CodexRolloutTranscriptReader.readMessages(at: transcript)
+
+    XCTAssertEqual(messages.map(\.role), [.user, .assistant, .assistant])
+    XCTAssertEqual(
+      messages.map(\.content),
+      [
+        "What shipped?\n\nInclude the date.",
+        "I’m checking now.",
+        "Version 0.4.1 shipped on October 1."
+      ]
+    )
+    XCTAssertEqual(messages.map(\.id), ["user-item", "msg-1", "msg-2"])
+    XCTAssertEqual(messages[0].createdAt.timeIntervalSince1970, 1_790_856_001.1, accuracy: 0.001)
+  }
+
   func testExternalThreadReadUsesTheRolloutInsteadOfMaterializingTurns() async throws {
     let temporaryDirectory = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-codex-external-read-test-\(UUID().uuidString)", isDirectory: true)
