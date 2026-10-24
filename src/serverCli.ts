@@ -230,7 +230,7 @@ export function validateServerConfiguration(value: unknown, configFile: string):
   for (const destination of config.destinations) {
     if (!destination.id || ids.has(destination.id)) throw new Error("AI destination IDs must be unique");
     ids.add(destination.id);
-    if (!["codexLocal", "claudeLocal", "piLocal", "piRemote", "openCodeLocal", "openCodeRemote", "openClaw", "codexRemote", "codexManagedRemote", "openAI", "anthropic", "openRouter", "ollama"].includes(destination.adapter)) {
+    if (!["codexLocal", "claudeLocal", "piLocal", "piRemote", "openCodeLocal", "openCodeRemote", "openClaw", "codexRemote", "codexManagedRemote", "openAI", "anthropic", "openRouter", "ollama", "openAIDot"].includes(destination.adapter)) {
       throw new Error(`Unsupported AI destination adapter: ${destination.adapter}`);
     }
     for (const key of ["name", "mention", "endpoint", "agentID", "workspaceRoot"] as const) {

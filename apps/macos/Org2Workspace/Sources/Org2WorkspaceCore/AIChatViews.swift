@@ -4001,7 +4001,15 @@ struct AIChatComposerView: View {
     .help("Choose a model for this chat, or inherit the \(store.selectedAIChatDestination.title) default")
   }
 
+  /// A dot chooses its own model in ChatGPT, so it has nothing to configure.
+  @ViewBuilder
   private var modelConfigurationPicker: some View {
+    if store.selectedAIChatDestination.adapter != .openAIDot {
+      modelConfigurationPickerButton
+    }
+  }
+
+  private var modelConfigurationPickerButton: some View {
     Button {
       showsModelConfiguration.toggle()
     } label: {

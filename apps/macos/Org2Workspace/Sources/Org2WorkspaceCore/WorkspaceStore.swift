@@ -8759,7 +8759,7 @@ extension WorkspaceStore {
     case .codexLocal, .codexRemote, .codexManagedRemote, .piLocal, .piRemote,
          .openCodeLocal, .openCodeRemote, .openClaw:
       true
-    case .claudeLocal, .openAI, .anthropic, .openRouter, .ollama:
+    case .claudeLocal, .openAI, .anthropic, .openRouter, .ollama, .openAIDot:
       false
     }
   }
@@ -24511,7 +24511,7 @@ extension WorkspaceStore {
       }
       if let option, !option.supportsReasoning { return [] }
       return cliHarnessReasoningOptions
-    case .claudeLocal, .openAI, .anthropic, .openRouter, .ollama:
+    case .claudeLocal, .openAI, .anthropic, .openRouter, .ollama, .openAIDot:
       return []
     }
   }
@@ -25126,6 +25126,13 @@ extension WorkspaceStore {
         effectiveModel = thread.model
           ?? selectedAIChatDestination.model
           ?? models.first(where: \.isDefault)?.id
+        reasoningOptions = []
+        defaultReasoningEffort = nil
+        resolvedReasoningConfiguration = true
+      case .openAIDot:
+        // A dot chooses its own model in ChatGPT.
+        models = []
+        effectiveModel = nil
         reasoningOptions = []
         defaultReasoningEffort = nil
         resolvedReasoningConfiguration = true
@@ -25794,7 +25801,9 @@ extension WorkspaceStore {
     let activeDestinationID = activeSharedRoomDestinationByThreadID[threadID]
       ?? untrackedRoomDestinationID
       ?? thread.destinationID
-    if aiChatDestination(id: activeDestinationID)?.adapter.isDirectProvider == true {
+    // Direct providers and dots run as one local request; stopping cancels it.
+    if let activeAdapter = aiChatDestination(id: activeDestinationID)?.adapter,
+       activeAdapter.isDirectProvider || activeAdapter == .openAIDot {
       guard isAIChatThreadRunning(threadID) else {
         if selectedAIChatThreadID == threadID {
           aiChatStatusText = "No active \(aiChatDestinationTitle(activeDestinationID)) request to stop"
@@ -27153,6 +27162,14 @@ extension WorkspaceStore {
       return AIChatRemoteConfiguration(
         models: models,
         effectiveModel: thread.model ?? aiChatDestination(id: thread.destinationID)?.model,
+        reasoningEffort: nil,
+        reasoningOptions: [],
+        defaultReasoningEffort: nil
+      )
+    case .openAIDot:
+      return AIChatRemoteConfiguration(
+        models: [],
+        effectiveModel: nil,
         reasoningEffort: nil,
         reasoningOptions: [],
         defaultReasoningEffort: nil
@@ -28989,6 +29006,14 @@ extension WorkspaceStore {
             usesBundledAgent: usesBundledAgent,
             sendOrigin: sendOrigin
           )
+        case .openAIDot:
+          reply = try await sendOpenAIDotRequest(
+            messages: requestMessages,
+            threadID: threadID,
+            destination: dispatchDestination,
+            userMessageID: userMessageID,
+            sendOrigin: sendOrigin
+          )
         }
         codexActiveTurnsByThreadID.removeValue(forKey: threadID)
         guard aiChatPendingUserMessageIDs(for: threadID).contains(userMessageID)
@@ -29841,6 +29866,92 @@ extension WorkspaceStore {
     if let usage = result.usage { aiChatUsageByDestinationTurn[telemetryKey] = usage }
     try Task.checkCancellation()
     return result.reply
+  }
+
+  private func sendOpenAIDotRequest(
+    messages: [AIChatMessage],
+    threadID: UUID,
+    destination: AIChatDestinationConfiguration,
+    userMessageID: UUID,
+    sendOrigin: AIChatSendOrigin
+  ) async throws -> String {
+    guard destination.adapter == .openAIDot,
+          let thread = aiChatThread(threadID, transcriptURL: sendOrigin.transcriptURL),
+          let userMessage = messages.last(where: { $0.role == .user })
+    else {
+      throw OpenAIDotChatError.invalidResponse("the selected thread is not routed to a dot")
+    }
+    if let attachment = userMessage.attachments.first {
+      throw OpenAIDotChatError.unsupportedAttachment(attachment.fileName)
+    }
+    resetAIChatTurnTelemetry(
+      threadID: threadID,
+      destinationID: destination.id,
+      transcriptURL: sendOrigin.transcriptURL
+    )
+    // The dot keeps its own conversation and memory in ChatGPT, so it receives
+    // only the newest message, not Celorga's history or workspace context. A
+    // shared room still sends the room prompt addressed to this destination.
+    let text: String
+    if thread.isSharedRoom {
+      let roomMessages = Self.sharedRoomRequestMessages(
+        messages,
+        targetDestinationName: destination.name,
+        targetDestinationID: destination.id,
+        destinationNamesByID: Dictionary(
+          uniqueKeysWithValues: enabledAIChatDestinations.map { ($0.id, $0.name) }
+        ),
+        handoffMentions: aiChatRoomHandoffMentions(in: thread, excluding: destination.id),
+        agentTurnLimit: aiChatRoomAgentTurnLimit(for: thread),
+        through: userMessage.id
+      )
+      text = roomMessages.last(where: { $0.id == userMessage.id })?.content ?? userMessage.content
+    } else {
+      text = userMessage.content
+    }
+    let client = OpenAIDotChatClient(
+      settings: try OpenAIDotChatClient.Settings(
+        endpoint: destination.endpoint,
+        dotSelector: destination.agentID
+      )
+    )
+    openClawGatewayStateByThreadID[threadID] = .connecting
+    openClawGatewayDetailByThreadID[threadID] = destination.name
+    if selectedAIChatThreadID == threadID, isActiveAIChatSendOrigin(sendOrigin) {
+      aiChatStatusText = "Sending to \(destination.name)"
+    }
+    try Task.checkCancellation()
+    openClawGatewayStateByThreadID[threadID] = .connected
+    if selectedAIChatThreadID == threadID, isActiveAIChatSendOrigin(sendOrigin) {
+      aiChatStatusText = "Waiting for \(destination.name)"
+    }
+    let result = try await client.send(
+      text: text,
+      // Reusing the Celorga message ID makes a retried send idempotent.
+      requestID: userMessageID.uuidString.lowercased(),
+      onMessage: { [weak self] message in
+        await self?.handleOpenAIDotMessage(message, threadID: threadID, destinationName: destination.name)
+      }
+    )
+    try Task.checkCancellation()
+    return result.transcriptText
+  }
+
+  private func handleOpenAIDotMessage(
+    _ message: OpenAIDotMessage,
+    threadID: UUID,
+    destinationName: String
+  ) {
+    guard !stoppedAIChatThreadIDs.contains(threadID) else { return }
+    aiChatLastEventAtByThreadID[threadID] = Date()
+    aiChatLiveState.noteEvent(for: threadID, coalesced: true)
+    aiChatLiveState.appendStreamingDelta(
+      message.text.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n",
+      for: threadID
+    )
+    if selectedAIChatThreadID == threadID, canPublishAIChatRuntimeState(for: threadID) {
+      aiChatStatusText = "\(destinationName) is replying"
+    }
   }
 
   private func handleBundledAgentEvent(_ event: JSONValue, threadID: UUID) {
@@ -30818,7 +30929,7 @@ extension WorkspaceStore {
       }
       transport = .managedRemote(sshHost: destination.endpoint)
     case .claudeLocal, .piLocal, .piRemote, .openCodeLocal, .openCodeRemote,
-         .openClaw, .openAI, .anthropic, .openRouter, .ollama:
+         .openClaw, .openAI, .anthropic, .openRouter, .ollama, .openAIDot:
       throw CodexAppServerError.invalidResponse("the configured AI destination is not a Codex target")
     }
     let client = CodexAppServerClient(
@@ -30895,6 +31006,8 @@ extension WorkspaceStore {
         discoveredModels,
         configuredModel: destination.model
       )
+    case .openAIDot:
+      return []
     }
   }
 

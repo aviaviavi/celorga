@@ -141,7 +141,7 @@ public struct AIProviderChatClient: Sendable {
     case .ollama:
       reply = (object["message"] as? [String: Any])?["content"] as? String
     case .codexLocal, .claudeLocal, .piLocal, .piRemote,
-         .openCodeLocal, .openCodeRemote, .codexRemote, .codexManagedRemote, .openClaw:
+         .openCodeLocal, .openCodeRemote, .codexRemote, .codexManagedRemote, .openClaw, .openAIDot:
       throw AIProviderChatError.unsupportedAdapter(settings.adapter.rawValue)
     }
     let normalizedReply = reply?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -166,7 +166,7 @@ public struct AIProviderChatClient: Sendable {
     case .anthropic: "messages"
     case .ollama: "chat"
     case .codexLocal, .claudeLocal, .piLocal, .piRemote,
-         .openCodeLocal, .openCodeRemote, .codexRemote, .codexManagedRemote, .openClaw: ""
+         .openCodeLocal, .openCodeRemote, .codexRemote, .codexManagedRemote, .openClaw, .openAIDot: ""
     }
   }
 
@@ -190,7 +190,7 @@ public struct AIProviderChatClient: Sendable {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
       }
     case .codexLocal, .claudeLocal, .piLocal, .piRemote,
-         .openCodeLocal, .openCodeRemote, .codexRemote, .codexManagedRemote, .openClaw:
+         .openCodeLocal, .openCodeRemote, .codexRemote, .codexManagedRemote, .openClaw, .openAIDot:
       break
     }
   }
@@ -221,7 +221,7 @@ public struct AIProviderChatClient: Sendable {
         "stream": false,
       ]
     case .codexLocal, .claudeLocal, .piLocal, .piRemote,
-         .openCodeLocal, .openCodeRemote, .codexRemote, .codexManagedRemote, .openClaw:
+         .openCodeLocal, .openCodeRemote, .codexRemote, .codexManagedRemote, .openClaw, .openAIDot:
       return [:]
     }
   }

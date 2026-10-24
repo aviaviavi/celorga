@@ -3243,6 +3243,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
   case anthropic
   case openRouter
   case ollama
+  case openAIDot
 
   public var id: String { rawValue }
 
@@ -3252,7 +3253,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     case .claudeLocal: .claude
     case .piLocal, .piRemote: .pi
     case .openCodeLocal, .openCodeRemote: .openCode
-    case .openClaw, .openAI, .anthropic, .openRouter, .ollama: .openClaw
+    case .openClaw, .openAI, .anthropic, .openRouter, .ollama, .openAIDot: .openClaw
     }
   }
 
@@ -3271,6 +3272,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     case .anthropic: "Anthropic API"
     case .openRouter: "OpenRouter"
     case .ollama: "Ollama"
+    case .openAIDot: "OpenAI Dot"
     }
   }
 
@@ -3285,6 +3287,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     case .anthropic: "a.circle"
     case .openRouter: "arrow.triangle.branch"
     case .ollama: "desktopcomputer"
+    case .openAIDot: "circle.circle.fill"
     }
   }
 
@@ -3293,7 +3296,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     case .openAI, .anthropic, .openRouter, .ollama: true
     case .codexLocal, .claudeLocal, .piLocal, .piRemote,
          .openCodeLocal, .openCodeRemote,
-         .codexRemote, .codexManagedRemote, .openClaw: false
+         .codexRemote, .codexManagedRemote, .openClaw, .openAIDot: false
     }
   }
 
@@ -3302,7 +3305,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     case .openAI, .anthropic, .openRouter: true
     case .codexLocal, .claudeLocal, .piLocal, .piRemote,
          .openCodeLocal, .openCodeRemote,
-         .codexRemote, .codexManagedRemote, .openClaw, .ollama: false
+         .codexRemote, .codexManagedRemote, .openClaw, .ollama, .openAIDot: false
     }
   }
 
@@ -3312,6 +3315,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     case .anthropic: "https://api.anthropic.com/v1"
     case .openRouter: "https://openrouter.ai/api/v1"
     case .ollama: "http://127.0.0.1:11434/api"
+    case .openAIDot: OpenAIDotChatClient.defaultBaseURL
     case .codexLocal, .claudeLocal, .piLocal, .piRemote,
          .openCodeLocal, .openCodeRemote,
          .codexRemote, .codexManagedRemote, .openClaw: ""
@@ -3333,6 +3337,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     case .anthropic: "Anthropic"
     case .openRouter: "OpenRouter"
     case .ollama: "Ollama"
+    case .openAIDot: "Dot"
     }
   }
 
@@ -3351,6 +3356,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     case .anthropic: "anthropic"
     case .openRouter: "openrouter"
     case .ollama: "ollama"
+    case .openAIDot: "dot"
     }
   }
 }
@@ -3408,12 +3414,13 @@ public struct AIChatDestinationConfiguration: Identifiable, Hashable, Codable, S
   public var mentionText: String { "@\(mention)" }
   public var requiresEndpoint: Bool {
     adapter != .codexLocal && adapter != .claudeLocal && adapter != .piLocal
-      && adapter != .openCodeLocal
+      && adapter != .openCodeLocal && adapter != .openAIDot
   }
   public var acceptsBearerToken: Bool {
     adapter != .codexLocal && adapter != .claudeLocal && adapter != .piLocal
       && adapter != .piRemote && adapter != .openCodeLocal
       && adapter != .openCodeRemote && adapter != .codexManagedRemote
+      && adapter != .openAIDot
   }
 
   /// A readable name for the machine where this destination's agent harness
@@ -3428,7 +3435,7 @@ public struct AIChatDestinationConfiguration: Identifiable, Hashable, Codable, S
     case .codexRemote, .openClaw:
       rawHost = URL(string: endpoint)?.host
     case .codexLocal, .claudeLocal, .piLocal, .openCodeLocal,
-         .openAI, .anthropic, .openRouter, .ollama:
+         .openAI, .anthropic, .openRouter, .ollama, .openAIDot:
       rawHost = nil
     }
     guard let host = rawHost?

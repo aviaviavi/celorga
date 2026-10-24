@@ -253,7 +253,7 @@ struct AIChatSettingsView: View {
       case .codexLocal, .claudeLocal, .piLocal, .openCodeLocal:
         return !store.aiChatDestinations.contains(where: { $0.adapter == adapter })
       case .piRemote, .openCodeRemote, .codexManagedRemote,
-           .openClaw, .openAI, .anthropic, .openRouter, .ollama:
+           .openClaw, .openAI, .anthropic, .openRouter, .ollama, .openAIDot:
         return true
       case .codexRemote:
         return false
@@ -410,6 +410,12 @@ private struct AIChatDestinationEditor: View {
             ),
             prompt: Text("Provider model ID")
           )
+        } else if destination.adapter == .openAIDot {
+          TextField(
+            "Dot (optional)",
+            text: $destination.agentID,
+            prompt: Text("Primary dot")
+          )
         }
 
         if destination.acceptsBearerToken && !isBuiltInOpenClaw {
@@ -433,6 +439,9 @@ private struct AIChatDestinationEditor: View {
               .font(.caption)
               .foregroundStyle(.secondary)
           }
+        }
+
+        if destination.adapter.isDirectProvider || destination.adapter == .openAIDot {
           HStack(spacing: 10) {
             Button("Test Connection") {
               testConnection()
@@ -611,6 +620,23 @@ private struct AIChatDestinationEditor: View {
           allowUserInteraction: true
         )
       : enteredToken
+    if destination.adapter == .openAIDot {
+      let endpoint = destination.endpoint
+      let selector = destination.agentID
+      Task {
+        do {
+          let client = OpenAIDotChatClient(
+            settings: try OpenAIDotChatClient.Settings(endpoint: endpoint, dotSelector: selector)
+          )
+          let dot = try await client.resolveDot()
+          connectionStatus = "Connected · \(dot.displayName)"
+        } catch {
+          connectionStatus = error.localizedDescription
+        }
+        isTestingConnection = false
+      }
+      return
+    }
     Task {
       do {
         let settings = try AIProviderChatSettings(
@@ -659,6 +685,8 @@ private struct AIChatDestinationEditor: View {
       return "Connects directly to any OpenRouter model available to your API key. Enter the exact OpenRouter model ID."
     case .ollama:
       return "Connects to a local or network Ollama server. The default local endpoint needs no API key; enter the model already installed in Ollama."
+    case .openAIDot:
+      return "Messages your OpenAI dot in its ChatGPT conversation, using the ChatGPT sign-in Codex stores on this Mac. Leave Dot blank for your primary dot, or enter a dot’s name or ID. Text only. OpenAI hasn’t published an API for dots, so this uses private ChatGPT routes that can change without notice."
     }
   }
 }
