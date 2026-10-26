@@ -4019,7 +4019,7 @@ struct AIChatComposerView: View {
           .truncationMode(.middle)
           .frame(maxWidth: compact ? 100 : 130)
           .fixedSize(horizontal: true, vertical: false)
-        if !store.selectedAIChatDestination.adapter.isDirectProvider {
+        if store.selectedAIChatDestination.supportsReasoningEffort {
           Text("·").foregroundStyle(.tertiary)
           Text(store.selectedAIChatReasoningLabel)
             .foregroundStyle(.secondary)
@@ -4043,7 +4043,7 @@ struct AIChatComposerView: View {
     .popover(isPresented: $showsModelConfiguration, arrowEdge: .bottom) {
       VStack(spacing: 16) {
         modelPicker
-        if !store.selectedAIChatDestination.adapter.isDirectProvider {
+        if store.selectedAIChatDestination.supportsReasoningEffort {
           effortConfiguration
         }
         Divider()

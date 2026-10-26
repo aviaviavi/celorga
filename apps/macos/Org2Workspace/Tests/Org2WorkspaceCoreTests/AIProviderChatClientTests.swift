@@ -320,6 +320,104 @@ final class AIProviderChatClientTests: XCTestCase {
     }
   }
 
+  func testDeepSeekPresetUsesOpenAICompatibleContractWithThinkingControls() async throws {
+    let destination = AIChatDestinationConfiguration(preset: .deepSeek)
+    XCTAssertEqual(destination.adapter, .openAI, "a preset persists as an adapter older builds decode")
+    XCTAssertEqual(destination.endpoint, "https://api.deepseek.com")
+    XCTAssertEqual(destination.model, "deepseek-flash")
+    XCTAssertEqual(destination.providerPreset, .deepSeek)
+    XCTAssertEqual(destination.adapterTitle, "DeepSeek")
+    XCTAssertTrue(destination.supportsReasoningEffort)
+    XCTAssertNil(AIChatDestinationConfiguration(
+      name: "OpenAI", mention: "openai", adapter: .openAI, endpoint: "https://api.openai.com/v1"
+    ).providerPreset)
+
+    var bodies: [[String: Any]] = []
+    let lock = NSLock()
+    AIProviderTestURLProtocol.setHandler { request in
+      XCTAssertEqual(request.url?.absoluteString, "https://api.deepseek.com/chat/completions")
+      XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer deepseek-secret")
+      let object = try XCTUnwrap(
+        JSONSerialization.jsonObject(with: try self.requestBodyData(request)) as? [String: Any]
+      )
+      lock.withLock { bodies.append(object) }
+      return (200, ["choices": [["message": [
+        "reasoning_content": "Thinking it over.",
+        "content": "DeepSeek reply",
+      ]]]])
+    }
+    let client = try deepSeekClient()
+    for effort in ["max", "off", nil] as [String?] {
+      let reply = try await client.send(
+        messages: [AIChatMessage(role: .user, content: "Summarize the launch notes.")],
+        model: "deepseek-flash",
+        workspaceContext: emptyContext,
+        destinationName: "DeepSeek",
+        reasoningEffort: effort
+      )
+      XCTAssertEqual(reply, "DeepSeek reply")
+    }
+
+    XCTAssertEqual(bodies.count, 3)
+    XCTAssertEqual(bodies[0]["model"] as? String, "deepseek-flash")
+    XCTAssertEqual((bodies[0]["thinking"] as? [String: String])?["type"], "enabled")
+    XCTAssertEqual(bodies[0]["reasoning_effort"] as? String, "max")
+    XCTAssertEqual((bodies[1]["thinking"] as? [String: String])?["type"], "disabled")
+    XCTAssertNil(bodies[1]["reasoning_effort"])
+    XCTAssertNil(bodies[2]["thinking"], "an unset effort keeps the provider default")
+    XCTAssertNil(bodies[2]["reasoning_effort"])
+  }
+
+  func testDeepSeekPresetListsKnownModelsFirstWithReasoningOptions() async throws {
+    AIProviderTestURLProtocol.setHandler { request in
+      XCTAssertEqual(request.url?.absoluteString, "https://api.deepseek.com/models")
+      return (200, ["data": [
+        ["id": "deepseek-v4-pro"],
+        ["id": "deepseek-experimental"],
+      ]])
+    }
+    let discovered = try await deepSeekClient().listModels()
+    let models = AIChatProviderPreset.deepSeek.modelOptions(merging: discovered)
+    XCTAssertEqual(models.map(\.id), ["deepseek-flash", "deepseek-v4-pro", "deepseek-experimental"])
+    XCTAssertEqual(models[0].reasoningOptions.map(\.id), ["off", "low", "high", "max"])
+    XCTAssertEqual(
+      WorkspaceStore.aiChatRoomReasoningOptions(
+        adapter: .openAI, selectedModel: nil, models: [], preset: .deepSeek
+      ).map(\.id),
+      ["off", "low", "high", "max"]
+    )
+    XCTAssertTrue(WorkspaceStore.aiChatRoomReasoningOptions(
+      adapter: .openAI, selectedModel: nil, models: []
+    ).isEmpty, "plain OpenAI-compatible destinations keep no effort control")
+    XCTAssertTrue(WorkspaceStore.automationDestinationSupportsReasoning(
+      AIChatDestinationConfiguration(preset: .deepSeek)
+    ))
+  }
+
+  /// Saved destinations decode as one array; a preset must not introduce an
+  /// adapter value an older build cannot decode, or that build would fall
+  /// back to the default destination list.
+  func testDeepSeekDestinationRoundTripsThroughThePersistedAdapter() throws {
+    let saved = try JSONEncoder().encode([AIChatDestinationConfiguration(preset: .deepSeek)])
+    let json = try XCTUnwrap(String(data: saved, encoding: .utf8))
+    XCTAssertTrue(json.contains(#""adapter":"openAI""#), json)
+    let restored = try JSONDecoder().decode([AIChatDestinationConfiguration].self, from: saved)
+    XCTAssertEqual(restored.first?.providerPreset, .deepSeek)
+  }
+
+  private func deepSeekClient() throws -> AIProviderChatClient {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [AIProviderTestURLProtocol.self]
+    return AIProviderChatClient(
+      settings: try AIProviderChatSettings(
+        adapter: .openAI,
+        endpoint: AIChatProviderPreset.deepSeek.defaultEndpoint,
+        apiKey: "deepseek-secret"
+      ),
+      session: URLSession(configuration: configuration)
+    )
+  }
+
   private func client(
     _ adapter: AIChatDestinationAdapter,
     apiKey: String?

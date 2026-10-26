@@ -8803,7 +8803,7 @@ extension WorkspaceStore {
         return nil
       }
       if let reasoningEffort = prepared.reasoningEffort,
-         !Self.automationDestinationSupportsReasoning(destination.adapter) {
+         !Self.automationDestinationSupportsReasoning(destination) {
         await failAgentAutomationRun(
           run.id,
           reason: "\(destination.title) cannot apply the configured reasoning effort \(reasoningEffort). Choose Codex or OpenClaw, or clear REASONING_EFFORT in the automation file."
@@ -8875,14 +8875,16 @@ extension WorkspaceStore {
       ?? enabledAIChatDestinations.first
   }
 
-  nonisolated private static func automationDestinationSupportsReasoning(
-    _ adapter: AIChatDestinationAdapter
+  nonisolated static func automationDestinationSupportsReasoning(
+    _ destination: AIChatDestinationConfiguration
   ) -> Bool {
-    switch adapter {
+    switch destination.adapter {
     case .codexLocal, .codexRemote, .codexManagedRemote, .piLocal, .piRemote,
          .openCodeLocal, .openCodeRemote, .openClaw:
       true
-    case .claudeLocal, .openAI, .anthropic, .openRouter, .ollama, .openAIDot:
+    case .openAI:
+      destination.providerPreset != nil
+    case .claudeLocal, .anthropic, .openRouter, .ollama, .openAIDot:
       false
     }
   }
@@ -24378,15 +24380,27 @@ extension WorkspaceStore {
   public func makeAIChatDestinationDraft(
     adapter: AIChatDestinationAdapter = .codexRemote
   ) -> AIChatDestinationConfiguration {
-    let existingMentions = Set(aiChatDestinations.map { $0.mention.lowercased() })
-    var destination = AIChatDestinationConfiguration.defaults.first(where: {
+    uniquelyMentioned(AIChatDestinationConfiguration.defaults.first(where: {
       $0.adapter == adapter && aiChatDestination(id: $0.id) == nil
     }) ?? AIChatDestinationConfiguration(
       name: adapter.defaultName,
       mention: adapter.defaultMention,
       adapter: adapter,
       endpoint: adapter.defaultEndpoint
-    )
+    ))
+  }
+
+  public func makeAIChatDestinationDraft(
+    preset: AIChatProviderPreset
+  ) -> AIChatDestinationConfiguration {
+    uniquelyMentioned(AIChatDestinationConfiguration(preset: preset))
+  }
+
+  private func uniquelyMentioned(
+    _ draft: AIChatDestinationConfiguration
+  ) -> AIChatDestinationConfiguration {
+    let existingMentions = Set(aiChatDestinations.map { $0.mention.lowercased() })
+    var destination = draft
     destination.isEnabled = true
     var suffix = 1
     let baseMention = destination.mention
@@ -24609,15 +24623,18 @@ extension WorkspaceStore {
     return Self.aiChatRoomReasoningOptions(
       adapter: destination.adapter,
       selectedModel: selectedAIChatRoomModel(forDestinationID: destinationID),
-      models: aiChatDestinationModelOptions[destinationID] ?? []
+      models: aiChatDestinationModelOptions[destinationID] ?? [],
+      preset: destination.providerPreset
     )
   }
 
   nonisolated static func aiChatRoomReasoningOptions(
     adapter: AIChatDestinationAdapter,
     selectedModel: String?,
-    models: [AIChatModelOption]
+    models: [AIChatModelOption],
+    preset: AIChatProviderPreset? = nil
   ) -> [AIChatReasoningOption] {
+    if let preset { return preset.reasoningOptions }
     switch adapter {
     case .codexLocal, .codexRemote, .codexManagedRemote:
       let option = selectedModel.flatMap { selected in
@@ -25249,8 +25266,9 @@ extension WorkspaceStore {
         effectiveModel = thread.model
           ?? selectedAIChatDestination.model
           ?? models.first(where: \.isDefault)?.id
-        reasoningOptions = []
-        defaultReasoningEffort = nil
+        let preset = aiChatDestination(id: thread.destinationID)?.providerPreset
+        reasoningOptions = preset?.reasoningOptions ?? []
+        defaultReasoningEffort = preset?.defaultReasoningEffort
         resolvedReasoningConfiguration = true
       case .openAIDot:
         // A dot chooses its own model in ChatGPT.
@@ -27284,12 +27302,13 @@ extension WorkspaceStore {
       )
     case .openAI, .anthropic, .openRouter, .ollama:
       let models = try await modelsForAIChatDestination(thread.destinationID)
+      let preset = aiChatDestination(id: thread.destinationID)?.providerPreset
       return AIChatRemoteConfiguration(
         models: models,
         effectiveModel: thread.model ?? aiChatDestination(id: thread.destinationID)?.model,
-        reasoningEffort: nil,
-        reasoningOptions: [],
-        defaultReasoningEffort: nil
+        reasoningEffort: preset == nil ? nil : thread.reasoningEffort,
+        reasoningOptions: preset?.reasoningOptions ?? [],
+        defaultReasoningEffort: preset?.defaultReasoningEffort
       )
     case .openAIDot:
       return AIChatRemoteConfiguration(
@@ -29980,7 +29999,10 @@ extension WorkspaceStore {
       messages: providerMessages,
       model: model,
       workspaceContext: sendOrigin.workspaceContext,
-      destinationName: destination.name
+      destinationName: destination.name,
+      reasoningEffort: settings.preset == nil
+        ? nil
+        : thread.reasoningEffort(forDestinationID: destination.id)
     )
     let telemetryKey = aiChatDestinationTurnKey(
       threadID: threadID,
@@ -31128,7 +31150,7 @@ extension WorkspaceStore {
       )
       let discoveredModels = try await AIProviderChatClient(settings: settings).listModels()
       return Self.directProviderModelOptions(
-        discoveredModels,
+        destination.providerPreset?.modelOptions(merging: discoveredModels) ?? discoveredModels,
         configuredModel: destination.model
       )
     case .openAIDot:

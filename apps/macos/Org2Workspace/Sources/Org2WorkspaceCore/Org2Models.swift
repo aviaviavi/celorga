@@ -3421,6 +3421,118 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
   }
 }
 
+/// A named provider reached through an existing direct-provider protocol.
+/// A preset destination persists as that adapter plus the preset's endpoint,
+/// so a build without the preset still decodes the saved destination list and
+/// treats the destination as an ordinary OpenAI-compatible provider.
+public enum AIChatProviderPreset: String, CaseIterable, Identifiable, Sendable {
+  case deepSeek
+
+  public var id: String { rawValue }
+  public var adapter: AIChatDestinationAdapter { .openAI }
+
+  public var title: String {
+    switch self {
+    case .deepSeek: "DeepSeek"
+    }
+  }
+
+  public var defaultMention: String {
+    switch self {
+    case .deepSeek: "deepseek"
+    }
+  }
+
+  public var systemImage: String {
+    switch self {
+    case .deepSeek: "water.waves"
+    }
+  }
+
+  public var defaultEndpoint: String {
+    switch self {
+    case .deepSeek: "https://api.deepseek.com"
+    }
+  }
+
+  public var defaultModel: String {
+    switch self {
+    case .deepSeek: "deepseek-flash"
+    }
+  }
+
+  public var reasoningOptions: [AIChatReasoningOption] {
+    switch self {
+    case .deepSeek:
+      [
+        AIChatReasoningOption(id: "off", label: "Off"),
+        AIChatReasoningOption(id: "low", label: "Low"),
+        AIChatReasoningOption(id: "high", label: "High"),
+        AIChatReasoningOption(id: "max", label: "Maximum"),
+      ]
+    }
+  }
+
+  /// The provider's own default when a chat leaves effort unset.
+  public var defaultReasoningEffort: String? {
+    switch self {
+    case .deepSeek: "high"
+    }
+  }
+
+  public var models: [AIChatModelOption] {
+    switch self {
+    case .deepSeek:
+      [
+        AIChatModelOption(
+          id: "deepseek-flash",
+          label: "DeepSeek Flash",
+          detail: "Fast and inexpensive; suits background work",
+          supportsReasoning: true,
+          reasoningOptions: reasoningOptions,
+          defaultReasoningEffort: defaultReasoningEffort
+        ),
+        AIChatModelOption(
+          id: "deepseek-v4-pro",
+          label: "DeepSeek V4 Pro",
+          supportsReasoning: true,
+          reasoningOptions: reasoningOptions,
+          defaultReasoningEffort: defaultReasoningEffort
+        ),
+      ]
+    }
+  }
+
+  public static func matching(adapter: AIChatDestinationAdapter, endpoint: String) -> AIChatProviderPreset? {
+    guard adapter == .openAI,
+          let host = URL(string: endpoint.trimmingCharacters(in: .whitespacesAndNewlines))?
+            .host?.lowercased()
+    else { return nil }
+    return allCases.first { URL(string: $0.defaultEndpoint)?.host?.lowercased() == host }
+  }
+
+  /// Extra chat-completions fields for a reasoning effort. An unset effort
+  /// keeps the provider default.
+  public func requestFields(reasoningEffort: String?) -> [String: Any] {
+    switch self {
+    case .deepSeek:
+      guard let effort = reasoningEffort?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            !effort.isEmpty
+      else { return [:] }
+      if effort == "off" || effort == "none" {
+        return ["thinking": ["type": "disabled"]]
+      }
+      return ["thinking": ["type": "enabled"], "reasoning_effort": effort]
+    }
+  }
+
+  /// Known models first, followed by any others the provider reports.
+  public func modelOptions(merging discovered: [AIChatModelOption]) -> [AIChatModelOption] {
+    let known = Set(models.map(\.id))
+    return models + discovered.filter { !known.contains($0.id) }
+  }
+}
+
 public struct AIChatDestinationConfiguration: Identifiable, Hashable, Codable, Sendable {
   public static let localCodexID = "builtin.codex"
   public static let localClaudeID = "builtin.claude"
@@ -3468,9 +3580,27 @@ public struct AIChatDestinationConfiguration: Identifiable, Hashable, Codable, S
     self.isEnabled = isEnabled
   }
 
+  public init(preset: AIChatProviderPreset) {
+    self.init(
+      name: preset.title,
+      mention: preset.defaultMention,
+      adapter: preset.adapter,
+      endpoint: preset.defaultEndpoint,
+      model: preset.defaultModel
+    )
+  }
+
   public var runtime: AIChatRuntime { adapter.runtime }
   public var title: String { name.isEmpty ? mention : name }
-  public var systemImage: String { adapter.systemImage }
+  public var providerPreset: AIChatProviderPreset? {
+    AIChatProviderPreset.matching(adapter: adapter, endpoint: endpoint)
+  }
+  public var systemImage: String { providerPreset?.systemImage ?? adapter.systemImage }
+  public var adapterTitle: String { providerPreset?.title ?? adapter.title }
+  /// Whether chats on this destination can choose a reasoning effort.
+  public var supportsReasoningEffort: Bool {
+    !adapter.isDirectProvider || providerPreset != nil
+  }
   public var mentionText: String { "@\(mention)" }
   public var requiresEndpoint: Bool {
     adapter != .codexLocal && adapter != .claudeLocal && adapter != .piLocal

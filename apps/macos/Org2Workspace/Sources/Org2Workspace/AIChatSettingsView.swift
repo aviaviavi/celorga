@@ -32,7 +32,7 @@ struct AIChatSettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
               Text(destination.title)
                 .font(.body.weight(.medium))
-              Text("@\(destination.mention) · \(destination.adapter.title)")
+              Text("@\(destination.mention) · \(destination.adapterTitle)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
@@ -59,6 +59,16 @@ struct AIChatSettingsView: View {
                 )
               } label: {
                 Label(adapter.title, systemImage: adapter.systemImage)
+              }
+            }
+            ForEach(AIChatProviderPreset.allCases) { preset in
+              Button {
+                destinationEditor = AIChatDestinationEditorPresentation(
+                  destination: store.makeAIChatDestinationDraft(preset: preset),
+                  isNew: true
+                )
+              } label: {
+                Label(preset.title, systemImage: preset.systemImage)
               }
             }
           } label: {
@@ -677,6 +687,8 @@ private struct AIChatDestinationEditor: View {
       return isBuiltInOpenClaw
         ? "This default destination uses the existing OpenClaw Gateway configuration."
         : "Routes turns to this OpenClaw gateway and agent ID with its own saved token."
+    case .openAI where destination.providerPreset == .deepSeek:
+      return "Connects directly to DeepSeek's OpenAI-compatible API with your API key, for context chat and inexpensive background work. deepseek-flash is the low-cost default; deepseek-v4-pro is also available. Reasoning effort sets DeepSeek's thinking mode."
     case .openAI:
       return "Connects directly to OpenAI with your API key for context and image chat."
     case .anthropic:

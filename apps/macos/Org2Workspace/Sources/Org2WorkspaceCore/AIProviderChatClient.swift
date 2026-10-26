@@ -30,6 +30,10 @@ public struct AIProviderChatSettings: Sendable {
     self.baseURL = url
     self.apiKey = normalizedKey?.isEmpty == false ? normalizedKey : nil
   }
+
+  public var preset: AIChatProviderPreset? {
+    AIChatProviderPreset.matching(adapter: adapter, endpoint: baseURL.absoluteString)
+  }
 }
 
 public struct AIProviderChatResult: Sendable {
@@ -85,13 +89,15 @@ public struct AIProviderChatClient: Sendable {
     messages: [AIChatMessage],
     model: String,
     workspaceContext: AIChatWorkspaceContext,
-    destinationName: String
+    destinationName: String,
+    reasoningEffort: String? = nil
   ) async throws -> String {
     try await sendResult(
       messages: messages,
       model: model,
       workspaceContext: workspaceContext,
-      destinationName: destinationName
+      destinationName: destinationName,
+      reasoningEffort: reasoningEffort
     ).reply
   }
 
@@ -99,7 +105,8 @@ public struct AIProviderChatClient: Sendable {
     messages: [AIChatMessage],
     model: String,
     workspaceContext: AIChatWorkspaceContext,
-    destinationName: String
+    destinationName: String,
+    reasoningEffort: String? = nil
   ) async throws -> AIProviderChatResult {
     let normalizedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !normalizedModel.isEmpty else { throw AIProviderChatError.modelRequired }
@@ -121,7 +128,8 @@ public struct AIProviderChatClient: Sendable {
       let bodyObject = try self.requestBody(
         messages: requestMessages,
         model: normalizedModel,
-        system: system
+        system: system,
+        reasoningEffort: reasoningEffort
       )
       return try JSONSerialization.data(withJSONObject: bodyObject)
     }.value
@@ -226,15 +234,20 @@ public struct AIProviderChatClient: Sendable {
   private func requestBody(
     messages: [AIChatMessage],
     model: String,
-    system: String
+    system: String,
+    reasoningEffort: String? = nil
   ) throws -> [String: Any] {
     switch settings.adapter {
     case .openAI, .openRouter:
-      return [
+      var body: [String: Any] = [
         "model": model,
         "messages": [["role": "system", "content": system]] + (try messages.map { try openAIMessage($0) }),
         "stream": false,
       ]
+      if let preset = settings.preset {
+        body.merge(preset.requestFields(reasoningEffort: reasoningEffort)) { _, preset in preset }
+      }
+      return body
     case .anthropic:
       return [
         "model": model,
