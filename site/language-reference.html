@@ -160,6 +160,7 @@ a { text-decoration-thickness: 0.08em; text-underline-offset: 0.15em; }
 <li><p>Syntax: <code>[#A]</code> style cookie after TODO keyword (or at headline start when no TODO keyword).</p></li>
 </ul>
 <pre class="org2-src language-org" style="padding: 0.9rem 1rem; border: 1px solid rgba(127,127,127,0.28); border-radius: 0.6rem; background: rgba(127,127,127,0.11); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 0.92rem; line-height: 1.28;"><code class="language-org">* TODO [#A] Critical task</code></pre>
+<p>A file may set its range with <code>#+PRIORITIES: HIGHEST LOWEST DEFAULT</code>, either as letters (<code>#+PRIORITIES: A E C</code>) or digits (<code>#+PRIORITIES: 1 5 3</code>); without it the range is <code>A</code> to <code>C</code> with default <code>B</code>. A cookie is one letter or digit, so <code>[#AA]</code> and <code>[#-1]</code> are not cookies. <code>celorga lint</code> and the LSP warn about cookies outside the range, invalid or unclosed cookies, and an invalid <code>#+PRIORITIES:</code> line.</p>
 <p>Priority is stored as the dedicated <code>priority</code> headline field. Org's <code>COMMENT</code> headline marker is stored as <code>commented: true</code> while all source bytes still round-trip unchanged.</p>
 </section>
 <section class="org2-headline level-1">
