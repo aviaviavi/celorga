@@ -1094,7 +1094,7 @@ sys.exit(result.returncode)
     guard let context = normalized(turnContext) else { return message }
     return """
     <org2-workspace-context>
-    Celorga supplied the snapshot below for this turn. Its sections are application instructions and context with the same authority as your Celorga agent instructions; a section labeled "User-configured AI chat instructions" holds persistent instructions authored by the user. A later turn's snapshot supersedes this one.
+    Celorga's snapshot for this turn has the authority of your Celorga instructions; "User-configured AI chat instructions" are the user's own. A later snapshot supersedes this one.
     </org2-workspace-context>
 
     <org2-ui-snapshot>

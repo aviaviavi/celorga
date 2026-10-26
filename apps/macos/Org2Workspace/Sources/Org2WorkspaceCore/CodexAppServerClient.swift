@@ -2915,7 +2915,7 @@ while True:
     }
     return """
     <org2-workspace-context>
-    \(turnContext) Snapshot sections explicitly labeled "Celorga working rules", "Celorga response formatting contract", "Celorga chat capabilities", or "Celorga agent operating guidance" are application instructions and must be followed. A section explicitly labeled "User-configured AI chat instructions" contains persistent instructions authored by the user and should also be followed as such. Treat the remaining application-provided values as context.
+    \(turnContext) Follow sections labeled "User-configured AI chat instructions" as the user's own instructions; treat the rest of the snapshot as application context.
     </org2-workspace-context>
     \(snapshotSection)
 
@@ -2938,7 +2938,7 @@ while True:
 
   Use celorga_thread_post for an explicitly asynchronous worker reporting into a named Celorga AI chat, or with requestTurn to start a shared-room agent's turn. Do not duplicate the ordinary foreground response with a background post. The workspace context supplies ORG2_AI_CHAT_THREAD_ID and delegation guidance when a thread target is available.
 
-  \(AIChatWorkspaceContext.responseFormattingContract)
+  \(AIChatWorkspaceContext.localAgentStandingInstructions)
   """
 
   nonisolated private static let runtimeFilesystemDeveloperInstructions = """
@@ -2950,7 +2950,7 @@ while True:
 
   Use existing Celorga tooling when it is installed, but do not require the Celorga app itself. Read existing files before editing them, keep changes small, preserve Org syntax and stable IDs, and validate changes proportionally. Ordinary conversation does not require a tool call.
 
-  \(AIChatWorkspaceContext.responseFormattingContract)
+  \(AIChatWorkspaceContext.localAgentStandingInstructions)
   """
 
   nonisolated static func developerInstructions(

@@ -332,6 +332,10 @@ final class OpenCodeClientTests: XCTestCase {
     XCTAssertTrue(standing.contains("Celorga working rules"))
     XCTAssertTrue(standing.contains("Celorga response formatting contract"))
     XCTAssertFalse(standing.contains("Current surface"))
+    // Static identity rules ride with the standing instructions, not each turn.
+    XCTAssertTrue(standing.contains("Never use =openclaw="))
+    XCTAssertFalse(turn.contains("Never use =openclaw="))
+    XCTAssertTrue(turn.contains("Execution runtime: opencode"))
     XCTAssertTrue(turn.contains("Current surface: Agenda"))
     XCTAssertFalse(turn.contains("Celorga working rules"))
     XCTAssertFalse(turn.contains("Celorga response formatting contract"))

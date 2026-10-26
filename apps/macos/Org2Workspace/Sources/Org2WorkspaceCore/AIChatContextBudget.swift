@@ -233,7 +233,9 @@ enum AIChatContextBudget {
           && previousSections?[section.key] != snapshot[section.key]
       }
       let removed = previousSections?.keys
-        .filter { snapshot[$0] == nil && !isTranscriptSection($0) }
+        .filter {
+          snapshot[$0] == nil && !isTranscriptSection($0) && !isRelocatedStandingSection($0)
+        }
         .sorted()
         .map { key in
           (
@@ -320,6 +322,16 @@ enum AIChatContextBudget {
     SHA256.hash(data: Data(text.utf8))
       .map { String(format: "%02x", $0) }
       .joined()
+  }
+
+  /// Standing instructions that Codex now receives as thread developer
+  /// instructions. A session that saw them in its snapshot must not be told
+  /// they were removed.
+  private static func isRelocatedStandingSection(_ key: String) -> Bool {
+    key.hasPrefix("Celorga working rules#")
+      || key.hasPrefix("Celorga response formatting contract#")
+      || key.hasPrefix("Celorga agent operating guidance#")
+      || key.hasPrefix("Celorga agent identity rules#")
   }
 
   private static func isTranscriptSection(_ key: String) -> Bool {

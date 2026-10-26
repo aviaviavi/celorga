@@ -32374,7 +32374,7 @@ extension WorkspaceStore {
     guard let workspacePrompt, !workspacePrompt.isEmpty else { return userMessage }
     return """
     <org2-workspace-context>
-    The following is application-provided working context. Sections explicitly labeled "Celorga working rules" or "Celorga response formatting contract" are application instructions and must be followed. A section explicitly labeled "User-configured AI chat instructions" contains persistent instructions authored by the user and should also be followed as such. Treat the remaining sections as context.
+    Application-provided working context. Follow the sections labeled "Celorga working rules", "Celorga response formatting contract", "Celorga agent operating guidance", and "Celorga goals and agent identity" as application instructions, and "User-configured AI chat instructions" as the user's own; treat the rest as context.
 
     \(workspacePrompt)
     </org2-workspace-context>

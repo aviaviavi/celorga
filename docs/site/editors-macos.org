@@ -348,14 +348,15 @@ main AI chat list. The document button opens the project note; the plus button
 creates a linked chat and opens it without expanding the project. The action summary includes TODOs in the note and tasks
 linked elsewhere. Use a chat's Projects menu to add or remove membership.
 Until a new chat's first message is sent, its composer also shows a project
-picker beside the assistant, so the first turn already gets the project brief.
+picker beside the assistant, so the first turn already gets the project note.
 A chat can belong to several projects.
 Right-click a project and choose Choose color to use the full picker, or select a quick color. Refresh projects reloads note edits.
 
 Only explicit chat membership supplies project context; expanding a
 sidebar project does not change another chat's prompt. Linked chats receive a
-bounded note excerpt with source path and revision, refreshed with the corpus.
-At most eight notes and 12,000 brief characters are included per turn. Project
+short note excerpt with source path and revision, refreshed with the corpus;
+the agent reads the note itself for the full brief. At most eight notes, 600
+characters each and 2,400 in total, are included per turn. Project
 membership does not import other conversations or change corpus permissions.
 Save an open project-note draft before changing its color or chat membership.
 

@@ -368,7 +368,7 @@ final class AIChatSlashCommandTests: XCTestCase {
     XCTAssertTrue(wrappedMessage.contains("Celorga response formatting contract"))
     XCTAssertTrue(wrappedMessage.contains("Celorga agent operating guidance"))
     XCTAssertTrue(wrappedMessage.contains("celorga agent capabilities"))
-    XCTAssertTrue(wrappedMessage.contains("are application instructions and must be followed"))
+    XCTAssertTrue(wrappedMessage.contains("as application instructions"))
     XCTAssertTrue(wrappedMessage.contains("|-------+--------------|"))
   }
 

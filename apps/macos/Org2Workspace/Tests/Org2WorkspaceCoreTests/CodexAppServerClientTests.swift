@@ -205,7 +205,7 @@ final class CodexAppServerClientTests: XCTestCase {
 
     let snapshot = context.codexSystemPrompt()
 
-    XCTAssertTrue(snapshot.contains("may include unsaved editor changes"))
+    XCTAssertTrue(snapshot.contains("may include unsaved edits"))
     XCTAssertTrue(snapshot.contains("notes/draft.org2"))
     XCTAssertTrue(snapshot.contains("Unsaved editor text"))
   }
@@ -246,14 +246,23 @@ final class CodexAppServerClientTests: XCTestCase {
     let codex = context.codexSystemPrompt()
     XCTAssertTrue(codex.contains("Execution runtime: codex"))
     XCTAssertTrue(codex.contains("celorga agent-profile resolve --runtime codex --runtime-agent-id default --dir /tmp/example-corpus --json"))
-    XCTAssertTrue(codex.contains("Celorga agent operating guidance"))
-    XCTAssertTrue(codex.contains("celorga agent capabilities"))
+    // Codex gets the standing instructions once, as thread developer
+    // instructions, rather than in every turn snapshot.
+    XCTAssertFalse(codex.contains("Celorga agent operating guidance"))
+    for corpusAccess in [CodexCorpusAccess.clientWorkspaceTools, .runtimeFilesystem] {
+      let developer = CodexAppServerClient.developerInstructions(for: corpusAccess)
+      XCTAssertTrue(developer.contains("Celorga agent operating guidance"))
+      XCTAssertTrue(developer.contains("celorga agent capabilities"))
+      XCTAssertTrue(developer.contains("Never use =openclaw=, =codex=, =claude=, a model name, or a session ID as =AGENT_REF:="))
+    }
 
     let claude = context.localAgentSystemPrompt(runtime: "claude", runtimeTitle: "Claude Code")
+    XCTAssertTrue(claude.contains("Never use =openclaw=, =codex=, =claude=, a model name, or a session ID as =AGENT_REF:="))
     // All chat destinations share the native-tool policy, including remote
     // shell-capable agents and providers with only exposed workspace tools.
-    for prompt in [openClaw, codex, claude,
-      context.codexSystemPrompt(runtimeFilesystemAccess: true),
+    for prompt in [openClaw, claude,
+      CodexAppServerClient.developerInstructions(for: .clientWorkspaceTools),
+      CodexAppServerClient.developerInstructions(for: .runtimeFilesystem),
       context.systemPrompt(runtime: "bundled"),
       context.systemPrompt(runtime: "anthropic")] {
       XCTAssertTrue(prompt.contains("Use Celorga's native CLI by default"))
@@ -300,7 +309,8 @@ final class CodexAppServerClientTests: XCTestCase {
     XCTAssertTrue(prompt.contains("Use normal filesystem tools there"))
     XCTAssertTrue(prompt.contains("User's Celorga machine: "))
     XCTAssertTrue(prompt.contains("only the synced corpus is shared"))
-    XCTAssertTrue(prompt.contains("link it with a corpus-relative path"))
+    XCTAssertTrue(CodexAppServerClient.developerInstructions(for: .runtimeFilesystem)
+      .contains("link it with a corpus-relative path"))
     XCTAssertFalse(prompt.contains("accessible to the Mac"))
     XCTAssertFalse(prompt.contains("Use the client-provided Celorga workspace tools"))
   }
@@ -343,15 +353,22 @@ final class CodexAppServerClientTests: XCTestCase {
       XCTAssertTrue(prompt.contains("/srv/team"))
       XCTAssertTrue(prompt.contains("User-configured AI chat instructions"))
       XCTAssertTrue(prompt.contains("Prefer concise answers and surface open TODOs."))
+    }
+    // Codex receives the formatting contract as developer instructions.
+    for prompt in [
+      context.systemPrompt(),
+      CodexAppServerClient.developerInstructions(for: .clientWorkspaceTools),
+      AIChatWorkspaceContext.localAgentStandingInstructions,
+    ] {
       XCTAssertTrue(prompt.contains("Celorga response formatting contract"))
       XCTAssertTrue(prompt.contains("[[file:images/qr.png][QR code]]"))
       XCTAssertTrue(prompt.contains("Celorga renders image links inline"))
       XCTAssertTrue(prompt.contains("opening Preview does not embed it"))
       XCTAssertTrue(prompt.contains("never link an absolute path outside the corpus"))
-      XCTAssertTrue(prompt.contains("Inline emphasis does not nest in Celorga's Org profile."))
+      XCTAssertTrue(prompt.contains("Inline emphasis does not nest in Celorga's Org profile"))
       XCTAssertTrue(prompt.contains("*no duplicate in* =recipes.org="))
       XCTAssertTrue(prompt.contains("|-------+--------------|"))
-      XCTAssertTrue(prompt.contains("Never use a Markdown table delimiter such as |---|---|."))
+      XCTAssertTrue(prompt.contains("Never use a Markdown table delimiter such as |---|---|"))
       // Agents must know what the chat surface and the agent network can do.
       XCTAssertTrue(prompt.contains("Celorga chat capabilities"))
       XCTAssertTrue(prompt.contains("live, sandboxed HTML, CSS, and JavaScript app"))
@@ -360,11 +377,11 @@ final class CodexAppServerClientTests: XCTestCase {
       XCTAssertTrue(prompt.contains("celorga thread send THREAD_ID"))
       XCTAssertTrue(prompt.contains("celorga_thread_send"))
       XCTAssertTrue(prompt.contains("Do not create an automation, workflow, cron job, scheduled task, or helper script"))
-      XCTAssertTrue(prompt.contains("exactly one fewer + join than the number of columns"))
+      XCTAssertTrue(prompt.contains("one dash segment per column joined by +"))
       XCTAssertTrue(prompt.contains("#+begin_src sh"))
-      XCTAssertTrue(prompt.contains("Never write ##+begin_src or ##+end_src."))
+      XCTAssertTrue(prompt.contains("Never write ##+begin_src or ##+end_src"))
       XCTAssertTrue(prompt.contains("Use Org links for citations too: [[file:/absolute/path/note.org::42][source]]."))
-      XCTAssertTrue(prompt.contains("Use [[https://example.com][label]] for web links."))
+      XCTAssertTrue(prompt.contains("[[https://example.com][label]]"))
       XCTAssertTrue(prompt.contains("Do not emit Markdown links in new replies."))
     }
   }

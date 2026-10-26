@@ -158,6 +158,32 @@ final class AIChatContextBudgetTests: XCTestCase {
     XCTAssertEqual(decoded.context?.totalTokens, 35)
   }
 
+  /// Codex now receives standing instructions as developer instructions. A
+  /// session that saw them in an earlier snapshot must not be told to drop them.
+  func testDeltaDoesNotRetractStandingInstructionsMovedOutOfTheSnapshot() {
+    let earlier = AIChatContextBudget.persistentEnvelope(
+      fullPrompt: [
+        "Celorga workspace UI snapshot\n\nCurrent surface: AI Chat",
+        "Celorga working rules\n\nKeep citations stable.",
+        "Celorga response formatting contract\n\nUse Org.",
+        "Search context: launch\n- result",
+      ].joined(separator: "\n\n---\n\n"),
+      previousSections: nil,
+      forceRecovery: true,
+      includesTranscript: true
+    )
+    let delta = AIChatContextBudget.persistentEnvelope(
+      fullPrompt: "Celorga workspace UI snapshot\n\nCurrent surface: AI Chat",
+      previousSections: earlier.sectionSnapshot,
+      forceRecovery: false,
+      includesTranscript: true
+    )
+    let prompt = try? XCTUnwrap(delta.prompt)
+    XCTAssertTrue(prompt?.contains("Search context: launch") == true)
+    XCTAssertFalse(prompt?.contains("Celorga working rules") == true)
+    XCTAssertFalse(prompt?.contains("Celorga response formatting contract") == true)
+  }
+
   func testTelemetryClassifiesDynamicWorkspaceContextAndExcludesCurrentRequest() {
     let system = [
       "Celorga workspace operating context\n\nCorpus roots",

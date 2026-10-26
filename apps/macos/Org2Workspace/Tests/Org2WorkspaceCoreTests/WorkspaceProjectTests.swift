@@ -52,7 +52,9 @@ final class WorkspaceProjectTests: XCTestCase {
     let thread = UUID()
     let notes = (0..<10).map { _ in project(threadID: thread, brief: String(repeating: "x", count: 15000)) }
     let context = WorkspaceProjectContext.presentation(projects: notes, threadID: thread)
-    XCTAssertLessThan(context.count, 16000)
+    // Every turn carries only excerpts; the agent reads the note itself.
+    XCTAssertLessThan(context.count, 4_500)
+    XCTAssertFalse(context.contains(String(repeating: "x", count: WorkspaceProjectContext.perProjectExcerpt + 1)))
     XCTAssertTrue(context.contains("truncated"))
     XCTAssertTrue(context.contains("Additional project notes omitted"))
   }

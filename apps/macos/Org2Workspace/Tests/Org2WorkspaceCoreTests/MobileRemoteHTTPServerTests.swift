@@ -930,8 +930,8 @@ final class MobileRemoteHTTPServerTests: XCTestCase {
     XCTAssertTrue(codexPrompt.contains("Thread title: Render Atlanta Talk"))
     XCTAssertTrue(codexPrompt.contains("Improve the talk."))
     XCTAssertTrue(codexPrompt.contains("notes/render-atlanta.org2:1"))
-    XCTAssertTrue(codexPrompt.contains("Celorga response formatting contract"))
-    XCTAssertTrue(codexPrompt.contains("|-------+--------------|"))
+    // Codex carries the formatting contract in its developer instructions.
+    XCTAssertFalse(codexPrompt.contains("Celorga response formatting contract"))
     XCTAssertFalse(codexPrompt.contains("unrelated-meeting.org2"))
 
     let secondReplyDeadline = Date().addingTimeInterval(5)
