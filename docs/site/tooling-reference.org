@@ -743,6 +743,40 @@ Continuation offers are bound to the run revision and the linked chat's latest m
 
 =workspace continue OFFER_ID= re-derives the workspace, refuses a stale or guarded offer without writing, and previews by default. With =--apply= it performs exactly one action: an idempotent =thread send= (key =workspace-continue:RUN:REVISION=) plus a revision-guarded run comment, or a revision-guarded =run retry=. Its result reports what remains unconfirmed and the =thread wait= or =run wait= command to check. Queuing never confirms that a turn started. MCP clients use =celorga_workspace_coordinate= and =celorga_workspace_continue= (not on the read-only endpoint).
 
+** Attention digest
+
+=workspace attention= answers one question deterministically: does anything need the person now? It composes =approvals=, =agenda=, the workspace coordinator, and the committed chat summary, and applies the person's own preferences. It never ranks, summarizes with a model, or decides importance.
+
+#+begin_src sh
+celorga workspace attention --dir ~/notes                          # text
+celorga workspace attention --dir ~/notes --mode brief --json      # morning brief
+celorga workspace attention --dir ~/notes --mark-delivered --fingerprint att_0123... # preview
+celorga workspace attention --dir ~/notes --mark-delivered --fingerprint att_0123... --apply
+#+end_src
+
+Categories: =approval= (pending approvals, reported once even when a run or chat is blocked on them), =blocked= (runs blocked on a question, orphaned workflow dispatch locks), =review= (artifacts awaiting review), =reply= (chats with an unread agent reply, a background report, an interrupted turn, or a failed delivery), =failed= (failed runs), =overdue= (unfinished deadlines before today), and =today= (deadlines and scheduled items dated today; deadline warnings and habits are left out). Each item has a stable =fingerprint= derived from the state that makes it need attention, a =ref= such as =notes/tasks.org:9=, =run:ID=, or =thread:ID=, evidence, and an inspection command. =--since DURATION= drops run and chat items whose last signal is older.
+
+Preferences live in =celorga.json=; unknown keys or malformed values are rejected:
+
+#+begin_src json
+{
+  "attention": {
+    "excludeCategories": ["failed"],
+    "excludeTags": ["someday"],
+    "excludePaths": ["archive/**"],
+    "quietHours": { "start": "22:00", "end": "07:00" },
+    "morningBrief": "08:30",
+    "checkIntervalMinutes": 120
+  }
+}
+#+end_src
+
+=includeCategories= narrows the categories instead. Times are local to the machine running the command; quiet hours may wrap midnight. With =--mount=, each corpus filters its own items and the first corpus supplies quiet hours and schedule.
+
+=interrupt= is true only when an item's fingerprint was never delivered and the current time is outside quiet hours; =--mode brief= interrupts for any item. The =notification= field carries a deterministic title, body, and the fingerprints it covers. Delivery is recorded in the corpus state directory (=attention/delivered.json=) only with =--mark-delivered --apply=, for exactly one corpus; =--fingerprint= restricts marking to the items a notification showed, and =--if-revision SHA256|absent= guards the ledger.
+
+The Celorga app for macOS has an opt-in *Attention* setting (off by default) that runs this command with the bundled CLI at the morning brief time and every =checkIntervalMinutes= outside quiet hours, posts one notification when =interrupt= is true, marks exactly those fingerprints delivered, and opens a list of the items with evidence links when the notification is clicked. The iOS app does not receive attention notifications yet.
+
 * Chat thread automation
 
 =celorga thread= reads the corpus-owned AI chat transcript from its authoritative sharded store, with compatibility for the older single-file transcript. Reads also project pending operation-journal entries, so active and settled threads retain the same stable ID, messages, session key, context, and timestamps while queued changes remain visible. Settlement is a reversible work-state transition, not deletion.

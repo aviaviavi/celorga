@@ -135,6 +135,12 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
         writes: "preview-by-default",
       },
       {
+        id: "attention-digest",
+        purpose: "Deterministic digest of what needs the person now: pending approvals, blocked runs with a question, artifact reviews, chats awaiting a reply, failed runs, overdue deadlines, and today's deadlines and scheduled items, each with a stable fingerprint and file:line, run, or thread evidence. Filtered by the `attention` key in celorga.json (categories, tags, paths, quiet hours, morning brief, check interval). `interrupt` is true only for never-delivered fingerprints outside quiet hours; `--mark-delivered --apply` records delivery in the corpus state directory. No model calls or judgment.",
+        commands: ["celorga workspace attention"],
+        writes: "preview-by-default",
+      },
+      {
         id: "explainable-activity",
         purpose: "Explain why every chat thread, durable run, and workflow is working or needs attention (reporting host/runtime, last heartbeat or transition, live/cached/uncertain confidence, exact blocking approval or question), trace one run through dispatch, executor, tools, result, and delivery to distinguish a working executor from completed-but-undelivered work and unknown state, list multi-host presence with failover candidates, stream local activity events, and wait race-free on thread or run conditions.",
         commands: ["celorga activity explain", "celorga activity trace", "celorga activity hosts", "celorga activity events", "celorga thread wait", "celorga run wait"],

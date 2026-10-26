@@ -148,6 +148,105 @@ export interface Org2Config {
   plugins?: Org2PluginConfig[];
   /** Portable, non-secret source intent. Credentials and machine paths live in local bindings. */
   externalSources?: Record<string, Org2ExternalSourceConfig>;
+  /** Deterministic attention digest preferences; see `celorga workspace attention`. */
+  attention?: Org2AttentionConfig;
+}
+
+export const ATTENTION_CATEGORIES = ["approval", "blocked", "review", "reply", "failed", "overdue", "today"] as const;
+export type AttentionCategory = (typeof ATTENTION_CATEGORIES)[number];
+
+export type Org2AttentionConfig = {
+  includeCategories?: AttentionCategory[];
+  excludeCategories?: AttentionCategory[];
+  /** Agenda and approval items carrying any of these tags are left out. */
+  excludeTags?: string[];
+  /** Corpus-relative paths or globs (same syntax as ignorePatterns). */
+  excludePaths?: string[];
+  /** Local-time window in which `interrupt` stays false. May wrap midnight. */
+  quietHours?: { start: string; end: string } | null;
+  /** Local time of the daily brief, or null for no brief. */
+  morningBrief?: string | null;
+  /** Minutes between interrupt checks; 0 turns periodic checks off. */
+  checkIntervalMinutes?: number;
+};
+
+export interface AttentionPreferences {
+  categories: AttentionCategory[];
+  excludeTags: string[];
+  excludePaths: string[];
+  quietHours: { start: string; end: string } | null;
+  morningBrief: string | null;
+  checkIntervalMinutes: number;
+}
+
+export const DEFAULT_ATTENTION_PREFERENCES: AttentionPreferences = {
+  categories: [...ATTENTION_CATEGORIES],
+  excludeTags: [],
+  excludePaths: [],
+  quietHours: null,
+  morningBrief: "08:00",
+  checkIntervalMinutes: 120,
+};
+
+const ATTENTION_KEYS = new Set(["includeCategories", "excludeCategories", "excludeTags", "excludePaths", "quietHours", "morningBrief", "checkIntervalMinutes"]);
+const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/u;
+
+/** Validate the `attention` key of celorga.json. Unknown keys and malformed values are reported, never guessed. */
+export function validateAttentionConfig(raw: unknown): { preferences: AttentionPreferences; issues: string[] } {
+  const issues: string[] = [];
+  const preferences: AttentionPreferences = { ...DEFAULT_ATTENTION_PREFERENCES, categories: [...DEFAULT_ATTENTION_PREFERENCES.categories] };
+  if (raw === undefined || raw === null) return { preferences, issues };
+  if (typeof raw !== "object" || Array.isArray(raw)) return { preferences, issues: ["attention must be an object"] };
+  const value = raw as Record<string, unknown>;
+  for (const key of Object.keys(value)) if (!ATTENTION_KEYS.has(key)) issues.push(`attention.${key} is not a known attention setting`);
+  const stringList = (key: string): string[] | undefined => {
+    const entry = value[key];
+    if (entry === undefined) return undefined;
+    if (!Array.isArray(entry) || entry.some((item) => typeof item !== "string" || !item.trim())) {
+      issues.push(`attention.${key} must be an array of non-empty strings`);
+      return undefined;
+    }
+    return entry.map((item: string) => item.trim());
+  };
+  const categoryList = (key: string): AttentionCategory[] | undefined => {
+    const list = stringList(key);
+    if (!list) return undefined;
+    const unknown = list.filter((item) => !(ATTENTION_CATEGORIES as readonly string[]).includes(item));
+    if (unknown.length) issues.push(`attention.${key} has unknown categories: ${unknown.join(", ")}; expected ${ATTENTION_CATEGORIES.join(", ")}`);
+    return list.filter((item): item is AttentionCategory => (ATTENTION_CATEGORIES as readonly string[]).includes(item));
+  };
+  const include = categoryList("includeCategories");
+  const exclude = new Set(categoryList("excludeCategories") ?? []);
+  preferences.categories = (include ?? [...ATTENTION_CATEGORIES]).filter((category) => !exclude.has(category));
+  preferences.excludeTags = (stringList("excludeTags") ?? []).map((tag) => tag.replace(/^:+|:+$/gu, "").toLowerCase());
+  preferences.excludePaths = stringList("excludePaths") ?? [];
+  if (value.quietHours !== undefined) {
+    const quiet = value.quietHours as Record<string, unknown> | null;
+    if (quiet === null) preferences.quietHours = null;
+    else if (typeof quiet !== "object" || Array.isArray(quiet) || typeof quiet.start !== "string" || typeof quiet.end !== "string"
+      || !CLOCK_TIME.test(quiet.start) || !CLOCK_TIME.test(quiet.end)) {
+      issues.push("attention.quietHours must be null or { \"start\": \"HH:MM\", \"end\": \"HH:MM\" } in 24-hour local time");
+    } else if (quiet.start === quiet.end) {
+      issues.push("attention.quietHours start and end must differ");
+    } else preferences.quietHours = { start: quiet.start, end: quiet.end };
+  }
+  if (value.morningBrief !== undefined) {
+    if (value.morningBrief === null) preferences.morningBrief = null;
+    else if (typeof value.morningBrief !== "string" || !CLOCK_TIME.test(value.morningBrief)) issues.push("attention.morningBrief must be null or \"HH:MM\" in 24-hour local time");
+    else preferences.morningBrief = value.morningBrief;
+  }
+  if (value.checkIntervalMinutes !== undefined) {
+    const minutes = value.checkIntervalMinutes;
+    if (typeof minutes !== "number" || !Number.isInteger(minutes) || (minutes !== 0 && (minutes < 15 || minutes > 1440))) {
+      issues.push("attention.checkIntervalMinutes must be 0 (off) or a whole number from 15 to 1440");
+    } else preferences.checkIntervalMinutes = minutes;
+  }
+  return { preferences, issues };
+}
+
+/** Corpus-relative path match using the same glob rules as ignorePatterns. */
+export function configPathMatches(relativePath: string, pattern: string): boolean {
+  return matchesPattern(relativePath, pattern);
 }
 
 export function findConfigFile(startDir: string): string | null {

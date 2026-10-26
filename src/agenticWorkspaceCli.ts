@@ -1,6 +1,7 @@
 import { createProjectNote, listProjectNotes, updateProjectNote } from "./project.js";
 import { workspaceAgentState, workspaceRunList, workspaceWorkflowList, workspaceGoalList, workspaceProfileList } from "./workspaceAgentState.js";
 import { continueWorkspaceOffer, coordinateWorkspace, renderWorkspaceCoordinationText } from "./workspaceCoordinator.js";
+import { buildAttentionDigest, renderAttentionDigestText } from "./attentionDigest.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -216,6 +217,12 @@ const HELP = `Agentic workspace commands:
   celorga workspace continue OFFER_ID [--mount CORPUS ...|--dir CORPUS] [--actor NAME] [--apply] [--json]
     Re-derives the offer, refuses it if stale or any guard fails, then delegates to an idempotent thread send or a
     revision-guarded run retry. Preview by default. Queuing does not confirm that a turn started.
+  celorga workspace attention [--mount CORPUS ...|--dir CORPUS] [--mode check|brief] [--since DURATION] [--now ISO] [--json]
+                              [--mark-delivered [--fingerprint FP ...] [--if-revision SHA256|absent] [--apply]]
+    Deterministic digest of what needs you now: pending approvals, blocked runs, artifact reviews, chats awaiting you,
+    failed runs, overdue deadlines, and today's deadlines and scheduled items, filtered by celorga.json "attention".
+    interrupt is true only for never-delivered fingerprints outside quiet hours (brief mode: any item). Delivery is
+    recorded in the corpus state directory only with --mark-delivered --apply (one corpus).
   celorga thread list|show|post|send|wait|settle|reopen|configure|auto-settle|repair [--dir CORPUS] [--apply]
   celorga thread repair [--dir CORPUS] [--apply] [--if-revision SHA256] [--watch --interval SECONDS] [--executable PATH] [--json]
   celorga thread post THREAD --message TEXT --author NAME [--agent-ref ID] [--source REF] [--idempotency-key KEY] [--request-turn AGENT ...] [--dir CORPUS] [--apply]
@@ -590,6 +597,27 @@ async function workspaceCommand(parsed: ParsedArgs): Promise<void> {
   if (action === "agent-state") {
     if (flags(parsed, "mount").length) throw new Error("workspace agent-state reads one --dir corpus; --mount is not supported");
     output(parsed, workspaceAgentState(root(parsed)));
+    return;
+  }
+  if (action === "attention") {
+    const mountRoots = flags(parsed, "mount");
+    if (mountRoots.length && parsed.flags.has("dir")) throw new Error("workspace attention reads either --mount CORPUS ... or one --dir CORPUS, not both");
+    const rawNow = flag(parsed, "now");
+    const now = rawNow ? new Date(rawNow) : new Date();
+    if (!Number.isFinite(now.getTime())) throw new Error("--now must be an ISO date");
+    const rawSince = flag(parsed, "since");
+    const result = await buildAttentionDigest({
+      mounts: mountRoots,
+      root: root(parsed),
+      now,
+      ...(rawSince !== undefined ? { sinceSeconds: durationSeconds(rawSince) } : {}),
+      mode: choice(flag(parsed, "mode", "check"), ["check", "brief"] as const, "attention mode"),
+      markDelivered: enabled(parsed, "mark-delivered"),
+      fingerprints: flags(parsed, "fingerprint"),
+      apply: enabled(parsed, "apply"),
+      ifRevision: flag(parsed, "if-revision"),
+    });
+    output(parsed, result, renderAttentionDigestText(result));
     return;
   }
   if (action === "coordinate" || action === "continue") {
