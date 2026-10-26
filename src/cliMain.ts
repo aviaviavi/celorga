@@ -4789,6 +4789,16 @@ function findArchiveOriginalId(subtreeLines: string[]): string | undefined {
   return undefined;
 }
 
+function findArchiveParentId(lines: string[], headlineLineIndex: number): string | undefined {
+  const level = /^(\*+)\s+/.exec(lines[headlineLineIndex] ?? "")?.[1].length ?? 1;
+  for (let idx = headlineLineIndex - 1; idx >= 0; idx -= 1) {
+    const match = /^(\*+)\s+/.exec(lines[idx] ?? "");
+    if (!match) continue;
+    if (match[1].length < level) return findArchiveOriginalId(lines.slice(idx));
+  }
+  return undefined;
+}
+
 function buildArchiveHeadingPath(lines: string[], headlineLineIndex: number): string[] {
   const headingPath: string[] = [];
   let currentLevel = Infinity;
@@ -4813,6 +4823,7 @@ function addArchiveProvenanceDrawer(subtreeLines: string[], provenance: Record<s
     `:ARCHIVE_SOURCE: ${provenance.sourcePath}`,
     `:ARCHIVE_SOURCE_LINE: ${provenance.sourceLine}`,
     provenance.originalId ? `:ARCHIVE_ORIGINAL_ID: ${provenance.originalId}` : undefined,
+    provenance.parentId ? `:ARCHIVE_PARENT_ID: ${provenance.parentId}` : undefined,
     provenance.headingPath ? `:ARCHIVE_HEADING_PATH: ${provenance.headingPath}` : undefined,
     ":END:",
     "",
@@ -14520,6 +14531,7 @@ Flags:
       sourcePath,
       sourceLine: String(headlineLineIndex + 1),
       originalId: findArchiveOriginalId(rawSubtreeLines),
+      parentId: findArchiveParentId(lines, headlineLineIndex),
       headingPath: buildArchiveHeadingPath(lines, headlineLineIndex).join("/"),
     };
     const subtreeLines = addArchiveProvenanceDrawer(rawSubtreeLines, provenance);

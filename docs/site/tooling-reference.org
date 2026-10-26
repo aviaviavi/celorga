@@ -468,7 +468,7 @@ celorga archive --file notes.org --pos 120:0 --apply
 celorga refile --file notes.org --pos 120:0 --to-file projects.org --to-pos 40:0 --apply
 #+end_src
 
-Archiving moves the selected subtree to a companion archive file (by default =FILE_archive= for =.org= files, otherwise =FILE.archive=). Archived subtrees receive a property drawer with =ARCHIVED_AT=, =ARCHIVE_SOURCE=, =ARCHIVE_SOURCE_LINE=, =ARCHIVE_HEADING_PATH=, and =ARCHIVE_ORIGINAL_ID= when the original subtree had an =ID=. Use =--format diff= to preview the exact removal/append operation, or =--format json= for editor/agent integrations.
+Archiving moves the selected subtree to a companion archive file (by default =FILE_archive= for =.org= files, otherwise =FILE.archive=). Archived subtrees receive a property drawer with =ARCHIVED_AT=, =ARCHIVE_SOURCE=, =ARCHIVE_SOURCE_LINE=, =ARCHIVE_HEADING_PATH=, =ARCHIVE_ORIGINAL_ID= when the original subtree had an =ID=, and =ARCHIVE_PARENT_ID= when its direct parent heading had an =ID=, so links and backlinks to the old context still resolve. Use =--format diff= to preview the exact removal/append operation, or =--format json= for editor/agent integrations.
 
 * Formatter
 

@@ -54,4 +54,35 @@ assert.equal(JSON.parse(agendaDefaultRaw).days.flatMap((day) => day.items).lengt
 const agendaArchivedRaw = execFileSync('node', ['dist/cli.js', 'agenda', '--dir', tmp, '--recursive', '--include-archives', '--from', '2026-01-21', '--to', '2026-01-21', '--format', 'json'], { encoding: 'utf8' });
 assert.equal(JSON.parse(agendaArchivedRaw).days.flatMap((day) => day.items).length, 1, '--include-archives should make archive destinations available to agenda');
 
+const parented = path.join(tmp, 'parented.org');
+fs.writeFileSync(parented, `* Area
+:PROPERTIES:
+:ID: area-alpha
+:END:
+** Project
+:PROPERTIES:
+:ID: project-beta
+:END:
+*** DONE Ship draft
+:PROPERTIES:
+:ID: task-gamma
+:END:
+Body.
+*** TODO Remaining work
+`);
+const parentedPreview = JSON.parse(execFileSync('node', ['dist/cli.js', 'archive', '--file', parented, '--pos', '9', '--format', 'json'], { encoding: 'utf8', env }));
+assert.equal(parentedPreview.provenance.parentId, 'project-beta', 'nearest parent heading ID is recorded');
+assert.match(parentedPreview.subtreeText, /:ARCHIVE_PARENT_ID: project-beta/);
+assert.doesNotMatch(parentedPreview.subtreeText, /area-alpha/);
+execFileSync('node', ['dist/cli.js', 'archive', '--file', parented, '--pos', '9', '--apply'], { encoding: 'utf8', env });
+const parentedArchive = fs.readFileSync(`${parented}_archive`, 'utf8');
+assert.match(parentedArchive, /:ARCHIVE_PARENT_ID: project-beta\n[\s\S]*:ID: task-gamma\n:END:/);
+
+const parentWithoutId = JSON.parse(execFileSync('node', ['dist/cli.js', 'archive', '--file', parented, '--pos', '5', '--format', 'json'], { encoding: 'utf8', env }));
+assert.equal(parentWithoutId.provenance.parentId, 'area-alpha');
+fs.writeFileSync(parented, `* Plain parent\n** TODO Child\n`);
+const noParentId = JSON.parse(execFileSync('node', ['dist/cli.js', 'archive', '--file', parented, '--pos', '2', '--format', 'json'], { encoding: 'utf8', env }));
+assert.equal(noParentId.provenance.parentId, undefined, 'no ARCHIVE_PARENT_ID when parent has no ID');
+assert.doesNotMatch(noParentId.subtreeText, /ARCHIVE_PARENT_ID/);
+
 console.log('✓ archive provenance');
