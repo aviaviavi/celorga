@@ -182,7 +182,7 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
       },
       {
         id: "planning",
-        purpose: "Build agendas, inspect the unified run/headline approval queue, and mutate corpus-default and file-defined TODO workflows (active and terminal states), list checkboxes and their progress cookies, planning, effort, habit, and clock state.",
+        purpose: "Build agendas, inspect the unified run/headline approval queue, and mutate corpus-default and file-defined TODO workflows (active and terminal states), list checkboxes and their progress cookies, planning (including cancelling an entry's repeaters), effort, habit, and clock state.",
         commands: ["celorga agenda", "celorga todo", "celorga todo-config", "celorga daily-config", "celorga migrate-names", "celorga checkbox", "celorga approvals", "celorga plan", "celorga clock", "celorga query clocks"],
         writes: "mixed",
       },

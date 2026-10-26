@@ -45,7 +45,7 @@ import {
 } from "./corpusFiles.js";
 import { resolvePublishHeadIncludes } from "./publish-defaults.js";
 import { documentTodoSequences, todoSequencesForFile, todoConfigurationKey, todoKeywordInWorkflow, type TodoSequence, assignTodoInText, formatOrgTimestamp, isActiveTodoKeyword, isTerminalTodoKeyword, normalizeTodoKeyword, TODO_KEYWORDS, updateTodoInText, type TodoStatus } from "./todo.js";
-import { planningKindFromArg, updatePlanningInText, type PlanningKindArg } from "./planning.js";
+import { cancelRepeatersInText, planningKindFromArg, updatePlanningInText, type PlanningKindArg } from "./planning.js";
 import { computeSubtreeRange, findHeadingAtOrAbove, isHeadlineLine, upsertHeadlinePropertyInLines } from "./sourceLines.js";
 import { findBacklinksInText, type Backlink } from "./backlinks.js";
 import { renderOrgDocumentToHtml, renderOrgExportIndexToHtml } from "./export.js";
@@ -7598,7 +7598,7 @@ async function main(): Promise<void> {
   let captureFormat: "text" | "json" | "diff" = "text";
 
   // Planning editing
-  let planAction: "set" | "today" = "set";
+  let planAction: "set" | "today" | "cancel-repeaters" = "set";
   let planFile = "";
   let planLine = 0;
   let planKind: PlanningKindArg | "" = "";
@@ -7826,10 +7826,10 @@ async function main(): Promise<void> {
     } else if (arg === "plan" || arg === "planning") {
       command = "plan";
       i++;
-      // Optional subcommand: set|today (default set)
+      // Optional subcommand: set|today|cancel-repeaters (default set)
       if (i < args.length && !args[i]!.startsWith("--")) {
         const sub = args[i]!;
-        if (sub === "set" || sub === "today") {
+        if (sub === "set" || sub === "today" || sub === "cancel-repeaters") {
           planAction = sub;
           i++;
         }
@@ -9470,7 +9470,7 @@ function printScopedUsage(
   options: {
     exportAction: "html" | "beamer";
     todoAction: "set" | "toggle" | "assign" | "approve";
-    planAction: "set" | "today";
+    planAction: "set" | "today" | "cancel-repeaters";
     cryptAction: "encrypt" | "decrypt" | "reencrypt";
     idAction: "get" | "ensure";
     roamAction: "db-sync" | "backlinks" | "node" | "link" | "linkify" | "graph";
@@ -9533,14 +9533,22 @@ Flags:
     text = `celorga plan ${options.planAction}
 
 Usage:
-  celorga plan <set|today> --file FILE (--line N | --pos LINE[:COL]) [--apply]
+  celorga plan <set|today> --file FILE (--line N | --pos LINE[:COL]) --kind scheduled|deadline [--apply]
+  celorga plan cancel-repeaters --file FILE (--line N | --pos LINE[:COL]) [--apply]
 
 Flags:
   --file FILE         Target file
   --line N            Heading line number
   --pos LINE[:COL]    Heading position
+  --kind KIND         scheduled or deadline for 'set' and 'today'
   --date YYYY-MM-DD   Planned date for 'set'
-  --apply             Write changes instead of previewing`;
+  --format text|json|diff  Output format (default json)
+  --apply             Write changes instead of previewing
+
+'cancel-repeaters' removes repeater cookies (+1w, ++1d, .+1m, including
+habit parts such as .+2d/4d) from every active timestamp in the entry:
+SCHEDULED, DEADLINE, the headline, and body text up to the next heading.
+Dates, times, and warning delays are kept.`;
   } else if (command === "crypt") {
     text = `celorga crypt ${options.cryptAction}
 
@@ -13665,6 +13673,32 @@ Flags:
     if (!Number.isFinite(planLine) || planLine < 1) {
       console.error("Error: plan requires --line N (1-based) or --pos LINE[:COL]");
       process.exit(1);
+    }
+    if (planAction === "cancel-repeaters") {
+      const beforeRaw = fs.readFileSync(planFile, "utf8").replace(/\r\n/g, "\n");
+      const res = cancelRepeatersInText(beforeRaw, { filePath: planFile, lineNumber: planLine });
+      if (planApply && res.changed) fs.writeFileSync(planFile, res.text, "utf8");
+      if (planFormat === "diff") {
+        if (!res.changed) return;
+        process.stdout.write(buildUnifiedDiff(beforeRaw, res.text, {
+          targetPath: planFile,
+          temporaryDirectoryPrefix: "org2-plan-diff-",
+        }));
+        return;
+      }
+      if (planFormat === "text") {
+        process.stdout.write(res.text + (res.text.endsWith("\n") ? "" : "\n"));
+        return;
+      }
+      process.stdout.write(JSON.stringify({
+        action: "cancel-repeaters",
+        file: res.filePath,
+        headingLine: res.headingLineNumber,
+        applied: planApply,
+        changed: res.changed,
+        cancelled: res.cancelled,
+      }, null, 2) + "\n");
+      return;
     }
     if (!planKind || (planKind !== "scheduled" && planKind !== "deadline")) {
       console.error("Error: plan requires --kind scheduled|deadline");

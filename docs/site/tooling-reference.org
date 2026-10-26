@@ -413,7 +413,11 @@ celorga todo toggle --file notes.org --line 42 --apply
 celorga todo set --file notes.org --line 42 --status in_progress --apply
 celorga todo set --file notes.org --line 42 --keyword SKIPPED --apply
 celorga plan set --file notes.org --line 42 --kind scheduled --date 2026-03-25 --apply
+celorga plan cancel-repeaters --file notes.org --line 42 --format diff
+celorga plan cancel-repeaters --file notes.org --line 42 --apply
 #+end_src
+
+=plan cancel-repeaters= turns a recurring entry into a one-off. It removes repeater cookies (=+1w=, =++1d=, =.+1m=, including habit parts such as =.+2d/4d=) from every active timestamp in the entry: the headline, =SCHEDULED=, =DEADLINE=, and body text up to the next heading. Dates, times, and warning delays such as =-2d= stay; inactive timestamps, child entries, and source or example blocks are untouched. It previews by default; the JSON preview lists each cancelled cookie with its line.
 
 Set corpus defaults through Settings → General → TODO States in Celorga, or with the guarded CLI:
 

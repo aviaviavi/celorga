@@ -131,3 +131,74 @@ export function updatePlanningInFile(opts: UpdatePlanningOptions & { apply: bool
   }
   return res;
 }
+
+export type CancelledRepeater = {
+  line: number; // 1-based
+  repeater: string;
+  before: string;
+  after: string;
+};
+
+export type CancelRepeatersResult = {
+  filePath: string;
+  headingLineNumber: number; // 1-based
+  changed: boolean;
+  cancelled: CancelledRepeater[];
+  text: string;
+};
+
+const ACTIVE_TIMESTAMP_RE = /<(\d{4}-\d{2}-\d{2}(?:[^<>\n]*?))>/g;
+const REPEATER_COOKIE_RE = /\s+(?:\+\+|\.\+|\+)\d+[hdwmy](?:\/\d+[hdwmy])?(?=\s|$)/gi;
+const LITERAL_BLOCK_BEGIN_RE = /^\s*#\+begin_(src|example|export)\b/i;
+
+export function stripTimestampRepeaters(timestampBody: string): { body: string; removed: string[] } {
+  const removed: string[] = [];
+  const body = timestampBody.replace(REPEATER_COOKIE_RE, (match) => {
+    removed.push(match.trim());
+    return "";
+  });
+  return { body, removed };
+}
+
+// Removes repeater cookies (including habit `/N` parts) from every active
+// timestamp in the entry at `lineNumber`: the headline, planning lines, and
+// body text up to the next headline. Dates, times, and warning delays stay.
+export function cancelRepeatersInText(input: string, opts: { filePath: string; lineNumber: number }): CancelRepeatersResult {
+  const lines = splitSourceLines(input);
+  const headingIndex = findHeadingAtOrAbove(lines, opts.lineNumber);
+  const cancelled: CancelledRepeater[] = [];
+  let literalBlockEnd: RegExp | null = null;
+
+  for (let i = headingIndex; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    if (i > headingIndex && /^\*+\s+/.test(line)) break;
+    if (literalBlockEnd) {
+      if (literalBlockEnd.test(line)) literalBlockEnd = null;
+      continue;
+    }
+    const begin = LITERAL_BLOCK_BEGIN_RE.exec(line);
+    if (begin) {
+      literalBlockEnd = new RegExp(`^\\s*#\\+end_${begin[1]}\\b`, "i");
+      continue;
+    }
+    const removedOnLine: string[] = [];
+    const updated = line.replace(ACTIVE_TIMESTAMP_RE, (whole, body: string) => {
+      const stripped = stripTimestampRepeaters(body);
+      if (!stripped.removed.length) return whole;
+      removedOnLine.push(...stripped.removed);
+      return `<${stripped.body}>`;
+    });
+    if (updated !== line) {
+      lines[i] = updated;
+      for (const repeater of removedOnLine) cancelled.push({ line: i + 1, repeater, before: line, after: updated });
+    }
+  }
+
+  return {
+    filePath: opts.filePath,
+    headingLineNumber: headingIndex + 1,
+    changed: cancelled.length > 0,
+    cancelled,
+    text: lines.join("\n"),
+  };
+}
