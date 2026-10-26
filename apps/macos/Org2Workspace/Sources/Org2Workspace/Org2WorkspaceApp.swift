@@ -10,6 +10,7 @@ struct Org2WorkspaceApp: App {
   @State private var store = WorkspaceStore()
   @StateObject private var mobileRemote = MobileRemoteCoordinator()
   @StateObject private var softwareUpdates = SoftwareUpdateController()
+  @StateObject private var attention = AttentionDigestMonitor()
   private let globalCaptureHotKey = GlobalCaptureHotKey()
 
   init() {
@@ -82,6 +83,7 @@ struct Org2WorkspaceApp: App {
           store.setCalendarRecordingPromptsActive(true)
           store.setAutomationSchedulerActive(true)
           store.setAIChatLivePresenceActive(true)
+          attention.attach(to: store)
         }
     }
     .windowToolbarStyle(.unifiedCompact(showsTitle: false))
@@ -491,6 +493,7 @@ struct Org2WorkspaceApp: App {
       WorkspaceSettingsView(softwareUpdates: softwareUpdates, telemetry: appDelegate.telemetry)
         .environment(store)
         .environmentObject(mobileRemote)
+        .environmentObject(attention)
         .preferredColorScheme(store.appearanceMode.colorScheme)
     }
   }

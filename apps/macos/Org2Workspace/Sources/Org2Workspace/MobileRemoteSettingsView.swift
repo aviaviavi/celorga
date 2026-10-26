@@ -47,6 +47,12 @@ struct WorkspaceSettingsView: View {
           Label("AI Chat", systemImage: "text.bubble")
         }
 
+      AttentionSettingsView()
+        .tag("attention")
+        .tabItem {
+          Label("Attention", systemImage: "bell.badge")
+        }
+
       MobileRemoteSettingsView()
         .tag("mobileRemote")
         .tabItem {

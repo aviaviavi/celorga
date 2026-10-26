@@ -107,7 +107,7 @@ public struct Org2CLI: Sendable {
     "todo.toggle", "todo.assign", "todo.approve", "workflow.list", "workflow.show",
     "workflow.validate", "workflow.save", "workflow.run", "workflow.triggers",
     "workflow.package", "workflow.corpus-template", "workflow.install-builtin",
-    "workspace.agenda", "workspace.search", "workspace.agent-state"
+    "workspace.agenda", "workspace.search", "workspace.agent-state", "workspace.attention"
   ]
 
   public init(
