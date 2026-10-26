@@ -214,8 +214,7 @@ public actor OpenCodeClient {
     sessionID: String?,
     model: String?,
     reasoningEffort: String?,
-    attachmentPaths: [String],
-    message: String
+    attachmentPaths: [String]
   ) -> [String] {
     var arguments = ["run", "--format", "json", "--thinking", "--agent", "openorg", "--auto"]
     if let sessionID = normalized(sessionID) {
@@ -229,9 +228,11 @@ public actor OpenCodeClient {
     for path in attachmentPaths {
       arguments.append(contentsOf: ["--file", path])
     }
-    // `--` ends option parsing. Without it a message such as "- header chip…"
-    // is read as a flag, and `opencode run` prints its help and exits 0.
-    arguments.append(contentsOf: ["--", message])
+    // The message goes to standard input, never as a positional argument:
+    // `opencode run` quotes each positional word, and it reads words after
+    // `--` twice, so the model saw `"<prompt>" "<prompt>"`. Standard input is
+    // delivered verbatim, and a message such as "- header chip…" cannot be
+    // read as a flag.
     return arguments
   }
 
@@ -793,7 +794,6 @@ try:
         session_id[0] = arguments[arguments.index("--session") + 1]
     for path in attachment_paths:
         arguments.extend(["--file", path])
-    arguments.extend(["--", payload["message"]])
 
     # A cold `opencode serve` spends about a second loading config, providers,
     # skills, and MCP servers before the model sees the prompt. Reuse a warm
@@ -829,9 +829,19 @@ try:
         [opencode] + arguments,
         cwd=workspace,
         env=environment,
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         start_new_session=True,
     )
+    # `opencode run` reads the message verbatim from standard input.
+    try:
+        process.stdin.write(payload["message"].encode("utf-8"))
+    except (BrokenPipeError, OSError):
+        pass
+    try:
+        process.stdin.close()
+    except (BrokenPipeError, OSError):
+        pass
     stopping = [False]
     def forward(_signum, _frame):
         # The session runs inside the shared server, so only SIGINT (which
@@ -1166,8 +1176,7 @@ sys.exit(result.returncode)
         sessionID: existingSessionID,
         model: model,
         reasoningEffort: reasoningEffort,
-        attachmentPaths: attachmentURLs.map(\.path),
-        message: message
+        attachmentPaths: attachmentURLs.map(\.path)
       )
       arguments.insert(contentsOf: ["--server", server.url], at: 1)
       process.arguments = arguments
@@ -1176,7 +1185,7 @@ sys.exit(result.returncode)
         processEnvironment,
         executableURL: executableURL
       )
-      inputData = nil
+      inputData = Data(message.utf8)
     case .managedRemote(let sshHost, let workspacePath):
       temporaryRoot = nil
       let workspacePath = workspacePath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1187,14 +1196,13 @@ sys.exit(result.returncode)
         sessionID: existingSessionID,
         model: model,
         reasoningEffort: reasoningEffort,
-        attachmentPaths: [],
-        message: ""
+        attachmentPaths: []
       )
       let payload = OpenCodeRemotePayload(
         workspacePath: workspacePath,
         threadID: openOrgThreadID.uuidString.lowercased(),
         runToken: runToken,
-        arguments: Array(remoteArguments.dropLast(2)),
+        arguments: remoteArguments,
         message: message,
         configuration: configuration,
         attachments: try attachments.map {

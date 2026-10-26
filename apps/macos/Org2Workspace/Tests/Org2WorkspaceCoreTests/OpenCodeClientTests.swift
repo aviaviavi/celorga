@@ -8,8 +8,7 @@ final class OpenCodeClientTests: XCTestCase {
       sessionID: "ses_123",
       model: "openai/gpt-5",
       reasoningEffort: "high",
-      attachmentPaths: ["/tmp/file.txt"],
-      message: "Review this"
+      attachmentPaths: ["/tmp/file.txt"]
     )
 
     XCTAssertEqual(arguments.prefix(7), [
@@ -18,19 +17,142 @@ final class OpenCodeClientTests: XCTestCase {
     XCTAssertFalse(arguments.contains("--standalone"))
     XCTAssertTrue(arguments.containsAdjacent(["--session", "ses_123"]))
     XCTAssertTrue(arguments.containsAdjacent(["--model", "openai/gpt-5#high"]))
-    XCTAssertEqual(arguments.suffix(4), ["--file", "/tmp/file.txt", "--", "Review this"])
+    XCTAssertEqual(arguments.suffix(2), ["--file", "/tmp/file.txt"])
+    // The message travels on standard input. `opencode run` quotes each
+    // positional word and reads words after `--` twice.
+    XCTAssertFalse(arguments.contains("--"))
   }
 
-  func testArgumentsKeepDashLeadingMessageAsPrompt() {
-    let arguments = OpenCodeClient.arguments(
-      sessionID: nil,
+  /// Regression: the agent received `"<prompt>" "<prompt>"` because the
+  /// prompt was a positional argument after `--`. The local turn must hand
+  /// `opencode run` the exact prompt once, on standard input, even when it
+  /// starts with a dash.
+  func testLocalTurnDeliversThePromptOnceOnStandardInput() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("OpenCodePromptOnce-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = root.appendingPathComponent("opencode")
+    try """
+    #!/bin/sh
+    case "$1" in
+      serve)
+        echo "server listening on http://127.0.0.1:4096"
+        exec sleep 30
+        ;;
+      run)
+        printf '%s\\n' "$@" > "\(root.path)/arguments"
+        cat > "\(root.path)/stdin"
+        echo '{"type":"step_start","sessionID":"ses_once","part":{}}'
+        echo '{"type":"text","sessionID":"ses_once","part":{"text":"ok"}}'
+        ;;
+    esac
+    """.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+
+    let client = OpenCodeClient(
+      executableURL: executable,
+      environment: ["PATH": "/usr/bin:/bin"],
+      warmServerIdleTimeout: 0.4
+    ) { _, _ in }
+    let message = "- header chip sounds good!\n- ship \"it\""
+    let context = "Celorga workspace UI snapshot\n\nCurrent surface: AI Chat"
+    let result = try await client.runTurn(
+      openOrgThreadID: UUID(),
+      existingSessionID: "ses_once",
+      message: message,
+      turnContext: context,
+      attachments: [],
+      cwd: root,
       model: nil,
       reasoningEffort: nil,
-      attachmentPaths: [],
-      message: "- header chip sounds good!\n- ship it"
+      sandboxAccess: .workspaceWrite
+    )
+    await client.shutdown()
+    XCTAssertEqual(result.reply, "ok")
+
+    let expected = OpenCodeClient.turnPrompt(message: message, turnContext: context)
+    let delivered = try String(contentsOf: root.appendingPathComponent("stdin"), encoding: .utf8)
+    XCTAssertEqual(delivered, expected, "the prompt arrives verbatim, exactly once")
+    let arguments = try String(contentsOf: root.appendingPathComponent("arguments"), encoding: .utf8)
+    XCTAssertFalse(arguments.contains("<user-message>"), arguments)
+    XCTAssertFalse(arguments.contains("header chip"), arguments)
+    XCTAssertTrue(arguments.contains("--server\nhttp://127.0.0.1:4096"), arguments)
+  }
+
+  /// The managed remote supervisor must also pass the prompt once, on the
+  /// `opencode run` process's standard input.
+  func testRemoteTurnDeliversThePromptOnceOnStandardInput() throws {
+    guard let python = ["/usr/local/bin/python3", "/opt/homebrew/bin/python3", "/usr/bin/python3"]
+      .first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+    else { throw XCTSkip("python3 is not available") }
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("OpenCodeRemotePromptOnce-\(UUID().uuidString)", isDirectory: true)
+    let bin = root.appendingPathComponent("bin", isDirectory: true)
+    let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+    try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try """
+    #!/bin/sh
+    case "$1" in
+      serve)
+        exec "\(python)" -c 'import socket, time; s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(8); print("server listening on http://127.0.0.1:%d" % s.getsockname()[1], flush=True); time.sleep(30)'
+        ;;
+      api)
+        exit 0
+        ;;
+    esac
+    printf '%s\\n' "$@" > "$HOME/arguments"
+    cat > "$HOME/stdin"
+    echo '{"type":"step_start","sessionID":"ses_remote_once","part":{}}'
+    echo '{"type":"text","sessionID":"ses_remote_once","part":{"text":"ok"}}'
+    """.write(to: bin.appendingPathComponent("opencode"), atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755],
+      ofItemAtPath: bin.appendingPathComponent("opencode").path
     )
 
-    XCTAssertEqual(arguments.suffix(2), ["--", "- header chip sounds good!\n- ship it"])
+    let message = OpenCodeClient.turnPrompt(
+      message: "- ship it",
+      turnContext: "Celorga workspace UI snapshot\n\nCurrent surface: AI Chat"
+    )
+    let payload: [String: Any] = [
+      "workspacePath": workspace.path,
+      "threadID": UUID().uuidString.lowercased(),
+      "runToken": "once",
+      "arguments": OpenCodeClient.arguments(
+        sessionID: nil, model: nil, reasoningEffort: nil, attachmentPaths: []
+      ),
+      "message": message,
+      "configuration": "{}",
+      "attachments": [],
+    ]
+    let process = Process()
+    let input = Pipe()
+    let output = Pipe()
+    process.executableURL = URL(fileURLWithPath: python)
+    process.arguments = ["-c", OpenCodeClient.managedRemotePythonBootstrap]
+    process.environment = [
+      "PATH": "\(bin.path):/usr/bin:/bin",
+      "HOME": root.path,
+      "XDG_STATE_HOME": root.appendingPathComponent("state").path,
+    ]
+    process.standardInput = input
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: payload))
+    try input.fileHandleForWriting.close()
+    let streamed = String(decoding: try output.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
+    process.waitUntilExit()
+    XCTAssertEqual(process.terminationStatus, 0, streamed)
+
+    let delivered = try String(contentsOf: root.appendingPathComponent("stdin"), encoding: .utf8)
+    XCTAssertEqual(delivered, message, "the prompt arrives verbatim, exactly once")
+    let arguments = try String(contentsOf: root.appendingPathComponent("arguments"), encoding: .utf8)
+    XCTAssertFalse(arguments.contains("<user-message>"), arguments)
+    XCTAssertFalse(arguments.contains("ship it"), arguments)
   }
 
   func testJSONStreamDecodesReasoningParts() async {
@@ -238,8 +360,7 @@ final class OpenCodeClientTests: XCTestCase {
         exec sleep 30
         ;;
       run)
-        for arg in "$@"; do last="$arg"; done
-        printf '%s' "$last" > "\(root.path)/prompt"
+        cat > "\(root.path)/prompt"
         echo '{"type":"step_start","sessionID":"ses_warm","part":{}}'
         echo '{"type":"text","sessionID":"ses_warm","part":{"text":"ok"}}'
         ;;
