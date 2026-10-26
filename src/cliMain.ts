@@ -46,6 +46,7 @@ import {
 import { resolvePublishHeadIncludes } from "./publish-defaults.js";
 import { documentTodoSequences, todoSequencesForFile, todoConfigurationKey, todoKeywordInWorkflow, type TodoSequence, assignTodoInText, formatOrgTimestamp, isActiveTodoKeyword, isTerminalTodoKeyword, normalizeTodoKeyword, TODO_KEYWORDS, updateTodoInText, type TodoStatus } from "./todo.js";
 import { lintPriorityCookies } from "./priorityLint.js";
+import { fileEntryInDatetree, parseDatetreeLevels, type DatetreeLevel } from "./datetree.js";
 import { cancelRepeatersInText, planningKindFromArg, updatePlanningInText, type PlanningKindArg } from "./planning.js";
 import { computeSubtreeRange, findHeadingAtOrAbove, isHeadlineLine, upsertHeadlinePropertyInLines } from "./sourceLines.js";
 import { findBacklinksInText, type Backlink } from "./backlinks.js";
@@ -7603,6 +7604,7 @@ async function main(): Promise<void> {
   let captureTodoKeywordFlagSet = false;
   let captureBodyRaw = "";
   let captureNow = ""; // ISO string
+  let captureDatetreeRaw = "";
   let captureApply = false;
   let captureFormat: "text" | "json" | "diff" = "text";
 
@@ -8690,6 +8692,12 @@ async function main(): Promise<void> {
         if (command === "capture") captureUrl = args[i]!;
         i++;
       }
+    } else if (arg === "--datetree" && command === "capture") {
+      i++;
+      if (i < args.length) {
+        captureDatetreeRaw = args[i]!;
+        i++;
+      }
     } else if (arg === "--source-type" && command === "capture") {
       i++;
       if (i < args.length) {
@@ -9579,7 +9587,7 @@ Flags:
     text = `celorga capture
 
 Usage:
-  celorga capture --file FILE --title TITLE [--template note|task] [--body TEXT] [--apply]
+  celorga capture --file FILE --title TITLE [--template note|task] [--body TEXT] [--datetree LEVELS] [--apply]
   celorga capture (--text TEXT|--stdin|--url URL|--file SOURCE) --to FILE [--title TITLE] [--author NAME] [--apply]
 
 Flags:
@@ -9593,6 +9601,9 @@ Flags:
   --origin VALUE        Optional source origin/provenance override
   --source-type TYPE    Optional source type override
   --template note|task  Capture template
+  --datetree LEVELS     File under a date tree; comma list of year, quarter,
+                        month, week, day (for example year,month,day)
+  --now ISO             Capture time; also selects the date tree day
   --apply               Write changes instead of previewing`;
   } else if (command === "archive") {
     text = `celorga archive
@@ -11922,6 +11933,16 @@ Flags:
     }
     const normalizedTemplate = normalizedTemplateRaw as "note" | "task";
 
+    let captureDatetreeLevels: DatetreeLevel[] | null = null;
+    if (captureDatetreeRaw) {
+      try {
+        captureDatetreeLevels = parseDatetreeLevels(captureDatetreeRaw);
+      } catch (err) {
+        console.error(`Error: invalid --datetree: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
+    }
+
     if (captureTodoKeywordFlagSet && normalizedTemplate !== "task") {
       console.error("Error: --todo is only supported with --template task");
       process.exit(1);
@@ -12001,13 +12022,27 @@ Flags:
       ? fs.readFileSync(targetFile, "utf8").replace(/\r\n/g, "\n")
       : "";
     const beforeTrimmed = beforeText.trimEnd();
-    const outText =
+    let outText =
       beforeTrimmed.length > 0
         ? `${beforeTrimmed}\n\n${captureEntryText}`
         : captureEntryText;
+    let headingLine1 = beforeTrimmed.length === 0 ? 1 : beforeTrimmed.split("\n").length + 2;
+    let datetree: { levels: DatetreeLevel[]; date: string; path: string[]; created: string[]; headingLine1: number } | undefined;
+    if (captureDatetreeLevels) {
+      const datetreeDate = { year: captureNowDate.getFullYear(), month: captureNowDate.getMonth() + 1, day: captureNowDate.getDate() };
+      const filed = fileEntryInDatetree(beforeText, captureEntryText, datetreeDate, captureDatetreeLevels);
+      outText = filed.text;
+      headingLine1 = filed.entryLine1;
+      datetree = {
+        levels: captureDatetreeLevels,
+        date: `${datetreeDate.year}-${String(datetreeDate.month).padStart(2, "0")}-${String(datetreeDate.day).padStart(2, "0")}`,
+        path: filed.headings.map((heading) => heading.title),
+        created: filed.created,
+        headingLine1: filed.datetreeLine1,
+      };
+    }
 
     const changed = outText !== beforeText;
-    const headingLine1 = beforeTrimmed.length === 0 ? 1 : beforeTrimmed.split("\n").length + 2;
 
     if (captureApply && changed) {
       fs.mkdirSync(path.dirname(targetFile), { recursive: true });
@@ -12035,6 +12070,7 @@ Flags:
             todoKeyword: captureTodoKeyword,
             body: normalizedBody || null,
             ...(source ? { source } : {}),
+            ...(datetree ? { datetree } : {}),
             capturedAt,
             headingLine1,
             apply: captureApply,

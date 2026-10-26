@@ -468,9 +468,12 @@ The LSP offers a *Cycle checkbox to …* as a =refactor.rewrite= code action on 
 
 #+begin_src sh
 celorga capture --file inbox.org --title "Quick note" --template note --apply
+celorga capture --file journal.org --title "Standup" --datetree year,month,day --apply
 celorga archive --file notes.org --pos 120:0 --apply
 celorga refile --file notes.org --pos 120:0 --to-file projects.org --to-pos 40:0 --apply
 #+end_src
+
+=--datetree LEVELS= files the capture under a date tree instead of at the end of the file. =LEVELS= is any comma-separated subset of =year=, =quarter=, =month=, =week=, and =day=; headings look like =2026=, =2026-Q4=, =2026-10 October=, =2026-W44=, and =2026-10-26 Monday=. Missing headings are created in date order among existing siblings, and the entry becomes the last child of the innermost heading. Weeks follow ISO 8601: with =week=, the year heading is the ISO week-numbering year, a week belongs to the month that contains its Thursday, and quarters are 13-week periods unless =month= is also used. The date comes from =--now= (default: now, local time); the JSON preview reports the date tree path and which headings it would create.
 
 Archiving moves the selected subtree to a companion archive file (by default =FILE_archive= for =.org= files, otherwise =FILE.archive=). Archived subtrees receive a property drawer with =ARCHIVED_AT=, =ARCHIVE_SOURCE=, =ARCHIVE_SOURCE_LINE=, =ARCHIVE_HEADING_PATH=, =ARCHIVE_ORIGINAL_ID= when the original subtree had an =ID=, and =ARCHIVE_PARENT_ID= when its direct parent heading had an =ID=, so links and backlinks to the old context still resolve. Use =--format diff= to preview the exact removal/append operation, or =--format json= for editor/agent integrations.
 
