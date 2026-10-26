@@ -7,8 +7,25 @@ struct OrgProseSelectionState: Equatable {
   var alternativeIndex: Int?
   var alternativeCount = 0
   var isInGhost = false
+  /// The active version at the cursor came from a model request.
+  var activeVariantIsAI = false
 
   var isInAlternative: Bool { alternativeIndex != nil }
+}
+
+/// The "Revise with AI" popover for one captured span.
+struct OrgProseRevisionDraft: Identifiable, Equatable {
+  let id = UUID()
+  let target: OrgProseRevisionTarget
+}
+
+/// A revision request in flight.
+struct OrgProseRevisionJob: Identifiable, Equatable {
+  let id = UUID()
+  let draft: OrgProseRevisionDraft
+  let instruction: String
+  let label: String
+  let model: String
 }
 
 struct OrgProseAlternativeDraft: Identifiable, Equatable {
@@ -69,6 +86,11 @@ final class OrgProseEditorController: NSObject, ObservableObject, NSMenuItemVali
   @Published private(set) var message: String?
   @Published private(set) var messageIsError = false
   @Published var alternativeDraft: OrgProseAlternativeDraft?
+  @Published var revisionDraft: OrgProseRevisionDraft?
+  @Published private(set) var revisionJob: OrgProseRevisionJob?
+  /// The last failure for the open revision popover, kept apart from the
+  /// toolbar message so a retry starts clean.
+  @Published private(set) var revisionError: String?
   @Published var revealsGhosts = false {
     didSet { applyPresentation() }
   }
@@ -80,6 +102,7 @@ final class OrgProseEditorController: NSObject, ObservableObject, NSMenuItemVali
   private let glyphHider = OrgProseGlyphHider()
   private var isApplyingEdit = false
   private var refreshTask: Task<Void, Never>?
+  private var revisionTask: Task<Void, Never>?
   private var presentationRanges: [NSRange] = []
 
   // MARK: Attachment
@@ -100,6 +123,7 @@ final class OrgProseEditorController: NSObject, ObservableObject, NSMenuItemVali
 
   private func detachCurrent() {
     refreshTask?.cancel()
+    abandonRevision()
     if let layoutManager = textView?.layoutManager {
       clearPresentation(in: layoutManager)
       if layoutManager.delegate === glyphHider { layoutManager.delegate = nil }
@@ -111,6 +135,9 @@ final class OrgProseEditorController: NSObject, ObservableObject, NSMenuItemVali
 
   /// The document was replaced wholesale (open, switch, external change).
   func textWasReplaced() {
+    // A pending revision belongs to the text it was started on; never apply
+    // it to a different or externally replaced document.
+    abandonRevision()
     refreshNow()
   }
 
@@ -191,6 +218,7 @@ final class OrgProseEditorController: NSObject, ObservableObject, NSMenuItemVali
     if let match = snapshot.alternative(containing: selection), let index = match.set.activeIndex {
       next.alternativeIndex = index
       next.alternativeCount = match.set.variants.count
+      next.activeVariantIsAI = match.set.variants[index].isAI
     }
     next.isInGhost = snapshot.state.ghosts.contains { ghost in
       guard let range = snapshot.resolution(for: ghost.id).range else { return false }
@@ -346,6 +374,118 @@ final class OrgProseEditorController: NSObject, ObservableObject, NSMenuItemVali
     alternativeDraft = nil
   }
 
+  // MARK: Revise with AI
+
+  /// Opens the revision popover for the selection, or for the whole
+  /// alternative at the cursor. While a request runs it reopens that request.
+  func beginRevision() {
+    if let job = revisionJob {
+      revisionDraft = job.draft
+      return
+    }
+    guard let textView else { return }
+    do {
+      let target = try OrgProseEngine.revisionTarget(in: textView.string, selection: textView.selectedRange())
+      revisionError = nil
+      revisionDraft = OrgProseRevisionDraft(target: target)
+    } catch {
+      report(error.localizedDescription, isError: true)
+    }
+  }
+
+  /// Sends the one model request. The reply is applied only if the request is
+  /// still current when it returns, and only as a new version of the span.
+  func submitRevision(
+    _ draft: OrgProseRevisionDraft,
+    instruction: String,
+    backend: OrgProseRevisionBackend
+  ) {
+    revisionTask?.cancel()
+    revisionError = nil
+    let job = OrgProseRevisionJob(
+      draft: draft,
+      instruction: instruction.trimmingCharacters(in: .whitespacesAndNewlines),
+      label: backend.label,
+      model: backend.model
+    )
+    revisionJob = job
+    report("Revising with \(backend.label)…", isError: false)
+    revisionTask = Task { [weak self] in
+      do {
+        let revised = try await OrgProseReviser.revise(
+          target: draft.target,
+          instruction: job.instruction,
+          backend: backend
+        )
+        self?.finishRevision(job, revisedText: revised, providerKind: backend.providerKind)
+      } catch {
+        self?.failRevision(job, error: error)
+      }
+    }
+  }
+
+  /// Stops a running request (nothing is changed) or closes the popover.
+  func cancelRevision() {
+    guard revisionJob != nil else {
+      revisionDraft = nil
+      return
+    }
+    revisionTask?.cancel()
+    revisionTask = nil
+    revisionJob = nil
+    report("Revision cancelled. Nothing was changed.", isError: false)
+  }
+
+  /// Reports a problem found before any request is sent, such as a missing
+  /// provider or key.
+  func reportRevisionError(_ text: String) {
+    revisionError = text
+    report(text, isError: true)
+  }
+
+  private func finishRevision(_ job: OrgProseRevisionJob, revisedText: String, providerKind: String) {
+    guard revisionJob?.id == job.id else { return }
+    revisionJob = nil
+    revisionTask = nil
+    let stamp = now()
+    let provenance = OrgProseAIProvenance(
+      provider: providerKind,
+      model: job.model,
+      instruction: job.instruction
+    )
+    let succeeded = run { text, _ in
+      try OrgProseEngine.addAIRevision(
+        to: text,
+        target: job.draft.target,
+        revisedText: revisedText,
+        provenance: provenance,
+        now: stamp
+      )
+    }
+    if succeeded {
+      if revisionDraft?.id == job.draft.id { revisionDraft = nil }
+    } else {
+      revisionError = message
+    }
+  }
+
+  private func failRevision(_ job: OrgProseRevisionJob, error: Error) {
+    guard revisionJob?.id == job.id else { return }
+    revisionJob = nil
+    revisionTask = nil
+    guard !(error is CancellationError) else { return }
+    revisionError = error.localizedDescription
+    report(error.localizedDescription, isError: true)
+  }
+
+  private func abandonRevision() {
+    revisionTask?.cancel()
+    revisionTask = nil
+    revisionJob = nil
+    revisionDraft = nil
+    revisionError = nil
+  }
+
   func cycleAlternative(_ step: Int) {
     run { text, selection in
       try OrgProseEngine.cycleAlternative(in: text, selection: selection, step: step)
@@ -469,6 +609,7 @@ final class OrgProseEditorController: NSObject, ObservableObject, NSMenuItemVali
     let submenu = NSMenu(title: "Prose")
     for (title, action) in [
       ("Add Alternative…", #selector(menuAddAlternative(_:))),
+      ("Revise with AI…", #selector(menuReviseWithAI(_:))),
       ("Next Alternative", #selector(menuNextAlternative(_:))),
       ("Previous Alternative", #selector(menuPreviousAlternative(_:))),
       ("Ghost Selection", #selector(menuGhost(_:))),
@@ -483,11 +624,12 @@ final class OrgProseEditorController: NSObject, ObservableObject, NSMenuItemVali
     parent.submenu = submenu
     menu.addItem(parent)
 
-    // Surfaces the cycling shortcuts where users read menus; the buttons in
+    // Surfaces the Prose shortcuts where users read menus; the buttons in
     // the toolbar bind the actual keys.
-    for (title, key, action) in [
-      ("Next Alternative", "]", #selector(menuNextAlternative(_:))),
-      ("Previous Alternative", "[", #selector(menuPreviousAlternative(_:)))
+    for (title, key) in [
+      ("Revise with AI…", "r"),
+      ("Next Alternative", "]"),
+      ("Previous Alternative", "[")
     ] {
       if let item = submenu.items.first(where: { $0.title == title }) {
         item.keyEquivalent = key
@@ -497,6 +639,7 @@ final class OrgProseEditorController: NSObject, ObservableObject, NSMenuItemVali
   }
 
   @objc private func menuAddAlternative(_ sender: Any?) { beginAddAlternative() }
+  @objc private func menuReviseWithAI(_ sender: Any?) { beginRevision() }
   @objc private func menuNextAlternative(_ sender: Any?) { cycleAlternative(1) }
   @objc private func menuPreviousAlternative(_ sender: Any?) { cycleAlternative(-1) }
   @objc private func menuGhost(_ sender: Any?) { ghostSelection() }
@@ -505,7 +648,7 @@ final class OrgProseEditorController: NSObject, ObservableObject, NSMenuItemVali
 
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     switch menuItem.action {
-    case #selector(menuAddAlternative(_:)):
+    case #selector(menuAddAlternative(_:)), #selector(menuReviseWithAI(_:)):
       return selectionState.hasSelection || selectionState.isInAlternative
     case #selector(menuNextAlternative(_:)), #selector(menuPreviousAlternative(_:)):
       return selectionState.alternativeCount > 1

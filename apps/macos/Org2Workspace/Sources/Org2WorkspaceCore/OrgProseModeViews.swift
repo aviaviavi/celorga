@@ -13,11 +13,33 @@ enum OrgProsePresentation {
     case .contextChanged: "Surrounding text changed"
     }
   }
+
+  /// Short label shown beside an AI version.
+  static func aiCaption(_ provenance: OrgProseAIProvenance?) -> String {
+    guard let model = provenance?.model, !model.isEmpty else { return "AI" }
+    return "AI · \(model)"
+  }
+
+  /// Full provenance for the AI version's tooltip.
+  static func aiDetail(_ provenance: OrgProseAIProvenance?) -> String {
+    var lines = ["Created with Revise with AI."]
+    if let provider = provenance?.provider, !provider.isEmpty {
+      let title = AIChatDestinationAdapter(rawValue: provider)?.title ?? provider
+      lines.append("Provider: \(title)")
+    }
+    if let model = provenance?.model, !model.isEmpty { lines.append("Model: \(model)") }
+    if let instruction = provenance?.instruction, !instruction.isEmpty {
+      lines.append("Instruction: \(instruction)")
+    }
+    if let created = provenance?.createdAt, !created.isEmpty { lines.append("Created: \(created)") }
+    return lines.joined(separator: "\n")
+  }
 }
 
 struct OrgProseToolbar: View {
   @ObservedObject var controller: OrgProseEditorController
   @Binding var showsSidebar: Bool
+  @Environment(WorkspaceStore.self) private var store
 
   var body: some View {
     let selection = controller.selectionState
@@ -29,6 +51,35 @@ struct OrgProseToolbar: View {
       }
       .disabled(!(selection.hasSelection || selection.isInAlternative))
       .help("Add another version of the selected text")
+
+      Button {
+        controller.beginRevision()
+      } label: {
+        Label("Revise with AI…", systemImage: "sparkles")
+      }
+      .keyboardShortcut("r", modifiers: [.control, .option])
+      .disabled(!(selection.hasSelection || selection.isInAlternative) && controller.revisionJob == nil)
+      .help("Revise the selection with a model you configured (Control-Option-R). The result becomes another version; the original stays recoverable.")
+      .popover(item: $controller.revisionDraft, arrowEdge: .bottom) { draft in
+        OrgProseRevisionPopover(
+          controller: controller,
+          draft: draft,
+          destinations: OrgProseRevisionPreferences.candidates(from: store.aiChatDestinations)
+        )
+      }
+
+      if let job = controller.revisionJob {
+        ProgressView()
+          .controlSize(.small)
+          .help("Revising with \(job.label) (\(job.model))")
+        Button {
+          controller.cancelRevision()
+        } label: {
+          Label("Cancel Revision", systemImage: "xmark.circle")
+        }
+        .labelStyle(.iconOnly)
+        .help("Cancel the revision. Nothing is changed.")
+      }
 
       ControlGroup {
         Button {
@@ -57,9 +108,16 @@ struct OrgProseToolbar: View {
         .help("Step through versions with Control-Option-[ and Control-Option-]")
 
       if let index = selection.alternativeIndex {
-        Text("\(index + 1) of \(selection.alternativeCount)")
-          .font(.caption.monospacedDigit())
-          .foregroundStyle(.secondary)
+        HStack(spacing: 3) {
+          if selection.activeVariantIsAI {
+            Image(systemName: "sparkles")
+              .font(.caption2)
+              .help("This version came from Revise with AI")
+          }
+          Text("\(index + 1) of \(selection.alternativeCount)")
+            .font(.caption.monospacedDigit())
+        }
+        .foregroundStyle(.secondary)
       }
 
       Divider().frame(height: 18)
@@ -192,6 +250,176 @@ struct OrgProseAlternativeSheet: View {
   }
 }
 
+struct OrgProseRevisionPopover: View {
+  @ObservedObject var controller: OrgProseEditorController
+  let draft: OrgProseRevisionDraft
+  /// Enabled direct model providers from Settings → AI Chat.
+  let destinations: [AIChatDestinationConfiguration]
+
+  @Environment(\.openSettings) private var openSettings
+  @AppStorage(WorkspaceSettingsNavigation.selectionKey)
+  private var settingsSelection = WorkspaceSettingsNavigation.workspace
+  @State private var instruction = ""
+  @State private var destinationID = ""
+  @State private var model = ""
+  @FocusState private var instructionFocused: Bool
+
+  static let suggestions = ["Tighter", "Friendlier", "Clearer", "More formal", "Fix grammar"]
+
+  private var isRunning: Bool { controller.revisionJob?.draft.id == draft.id }
+
+  private var destination: AIChatDestinationConfiguration? {
+    destinations.first { $0.id == destinationID }
+  }
+
+  private var canSubmit: Bool {
+    !isRunning
+      && destination != nil
+      && !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Label("Revise with AI", systemImage: "sparkles")
+        .font(.headline)
+      Text(draft.target.text.trimmingCharacters(in: .whitespacesAndNewlines))
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .lineLimit(3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+
+      if destinations.isEmpty {
+        noProvider
+      } else {
+        form
+      }
+    }
+    .padding(14)
+    .frame(width: 380)
+    .onAppear(perform: configure)
+  }
+
+  private var noProvider: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("No direct model provider is set up.")
+        .font(.callout.weight(.semibold))
+      Text("Revise with AI sends one request to a provider you configure: OpenAI, Anthropic, OpenRouter, Ollama, or an OpenAI-compatible endpoint. Add one in Settings → AI Chat.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      HStack {
+        Spacer()
+        Button("Cancel") { controller.cancelRevision() }
+          .keyboardShortcut(.cancelAction)
+        Button("Open AI Chat Settings…") { openAISettings() }
+          .keyboardShortcut(.defaultAction)
+      }
+    }
+  }
+
+  private var form: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      TextField("How should it change? For example: tighter", text: $instruction, axis: .vertical)
+        .lineLimit(1...4)
+        .textFieldStyle(.roundedBorder)
+        .focused($instructionFocused)
+        .disabled(isRunning)
+        .onSubmit(submit)
+        .accessibilityIdentifier("proseRevisionInstruction")
+
+      HStack(spacing: 6) {
+        ForEach(Self.suggestions, id: \.self) { suggestion in
+          Button(suggestion) { instruction = suggestion.lowercased() }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
+        }
+      }
+      .disabled(isRunning)
+
+      HStack(spacing: 8) {
+        Picker("Provider", selection: $destinationID) {
+          ForEach(destinations) { destination in
+            Text(destination.title).tag(destination.id)
+          }
+        }
+        .labelsHidden()
+        .frame(maxWidth: 150)
+        .onChange(of: destinationID) { _, _ in
+          if let destination { model = OrgProseRevisionPreferences().preferredModel(for: destination) }
+        }
+        TextField("Model", text: $model)
+          .textFieldStyle(.roundedBorder)
+          .onSubmit(submit)
+      }
+      .controlSize(.small)
+      .disabled(isRunning)
+
+      if isRunning, let job = controller.revisionJob {
+        HStack(spacing: 6) {
+          ProgressView().controlSize(.small)
+          Text("Waiting for \(job.label) (\(job.model))…")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      } else if let error = controller.revisionError {
+        Text(error)
+          .font(.caption)
+          .foregroundStyle(.orange)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+
+      Text("Sends the instruction, the selection, and nearby text to the chosen provider. The reply becomes another version; the original stays one step away.")
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+
+      HStack {
+        Button("Provider Settings…") { openAISettings() }
+          .buttonStyle(.link)
+          .controlSize(.small)
+        Spacer()
+        Button(isRunning ? "Stop" : "Cancel") { controller.cancelRevision() }
+          .keyboardShortcut(.cancelAction)
+        Button("Revise", action: submit)
+          .keyboardShortcut(.defaultAction)
+          .disabled(!canSubmit)
+      }
+    }
+  }
+
+  private func configure() {
+    if let job = controller.revisionJob, job.draft.id == draft.id {
+      instruction = job.instruction
+    }
+    let preferences = OrgProseRevisionPreferences()
+    if let preferred = preferences.preferredDestination(among: destinations) {
+      destinationID = preferred.id
+      model = preferences.preferredModel(for: preferred)
+    }
+    instructionFocused = true
+  }
+
+  private func submit() {
+    guard canSubmit, let destination else { return }
+    do {
+      let backend = try OrgProseRevisionPreferences.backend(for: destination, model: model)
+      OrgProseRevisionPreferences().remember(destinationID: destination.id, model: backend.model)
+      controller.submitRevision(draft, instruction: instruction, backend: backend)
+    } catch {
+      controller.reportRevisionError(error.localizedDescription)
+    }
+  }
+
+  private func openAISettings() {
+    controller.revisionDraft = nil
+    settingsSelection = WorkspaceSettingsNavigation.aiChat
+    openSettings()
+  }
+}
+
 struct OrgProseSidebar: View {
   @ObservedObject var controller: OrgProseEditorController
   @State private var dismissingAlternativeID: String?
@@ -236,7 +464,7 @@ struct OrgProseSidebar: View {
 
         section("Alternatives", count: snapshot.state.alternatives.count) {
           if snapshot.state.alternatives.isEmpty {
-            emptyHint("Select text and choose Add Alternative to try another version.")
+            emptyHint("Select text and choose Add Alternative or Revise with AI to try another version.")
           }
           ForEach(snapshot.state.alternatives, id: \.id) { set in
             alternativeRow(set, resolution: snapshot.resolution(for: set.id))
@@ -379,6 +607,12 @@ struct OrgProseSidebar: View {
                 .multilineTextAlignment(.leading)
               if variant.origin == OrgProseStateFormat.originalOrigin {
                 Text("Original").font(.caption2).foregroundStyle(.secondary)
+              } else if variant.isAI {
+                Label(OrgProsePresentation.aiCaption(variant.provenance), systemImage: "sparkles")
+                  .font(.caption2)
+                  .foregroundStyle(.secondary)
+                  .lineLimit(1)
+                  .help(OrgProsePresentation.aiDetail(variant.provenance))
               }
             }
             Spacer(minLength: 0)

@@ -338,6 +338,100 @@ final class OrgProseEditorTests: XCTestCase {
     XCTAssertEqual(mounted.textView.string, text)
   }
 
+  // MARK: Revise with AI
+
+  private func waitUntil(
+    timeout: TimeInterval = 3,
+    _ condition: @MainActor () -> Bool
+  ) async throws {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition() {
+      guard Date() < deadline else { return XCTFail("Timed out waiting for condition") }
+      try await Task.sleep(nanoseconds: 10_000_000)
+    }
+  }
+
+  private func stubBackend(_ stub: OrgProseStubRevisionProvider) -> OrgProseRevisionBackend {
+    OrgProseRevisionBackend(label: "Stub", providerKind: "ollama", model: "stub-model", provider: stub)
+  }
+
+  func testReviseWithAIAppliesOneUndoableAIAlternative() async throws {
+    let original = "Hello brave world.\n"
+    let mounted = try mount(original)
+    select("brave", in: mounted)
+
+    mounted.controller.beginRevision()
+    let draft = try XCTUnwrap(mounted.controller.revisionDraft)
+    XCTAssertEqual(draft.target.text, "brave")
+    XCTAssertEqual(mounted.textView.string, original)
+
+    let stub = OrgProseStubRevisionProvider(reply: "\"bold\"")
+    mounted.controller.submitRevision(draft, instruction: " stronger ", backend: stubBackend(stub))
+    XCTAssertEqual(mounted.controller.revisionJob?.instruction, "stronger")
+    XCTAssertEqual(mounted.textView.string, original)
+    try await waitUntil { mounted.controller.revisionJob == nil }
+
+    XCTAssertEqual(stub.calls.count, 1)
+    XCTAssertNil(mounted.controller.revisionDraft)
+    XCTAssertTrue(try proseBody(mounted.textView.string).hasPrefix("Hello bold world."))
+    XCTAssertEqual(mounted.controller.selectionState.alternativeIndex, 1)
+    XCTAssertEqual(mounted.controller.selectionState.alternativeCount, 2)
+    XCTAssertTrue(mounted.controller.selectionState.activeVariantIsAI)
+    let variant = try XCTUnwrap(mounted.controller.snapshot.state.alternatives.first?.variants.last)
+    XCTAssertEqual(variant.origin, OrgProseStateFormat.aiOrigin)
+    XCTAssertEqual(variant.provenance?.provider, "ollama")
+    XCTAssertEqual(variant.provenance?.model, "stub-model")
+    XCTAssertEqual(variant.provenance?.instruction, "stronger")
+    XCTAssertNotNil(variant.provenance?.createdAt)
+
+    mounted.controller.cycleAlternative(-1)
+    XCTAssertTrue(try proseBody(mounted.textView.string).hasPrefix("Hello brave world."))
+    XCTAssertFalse(mounted.controller.selectionState.activeVariantIsAI)
+
+    mounted.undoManager.undo()
+    XCTAssertTrue(try proseBody(mounted.textView.string).hasPrefix("Hello bold world."))
+    mounted.undoManager.undo()
+    XCTAssertEqual(mounted.textView.string, original)
+  }
+
+  func testCancelledOrAbandonedRevisionChangesNothing() async throws {
+    let original = "Hello brave world.\n"
+    let mounted = try mount(original)
+    select("brave", in: mounted)
+
+    mounted.controller.beginRevision()
+    let draft = try XCTUnwrap(mounted.controller.revisionDraft)
+    let slow = OrgProseStubRevisionProvider(reply: "bold", delayNanoseconds: 5_000_000_000)
+    mounted.controller.submitRevision(draft, instruction: "stronger", backend: stubBackend(slow))
+    XCTAssertNotNil(mounted.controller.revisionJob)
+    mounted.controller.cancelRevision()
+    XCTAssertNil(mounted.controller.revisionJob)
+    XCTAssertNotNil(mounted.controller.revisionDraft)
+    try await Task.sleep(nanoseconds: 50_000_000)
+    XCTAssertEqual(mounted.textView.string, original)
+
+    // Replacing the document (switching files) drops a pending revision.
+    mounted.controller.submitRevision(draft, instruction: "stronger", backend: stubBackend(slow))
+    mounted.controller.textWasReplaced()
+    XCTAssertNil(mounted.controller.revisionJob)
+    XCTAssertNil(mounted.controller.revisionDraft)
+    XCTAssertEqual(mounted.textView.string, original)
+  }
+
+  func testRevisionReplyForChangedTextIsRefused() async throws {
+    let original = "Hello brave world.\n"
+    let mounted = try mount(original)
+    select("brave", in: mounted)
+    mounted.controller.beginRevision()
+    let draft = try XCTUnwrap(mounted.controller.revisionDraft)
+    let slow = OrgProseStubRevisionProvider(reply: "bold", delayNanoseconds: 100_000_000)
+    mounted.controller.submitRevision(draft, instruction: "stronger", backend: stubBackend(slow))
+    type("sh", at: (mounted.textView.string as NSString).range(of: "ve"), in: mounted)
+    try await waitUntil { mounted.controller.revisionJob == nil }
+    XCTAssertEqual(mounted.textView.string, "Hello brash world.\n")
+    XCTAssertEqual(mounted.controller.revisionError, OrgProseError.revisionTargetChanged.localizedDescription)
+  }
+
   func testDetachingRemovesHidingAndPresentation() throws {
     let mounted = try mount("Some prose.\n")
     select("prose", in: mounted)

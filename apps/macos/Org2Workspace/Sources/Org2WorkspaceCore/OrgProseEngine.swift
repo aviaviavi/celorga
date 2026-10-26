@@ -33,6 +33,7 @@ enum OrgProseError: Error, Equatable, LocalizedError {
   case emptyText
   case notFound(String)
   case anchorUnresolved
+  case revisionTargetChanged
 
   var errorDescription: String? {
     switch self {
@@ -52,8 +53,26 @@ enum OrgProseError: Error, Equatable, LocalizedError {
       return what
     case .anchorUnresolved:
       return "The original location can no longer be found."
+    case .revisionTargetChanged:
+      return "The selected text changed while the revision was running. Nothing was changed."
     }
   }
+}
+
+/// The span captured when a revision request starts. The request runs
+/// asynchronously, so the result is applied by re-resolving `anchor` (or the
+/// alternative) against the document as it is when the reply arrives.
+struct OrgProseRevisionTarget: Equatable, Sendable {
+  /// The text to revise: the selection, or the active version of the
+  /// alternative at the cursor.
+  let text: String
+  /// Body coordinates, like every stored anchor.
+  let anchor: OrgProseAnchor
+  /// Set when the revision joins an existing alternative.
+  let alternativeID: String?
+  /// Bounded surrounding prose sent with the request, without the state block.
+  let contextBefore: String
+  let contextAfter: String
 }
 
 struct OrgProseEdit: Equatable {
@@ -369,6 +388,128 @@ enum OrgProseEngine {
       created: stamp
     )
     return try replaceAlternative(set, at: selection, with: versionText, in: context, message: "Added alternative", isNew: true)
+  }
+
+  // MARK: AI revisions
+
+  /// UTF-16 units of surrounding prose sent on each side of a revision.
+  static let revisionContextLimit = 1_200
+
+  /// Captures what a "Revise with AI" request would rewrite. Inside an
+  /// alternative the whole active version is the target, matching Add
+  /// Alternative; otherwise the selection must be non-empty and must not
+  /// partly overlap an alternative.
+  static func revisionTarget(
+    in text: String,
+    selection: NSRange,
+    contextLimit: Int = revisionContextLimit
+  ) throws -> OrgProseRevisionTarget {
+    let context = try OrgProseContext(text: text)
+    let selection = clamp(selection, length: context.text.length)
+    guard !context.intersectsBlock(selection) else { throw OrgProseError.selectionTouchesState }
+    let existing = context.alternativeRanges()
+    let range: NSRange
+    let alternativeID: String?
+    if let match = existing
+      .filter({ OrgProseSnapshot.range($0.range, covers: selection) })
+      .min(by: { $0.range.length < $1.range.length }) {
+      range = match.range
+      alternativeID = match.set.id
+    } else {
+      guard selection.length > 0 else { throw OrgProseError.emptySelection }
+      if existing.contains(where: { NSIntersectionRange($0.range, selection).length > 0 }) {
+        throw OrgProseError.overlapsAlternative
+      }
+      range = selection
+      alternativeID = nil
+    }
+    let selected = context.text.substring(with: range)
+    guard !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      throw OrgProseError.emptySelection
+    }
+    let bodyRange = context.bodyRange(of: range)
+    return OrgProseRevisionTarget(
+      text: selected,
+      anchor: OrgProseAnchor.make(in: context.body, range: bodyRange),
+      alternativeID: alternativeID,
+      contextBefore: OrgProseAnchor.context(in: context.body, before: bodyRange.location, limit: contextLimit),
+      contextAfter: OrgProseAnchor.context(in: context.body, after: NSMaxRange(bodyRange), limit: contextLimit)
+    )
+  }
+
+  /// Applies a model's revision as a new `ai` version of the target and makes
+  /// it active, in one edit. The original stays recoverable as another
+  /// version. If the target moved or changed while the request ran, nothing
+  /// is changed.
+  static func addAIRevision(
+    to text: String,
+    target: OrgProseRevisionTarget,
+    revisedText: String,
+    provenance: OrgProseAIProvenance,
+    now: Date = Date(),
+    makeID: IDGenerator = OrgProseStateFormat.newID
+  ) throws -> OrgProseEdit {
+    guard !revisedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      throw OrgProseError.emptyText
+    }
+    let context = try OrgProseContext(text: text)
+    let stamp = OrgProseStateFormat.timestamp(now)
+    var provenance = provenance
+    if provenance.createdAt == nil { provenance.createdAt = stamp }
+    let message = "Added AI alternative"
+
+    if let alternativeID = target.alternativeID {
+      guard var set = context.state.alternatives.first(where: { $0.id == alternativeID }),
+            let range = context.resolveText(set.anchor).range,
+            set.variants.first(where: { $0.id == set.activeVariantID })?.text == target.text
+      else {
+        throw OrgProseError.revisionTargetChanged
+      }
+      guard revisedText != target.text else { throw OrgProseError.unchangedText }
+      if let known = set.variants.first(where: { $0.text == revisedText }) {
+        set.activeVariantID = known.id
+      } else {
+        let variant = OrgProseVariant(
+          id: makeID(),
+          text: revisedText,
+          origin: OrgProseStateFormat.aiOrigin,
+          created: stamp,
+          provenance: provenance
+        )
+        set.variants.append(variant)
+        set.activeVariantID = variant.id
+      }
+      return try replaceAlternative(set, at: range, with: revisedText, in: context, message: message)
+    }
+
+    guard let range = context.resolveText(target.anchor).range else {
+      throw OrgProseError.revisionTargetChanged
+    }
+    if context.alternativeRanges().contains(where: { NSIntersectionRange($0.range, range).length > 0 }) {
+      throw OrgProseError.overlapsAlternative
+    }
+    guard revisedText != target.text else { throw OrgProseError.unchangedText }
+    let originalVariant = OrgProseVariant(
+      id: makeID(),
+      text: target.text,
+      origin: OrgProseStateFormat.originalOrigin,
+      created: stamp
+    )
+    let revised = OrgProseVariant(
+      id: makeID(),
+      text: revisedText,
+      origin: OrgProseStateFormat.aiOrigin,
+      created: stamp,
+      provenance: provenance
+    )
+    let set = OrgProseAlternativeSet(
+      id: makeID(),
+      anchor: OrgProseAnchor(text: revisedText, prefix: "", suffix: "", offset: nil),
+      activeVariantID: revised.id,
+      variants: [originalVariant, revised],
+      created: stamp
+    )
+    return try replaceAlternative(set, at: range, with: revisedText, in: context, message: message, isNew: true)
   }
 
   /// Moves the alternative containing the selection by `step` versions.

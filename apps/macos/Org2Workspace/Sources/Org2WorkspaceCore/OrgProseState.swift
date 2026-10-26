@@ -78,6 +78,8 @@ enum OrgProseStateFormat {
   static let contextLimit = 48
   static let originalOrigin = "original"
   static let authorOrigin = "author"
+  /// A version returned by an explicit, user-initiated model request.
+  static let aiOrigin = "ai"
 
   static func timestamp(_ date: Date) -> String {
     let formatter = ISO8601DateFormatter()
@@ -121,8 +123,12 @@ struct OrgProseAnchor: Equatable, Sendable {
     )
   }
 
-  static func context(in body: NSString, before location: Int) -> String {
-    var start = max(0, location - OrgProseStateFormat.contextLimit)
+  static func context(
+    in body: NSString,
+    before location: Int,
+    limit: Int = OrgProseStateFormat.contextLimit
+  ) -> String {
+    var start = max(0, location - limit)
     if start > 0, start < body.length {
       let sequence = body.rangeOfComposedCharacterSequence(at: start)
       if sequence.location < start { start = NSMaxRange(sequence) }
@@ -131,8 +137,12 @@ struct OrgProseAnchor: Equatable, Sendable {
     return body.substring(with: NSRange(location: start, length: location - start))
   }
 
-  static func context(in body: NSString, after location: Int) -> String {
-    var end = min(body.length, location + OrgProseStateFormat.contextLimit)
+  static func context(
+    in body: NSString,
+    after location: Int,
+    limit: Int = OrgProseStateFormat.contextLimit
+  ) -> String {
+    var end = min(body.length, location + limit)
     if end < body.length, end > location {
       let sequence = body.rangeOfComposedCharacterSequence(at: end)
       if sequence.location < end { end = sequence.location }
@@ -142,15 +152,31 @@ struct OrgProseAnchor: Equatable, Sendable {
   }
 }
 
+/// Where an `ai` variant came from. Every field is optional on read, and
+/// unknown fields (or known fields of an unexpected type) are kept verbatim.
+struct OrgProseAIProvenance: Equatable, Sendable {
+  /// The provider kind, such as `anthropic` or `ollama`. Never a credential or
+  /// a machine-local destination identifier.
+  var provider: String?
+  var model: String?
+  var instruction: String?
+  var createdAt: String?
+  var extra: [String: OrgProseJSON] = [:]
+}
+
 struct OrgProseVariant: Equatable, Sendable {
   var id: String
   var text: String
   /// `original` for the text that was first selected, `author` for versions
-  /// the user typed. Later phases may add other origins; unknown values are
-  /// preserved.
+  /// the user typed, `ai` for versions returned by a model request. Unknown
+  /// values are preserved.
   var origin: String
   var created: String?
+  /// Present on `ai` variants written by this version of Celorga.
+  var provenance: OrgProseAIProvenance? = nil
   var extra: [String: OrgProseJSON] = [:]
+
+  var isAI: Bool { origin == OrgProseStateFormat.aiOrigin }
 }
 
 struct OrgProseAlternativeSet: Equatable, Sendable {
@@ -329,16 +355,50 @@ extension OrgProseAnchor {
   }
 }
 
+extension OrgProseAIProvenance {
+  /// Lenient by design: provenance is descriptive, so a surprising value is
+  /// kept in `extra` instead of making the whole block unreadable.
+  fileprivate init(json object: [String: OrgProseJSON]) {
+    var rest = object
+    func take(_ key: String) -> String? {
+      guard case .string(let value)? = object[key] else { return nil }
+      rest.removeValue(forKey: key)
+      return value
+    }
+    let provider = take("provider")
+    let model = take("model")
+    let instruction = take("instruction")
+    let createdAt = take("createdAt")
+    self.init(provider: provider, model: model, instruction: instruction, createdAt: createdAt, extra: rest)
+  }
+
+  fileprivate var json: OrgProseJSON {
+    var object = extra
+    proseSet(&object, "provider", provider)
+    proseSet(&object, "model", model)
+    proseSet(&object, "instruction", instruction)
+    proseSet(&object, "createdAt", createdAt)
+    return .object(object)
+  }
+}
+
 extension OrgProseVariant {
   fileprivate static let knownKeys: Set<String> = ["id", "text", "origin", "created"]
 
   fileprivate init(json object: [String: OrgProseJSON]) throws {
+    var extra = proseExtra(object, known: Self.knownKeys)
+    var provenance: OrgProseAIProvenance?
+    if case .object(let raw)? = object["provenance"] {
+      provenance = OrgProseAIProvenance(json: raw)
+      extra.removeValue(forKey: "provenance")
+    }
     self.init(
       id: try proseString(object, "id") ?? "",
       text: try proseString(object, "text") ?? "",
       origin: try proseString(object, "origin", required: false) ?? OrgProseStateFormat.authorOrigin,
       created: try proseString(object, "created", required: false),
-      extra: proseExtra(object, known: Self.knownKeys)
+      provenance: provenance,
+      extra: extra
     )
   }
 
@@ -348,6 +408,7 @@ extension OrgProseVariant {
     object["text"] = .string(text)
     object["origin"] = .string(origin)
     proseSet(&object, "created", created)
+    if let provenance { object["provenance"] = provenance.json }
     return .object(object)
   }
 }

@@ -126,6 +126,45 @@ public struct AIProviderChatClient: Sendable {
       return try JSONSerialization.data(withJSONObject: bodyObject)
     }.value
     let object = try await send(request)
+    let normalizedReply = try replyText(from: object)
+    let roomPrompt = requestMessages.last(where: {
+      $0.content.contains("<org2-shared-ai-room>")
+    })?.content ?? ""
+    return AIProviderChatResult(
+      reply: normalizedReply,
+      usage: tokenUsage(from: object),
+      contextTelemetry: AIChatContextBudget.statelessTelemetry(
+        systemPrompt: system,
+        history: requestMessages,
+        roomPrompt: roomPrompt
+      )
+    )
+  }
+
+  /// One stateless text-in/text-out request: the caller's system prompt and a
+  /// single user message, with no workspace context, history, tools, or
+  /// attachments.
+  public func complete(
+    system: String,
+    prompt: String,
+    model: String,
+    maxTokens: Int = 4_096
+  ) async throws -> String {
+    let normalizedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalizedModel.isEmpty else { throw AIProviderChatError.modelRequired }
+    var request = URLRequest(url: endpoint(chatComponent))
+    request.httpMethod = "POST"
+    applyHeaders(to: &request)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    let userMessage = AIChatMessage(role: .user, content: prompt)
+    var body = try requestBody(messages: [userMessage], model: normalizedModel, system: system)
+    if settings.adapter == .anthropic { body["max_tokens"] = maxTokens }
+    request.httpBody = try JSONSerialization.data(withJSONObject: body)
+    try Task.checkCancellation()
+    return try replyText(from: try await send(request))
+  }
+
+  private func replyText(from object: [String: Any]) throws -> String {
     let reply: String?
     switch settings.adapter {
     case .openAI, .openRouter:
@@ -146,18 +185,7 @@ public struct AIProviderChatClient: Sendable {
     }
     let normalizedReply = reply?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     guard !normalizedReply.isEmpty else { throw AIProviderChatError.emptyResponse }
-    let roomPrompt = requestMessages.last(where: {
-      $0.content.contains("<org2-shared-ai-room>")
-    })?.content ?? ""
-    return AIProviderChatResult(
-      reply: normalizedReply,
-      usage: tokenUsage(from: object),
-      contextTelemetry: AIChatContextBudget.statelessTelemetry(
-        systemPrompt: system,
-        history: requestMessages,
-        roomPrompt: roomPrompt
-      )
-    )
+    return normalizedReply
   }
 
   private var chatComponent: String {

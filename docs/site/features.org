@@ -110,7 +110,7 @@
       <p>A fast native editor for plain-text notes, rendered for reading and editable as source.</p>
       <ul class="celorga-feature-list" data-heading-anchors="off">
         <li><strong>Reading, Source, Split</strong>Switch views without changing the file</li>
-        <li><strong>Prose mode</strong>Keep alternatives, ghosted text, and cuts recoverable</li>
+        <li><strong>Prose mode</strong>Keep alternatives, ghosted text, and cuts recoverable, and revise a selection with your own model provider when you ask</li>
         <li><strong>Vim mode</strong>Optional Vim keybindings in the source editor</li>
         <li><strong>Tables</strong>Spreadsheet formulas in ordinary text tables</li>
         <li><strong>Live embeds</strong>Show another note or section inline</li>

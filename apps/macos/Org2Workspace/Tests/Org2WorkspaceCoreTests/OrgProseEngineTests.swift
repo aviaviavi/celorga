@@ -104,7 +104,8 @@ final class OrgProseEngineTests: XCTestCase {
     XCTAssertEqual(rewritten.ghosts.first { $0.id == "g1" }?.extra["tag"], .string("keep"))
     XCTAssertEqual(rewritten.ghosts.first { $0.id == "g1" }?.anchor.extra["confidence"], .double(0.5))
     XCTAssertEqual(rewritten.alternatives[0].extra["rank"], .int(3))
-    XCTAssertEqual(rewritten.alternatives[0].variants[1].extra["provenance"], .object(["model": .string("x")]))
+    XCTAssertEqual(rewritten.alternatives[0].variants[1].provenance, OrgProseAIProvenance(model: "x"))
+    XCTAssertTrue(edit.text.contains("\"provenance\":{\"model\":\"x\"}"))
     XCTAssertEqual(rewritten.ghosts.count, 2)
   }
 

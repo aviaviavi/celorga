@@ -263,6 +263,63 @@ final class AIProviderChatClientTests: XCTestCase {
     }
   }
 
+  func testCompleteSendsOnlyTheCallersSystemAndPromptToOpenAI() async throws {
+    AIProviderTestURLProtocol.setHandler { request in
+      XCTAssertEqual(request.url?.absoluteString, "https://api.example.test/v1/chat/completions")
+      XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer synthetic-key")
+      let body = try self.requestBodyData(request)
+      let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+      XCTAssertEqual(object["model"] as? String, "gpt-test")
+      XCTAssertNil(object["tools"])
+      let messages = try XCTUnwrap(object["messages"] as? [[String: Any]])
+      XCTAssertEqual(messages.count, 2)
+      XCTAssertEqual(messages[0]["role"] as? String, "system")
+      XCTAssertEqual(messages[0]["content"] as? String, "Revise only.")
+      XCTAssertEqual(messages[1]["role"] as? String, "user")
+      XCTAssertEqual(messages[1]["content"] as? String, "Make it tighter: the fox")
+      return (200, ["choices": [["message": ["content": "  a fox \n"]]]])
+    }
+    let reply = try await client(.openAI, apiKey: "synthetic-key").complete(
+      system: "Revise only.",
+      prompt: "Make it tighter: the fox",
+      model: " gpt-test "
+    )
+    XCTAssertEqual(reply, "a fox")
+  }
+
+  func testCompleteUsesAnthropicSystemFieldAndTokenLimit() async throws {
+    AIProviderTestURLProtocol.setHandler { request in
+      XCTAssertEqual(request.url?.absoluteString, "https://api.example.test/v1/messages")
+      let body = try self.requestBodyData(request)
+      let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+      XCTAssertEqual(object["system"] as? String, "Revise only.")
+      XCTAssertEqual(object["max_tokens"] as? Int, 512)
+      let messages = try XCTUnwrap(object["messages"] as? [[String: Any]])
+      XCTAssertEqual(messages.count, 1)
+      return (200, ["content": [["type": "text", "text": "Revised."]]])
+    }
+    let reply = try await client(.anthropic, apiKey: "synthetic-key").complete(
+      system: "Revise only.",
+      prompt: "Passage",
+      model: "claude-test",
+      maxTokens: 512
+    )
+    XCTAssertEqual(reply, "Revised.")
+  }
+
+  func testCompleteRequiresAModelWithoutMakingARequest() async throws {
+    AIProviderTestURLProtocol.setHandler { _ in
+      XCTFail("No request expected")
+      return (500, [:])
+    }
+    do {
+      _ = try await client(.ollama, apiKey: nil).complete(system: "s", prompt: "p", model: "  ")
+      XCTFail("Expected modelRequired")
+    } catch {
+      XCTAssertEqual(error as? AIProviderChatError, .modelRequired)
+    }
+  }
+
   private func client(
     _ adapter: AIChatDestinationAdapter,
     apiKey: String?
