@@ -93,6 +93,7 @@
         <li><strong>Drafts stay drafts</strong>AI-written content is marked until accepted</li>
         <li><strong>Previewed edits</strong>Every agent change is a readable diff</li>
         <li><strong>Per-agent encryption</strong>Seal a section to one person, device, or agent</li>
+        <li><strong>Secrets stay out of chat</strong>Agents request keys; you type them into a secure sheet and Celorga stores them encrypted</li>
         <li><strong>Sourced answers</strong>Agent replies link to the file and line they used</li>
         <li><strong>Local by default</strong>Nothing leaves your Mac unless you send it</li>
         <li><strong>Pinned plugins</strong>Locked to exact commits and checksums</li>

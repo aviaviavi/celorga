@@ -40,6 +40,11 @@ async function main(): Promise<void> {
     await runActivityCommand(args.slice(1));
     return;
   }
+  if (args[0] === "secret" || args[0] === "secrets") {
+    const { runSecretCommand } = await import("./secretCli.js");
+    await runSecretCommand(args.slice(1));
+    return;
+  }
   if (args[0] === "server") {
     const { runServerCommand } = await import("./serverCli.js");
     await runServerCommand(args.slice(1));

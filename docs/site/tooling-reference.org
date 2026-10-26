@@ -1256,6 +1256,37 @@ celorga crypt reencrypt --file secrets.org --line 42 \
 
 Per-entry recipient properties let one corpus mix private-only and shared-with-agent notes without a global editor setting. =:CRYPT_RECIPIENT:= / =:CRYPT_RECIPIENTS:= add GPG recipient identifiers, while =:CRYPT_RECIPIENT_FILE:= / =:CRYPT_RECIPIENT_FILES:= add armored public key files. Multiple values can be separated with commas. Relative recipient-file paths are resolved relative to the Org file that contains the subtree, so they work across machines when the key file lives in the synced project.
 
+** Secret requests
+
+Agents should never ask a person to paste a credential into chat, where it would stay in the transcript. They request it instead, and Celorga stores it as an encrypted =:crypt:= entry in the corpus.
+
+#+begin_src sh
+celorga secret request EXAMPLE_API_TOKEN --reason "Call the example API for the weekly report" \
+  --author "Example Builder" --agent-ref agent-profile-example-builder \
+  --thread THREAD_ID --idempotency-key weekly-report-token --apply --wait 300
+celorga secret status REQUEST_ID --json
+celorga secret list --json
+celorga secret exec EXAMPLE_API_TOKEN --env EXAMPLE_TOKEN -- ./scripts/report.sh
+#+end_src
+
+=request= previews by default. With =--apply= it queues =celorga:secret-request:v1= under the AI chat inbox (=secret-requests/=), using the same atomic, no-replace publication and idempotency keys as =thread post=. The requester is identified by =--author= and/or =--agent-ref=. While Celorga is running on the Mac, it shows a secure entry sheet with the name, reason, requester, chat, destination, and recipients. The person can save, decline, or choose *Later*. Saving pipes the value to =celorga secret fulfill=, which pipes it to gpg and writes only the armored ciphertext. The secret becomes a =* NAME :secret:crypt:= heading with a stable =:ID:=, =SECRET_*= metadata properties, and =CRYPT_RECIPIENTS= / =CRYPT_RECIPIENT_FILES= for explicit recipients. Fulfilling the same name again replaces the ciphertext and keeps the ID. Fulfillment and decline are recorded in =secret-requests/receipts/= without the value.
+
+Secrets are always encrypted to public keys, never with a symmetric passphrase. Recipients are the default GPG key (unless =defaultRecipientSelf= is false or the app's default-key setting is off), the app's encryption recipients, =secrets.recipients= / =secrets.recipientFiles=, and any keys configured for the requesting agent ref. Recipients named with =--recipient= / =--recipient-file= are labeled as requested in the sheet. Recipient files must stay inside the corpus. If no recipient resolves, Celorga shows an actionable error and writes nothing.
+
+#+begin_src json
+{
+  "secrets": {
+    "file": "secrets.org",
+    "defaultRecipientSelf": true,
+    "recipients": [],
+    "recipientFiles": [],
+    "agents": { "agent-profile-example-builder": { "recipientFiles": ["public-keys/example-builder.asc"] } }
+  }
+}
+#+end_src
+
+=status= reports =pending=, =fulfilled=, or =declined=. =request --wait SECONDS= exits 0 when fulfilled, 2 when declined, and 124 on timeout. =exec= decrypts with gpg (gpg-agent may prompt) and passes the value only in the child's environment, by default as =NAME=. =list= reports names, IDs, lines, and whether each entry is encrypted. No =secret= command prints a value. MCP exposes =celorga_secret_request= and =celorga_secret_status= on the trusted stdio server only, not on the read-only endpoint.
+
 * Export + publish
 
 #+begin_src sh

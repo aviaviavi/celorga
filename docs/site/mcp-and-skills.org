@@ -106,6 +106,7 @@ The current tools are:
 - =celorga_run_transition=: move a run through its lifecycle; completion requires a reviewer-facing summary.
 - =celorga_run_list=: inspect durable runs and review state.
 - =celorga_thread_post=: post an attributed, idempotent background update to an existing AI chat without starting a model turn.
+- =celorga_secret_request= / =celorga_secret_status=: ask the person for a credential through Celorga's secure entry sheet instead of chat, then check whether it was stored encrypted. Neither tool returns a value; run commands with =celorga secret exec=.
 
 The read-only retrieval tools share the same incremental compiler and cited context substrate as =celorga agent search|fetch|context=. Result counts and context characters are capped by their schemas. Resource listing is paginated in stable lexical order, and resource reads include a SHA-256 revision plus line count. The server is still not a complete mirror of the CLI: Agenda, TODO mutation, publishing, lint, graph checks, and other specialized commands remain CLI operations. Use the general skill below so an agent knows when to leave MCP and call CLI JSON.
 
@@ -115,7 +116,7 @@ The read-only retrieval tools share the same incremental compiler and cited cont
 - Resource reads stay beneath the canonical corpus root, reject symlinked files, hidden runtime state, archives, and ignored sync artifacts, and expose only canonical =.org= source.
 - Workflow prompts and resource listing are read-only.
 - The headless HTTP endpoint exposes only =celorga_search=, =celorga_fetch=, =celorga_context=, =celorga_agent_profile_resolve=, and =celorga_run_list=. Every HTTP token currently has only the =corpus:read= scope.
-- Trusted stdio additionally exposes run creation, run transition, and thread posting. Those are writes. They use the same guarded Celorga records and lifecycle rules as the CLI, but the MCP call itself is the requested action; there is no second =--apply= preview inside those tools.
+- Trusted stdio additionally exposes run creation, run transition, thread posting, and secret requests. Those are writes. They use the same guarded Celorga records and lifecycle rules as the CLI, but the MCP call itself is the requested action; there is no second =--apply= preview inside those tools.
 - Credentials are not read from corpus files or returned as MCP resources. Keep client secrets in the client environment or its credential store.
 
 Only enable stdio write tools for agents you trust to act within that corpus. If a client supports per-tool approval, require confirmation for the three mutating tools. Retrieval and coordination tools carry MCP =readOnlyHint= annotations so compatible clients can apply an appropriate approval policy.

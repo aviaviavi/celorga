@@ -280,7 +280,7 @@ With Celorga, Org documents can connect notes to CSV, Parquet, JSON, ClickHouse,
 
 Your corpus is an ordinary folder on your Mac. Celorga does not upload it to a Celorga service. Information leaves the Mac only when you use a destination or source provider you configured, so its retention and data-use policy still applies.
 
-Secrets belong in macOS Keychain or another protected local store. Celorga also supports GPG-backed =:crypt:= subtrees when individual sections need encrypted storage. Consequential external actions can be held for explicit approval before execution.
+Secrets belong in macOS Keychain or another protected local store. Celorga also supports GPG-backed =:crypt:= subtrees when individual sections need encrypted storage. When an agent runs =celorga secret request=, Celorga shows a secure entry sheet with the requester, reason, destination, and recipients, and seals the value with GPG into the corpus secrets file, so it never goes into the chat. *Decline* records the refusal, and *Later* keeps the request pending. Consequential external actions can be held for explicit approval before execution.
 
 Back up or sync the corpus with a file-oriented tool you understand, such as Git, Time Machine, iCloud Drive, or Syncthing.
 

@@ -9392,6 +9392,7 @@ Core commands:
   celorga approvals --dir DIR [--recursive] [--include-archives] [--index auto|never|rebuild] [--run-detail ID] [--format text|json]
   celorga plan <set|today> --file FILE (--line N | --pos LINE[:COL]) [--apply]
   celorga crypt <encrypt|decrypt|reencrypt> --file FILE (--line N | --pos LINE[:COL]) [--passphrase PASS] [--recipient USER]... [--recipient-file FILE]... [--default-recipient-self] [--gpg-program PATH] [--gpg-timeout SECONDS] [--apply]
+  celorga secret request|status|list|exec|fulfill|decline [--help]
   celorga browser-clip import --file CLIP.org2clip --dir CORPUS [--if-revision HASH --if-clip-revision HASH --apply]
   celorga capture --file FILE --title TITLE [--template note|task] [--apply]
   celorga capture (--text TEXT|--stdin|--url URL|--file SOURCE) --to FILE [--title TITLE] [--apply]

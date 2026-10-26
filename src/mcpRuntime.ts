@@ -18,6 +18,7 @@ import {
 import { defaultCorpusCachePath } from "./indexPaths.js";
 import { safeIdentifier } from "./safeIdentifier.js";
 import { queueAIChatInboxMessage } from "./aiChatInbox.js";
+import { queueSecretRequest, secretRequestStatus } from "./secretRequest.js";
 import { isOpenClawThreadSettled, loadOpenClawThreadState, openClawDateMilliseconds } from "./openClawThreadState.js";
 import { celorgaToolName, legacyToolName, stateDir } from "./brandNames.js";
 
@@ -411,6 +412,8 @@ function legacyMcpTools(readOnly: boolean) {
     { name: "org2_workspace_coordinate", description: "Review this corpus's agent work across hosts: what needs you, what is stuck, what is working, what shipped (with evidence links), and guarded continuation offers. Read-only; derived from durable runs, chats, and host presence", inputSchema: { type: "object", properties: { sinceHours: { type: "number", minimum: 1, maximum: 720, default: 24 }, quietMinutes: { type: "integer", minimum: 0, maximum: 10080, default: 15 } } }, annotations: readOnlyAnnotations },
     { name: "org2_workspace_continue", description: "Execute one current continuation offer from workspace_coordinate after re-checking every guard. Preview unless apply is true. Queues an idempotent single-agent send or a revision-guarded run retry; never confirms a turn started", inputSchema: { type: "object", required: ["offerId"], properties: { offerId: { type: "string" }, apply: { type: "boolean", default: false }, actor: { type: "string" } } }, annotations: writeAnnotations },
     { name: "org2_thread_post", description: "Post an attributed background message to an existing Celorga AI chat. It is context only unless requestTurn names shared-room agents (destination IDs or @mentions) that should each take a turn in response", inputSchema: { type: "object", required: ["threadId", "message", "author"], properties: { threadId: { type: "string" }, message: { type: "string" }, author: { type: "string" }, agentRef: { type: "string" }, source: { type: "string" }, idempotencyKey: { type: "string" }, requestTurn: { type: "array", items: { type: "string" }, maxItems: 8 } } }, annotations: writeAnnotations },
+    { name: "org2_secret_request", description: "Ask the person for a credential through Celorga's secure entry sheet instead of chat. The app seals the value with GPG into the corpus secrets file; this tool never returns it. Check with secret_status, then run commands with `celorga secret exec NAME -- COMMAND`", inputSchema: { type: "object", required: ["name", "reason", "author"], properties: { name: { type: "string" }, reason: { type: "string" }, author: { type: "string" }, agentRef: { type: "string" }, threadId: { type: "string" }, recipients: { type: "array", items: { type: "string" } }, recipientFiles: { type: "array", items: { type: "string" } }, idempotencyKey: { type: "string" } } }, annotations: writeAnnotations },
+    { name: "org2_secret_status", description: "Report whether a secret request is pending, fulfilled, or declined. Never returns the value", inputSchema: { type: "object", required: ["requestId"], properties: { requestId: { type: "string" } } }, annotations: readOnlyAnnotations },
   ];
 }
 
@@ -424,7 +427,7 @@ async function handle(root: string, request: JsonRpcRequest, options: McpServerO
     serverInfo: { name: "celorga", version: "0.3.0" },
     instructions: readOnly
       ? "Read-only Celorga corpus. Search with celorga_search, fetch stable IDs with celorga_fetch, and assemble cited context with celorga_context. Results are bounded and cite canonical source files and line ranges. Do not claim corpus facts without returned evidence."
-      : "Search with celorga_search before broad resource reads, fetch stable IDs with celorga_fetch, and use celorga_context for bounded cited context. Corpus source is canonical. Run and thread tools write immediately; use them only when the user requested the action.",
+      : "Search with celorga_search before broad resource reads, fetch stable IDs with celorga_fetch, and use celorga_context for bounded cited context. Corpus source is canonical. Run and thread tools write immediately; use them only when the user requested the action. Never ask the user to paste credentials into chat; use celorga_secret_request.",
   });
   if (request.method === "notifications/initialized") return null;
   if (request.method === "resources/list") {
@@ -462,7 +465,7 @@ async function handle(root: string, request: JsonRpcRequest, options: McpServerO
       const resolved = resolveAgentProfile(root, requiredString(args.runtime, "runtime"), requiredString(args.runtimeAgentId, "runtimeAgentId"));
       return result(toolResult(resolved));
     }
-    if (readOnly && ["org2_run_create", "org2_run_transition", "org2_thread_list", "org2_thread_send", "org2_thread_post", "org2_workspace_coordinate", "org2_workspace_continue"].includes(String(name))) {
+    if (readOnly && ["org2_run_create", "org2_run_transition", "org2_thread_list", "org2_thread_send", "org2_thread_post", "org2_workspace_coordinate", "org2_workspace_continue", "org2_secret_request", "org2_secret_status"].includes(String(name))) {
       throw new Error("tool is unavailable on the read-only MCP endpoint");
     }
     if (name === "org2_workspace_coordinate" || name === "org2_workspace_continue") {
@@ -519,6 +522,22 @@ async function handle(root: string, request: JsonRpcRequest, options: McpServerO
         },
       );
       return result({ content: [{ type: "text", text: JSON.stringify(queued, null, 2) }] });
+    }
+    if (name === "org2_secret_request") {
+      const queued = queueSecretRequest(root, requiredString(args.name, "name"), {
+        reason: requiredString(args.reason, "reason"),
+        authorLabel: requiredString(args.author, "author"),
+        authorAgentRef: optionalString(args.agentRef, "agentRef"),
+        threadID: optionalString(args.threadId, "threadId"),
+        recipients: stringArray(args.recipients, "recipients"),
+        recipientFiles: stringArray(args.recipientFiles, "recipientFiles"),
+        idempotencyKey: optionalString(args.idempotencyKey, "idempotencyKey"),
+        apply: true,
+      });
+      return result({ content: [{ type: "text", text: JSON.stringify(queued, null, 2) }] });
+    }
+    if (name === "org2_secret_status") {
+      return result({ content: [{ type: "text", text: JSON.stringify(secretRequestStatus(root, requiredString(args.requestId, "requestId")), null, 2) }] });
     }
     if (name === "org2_run_create") {
       const run = instantiateWorkflow(loadWorkflow(root, requiredString(args.workflow, "workflow")), workflowInputs(args.inputs), {
