@@ -1051,7 +1051,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
               let target = payload["target"] as? String,
               let token = (payload["token"] as? NSNumber)?.intValue
         else { return }
-        showLinkPreview(target: target, token: token)
+        showLinkPreview(target: target, token: token, label: payload["label"] as? String)
       case Self.paneActivationMessageHandlerName:
         activateWorkspacePane()
       case Self.viewportMessageHandlerName:
@@ -1658,10 +1658,19 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       return AIChatFileReference(path: fileTarget.url.path, line: fileTarget.line)
     }
 
-    private func showLinkPreview(target rawTarget: String, token: Int) {
+    private func showLinkPreview(target rawTarget: String, token: Int, label: String? = nil) {
       let target = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !target.isEmpty else { return }
       linkPreviewTask?.cancel()
+      if let preview = OrgLinkHoverPreview.external(url: target, label: label) {
+        linkPreviewTask = nil
+        webView?.evaluateJavaScript(
+          "window.__org2ShowLinkPreview?.(\(token), \(preview.scriptPayload));",
+          completionHandler: nil
+        )
+        recordUsageEvent(.linkPreview, ["kind": "web"])
+        return
+      }
       linkPreviewTask = Task { @MainActor [weak self] in
         guard let self, let reference = await self.resolveWorkspaceTarget(target) else { return }
         let path = reference.path

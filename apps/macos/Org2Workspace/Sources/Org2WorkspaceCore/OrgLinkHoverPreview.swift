@@ -1,7 +1,9 @@
 import Foundation
 
-/// A short, read-only excerpt shown when hovering an internal link in a
-/// rendered document. Derived from the target file on demand; never stored.
+/// A short, read-only excerpt shown when hovering a link in a rendered
+/// document. Internal targets are excerpted from the target file on demand
+/// (cached in memory per file revision); web links show the URL and the
+/// link's own description and are never fetched.
 struct OrgLinkHoverPreview: Equatable, Sendable {
   let title: String
   let location: String
@@ -89,15 +91,87 @@ struct OrgLinkHoverPreview: Equatable, Sendable {
     )
   }
 
-  static func load(path: String, line: Int?, relativePath: String) async -> OrgLinkHoverPreview? {
+  /// Preview for an `http`/`https` link. Uses only what the document already
+  /// knows (the link description); the page is not fetched.
+  static func external(url rawURL: String, label rawLabel: String?) -> OrgLinkHoverPreview? {
+    let urlString = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let url = URL(string: urlString),
+          let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+          let host = url.host, !host.isEmpty
+    else { return nil }
+    let label = (rawLabel ?? "")
+      .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let comparableLabel = label.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let labelIsURL = comparableLabel == urlString.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+      || comparableLabel == host.lowercased()
+    let displayHost = host.lowercased().hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    let title = label.isEmpty || labelIsURL ? displayHost : String(label.prefix(160))
+    return OrgLinkHoverPreview(
+      title: title,
+      location: urlString.count > 300 ? String(urlString.prefix(299)) + "…" : urlString,
+      excerpt: "Web link on \(displayHost). Celorga doesn't load the page for previews."
+    )
+  }
+
+  /// File-preview cache keyed by path and line, valid while the file's size
+  /// and modification date are unchanged.
+  final class Cache: @unchecked Sendable {
+    struct Key: Hashable { let path: String; let line: Int?; let relativePath: String }
+    struct Revision: Equatable { let size: Int; let modified: Date? }
+    private struct Entry { let revision: Revision; let preview: OrgLinkHoverPreview }
+
+    let capacity: Int
+    private let lock = NSLock()
+    private var entries: [Key: Entry] = [:]
+    private var order: [Key] = []
+
+    init(capacity: Int = 64) { self.capacity = max(1, capacity) }
+
+    func preview(for key: Key, revision: Revision) -> OrgLinkHoverPreview? {
+      lock.lock(); defer { lock.unlock() }
+      guard let entry = entries[key] else { return nil }
+      guard entry.revision == revision else {
+        entries[key] = nil
+        order.removeAll { $0 == key }
+        return nil
+      }
+      order.removeAll { $0 == key }
+      order.append(key)
+      return entry.preview
+    }
+
+    func store(_ preview: OrgLinkHoverPreview, for key: Key, revision: Revision) {
+      lock.lock(); defer { lock.unlock() }
+      if entries[key] == nil, entries.count >= capacity, let oldest = order.first {
+        entries[oldest] = nil
+        order.removeFirst()
+      }
+      entries[key] = Entry(revision: revision, preview: preview)
+      order.removeAll { $0 == key }
+      order.append(key)
+    }
+
+    var count: Int { lock.lock(); defer { lock.unlock() }; return entries.count }
+  }
+
+  static let sharedCache = Cache()
+
+  static func load(path: String, line: Int?, relativePath: String, cache: Cache = sharedCache) async -> OrgLinkHoverPreview? {
     await Task.detached(priority: .userInitiated) {
       let url = URL(fileURLWithPath: path)
       let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-      if let size = (attributes?[.size] as? NSNumber)?.intValue, size > maximumFileBytes { return nil }
+      let size = (attributes?[.size] as? NSNumber)?.intValue ?? -1
+      if size > maximumFileBytes { return nil }
+      let key = Cache.Key(path: url.standardizedFileURL.path, line: line, relativePath: relativePath)
+      let revision = Cache.Revision(size: size, modified: attributes?[.modificationDate] as? Date)
+      if let cached = cache.preview(for: key, revision: revision) { return cached }
       guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
             let text = String(data: data, encoding: .utf8)
       else { return nil }
-      return make(text: text, line: line, fileName: url.deletingPathExtension().lastPathComponent, relativePath: relativePath)
+      let preview = make(text: text, line: line, fileName: url.deletingPathExtension().lastPathComponent, relativePath: relativePath)
+      cache.store(preview, for: key, revision: revision)
+      return preview
     }.value
   }
 
@@ -162,26 +236,42 @@ struct OrgLinkHoverPreview: Equatable, Sendable {
       .org2-link-preview .h { opacity: .5; font-size: 10.5px; margin-top: 8px; }`;
     document.documentElement.appendChild(style);
     const hide = () => {
-      clearTimeout(timer); timer = null; token += 1; anchor = null;
+      clearTimeout(timer); timer = null; token += 1;
+      if (anchor && anchor.dataset.org2Title !== undefined) {
+        anchor.setAttribute('title', anchor.dataset.org2Title);
+        delete anchor.dataset.org2Title;
+      }
+      anchor = null;
       if (pop) { pop.remove(); pop = null; }
     };
-    const workspaceLink = (target) => {
+    const previewLink = (target) => {
       const element = target instanceof Element ? target : target?.parentElement;
-      const link = element?.closest('a[href^="org2-workspace://open-link"]');
+      const link = element?.closest('a[href^="org2-workspace://open-link"], a[href^="http://"], a[href^="https://"]');
       return link || null;
     };
     document.addEventListener('mouseover', (event) => {
-      const link = workspaceLink(event.target);
+      const link = previewLink(event.target);
       if (!link || link === anchor) return;
       hide();
       anchor = link;
+      const external = !link.href.startsWith('org2-workspace:');
+      if (external && link.hasAttribute('title')) {
+        // The popover replaces the native tooltip for web links.
+        link.dataset.org2Title = link.getAttribute('title');
+        link.removeAttribute('title');
+      }
       const current = token;
       timer = setTimeout(() => {
         if (current !== token) return;
         let target = '';
-        try { target = new URL(link.href).searchParams.get('target') || ''; } catch (_) { return; }
+        if (external) {
+          target = link.href;
+        } else {
+          try { target = new URL(link.href).searchParams.get('target') || ''; } catch (_) { return; }
+        }
         if (!target) return;
-        window.webkit.messageHandlers.org2LinkHover.postMessage({ target, token: current });
+        const label = external ? (link.textContent || '').slice(0, 300) : '';
+        window.webkit.messageHandlers.org2LinkHover.postMessage({ target, token: current, label });
       }, 450);
     }, true);
     document.addEventListener('mouseout', (event) => {
@@ -200,7 +290,7 @@ struct OrgLinkHoverPreview: Equatable, Sendable {
       const title = document.createElement('div'); title.className = 't'; title.textContent = preview.title;
       const location = document.createElement('div'); location.className = 'l'; location.textContent = preview.location;
       const excerpt = document.createElement('div'); excerpt.className = 'x'; excerpt.textContent = preview.excerpt;
-      const hint = document.createElement('div'); hint.className = 'h'; hint.textContent = 'Click to open · ⌘-click to open in a new tab';
+      const hint = document.createElement('div'); hint.className = 'h'; hint.textContent = anchor.href.startsWith('org2-workspace:') ? 'Click to open · ⌘-click to open in a new tab' : 'Click to open';
       pop.append(title, location, excerpt, hint);
       document.body.appendChild(pop);
       const rect = anchor.getBoundingClientRect();

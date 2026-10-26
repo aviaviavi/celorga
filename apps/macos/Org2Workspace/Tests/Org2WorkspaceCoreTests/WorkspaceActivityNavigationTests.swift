@@ -192,6 +192,51 @@ final class WorkspaceActivityNavigationTests: XCTestCase {
     XCTAssertEqual(filePreview.location, "projects/notes.org")
   }
 
+  func testLinkPreviewForWebLinksUsesTheKnownDescriptionWithoutFetching() throws {
+    let described = try XCTUnwrap(OrgLinkHoverPreview.external(url: "https://www.example.com/guide", label: "  The\n field guide "))
+    XCTAssertEqual(described.title, "The field guide")
+    XCTAssertEqual(described.location, "https://www.example.com/guide")
+    XCTAssertTrue(described.excerpt.contains("example.com"))
+    XCTAssertTrue(described.excerpt.contains("doesn't load the page"))
+
+    let bare = try XCTUnwrap(OrgLinkHoverPreview.external(url: "https://example.org/a/", label: "https://example.org/a"))
+    XCTAssertEqual(bare.title, "example.org")
+    XCTAssertEqual(try XCTUnwrap(OrgLinkHoverPreview.external(url: "http://example.net", label: nil)).title, "example.net")
+
+    XCTAssertNil(OrgLinkHoverPreview.external(url: "id:abc-123", label: "Note"))
+    XCTAssertNil(OrgLinkHoverPreview.external(url: "file:notes.org::*Plan", label: nil))
+    XCTAssertNil(OrgLinkHoverPreview.external(url: "mailto:someone@example.com", label: nil))
+  }
+
+  func testLinkPreviewCacheReusesUnchangedFilesAndRefreshesEditedOnes() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("link-preview-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("notes.org")
+    try "* Plan\nFirst draft.\n".write(to: file, atomically: true, encoding: .utf8)
+    let cache = OrgLinkHoverPreview.Cache(capacity: 2)
+
+    let first = await OrgLinkHoverPreview.load(path: file.path, line: 1, relativePath: "notes.org", cache: cache)
+    XCTAssertEqual(first?.excerpt, "First draft.")
+    XCTAssertEqual(cache.count, 1)
+    let again = await OrgLinkHoverPreview.load(path: file.path, line: 1, relativePath: "notes.org", cache: cache)
+    XCTAssertEqual(again, first)
+    XCTAssertEqual(cache.count, 1)
+
+    try "* Plan\nSecond, longer draft.\n".write(to: file, atomically: true, encoding: .utf8)
+    let edited = await OrgLinkHoverPreview.load(path: file.path, line: 1, relativePath: "notes.org", cache: cache)
+    XCTAssertEqual(edited?.excerpt, "Second, longer draft.")
+
+    let preview = OrgLinkHoverPreview(title: "t", location: "l", excerpt: "x")
+    let revision = OrgLinkHoverPreview.Cache.Revision(size: 1, modified: nil)
+    cache.store(preview, for: .init(path: "/a", line: nil, relativePath: "a"), revision: revision)
+    cache.store(preview, for: .init(path: "/b", line: nil, relativePath: "b"), revision: revision)
+    XCTAssertEqual(cache.count, 2, "least recently used entry is evicted at capacity")
+    XCTAssertNil(cache.preview(for: .init(path: file.standardizedFileURL.path, line: 1, relativePath: "notes.org"), revision: revision))
+    XCTAssertEqual(cache.preview(for: .init(path: "/b", line: nil, relativePath: "b"), revision: revision), preview)
+    XCTAssertNil(cache.preview(for: .init(path: "/b", line: nil, relativePath: "b"), revision: .init(size: 2, modified: nil)))
+  }
+
   func testLinkPreviewPayloadIsJSONEscaped() throws {
     let preview = OrgLinkHoverPreview(title: "A \"quoted\" </script>", location: "a.org", excerpt: "x\ny")
     let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(preview.scriptPayload.utf8)) as? [String: String])
