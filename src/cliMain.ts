@@ -45,6 +45,7 @@ import {
 } from "./corpusFiles.js";
 import { resolvePublishHeadIncludes } from "./publish-defaults.js";
 import { documentTodoSequences, todoSequencesForFile, todoConfigurationKey, todoKeywordInWorkflow, type TodoSequence, assignTodoInText, formatOrgTimestamp, isActiveTodoKeyword, isTerminalTodoKeyword, normalizeTodoKeyword, TODO_KEYWORDS, updateTodoInText, type TodoStatus } from "./todo.js";
+import { lintPriorityCookies } from "./priorityLint.js";
 import { cancelRepeatersInText, planningKindFromArg, updatePlanningInText, type PlanningKindArg } from "./planning.js";
 import { computeSubtreeRange, findHeadingAtOrAbove, isHeadlineLine, upsertHeadlinePropertyInLines } from "./sourceLines.js";
 import { findBacklinksInText, type Backlink } from "./backlinks.js";
@@ -4465,6 +4466,14 @@ function appendEffortLintIssues(raw: string, filePath: string, issues: ArtifactL
       line: i + 1,
       message: `EFFORT '${value}' is not a supported duration. Use minutes, H:MM, 2h, 30m, or 2h30m.`,
     });
+  }
+}
+
+function appendPriorityLintIssues(raw: string, filePath: string, issues: ArtifactLintIssue[]): void {
+  let todoSequences;
+  try { todoSequences = documentTodoSequences(raw, todoSequencesForFile(filePath)); } catch { todoSequences = undefined; }
+  for (const issue of lintPriorityCookies(raw, { todoSequences })) {
+    issues.push({ severity: issue.severity, rule: issue.rule, file: filePath, line: issue.line, message: issue.message });
   }
 }
 
@@ -9938,8 +9947,9 @@ Flags:
 Checks:
   Artifact metadata, source hash/review status syntax, duplicate IDs,
   unresolved provenance references, graph link health (broken id/wiki links
-  and ambiguous wiki labels), and conventional corpus-flow role/path
-  mismatches.`;
+  and ambiguous wiki labels), headline priority cookies (outside the file's
+  #+PRIORITIES range, invalid like [#AA], or unclosed like [#A), and
+  conventional corpus-flow role/path mismatches.`;
   } else if (command === "ai") {
     text = `celorga ai ${options.aiAction || "validate-job"}
 
@@ -13459,6 +13469,7 @@ Flags:
       appendHabitLintIssues(raw, filePath, issues);
       appendCheckboxProgressLintIssues(raw, filePath, issues);
       appendEffortLintIssues(raw, filePath, issues);
+      appendPriorityLintIssues(raw, filePath, issues);
 
       for (const ref of collectArtifactProvenanceRefsInText(raw, filePath)) {
         if (ref.kind === "file") {

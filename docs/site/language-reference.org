@@ -71,6 +71,8 @@ Example:
 * TODO [#A] Critical task
 #+end_src
 
+A file may set its range with =#+PRIORITIES: HIGHEST LOWEST DEFAULT=, either as letters (=#+PRIORITIES: A E C=) or digits (=#+PRIORITIES: 1 5 3=); without it the range is =A= to =C= with default =B=. A cookie is one letter or digit, so =[#AA]= and =[#-1]= are not cookies. =celorga lint= and the LSP warn about cookies outside the range, invalid or unclosed cookies, and an invalid =#+PRIORITIES:= line.
+
 Priority is stored as the dedicated =priority= headline field. Org's =COMMENT= headline marker is stored as =commented: true= while all source bytes still round-trip unchanged.
 
 * Tags

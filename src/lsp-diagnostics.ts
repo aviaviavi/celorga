@@ -1,6 +1,8 @@
 import { fileURLToPath } from "node:url";
 import { parseOrgWithDiagnostics } from "./parser.js";
+import { lintPriorityCookies } from "./priorityLint.js";
 import { evaluateTableNode, tablesInDocument } from "./tableFormula.js";
+import { documentTodoSequences, todoSequencesForFile } from "./todo.js";
 
 export interface Position {
   line: number;
@@ -26,6 +28,7 @@ export interface PublishDiagnosticsParams {
 
 const DiagnosticSeverity = {
   Error: 1,
+  Warning: 2,
 } as const;
 
 class DiagnosticLineTracker {
@@ -86,6 +89,22 @@ export function buildPublishDiagnosticsParams(uri: string, text: string): Publis
           code: "org2-table-formula",
         });
       }
+    });
+  }
+
+  let todoSequences = result.ast.todoSequences;
+  if (!todoSequences) {
+    try { todoSequences = documentTodoSequences(text, todoSequencesForFile(sourcePath)); } catch { todoSequences = documentTodoSequences(text); }
+  }
+  for (const issue of lintPriorityCookies(text, { todoSequences })) {
+    diagnostics.push({
+      range: {
+        start: { line: issue.line - 1, character: issue.column - 1 },
+        end: { line: issue.line - 1, character: issue.endColumn - 1 },
+      },
+      severity: DiagnosticSeverity.Warning,
+      message: issue.message,
+      code: `org2-${issue.rule}`,
     });
   }
 

@@ -1035,6 +1035,7 @@ Current checks include:
 - duplicate IDs and unresolved provenance references
 - stale generated artifacts when provenance file mtimes or =CELORGA_SOURCE_HASHES= no longer match
 - unresolved =id:= links, unresolved wiki links, and ambiguous wiki links/aliases using the same graph index as roam workflows
+- headline priority cookies outside the file's =#+PRIORITIES:= range (default =A= to =C=), invalid cookies such as =[#AA]= or =[#-1]=, unclosed cookies such as =[#A=, and an invalid =#+PRIORITIES:= line. Editors receive the same checks as LSP warnings.
 - conventional corpus-flow checks when you organize notes as =raw/= -> =notes/= -> =compiled/= -> =views/= -> =publish/=
 
 See [[file:corpus-flow.org][Corpus flow]] for the canonical zone model, artifact roles, and generated-output trust boundaries.
