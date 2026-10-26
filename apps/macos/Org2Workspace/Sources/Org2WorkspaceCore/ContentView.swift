@@ -173,6 +173,10 @@ public struct ContentView: View {
         OrgCryptPeekSheet(peek: peek)
           .environment(store)
       }
+      .sheet(item: $store.activeSecretRequest) { request in
+        SecretRequestSheet(request: request)
+          .environment(store)
+      }
       .sheet(isPresented: $store.isLaunchGuidePresented) {
         OpenOrgLaunchGuideView()
           .environment(store)

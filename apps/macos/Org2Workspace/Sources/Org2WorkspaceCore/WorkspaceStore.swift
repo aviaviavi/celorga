@@ -2929,6 +2929,14 @@ public final class WorkspaceStore {
   /// Plaintext shown in the temporary "View Decrypted" sheet. It lives only
   /// in memory and is dropped when the sheet closes; the file is untouched.
   public var orgCryptPeek: OrgCryptPeek?
+  /// Agent secret requests awaiting the person. The sheet's typed value is
+  /// never stored here; only request metadata is.
+  public private(set) var pendingSecretRequests: [SecretRequest] = []
+  public var activeSecretRequest: SecretRequest?
+  public private(set) var secretRequestErrorText: String?
+  public private(set) var isSubmittingSecretRequest = false
+  private var deferredSecretRequestIDs: Set<String> = []
+  var secretSealerForTesting: (any SecretSealing)?
   public var isDataSourceConfigurationPresented = false
   public private(set) var scarfMetabaseHasStoredAPIKey = false
   public var orgCryptEncryptOnSave = true {
@@ -26168,6 +26176,8 @@ extension WorkspaceStore {
     else { return }
     await performAIChatOperationJournalDrain(corpusRoot: corpusRoot, context: context)
     guard isCurrentAIChatCorpusContext(context) else { return }
+    await refreshSecretRequests()
+    guard isCurrentAIChatCorpusContext(context) else { return }
     let directory = Self.aiChatInboxDirectory(corpusRoot: corpusRoot)
     let loads = await Task.detached(priority: .utility) {
       Self.loadAIChatInboxFiles(in: directory)
@@ -38601,6 +38611,132 @@ extension WorkspaceStore {
       orgCryptStatusText = error.localizedDescription
       statusText = error.localizedDescription
       return .failure(message: error.localizedDescription, headingLine: line)
+    }
+  }
+
+  // MARK: Secret requests
+
+  /// Reloads pending `celorga secret request` envelopes and presents the
+  /// oldest one the person has not deferred this session.
+  func refreshSecretRequests() async {
+    guard let corpusRoot else {
+      pendingSecretRequests = []
+      activeSecretRequest = nil
+      return
+    }
+    let root = corpusRoot.standardizedFileURL
+    let generation = corpusSessionGeneration
+    let scan = await Task.detached(priority: .utility) {
+      SecretRequestQueue.loadPending(corpusRoot: root)
+    }.value
+    guard isCurrentCorpusSession(root: root, generation: generation) else { return }
+    pendingSecretRequests = scan.requests
+    if let error = scan.errors.first {
+      errorText = "Ignored a secret request: \(error)"
+    }
+    if let active = activeSecretRequest, !scan.requests.contains(where: { $0.id == active.id }) {
+      activeSecretRequest = nil
+      secretRequestErrorText = nil
+    }
+    if activeSecretRequest == nil, !isSubmittingSecretRequest {
+      activeSecretRequest = scan.requests.first { !deferredSecretRequestIDs.contains($0.id) }
+    }
+  }
+
+  public func presentPendingSecretRequests() {
+    deferredSecretRequestIDs.removeAll()
+    if activeSecretRequest == nil {
+      activeSecretRequest = pendingSecretRequests.first
+    }
+  }
+
+  public func deferSecretRequest(_ request: SecretRequest) {
+    deferredSecretRequestIDs.insert(request.id)
+    secretRequestErrorText = nil
+    activeSecretRequest = pendingSecretRequests.first { !deferredSecretRequestIDs.contains($0.id) }
+    statusText = "\(request.authorLabel)'s request for \(request.name) is still pending"
+  }
+
+  public func secretRequestThreadTitle(_ request: SecretRequest) -> String? {
+    guard let raw = request.threadID, let id = UUID(uuidString: raw) else { return nil }
+    return aiChatThreads.first(where: { $0.id == id })?.title
+  }
+
+  public func secretRequestRecipientSummary(_ request: SecretRequest) -> String {
+    let options = SecretSealOptions(settings: currentOrgCryptSettings())
+    var parts: [String] = []
+    if options.useDefaultGpgKey {
+      parts.append("your default GPG key")
+    }
+    for entry in request.recipients.entries {
+      let label = entry.source == "request" ? "\(entry.value) (requested)" : entry.value
+      if !parts.contains(label) { parts.append(label) }
+    }
+    for value in options.recipients + options.recipientFiles where !parts.contains(value) {
+      parts.append(value)
+    }
+    return parts.isEmpty ? "No recipients are configured" : parts.joined(separator: ", ")
+  }
+
+  private var secretSealer: any SecretSealing {
+    secretSealerForTesting ?? CLISecretSealer(cli: cli)
+  }
+
+  /// Seals the typed value with GPG into the corpus secrets file. Only
+  /// ciphertext reaches disk; the value is never logged or posted to a thread.
+  @discardableResult
+  public func submitSecretRequest(_ request: SecretRequest, value: String) async -> Bool {
+    guard !value.isEmpty else {
+      secretRequestErrorText = SecretRequestError.emptyValue.errorDescription
+      return false
+    }
+    guard let corpusRoot else { return false }
+    let root = corpusRoot.standardizedFileURL
+    let file = root.appendingPathComponent(request.destination.file).standardizedFileURL.path
+    guard file.hasPrefix(root.path + "/"),
+          let context = captureDocumentCorpusContext(forFile: file)
+    else {
+      secretRequestErrorText = SecretRequestError.outsideCorpus.errorDescription
+      return false
+    }
+    isSubmittingSecretRequest = true
+    secretRequestErrorText = nil
+    defer { isSubmittingSecretRequest = false }
+    let options = SecretSealOptions(settings: currentOrgCryptSettings())
+    let sealer = secretSealer
+    let payload = Data(value.utf8)
+    do {
+      let result = try await performDocumentMutation(context: context, files: [file]) { _ in
+        try await sealer.fulfill(request, value: payload, options: options, corpusRoot: root)
+      }
+      guard isCurrentDocumentCorpusContext(context) else { return false }
+      invalidateCanonicalDocumentCache(for: file)
+      pendingSecretRequests.removeAll { $0.id == request.id }
+      deferredSecretRequestIDs.remove(request.id)
+      activeSecretRequest = pendingSecretRequests.first { !deferredSecretRequestIDs.contains($0.id) }
+      statusText = "Encrypted \(result.name) into \(result.file)"
+      if let selectedLocation, selectedLocation.file == file {
+        await loadEntrySource(for: selectedLocation)
+      }
+      return true
+    } catch {
+      secretRequestErrorText = error.localizedDescription
+      return false
+    }
+  }
+
+  public func declineSecretRequest(_ request: SecretRequest) async {
+    guard let corpusRoot else { return }
+    isSubmittingSecretRequest = true
+    defer { isSubmittingSecretRequest = false }
+    do {
+      try await secretSealer.decline(request, corpusRoot: corpusRoot.standardizedFileURL)
+      pendingSecretRequests.removeAll { $0.id == request.id }
+      secretRequestErrorText = nil
+      activeSecretRequest = pendingSecretRequests.first { !deferredSecretRequestIDs.contains($0.id) }
+      statusText = "Declined \(request.authorLabel)'s request for \(request.name)"
+    } catch {
+      secretRequestErrorText = error.localizedDescription
     }
   }
 
