@@ -852,7 +852,15 @@ final class AIChatTranscriptDocumentTests: XCTestCase {
     let context = AIChatWorkspaceContext(localCorpusRoot: "/tmp/corpus", remoteCorpusRoot: "/tmp/corpus",
       selectedSurface: "AI Chat", selectedLocation: nil, selectedEntrySource: nil, backlinks: nil,
       agenda: nil, searchQuery: "", searchResults: [])
-    for prompt in [context.systemPrompt(), context.codexSystemPrompt(), context.localAgentSystemPrompt(runtime: "claude", runtimeTitle: "Claude Code")] {
+    // Codex receives the standing instructions once, as thread developer
+    // instructions, so its per-turn prompt does not repeat them.
+    let prompts = [
+      context.systemPrompt(),
+      CodexAppServerClient.developerInstructions(for: .clientWorkspaceTools),
+      CodexAppServerClient.developerInstructions(for: .runtimeFilesystem),
+      context.localAgentSystemPrompt(runtime: "claude", runtimeTitle: "Claude Code"),
+    ]
+    for prompt in prompts {
       XCTAssertTrue(prompt.contains("[[file:/absolute/path/note.org::42][source]]"))
       XCTAssertFalse(prompt.contains("use Markdown links"))
       XCTAssertFalse(prompt.contains("Markdown chat transport exception"))
