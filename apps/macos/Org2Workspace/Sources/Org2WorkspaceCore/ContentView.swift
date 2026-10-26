@@ -6154,6 +6154,11 @@ private struct WorkflowsView: View {
               .foregroundStyle(.red)
               .textSelection(.enabled)
           }
+          if let eventSourceStatus = store.workflowEventSourceStatusText {
+            Text(eventSourceStatus)
+              .foregroundStyle(.orange)
+              .textSelection(.enabled)
+          }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
       }

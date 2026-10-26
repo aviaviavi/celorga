@@ -16,8 +16,19 @@ import { isOrgRecordFileName, orgRecordPath, schemaMatches, stateDir } from "./b
 export const ORG2_WORKFLOW_SCHEMA = "org2:workflow:v1" as const;
 export const WORKFLOW_SCHEDULE_TRIGGER_ID = "schedule" as const;
 export const LEGACY_WORKFLOW_SCHEDULE_TRIGGER_IDS = ["openorg-schedule", "openclaw-schedule"] as const;
-export const WORKFLOW_EVENT_TRIGGER_TYPES = ["capture", "meeting-import"] as const;
+export const WORKFLOW_EVENT_TRIGGER_TYPES = ["capture", "meeting-import", "todo-state", "pull-request"] as const;
 export const WORKFLOW_TRIGGER_TYPES = ["manual", "schedule", "file-change", ...WORKFLOW_EVENT_TRIGGER_TYPES] as const;
+/**
+ * Event triggers that `workflow due` dispatches from recorded signals. Their
+ * signals come from deterministic detectors (`workflow observe`, `workflow
+ * poll`), never from a model deciding whether work should run.
+ */
+export const WORKFLOW_SIGNAL_TRIGGER_TYPES = ["todo-state", "pull-request"] as const;
+export type WorkflowSignalTriggerType = typeof WORKFLOW_SIGNAL_TRIGGER_TYPES[number];
+export const WORKFLOW_PULL_REQUEST_EVENTS = ["opened", "commit", "review", "comment", "merged", "closed"] as const;
+export type WorkflowPullRequestEvent = typeof WORKFLOW_PULL_REQUEST_EVENTS[number];
+/** Longest accepted coalescing window. */
+export const WORKFLOW_COALESCE_MAX_MS = 24 * 60 * 60 * 1_000;
 /** How a schedule treats an earlier attempt that is blocked on a person. */
 export const WORKFLOW_SCHEDULE_WHEN_BLOCKED = ["continue", "wait"] as const;
 export type WorkflowScheduleWhenBlocked = typeof WORKFLOW_SCHEDULE_WHEN_BLOCKED[number];
@@ -30,11 +41,41 @@ export type WorkflowEventTriggerType = typeof WORKFLOW_EVENT_TRIGGER_TYPES[numbe
 export type WorkflowSignalType = WorkflowEventTriggerType | "file-change";
 export type WorkflowTriggerType = typeof WORKFLOW_TRIGGER_TYPES[number];
 
+/** The heading that entered a configured TODO state. */
+export interface WorkflowTodoStateSignalDetail {
+  file: string;
+  line: number;
+  headingId?: string;
+  title: string;
+  from: string | null;
+  to: string;
+  tags: string[];
+}
+
+/** One GitHub pull-request activity item observed by `workflow poll`. */
+export interface WorkflowPullRequestSignalDetail {
+  repo: string;
+  number: number;
+  event: WorkflowPullRequestEvent;
+  key: string;
+  title?: string;
+  url?: string;
+  author?: string;
+  actor?: string;
+  occurredAt?: string;
+}
+
 export interface WorkflowSignal {
   id: string;
   type: WorkflowSignalType;
+  /** When Celorga recorded the signal; provider event times live in the detail. */
   at: string;
   paths: string[];
+  /** Set when a detector matched one specific trigger's filters. */
+  triggerId?: string;
+  source?: string;
+  todoState?: WorkflowTodoStateSignalDetail;
+  pullRequest?: WorkflowPullRequestSignalDetail;
 }
 
 export interface WorkflowTriggerGate {
@@ -79,6 +120,24 @@ export interface WorkflowTrigger {
    * skips occurrences until the earlier attempt settles.
    */
   whenRunning?: WorkflowScheduleWhenRunning;
+  /** todo-state: fire when a heading enters one of these TODO keywords. */
+  states?: string[];
+  /** todo-state: the heading (or an ancestor) must carry at least one of these tags. */
+  tags?: string[];
+  /** todo-state: corpus-relative path globs (`*`, `**`, `?`; a plain path also matches its directory). */
+  paths?: string[];
+  /** todo-state: a property that must be present on the heading, as NAME or NAME=VALUE. */
+  property?: string;
+  /** pull-request: GitHub repository as owner/name. */
+  repo?: string;
+  /** pull-request: activity kinds to accept; absent means all. */
+  events?: WorkflowPullRequestEvent[];
+  /** pull-request: limit to one pull request number. */
+  number?: number;
+  /** pull-request: limit to pull requests opened by this GitHub login. */
+  author?: string;
+  /** todo-state and pull-request: combine signals that arrive within this window (for example 5m) into one attempt. */
+  coalesce?: string;
 }
 
 /**
@@ -320,6 +379,7 @@ export function validateWorkflow(workflow: AgentWorkflow): WorkflowValidationRes
         issues.push({ path: `triggers[${index}].gate.events`, message: `unsupported event: ${event}` });
       }
     }
+    issues.push(...validateEventTriggerFields(trigger, index));
   }
   for (const [index, signal] of (workflow.signals || []).entries()) {
     if (!signal.id?.trim()) issues.push({ path: `signals[${index}].id`, message: "is required" });
@@ -327,6 +387,76 @@ export function validateWorkflow(workflow: AgentWorkflow): WorkflowValidationRes
     if (!signal.at || Number.isNaN(new Date(signal.at).getTime())) issues.push({ path: `signals[${index}].at`, message: "must be an ISO timestamp" });
   }
   return { valid: issues.length === 0, issues };
+}
+
+const TODO_KEYWORD_PATTERN = /^[\p{L}][\p{L}\p{N}_-]*$/u;
+const GITHUB_REPO_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
+const GITHUB_LOGIN_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$/;
+
+function validateEventTriggerFields(trigger: WorkflowTrigger, index: number): WorkflowValidationResult["issues"] {
+  const issues: WorkflowValidationResult["issues"] = [];
+  const at = (field: string) => `triggers[${index}].${field}`;
+  const isTodoState = trigger.type === "todo-state";
+  const isPullRequest = trigger.type === "pull-request";
+  const only = (field: keyof WorkflowTrigger, type: string, allowed: boolean) => {
+    if (trigger[field] !== undefined && !allowed) issues.push({ path: at(field), message: `applies only to ${type} triggers` });
+  };
+  only("states", "todo-state", isTodoState);
+  only("tags", "todo-state", isTodoState);
+  only("paths", "todo-state", isTodoState);
+  only("property", "todo-state", isTodoState);
+  only("repo", "pull-request", isPullRequest);
+  only("events", "pull-request", isPullRequest);
+  only("number", "pull-request", isPullRequest);
+  only("author", "pull-request", isPullRequest);
+  only("coalesce", "todo-state and pull-request", isTodoState || isPullRequest);
+  if (isTodoState) {
+    if (!Array.isArray(trigger.states) || trigger.states.length === 0) {
+      issues.push({ path: at("states"), message: "must list at least one TODO keyword for todo-state triggers, such as [\"NEXT\"]" });
+    } else {
+      for (const state of trigger.states) {
+        if (typeof state !== "string" || !TODO_KEYWORD_PATTERN.test(state)) issues.push({ path: at("states"), message: `invalid TODO keyword: ${String(state)}` });
+      }
+    }
+    if (trigger.tags !== undefined && (!Array.isArray(trigger.tags) || trigger.tags.some((tag) => typeof tag !== "string" || !/^[\p{L}\p{N}_@#%]+$/u.test(tag)))) {
+      issues.push({ path: at("tags"), message: "must be a list of Org tag names without colons" });
+    }
+    if (trigger.paths !== undefined && (!Array.isArray(trigger.paths) || trigger.paths.some((item) => typeof item !== "string" || !item.trim() || item.startsWith("/") || item.split("/").includes("..")))) {
+      issues.push({ path: at("paths"), message: "must be a list of corpus-relative path globs" });
+    }
+    if (trigger.property !== undefined && !/^[A-Za-z][A-Za-z0-9_-]*(?:=.*)?$/.test(String(trigger.property))) {
+      issues.push({ path: at("property"), message: "must be a property NAME or NAME=VALUE, such as AGENT_REF" });
+    }
+  }
+  if (isPullRequest) {
+    if (!trigger.repo || !GITHUB_REPO_PATTERN.test(trigger.repo)) issues.push({ path: at("repo"), message: "must be a GitHub repository as owner/name for pull-request triggers" });
+    if (trigger.events !== undefined) {
+      if (!Array.isArray(trigger.events) || trigger.events.length === 0) issues.push({ path: at("events"), message: `must list at least one of ${WORKFLOW_PULL_REQUEST_EVENTS.join(", ")} when present` });
+      else for (const event of trigger.events) {
+        if (!WORKFLOW_PULL_REQUEST_EVENTS.includes(event)) issues.push({ path: at("events"), message: `unsupported pull-request event: ${String(event)}; use ${WORKFLOW_PULL_REQUEST_EVENTS.join(", ")}` });
+      }
+    }
+    if (trigger.number !== undefined && (!Number.isSafeInteger(trigger.number) || trigger.number < 1)) issues.push({ path: at("number"), message: "must be a positive pull request number" });
+    if (trigger.author !== undefined && !GITHUB_LOGIN_PATTERN.test(String(trigger.author))) issues.push({ path: at("author"), message: "must be a GitHub login" });
+  }
+  if (trigger.coalesce !== undefined && parseCoalesce(trigger.coalesce) === null) {
+    issues.push({ path: at("coalesce"), message: "must be a duration such as 30s, 5m, or 1h, at most 24h" });
+  }
+  return issues;
+}
+
+/** Parses a coalescing window such as `30s`, `5m`, or `1h` into milliseconds. */
+export function parseCoalesce(raw: string | undefined): number | null {
+  const match = String(raw ?? "").trim().match(/^(\d+)\s*(s|m|h)$/i);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = match[2]!.toLowerCase();
+  const ms = amount * (unit === "s" ? 1_000 : unit === "m" ? 60_000 : 3_600_000);
+  return Number.isSafeInteger(amount) && ms >= 0 && ms <= WORKFLOW_COALESCE_MAX_MS ? ms : null;
+}
+
+export function isSignalTrigger(trigger: Pick<WorkflowTrigger, "type">): trigger is WorkflowTrigger & { type: WorkflowSignalTriggerType } {
+  return (WORKFLOW_SIGNAL_TRIGGER_TYPES as readonly string[]).includes(trigger.type);
 }
 
 function applyTemplate(value: string, inputs: Record<string, string>): string {
@@ -341,6 +471,8 @@ export function instantiateWorkflow(workflow: AgentWorkflow, inputs: Record<stri
   now?: string;
   logicalWorkId?: string;
   attempt?: AgentRun["attempt"];
+  /** Additional run context, such as the headings that fired a todo-state trigger. */
+  context?: Array<{ ref: string; title?: string; citation?: string }>;
 } = {}): AgentRun {
   const missing = workflow.inputs.filter((input) => input.required && !(inputs[input.id] || input.default));
   if (missing.length) throw new Error(`missing required workflow inputs: ${missing.map((input) => input.id).join(", ")}`);
@@ -358,7 +490,7 @@ export function instantiateWorkflow(workflow: AgentWorkflow, inputs: Record<stri
     workflowVersion: workflow.version,
     destinationRef: workflow.destinationRef,
     capabilities: workflow.capabilities,
-    context: workflow.contextRules.map((ref) => ({ ref: applyTemplate(ref, resolved) })),
+    context: [...workflow.contextRules.map((ref) => ({ ref: applyTemplate(ref, resolved) })), ...(options.context || [])],
     plan: workflow.steps.map((step) => ({ ...step, title: applyTemplate(step.title, resolved), detail: step.detail ? applyTemplate(step.detail, resolved) : undefined })),
     logicalWorkId: options.logicalWorkId,
     attempt: options.attempt,
@@ -371,6 +503,7 @@ export function workflowExecutionPrompt(
   run: AgentRun,
   inputs: Record<string, string> = {},
 ): string {
+  const signals = (run.attempt?.signals || []) as unknown as WorkflowSignal[];
   return [
     `ORG2_WORKFLOW_ID: ${workflow.id}`,
     `ORG2_WORKFLOW_VERSION: ${workflow.version}`,
@@ -381,11 +514,13 @@ export function workflowExecutionPrompt(
     ...(workflow.model ? [`ORG2_MODEL: ${workflow.model}`] : []),
     ...(workflow.reasoningEffort ? [`ORG2_REASONING_EFFORT: ${workflow.reasoningEffort}`] : []),
     `ORG2_WORKFLOW_INPUTS: ${JSON.stringify(inputs)}`,
+    ...(signals.length ? [`ORG2_WORKFLOW_SIGNALS: ${JSON.stringify(signals)}`] : []),
     "",
     `Execute the Celorga automation “${workflow.title}”.`,
     "",
     "Automation prompt:",
     run.goal,
+    ...workflowSignalPromptLines(signals),
     "",
     "This automation already has a durable Celorga run. Do not create a replacement run.",
     "If the Celorga CLI is available, continue this run, update its steps and artifacts as work progresses, preserve approval boundaries, and record its final outcome before completing it.",
@@ -810,36 +945,136 @@ export function dueWorkflowTriggers(workflow: AgentWorkflow, options: { now?: st
     if (trigger.type === "file-change") return (options.changedPaths || []).some((item) => item === trigger.path || item.startsWith(`${trigger.path}/`));
     if (trigger.type === "schedule") return workflowScheduleOccurrence(workflow, trigger, options.now) !== null
       && workflowTriggerEligibility(workflow, trigger.id).eligible;
+    if (isSignalTrigger(trigger)) return workflowEventTriggerWindows(workflow, trigger, { now: options.now }).some((window) => window.ready);
     return false;
   });
 }
 
-export function recordWorkflowSignal(
-  workflow: AgentWorkflow,
-  input: { id?: string; type: WorkflowSignalType; at?: string; paths?: string[] },
-): AgentWorkflow {
-  if (![...WORKFLOW_EVENT_TRIGGER_TYPES, "file-change"].includes(input.type)) throw new Error(`invalid workflow signal: ${input.type}`);
-  const at = nowIso(input.at);
-  const signal: WorkflowSignal = {
-    id: safeIdentifier(input.id || crypto.randomUUID(), { invalidMessage: (raw) => `invalid workflow id: ${raw}` }),
-    type: input.type,
-    at,
-    paths: Array.from(new Set((input.paths || []).map((item) => item.trim()).filter(Boolean))),
-  };
+export interface RecordWorkflowSignalInput {
+  id?: string;
+  type: WorkflowSignalType;
+  at?: string;
+  paths?: string[];
+  triggerId?: string;
+  source?: string;
+  todoState?: WorkflowTodoStateSignalDetail;
+  pullRequest?: WorkflowPullRequestSignalDetail;
+}
+
+export function recordWorkflowSignal(workflow: AgentWorkflow, input: RecordWorkflowSignalInput): AgentWorkflow {
+  return recordWorkflowSignals(workflow, [input]);
+}
+
+/**
+ * Appends signals in one revision. A signal whose id is already recorded is
+ * skipped, so deterministic detector ids make replays idempotent.
+ */
+export function recordWorkflowSignals(workflow: AgentWorkflow, inputs: RecordWorkflowSignalInput[]): AgentWorkflow {
+  const existing = new Set((workflow.signals || []).map((signal) => signal.id));
+  const added: WorkflowSignal[] = [];
+  let latest = "";
+  for (const input of inputs) {
+    if (![...WORKFLOW_EVENT_TRIGGER_TYPES, "file-change"].includes(input.type)) throw new Error(`invalid workflow signal: ${input.type}`);
+    if (input.triggerId !== undefined && !workflow.triggers.some((trigger) => trigger.id === input.triggerId)) {
+      throw new Error(`workflow trigger not found: ${input.triggerId}`);
+    }
+    const at = nowIso(input.at);
+    const id = safeIdentifier(input.id || crypto.randomUUID(), { invalidMessage: (raw) => `invalid workflow id: ${raw}` });
+    if (existing.has(id)) continue;
+    existing.add(id);
+    added.push({
+      id,
+      type: input.type,
+      at,
+      paths: Array.from(new Set((input.paths || []).map((item) => item.trim()).filter(Boolean))),
+      ...(input.triggerId ? { triggerId: input.triggerId } : {}),
+      ...(input.source ? { source: input.source } : {}),
+      ...(input.todoState ? { todoState: input.todoState } : {}),
+      ...(input.pullRequest ? { pullRequest: input.pullRequest } : {}),
+    });
+    if (at > latest) latest = at;
+  }
+  if (!added.length) return workflow;
   return {
     ...workflow,
-    signals: [...(workflow.signals || []), signal],
-    updatedAt: at,
+    signals: [...(workflow.signals || []), ...added],
+    updatedAt: latest,
   };
+}
+
+/** Whether a recorded signal belongs to a todo-state or pull-request trigger. */
+export function signalMatchesEventTrigger(signal: WorkflowSignal, trigger: WorkflowTrigger): boolean {
+  if (signal.triggerId) return signal.triggerId === trigger.id;
+  return signal.type === trigger.type;
+}
+
+function eventTriggerBoundary(trigger: WorkflowTrigger): number {
+  const parsed = new Date(trigger.lastAttemptAt || trigger.lastRunAt || 0).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export interface WorkflowEventTriggerWindow {
+  /** The planned attempt time: the first signal plus the coalescing window. */
+  scheduledFor: string;
+  /** False while the coalescing window is still open. */
+  ready: boolean;
+  signals: WorkflowSignal[];
+}
+
+/**
+ * Groups the pending signals of a todo-state or pull-request trigger into
+ * attempt windows. A window opens at its first signal and closes after the
+ * trigger's `coalesce` duration (immediately when absent); every pending
+ * signal recorded at or before the close joins that one attempt.
+ */
+export function workflowEventTriggerWindows(
+  workflow: AgentWorkflow,
+  trigger: WorkflowTrigger,
+  options: { now?: string; until?: string } = {},
+): WorkflowEventTriggerWindow[] {
+  if (!trigger.enabled || !isSignalTrigger(trigger)) return [];
+  const now = new Date(options.now || Date.now()).getTime();
+  if (!Number.isFinite(now)) throw new Error(`invalid timestamp: ${options.now}`);
+  const until = options.until === undefined ? Number.POSITIVE_INFINITY : new Date(options.until).getTime();
+  if (Number.isNaN(until)) throw new Error(`invalid timestamp: ${options.until}`);
+  const boundary = eventTriggerBoundary(trigger);
+  const window = parseCoalesce(trigger.coalesce) ?? 0;
+  const pending = (workflow.signals || [])
+    .map((signal) => ({ signal, at: new Date(signal.at).getTime() }))
+    .filter((item) => Number.isFinite(item.at) && item.at > boundary && item.at <= until && signalMatchesEventTrigger(item.signal, trigger))
+    .sort((a, b) => a.at - b.at || a.signal.id.localeCompare(b.signal.id));
+  const windows: WorkflowEventTriggerWindow[] = [];
+  let index = 0;
+  while (index < pending.length) {
+    const close = pending[index]!.at + window;
+    const signals: WorkflowSignal[] = [];
+    while (index < pending.length && pending[index]!.at <= close) signals.push(pending[index++]!.signal);
+    windows.push({ scheduledFor: new Date(close).toISOString(), ready: close <= now, signals });
+  }
+  return windows;
 }
 
 export function workflowTriggerEligibility(
   workflow: AgentWorkflow,
   triggerId: string,
-): { eligible: boolean; reason: string; signalIds: string[] } {
+  options: { now?: string; until?: string } = {},
+): { eligible: boolean; reason: string; signalIds: string[]; scheduledFor?: string } {
   const trigger = workflow.triggers.find((item) => item.id === triggerId);
   if (!trigger) throw new Error(`workflow trigger not found: ${triggerId}`);
   if (!trigger.enabled) return { eligible: false, reason: "trigger is disabled", signalIds: [] };
+  if (isSignalTrigger(trigger)) {
+    const windows = workflowEventTriggerWindows(workflow, trigger, options);
+    const [first] = windows;
+    if (!first) return { eligible: false, reason: `no ${trigger.type} signal arrived after the previous attempt`, signalIds: [] };
+    // An explicit planned time closes the attempt there: every pending signal
+    // up to it is consumed together. Otherwise the first window must close.
+    const signalIds = (options.until === undefined ? first.signals : windows.flatMap((item) => item.signals)).map((item) => item.id);
+    const plural = signalIds.length === 1 ? "" : "s";
+    if (!first.ready && options.until === undefined) {
+      return { eligible: false, reason: `coalescing ${signalIds.length} ${trigger.type} signal${plural} until ${first.scheduledFor}`, signalIds, scheduledFor: first.scheduledFor };
+    }
+    return { eligible: true, reason: `${signalIds.length} ${trigger.type} signal${plural} combined`, signalIds, scheduledFor: options.until === undefined ? first.scheduledFor : new Date(options.until).toISOString() };
+  }
   if (!trigger.gate) return { eligible: true, reason: "trigger has no event gate", signalIds: [] };
   const boundary = new Date(trigger.lastAttemptAt || trigger.lastRunAt || 0).getTime();
   const matching = (workflow.signals || []).filter((signal) => {
@@ -865,7 +1100,58 @@ export function markWorkflowTriggerAttempt(workflow: AgentWorkflow, triggerId: s
     return { ...trigger, lastAttemptAt: at, lastRunAt: at };
   });
   if (!found) throw new Error(`workflow trigger not found: ${triggerId}`);
-  return { ...workflow, triggers, updatedAt: at };
+  // Detector signals addressed to this trigger are consumed by the attempt,
+  // which keeps a copy; prune them so polling cannot grow the file forever.
+  const atMs = new Date(at).getTime();
+  const signals = workflow.signals?.filter((signal) =>
+    !(signal.triggerId === triggerId && new Date(signal.at).getTime() <= atMs));
+  return {
+    ...workflow,
+    triggers,
+    ...(workflow.signals ? { signals } : {}),
+    updatedAt: at,
+  };
+}
+
+/** Summaries of signals carried into a run attempt and its prompt. */
+export function workflowSignalsById(workflow: AgentWorkflow, ids: readonly string[]): WorkflowSignal[] {
+  const byId = new Map((workflow.signals || []).map((signal) => [signal.id, signal]));
+  return ids.flatMap((id) => byId.get(id) ? [byId.get(id)!] : []);
+}
+
+function describeWorkflowSignal(signal: WorkflowSignal): string {
+  if (signal.todoState) {
+    const item = signal.todoState;
+    return `- ${item.file}:${item.line} “${item.title}” entered ${item.to}${item.from ? ` from ${item.from}` : ""}${item.headingId ? ` (ID ${item.headingId})` : ""}`;
+  }
+  if (signal.pullRequest) {
+    const item = signal.pullRequest;
+    return `- ${item.repo}#${item.number} ${item.event}${item.actor ? ` by ${item.actor}` : ""}${item.title ? ` — ${item.title}` : ""}${item.url ? ` ${item.url}` : ""}`;
+  }
+  return `- ${signal.type} at ${signal.at}${signal.paths.length ? ` (${signal.paths.join(", ")})` : ""}`;
+}
+
+/** Readable trigger evidence appended to an event-triggered attempt's prompt. */
+export function workflowSignalPromptLines(signals: readonly WorkflowSignal[]): string[] {
+  if (!signals.length) return [];
+  return [
+    "",
+    `Trigger events (${signals.length}):`,
+    ...signals.map(describeWorkflowSignal),
+  ];
+}
+
+/** Context references for event-triggered attempts, so the run cites its input headings. */
+export function workflowSignalContext(signals: readonly WorkflowSignal[]): Array<{ ref: string; title?: string; citation?: string }> {
+  const seen = new Set<string>();
+  return signals.flatMap((signal) => {
+    const item = signal.todoState;
+    if (!item) return [];
+    const ref = item.headingId ? `id:${item.headingId}` : `${item.file}::${item.line}`;
+    if (seen.has(ref)) return [];
+    seen.add(ref);
+    return [{ ref, title: item.title, citation: `${item.file}:${item.line}` }];
+  });
 }
 
 export function packagedWorkflowManifest(workflow: AgentWorkflow): Record<string, unknown> {

@@ -348,8 +348,64 @@ public struct AgentWorkflowTriggerItem: Decodable, Hashable, Sendable, Identifia
   /// `wait` runs one instance at a time; absent or `continue` lets
   /// occurrences overlap with earlier attempts that are still open.
   public let whenRunning: String?
+  /// `pull-request` triggers name a GitHub repository as owner/name.
+  public let repo: String?
+  /// `todo-state` and `pull-request` triggers may combine nearby signals.
+  public let coalesce: String?
 
   public var skipsWhileRunning: Bool { whenRunning == "wait" }
+}
+
+/// Which deterministic event detectors the scheduler should run.
+public struct AgentWorkflowEventSources: Decodable, Equatable, Sendable {
+  public let todoState: Bool
+  public let pullRequest: Bool
+
+  public init(todoState: Bool, pullRequest: Bool) {
+    self.todoState = todoState
+    self.pullRequest = pullRequest
+  }
+
+  public static let none = AgentWorkflowEventSources(todoState: false, pullRequest: false)
+
+  /// Active workflows with enabled `todo-state` or `pull-request` triggers.
+  public static func required(by workflows: [AgentWorkflowItem]) -> AgentWorkflowEventSources {
+    let triggers = workflows
+      .filter { $0.state == "active" }
+      .flatMap(\.triggers)
+      .filter(\.enabled)
+    return AgentWorkflowEventSources(
+      todoState: triggers.contains { $0.type == "todo-state" },
+      pullRequest: triggers.contains { $0.type == "pull-request" }
+    )
+  }
+
+  public func union(_ other: AgentWorkflowEventSources?) -> AgentWorkflowEventSources {
+    guard let other else { return self }
+    return AgentWorkflowEventSources(
+      todoState: todoState || other.todoState,
+      pullRequest: pullRequest || other.pullRequest
+    )
+  }
+}
+
+/// Result of `workflow observe` or `workflow poll --source github`.
+public struct AgentWorkflowEventSourcePayload: Decodable, Sendable {
+  public let schema: String
+  public let status: String
+  public let message: String?
+  public let applied: Bool?
+  public let recorded: Int?
+
+  /// A person-facing status for the pull-request poller, or nil when nothing needs attention.
+  public var pullRequestStatusText: String? {
+    guard ["gh-missing", "gh-unauthenticated", "partial"].contains(status) else { return nil }
+    return "Pull-request triggers: \(message ?? status)"
+  }
+
+  public var needsAttention: Bool {
+    ["gh-missing", "gh-unauthenticated"].contains(status)
+  }
 }
 
 public struct AgentWorkflowDueListPayload: Decodable, Sendable {
@@ -360,6 +416,7 @@ public struct AgentWorkflowDueListPayload: Decodable, Sendable {
   public let skipped: [AgentWorkflowDueItem]
   public let failures: [AgentWorkflowFailureItem]?
   public let hostRef: String?
+  public let eventSources: AgentWorkflowEventSources?
 }
 
 public struct AgentWorkflowFailureItem: Decodable, Sendable {
@@ -383,6 +440,9 @@ public struct AgentWorkflowDueItem: Decodable, Hashable, Sendable, Identifiable 
   public let scheduledFor: String
   public let reason: String?
   public let activeRunId: String?
+  /// `todo-state` or `pull-request` for event-triggered attempts; absent for schedules.
+  public let triggerType: String?
+  public let signalIds: [String]?
 
   public var id: String { "\(workflowId):\(triggerId):\(scheduledFor)" }
 }

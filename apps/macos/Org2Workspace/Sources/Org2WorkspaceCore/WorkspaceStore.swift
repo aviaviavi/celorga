@@ -2333,6 +2333,9 @@ public final class WorkspaceStore {
   nonisolated public static let defaultEntryRenderTimeoutNanoseconds: UInt64 = 15_000_000_000
   nonisolated public static let sourceAutoSyncCheckIntervalNanoseconds: UInt64 = 60_000_000_000
   nonisolated public static let automationScheduleCheckIntervalNanoseconds: UInt64 = 60_000_000_000
+  nonisolated public static let pullRequestPollIntervalSeconds: TimeInterval = 120
+  /// A missing or signed-out `gh` is rechecked less often.
+  nonisolated public static let pullRequestPollAttentionIntervalSeconds: TimeInterval = 900
   nonisolated public static let applicationActivationRefreshDelayNanoseconds: UInt64 = 250_000_000
   nonisolated static let workspaceSearchCandidateLimit = 200
   nonisolated static let workspaceSearchDisplayLimit = 50
@@ -2499,6 +2502,18 @@ public final class WorkspaceStore {
   public private(set) var automationSchedulerStatusText = "Automation scheduler is starting"
   @ObservationIgnored private var hasSettledAutomationSchedulerStatus = false
   public private(set) var automationSchedulerErrorText: String?
+  /// Problems from the deterministic TODO-state detector, such as a write conflict.
+  public private(set) var workflowTodoStateStatusText: String?
+  /// GitHub CLI availability or polling problems for pull-request triggers.
+  public private(set) var workflowPullRequestStatusText: String?
+  public var workflowEventSourceStatusText: String? {
+    let parts = [workflowTodoStateStatusText, workflowPullRequestStatusText].compactMap { $0 }
+    return parts.isEmpty ? nil : parts.joined(separator: "\n")
+  }
+  @ObservationIgnored private var lastDueEventSources: AgentWorkflowEventSources?
+  @ObservationIgnored private var lastPullRequestPollAt: Date?
+  @ObservationIgnored private var lastPullRequestPollNeedsAttention = false
+  @ObservationIgnored private var isRunningWorkflowEventDetectors = false
   public private(set) var automationOwnerHostRef: String?
   public private(set) var agentGoals: [AgentGoalItem] = []
   public var selectedAgentGoalID: AgentGoalItem.ID?
@@ -6691,6 +6706,7 @@ extension WorkspaceStore {
     }
     automationSchedulerErrorText = nil
     defer { hasSettledAutomationSchedulerStatus = true }
+    await runWorkflowEventDetectors(corpusRoot: corpusRoot, now: now)
     do {
       let formatter = ISO8601DateFormatter()
       formatter.formatOptions = [.withInternetDateTime]
@@ -6707,6 +6723,7 @@ extension WorkspaceStore {
         errorText = nil
       }
       automationSchedulerPresentedErrorText = nil
+      lastDueEventSources = payload.eventSources
       if let hostRef = payload.hostRef?.trimmingCharacters(in: .whitespacesAndNewlines),
          !hostRef.isEmpty {
         automationOwnerHostRef = hostRef
@@ -6747,6 +6764,99 @@ extension WorkspaceStore {
       let notice = "Automation scheduler: \(error.localizedDescription)"
       automationSchedulerPresentedErrorText = notice
       errorText = notice
+    }
+  }
+
+  /// Runs the deterministic event detectors that feed `workflow due`:
+  /// `workflow observe` for todo-state triggers and, on its own interval,
+  /// `workflow poll --source github` for pull-request triggers. Both only
+  /// record signals; Celorga never asks a model whether work should run.
+  private func runWorkflowEventDetectors(
+    corpusRoot: URL,
+    now: Date,
+    changedPaths: [String]? = nil
+  ) async {
+    let sources = AgentWorkflowEventSources.required(by: agentWorkflows).union(lastDueEventSources)
+    if !sources.todoState { workflowTodoStateStatusText = nil }
+    if !sources.pullRequest {
+      workflowPullRequestStatusText = nil
+      lastPullRequestPollAt = nil
+      lastPullRequestPollNeedsAttention = false
+    }
+    guard sources.todoState || sources.pullRequest, !isRunningWorkflowEventDetectors else { return }
+    isRunningWorkflowEventDetectors = true
+    defer { isRunningWorkflowEventDetectors = false }
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    let nowText = formatter.string(from: now)
+    if sources.todoState {
+      var arguments = [
+        "workflow", "observe", "--apply",
+        "--host-ref", automationHostRef,
+        "--now", nowText,
+        "--dir", corpusRoot.path,
+        "--json"
+      ]
+      for path in changedPaths ?? [] {
+        arguments += ["--changed", path]
+      }
+      do {
+        let _: AgentWorkflowEventSourcePayload = try await cli.runJSON(arguments)
+        workflowTodoStateStatusText = nil
+      } catch {
+        workflowTodoStateStatusText = "TODO-state triggers: \(error.localizedDescription)"
+      }
+    }
+    guard changedPaths == nil,
+          sources.pullRequest,
+          Self.shouldPollPullRequests(
+            lastPollAt: lastPullRequestPollAt,
+            needsAttention: lastPullRequestPollNeedsAttention,
+            now: now
+          )
+    else { return }
+    lastPullRequestPollAt = now
+    do {
+      let payload: AgentWorkflowEventSourcePayload = try await cli.runJSON([
+        "workflow", "poll", "--source", "github", "--apply",
+        "--host-ref", automationHostRef,
+        "--now", nowText,
+        "--dir", corpusRoot.path,
+        "--json"
+      ])
+      lastPullRequestPollNeedsAttention = payload.needsAttention
+      workflowPullRequestStatusText = payload.pullRequestStatusText
+    } catch {
+      lastPullRequestPollNeedsAttention = false
+      workflowPullRequestStatusText = "Pull-request triggers: \(error.localizedDescription)"
+    }
+  }
+
+  nonisolated static func shouldPollPullRequests(
+    lastPollAt: Date?,
+    needsAttention: Bool,
+    now: Date
+  ) -> Bool {
+    guard let lastPollAt else { return true }
+    let interval = needsAttention
+      ? pullRequestPollAttentionIntervalSeconds
+      : pullRequestPollIntervalSeconds
+    return now.timeIntervalSince(lastPollAt) >= interval
+  }
+
+  /// Observes TODO-state changes as soon as Org files change, so a quick
+  /// NEXT→DONE edit between scheduler checks still records its transition.
+  private func scheduleTodoStateObservation(for paths: [String], corpusRoot: URL) {
+    guard isAutomationSchedulerActive,
+          AgentWorkflowEventSources.required(by: agentWorkflows).union(lastDueEventSources).todoState
+    else { return }
+    let workflowPrefix = corpusRoot.appendingPathComponent("workflows").path + "/"
+    let orgPaths = paths.filter {
+      ($0.hasSuffix(".org") || $0.hasSuffix(".org2")) && !$0.hasPrefix(workflowPrefix)
+    }
+    guard !orgPaths.isEmpty else { return }
+    Task { @MainActor [weak self] in
+      await self?.runWorkflowEventDetectors(corpusRoot: corpusRoot, now: Date(), changedPaths: orgPaths)
     }
   }
 
@@ -34547,6 +34657,7 @@ extension WorkspaceStore {
       URL(fileURLWithPath: $0).standardizedFileURL.path
     }.filter { $0.hasPrefix(rootPrefix) }))
     guard !paths.isEmpty else { return }
+    scheduleTodoStateObservation(for: paths, corpusRoot: root)
 
     if let incrementalCorpusChangePreparationForTesting {
       await incrementalCorpusChangePreparationForTesting(root, paths)

@@ -73,7 +73,15 @@ import {
   workflowScheduleOccurrences,
   WORKFLOW_SCHEDULE_WHEN_BLOCKED,
   WORKFLOW_SCHEDULE_WHEN_RUNNING,
+  WORKFLOW_PULL_REQUEST_EVENTS,
+  WORKFLOW_SIGNAL_TRIGGER_TYPES,
+  isSignalTrigger,
+  workflowEventTriggerWindows,
+  workflowSignalContext,
+  workflowSignalsById,
+  type WorkflowTrigger,
 } from "./agentWorkflow.js";
+import { observeTodoStateTransitions, pollGithubPullRequests } from "./workflowEventTriggers.js";
 import { artifactRebuildPlan, buildArtifactGraph, loadArtifactDeclarations, MEETING_TO_CONTROLLED_EXECUTION_WORKFLOW, saveArtifactGraph } from "./artifactPipeline.js";
 import { discoverMcpClient, loadMcpClients, saveMcpClients, serveMcp, writeMcpSnapshot } from "./mcpRuntime.js";
 import {
@@ -252,9 +260,17 @@ const HELP = `Agentic workspace commands:
   celorga run approval-resolve --decision-key PROVIDER_KEY [--json]
   celorga run approval-reconcile [--apply] [--json]
   celorga review list [--status pending] | celorga review show RUN
-  celorga workflow list|show|validate|create|save|run|due|triggers|signal|gate|activate|pause|draft|schedule|delete|migrate|package|corpus-template|install-builtin
+  celorga workflow list|show|validate|create|save|run|due|observe|poll|triggers|trigger-set|trigger-remove|signal|gate|activate|pause|draft|schedule|delete|migrate|package|corpus-template|install-builtin
   celorga workflow create ID --title TEXT --prompt TEXT --destination-ref ID [--model ID] [--reasoning-effort LEVEL] [--agent-ref ID] [--schedule EXPR --timezone IANA]
   celorga workflow due [--host-ref HOST] [--now ISO_TIMESTAMP] [--dir CORPUS] [--json]
+    Lists due schedule occurrences and todo-state/pull-request triggers whose recorded signals are ready (after any coalesce window).
+  celorga workflow trigger-set ID --trigger TRIGGER_ID --type todo-state --state KEYWORD [--state ...] [--tag TAG] [--path GLOB] [--property NAME[=VALUE]] [--coalesce 5m] [--disable]
+  celorga workflow trigger-set ID --trigger TRIGGER_ID --type pull-request --repo OWNER/NAME [--pr-event opened|commit|review|comment|merged|closed ...] [--number N] [--author LOGIN] [--coalesce 5m] [--disable]
+  celorga workflow trigger-remove ID --trigger TRIGGER_ID
+  celorga workflow observe [--changed FILE ...] [--host-ref HOST] [--now ISO] [--apply] [--dir CORPUS] [--json]
+    Deterministically compares headings with the last observed snapshot and proposes todo-state signals. The first observation records a baseline. Preview by default.
+  celorga workflow poll --source github [--workflow ID] [--host-ref HOST] [--now ISO] [--apply] [--dir CORPUS] [--json]
+    Reads pull-request activity through your existing \`gh\` CLI login (no token is stored) and proposes pull-request signals. Preview by default; --apply records signals and advances cursors.
   celorga workflow schedule ID --cron EXPR [--timezone IANA] [--destination-ref ID] [--model ID|--clear-model] [--reasoning-effort LEVEL|--clear-reasoning-effort] [--when-blocked continue|wait] [--when-running continue|wait] | --disable
   celorga workflow delete ID [--apply]
   celorga artifact graph --manifest FILE | celorga artifact rebuild --manifest FILE
@@ -1550,6 +1566,9 @@ function workflowCommand(parsed: ParsedArgs): void {
     const runs = listAgentRuns(corpus);
     const due: Array<Record<string, unknown>> = [];
     const skipped: Array<Record<string, unknown>> = [];
+    const pending: Array<Record<string, unknown>> = [];
+    // Tells schedulers which deterministic detectors (`workflow observe`, `workflow poll`) to run.
+    const eventSources = { todoState: false, pullRequest: false };
     const failures: Array<Record<string, unknown>> = [];
     const runsById = new Map(runs.map((run) => [run.id, run]));
     const latestScheduledAttempts = new Map(summarizeAgentRunAttempts(
@@ -1587,8 +1606,57 @@ function workflowCommand(parsed: ParsedArgs): void {
         if (activeRun) skipped.push({ ...summary, reason: `active attempt ${activeRun.id} is ${activeRun.status}`, activeRunId: activeRun.id });
         else due.push(summary);
       }
+      for (const trigger of item.triggers.filter((candidate) => isSignalTrigger(candidate))) {
+        if (trigger.enabled) eventSources[trigger.type === "todo-state" ? "todoState" : "pullRequest"] = true;
+        for (const window of workflowEventTriggerWindows(item, trigger, { now })) {
+          const summary = {
+            workflowId: item.id,
+            title: item.title,
+            destinationRef: item.destinationRef,
+            model: item.model,
+            reasoningEffort: item.reasoningEffort,
+            agentRef: item.agentRef,
+            goalRef: item.goalRef,
+            triggerId: trigger.id,
+            triggerType: trigger.type,
+            ...(trigger.coalesce ? { coalesce: trigger.coalesce } : {}),
+            scheduledFor: window.scheduledFor,
+            signalIds: window.signals.map((signal) => signal.id),
+          };
+          if (window.ready) due.push(summary);
+          else pending.push({ ...summary, reason: `coalescing until ${window.scheduledFor}` });
+        }
+      }
     }
-    output(parsed, { schema: "org2:automation-due-list:v1", now, due, skipped, failures, hostRef: owner }, due.length ? due.map((item) => `${item.workflowId}\t${item.scheduledFor}`).join("\n") : "No automations due.");
+    output(parsed, { schema: "org2:automation-due-list:v1", now, due, skipped, pending, eventSources, failures, hostRef: owner }, due.length ? due.map((item) => `${item.workflowId}\t${item.scheduledFor}${item.triggerType ? `\t${item.triggerType}` : ""}`).join("\n") : "No automations due.");
+    return;
+  }
+  if (action === "observe" || action === "poll") {
+    const owner = automationHostRef(corpus);
+    const requestingHost = flag(parsed, "host-ref") || "desktop";
+    if (owner !== requestingHost) {
+      const schema = action === "observe" ? "org2:workflow-observe:v1" : "org2:workflow-poll:v1";
+      output(parsed, { schema, applied: false, status: "not-owner", hostRef: owner, message: `Automations are owned by ${owner}`, signals: [], recorded: 0 }, `Automations are owned by ${owner}.`);
+      return;
+    }
+    if (action === "observe") {
+      const result = observeTodoStateTransitions(corpus, { changed: flags(parsed, "changed"), apply: enabled(parsed, "apply"), now: flag(parsed, "now") });
+      output(parsed, result, [
+        `${result.applied ? "" : "preview: "}${result.message}`,
+        ...result.signals.map((item) => `${item.workflowId}/${item.triggerId}\t${item.signal.todoState?.file}:${item.signal.todoState?.line}\t${item.signal.todoState?.from ?? "(new)"} -> ${item.signal.todoState?.to}\t${item.signal.todoState?.title}`),
+        ...(!result.applied && result.status === "ok" ? ["Run again with --apply to record signals and advance the snapshot."] : []),
+      ].join("\n"));
+      return;
+    }
+    const source = required(flag(parsed, "source"), "--source github is required");
+    if (source !== "github") throw new Error(`unsupported workflow poll source: ${source}; use github`);
+    const result = pollGithubPullRequests(corpus, { apply: enabled(parsed, "apply"), now: flag(parsed, "now"), workflowId: flag(parsed, "workflow") });
+    output(parsed, result, [
+      `${result.applied ? "" : "preview: "}${result.message}`,
+      ...result.triggers.map((item) => `${item.workflowId}/${item.triggerId}\t${item.repo}\t${item.status}${item.message ? `\t${item.message}` : ""}`),
+      ...result.signals.map((item) => `${item.workflowId}/${item.triggerId}\t${item.signal.pullRequest?.repo}#${item.signal.pullRequest?.number}\t${item.signal.pullRequest?.event}`),
+      ...(!result.applied && (result.status === "ok" || result.status === "partial") ? ["Run again with --apply to record signals and advance cursors."] : []),
+    ].join("\n"));
     return;
   }
   const id = required(parsed.positional[1], `workflow id is required for ${action}`);
@@ -1675,7 +1743,65 @@ function workflowCommand(parsed: ParsedArgs): void {
       changedPaths: flags(parsed, "changed"),
       event,
     });
-    output(parsed, { workflow: id, due }, due.length ? due.map((trigger) => `${trigger.id}\t${trigger.type}`).join("\n") : "No triggers due.");
+    const events = workflow.triggers.filter((trigger) => isSignalTrigger(trigger)).map((trigger) => ({
+      triggerId: trigger.id,
+      type: trigger.type,
+      ...(trigger.coalesce ? { coalesce: trigger.coalesce } : {}),
+      windows: workflowEventTriggerWindows(workflow, trigger, { now: flag(parsed, "now") }).map((window) => ({
+        scheduledFor: window.scheduledFor,
+        ready: window.ready,
+        signalIds: window.signals.map((signal) => signal.id),
+      })),
+    }));
+    output(parsed, { workflow: id, due, events }, due.length ? due.map((trigger) => `${trigger.id}\t${trigger.type}`).join("\n") : "No triggers due.");
+    return;
+  }
+  if (action === "trigger-set") {
+    const triggerId = required(flag(parsed, "trigger"), "--trigger is required");
+    const type = choice(flag(parsed, "type"), WORKFLOW_SIGNAL_TRIGGER_TYPES, "workflow trigger-set --type");
+    const list = (name: string) => flags(parsed, name).flatMap((value) => value.split(",")).map((value) => value.trim()).filter(Boolean);
+    const coalesce = flag(parsed, "coalesce")?.trim();
+    const numberFlag = flag(parsed, "number");
+    const trigger: WorkflowTrigger = type === "todo-state"
+      ? {
+        id: triggerId,
+        type,
+        enabled: !parsed.flags.has("disable"),
+        states: list("state"),
+        ...(list("tag").length ? { tags: list("tag") } : {}),
+        ...(list("path").length ? { paths: list("path") } : {}),
+        ...(flag(parsed, "property")?.trim() ? { property: flag(parsed, "property")!.trim() } : {}),
+        ...(coalesce ? { coalesce } : {}),
+      }
+      : {
+        id: triggerId,
+        type,
+        enabled: !parsed.flags.has("disable"),
+        repo: required(flag(parsed, "repo"), "--repo OWNER/NAME is required for pull-request triggers").trim(),
+        ...(list("pr-event").length ? { events: list("pr-event").map((event) => choice(event, WORKFLOW_PULL_REQUEST_EVENTS, "workflow trigger-set --pr-event")) } : {}),
+        ...(numberFlag !== undefined ? { number: Number(numberFlag) } : {}),
+        ...(flag(parsed, "author")?.trim() ? { author: flag(parsed, "author")!.trim() } : {}),
+        ...(coalesce ? { coalesce } : {}),
+      };
+    const updated = updateWorkflow(corpus, id, (item) => {
+      const previous = item.triggers.find((candidate) => candidate.id === triggerId);
+      if (previous && previous.type !== type) throw new Error(`trigger ${triggerId} is a ${previous.type} trigger; remove it first or choose another --trigger id`);
+      // Keep the attempt boundary so editing filters does not replay consumed signals.
+      const boundary = previous ? { ...(previous.lastAttemptAt ? { lastAttemptAt: previous.lastAttemptAt } : {}), ...(previous.lastRunAt ? { lastRunAt: previous.lastRunAt } : {}) } : {};
+      return { ...item, triggers: [...item.triggers.filter((candidate) => candidate.id !== triggerId), { ...trigger, ...boundary }] };
+    });
+    output(parsed, updated, `${id}: ${type} trigger ${triggerId} saved`);
+    return;
+  }
+  if (action === "trigger-remove") {
+    const triggerId = required(flag(parsed, "trigger"), "--trigger is required");
+    if (!workflow.triggers.some((trigger) => trigger.id === triggerId)) throw new Error(`workflow trigger not found: ${triggerId}`);
+    const updated = updateWorkflow(corpus, id, (item) => ({
+      ...item,
+      triggers: item.triggers.filter((trigger) => trigger.id !== triggerId),
+      ...(item.signals ? { signals: item.signals.filter((signal) => signal.triggerId !== triggerId) } : {}),
+    }));
+    output(parsed, updated, `${id}: trigger ${triggerId} removed`);
     return;
   }
   if (action === "signal") {
@@ -1706,7 +1832,10 @@ function workflowCommand(parsed: ParsedArgs): void {
       }
       const inputs = Object.fromEntries(flags(parsed, "input").map((item) => { const at = item.indexOf("="); if (at < 1) throw new Error("--input must be NAME=VALUE"); return [item.slice(0, at), item.slice(at + 1)]; }));
       const triggerId = flag(parsed, "trigger");
-      const eligibility = triggerId ? workflowTriggerEligibility(workflow, triggerId) : { eligible: true, reason: "manual run", signalIds: [] };
+      const eventTrigger = triggerId ? workflow.triggers.find((item) => item.id === triggerId && isSignalTrigger(item)) : undefined;
+      const eligibility: ReturnType<typeof workflowTriggerEligibility> = triggerId
+        ? workflowTriggerEligibility(workflow, triggerId, eventTrigger ? { now: flag(parsed, "now"), until: flag(parsed, "scheduled-for") } : {})
+        : { eligible: true, reason: "manual run", signalIds: [] };
       if (!eligibility.eligible) {
         output(parsed, { schema: "org2:workflow-run-skipped:v1", workflowId: id, triggerId, ...eligibility }, `skipped ${id}: ${eligibility.reason}`);
         return;
@@ -1714,9 +1843,11 @@ function workflowCommand(parsed: ParsedArgs): void {
       const logicalWorkId = flag(parsed, "logical-work-id") || `workflow:${id}`;
       const existingAttempts = listAgentRuns(corpus).filter((item) => item.logicalWorkId === logicalWorkId && item.attempt);
       const trigger = triggerId ? workflow.triggers.find((item) => item.id === triggerId) : undefined;
-      const scheduledFor = flag(parsed, "scheduled-for");
+      // Event-triggered attempts are planned at the close of their signal window.
+      const scheduledFor = eventTrigger ? eligibility.scheduledFor : flag(parsed, "scheduled-for");
       const priorOccurrence = triggerId && scheduledFor
-        ? existingAttempts.find((item) => item.attempt?.triggerId === triggerId && item.attempt?.scheduledFor === scheduledFor)
+        ? existingAttempts.find((item) => item.attempt?.triggerId === triggerId && (item.attempt?.scheduledFor === scheduledFor
+          || (eventTrigger && item.attempt?.scheduledFor && new Date(item.attempt.scheduledFor).getTime() === new Date(scheduledFor).getTime())))
         : undefined;
       if (priorOccurrence) {
         output(parsed, { schema: "org2:workflow-run-skipped:v1", workflowId: id, triggerId, eligible: false,
@@ -1738,7 +1869,8 @@ function workflowCommand(parsed: ParsedArgs): void {
         return;
       }
       const attemptNumber = existingAttempts.reduce((maximum, item) => Math.max(maximum, item.attempt?.number || 0), 0) + 1;
-      const attemptAt = flag(parsed, "scheduled-for") || new Date().toISOString();
+      const attemptAt = scheduledFor || new Date().toISOString();
+      const triggerSignals = eventTrigger ? workflowSignalsById(workflow, eligibility.signalIds) : [];
       const run = instantiateWorkflow(workflow, inputs, {
         owner: flag(parsed, "owner"),
         assignee: flag(parsed, "assignee"),
@@ -1752,7 +1884,9 @@ function workflowCommand(parsed: ParsedArgs): void {
           triggerType: workflow.triggers.find((item) => item.id === triggerId)?.type,
           scheduledFor: attemptAt,
           signalIds: eligibility.signalIds,
+          ...(triggerSignals.length ? { signals: triggerSignals.map((signal) => ({ ...signal })) } : {}),
         } : undefined,
+        ...(triggerSignals.length ? { context: workflowSignalContext(triggerSignals) } : {}),
       });
       const file = saveAgentRun(corpus, run, { expectedRevision: null });
       if (triggerId) updateWorkflow(corpus, id, (item) => markWorkflowTriggerAttempt(item, triggerId, attemptAt));

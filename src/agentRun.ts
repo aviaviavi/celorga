@@ -169,6 +169,8 @@ export interface AgentRunAttempt {
   triggerType?: string;
   scheduledFor?: string;
   signalIds?: string[];
+  /** Detector evidence for event-triggered attempts (todo-state headings, pull-request activity). */
+  signals?: Array<Record<string, unknown> & { id: string; type: string; at: string }>;
 }
 
 export interface AgentRunValidation {
@@ -510,6 +512,7 @@ export function createAgentRun(input: AgentRunCreateInput): AgentRun {
       ...(optional(input.attempt.triggerType) ? { triggerType: optional(input.attempt.triggerType) } : {}),
       ...(optional(input.attempt.scheduledFor) ? { scheduledFor: isoNow(input.attempt.scheduledFor) } : {}),
       ...(input.attempt.signalIds?.length ? { signalIds: unique(input.attempt.signalIds) } : {}),
+      ...(input.attempt.signals?.length ? { signals: input.attempt.signals.map((signal) => ({ ...signal })) } : {}),
     } } : {}),
     ...(optional(input.parentRunId) ? { parentRunId: optional(input.parentRunId) } : {}),
     ...(optional(input.forkedFromEventId) ? { forkedFromEventId: optional(input.forkedFromEventId) } : {}),
