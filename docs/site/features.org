@@ -74,6 +74,7 @@
         <li><strong>Skills</strong>Workspace <code>SKILL.md</code> files for every agent</li>
         <li><strong>Projects</strong>Group chats around one shared brief</li>
         <li><strong>Interactive answers</strong>Charts, tables, and live HTML in chat</li>
+        <li><strong>Live thread links</strong>Known secrets redacted; guest messages wait for your approval</li>
         <li><strong>MCP server</strong>Any MCP client can search your notes</li>
       </ul>
       <p class="celorga-feature-links"><a href="agent-quickstart.html">Connect an agent</a><a href="mcp-and-skills.html">MCP and skills</a></p>

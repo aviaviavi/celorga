@@ -72,7 +72,14 @@ struct AIChatThreadSharePopover: View {
           ) {
             store.stopSharingChatThreadLocally(threadID)
           }
+          guestMessagesToggle
+        } else if serverShare != nil {
+          Text("Guest messages are available for links shared from this Mac.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         }
+        redactionNote
       } else {
         Text("Create a read-only link that anyone who can reach it can open in a browser. It uses your Celorga theme and shows new messages as they arrive.")
           .font(.callout)
@@ -85,6 +92,7 @@ struct AIChatThreadSharePopover: View {
           .font(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
+        redactionNote
 
         HStack {
           if !server.isPaired {
@@ -133,6 +141,41 @@ struct AIChatThreadSharePopover: View {
       if store.openOrgServer.isPaired {
         await store.openOrgServer.refreshShare(threadID: threadID)
       }
+    }
+  }
+
+  private var redactionNote: some View {
+    Label(
+      "Known secret patterns, such as API keys, access tokens, and private keys, are redacted. Review the thread before sharing; other sensitive text is not detected.",
+      systemImage: "eye.slash"
+    )
+    .font(.caption)
+    .foregroundStyle(.secondary)
+    .fixedSize(horizontal: false, vertical: true)
+  }
+
+  private var guestMessagesToggle: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Toggle("Let guests send messages (you approve each one)", isOn: Binding(
+        get: { store.isChatThreadGuestMessagesEnabled(threadID) },
+        set: { enabled in
+          Task {
+            errorText = nil
+            do {
+              try await store.setChatThreadGuestMessagesEnabled(enabled, for: threadID)
+            } catch {
+              errorText = error.localizedDescription
+            }
+          }
+        }
+      ))
+      .toggleStyle(.checkbox)
+      .disabled(store.isPublishingChatThread(threadID))
+      .accessibilityIdentifier("ai-chat-share-guest-messages")
+      Text("Guests add a name and a text message on the shared page. Each one waits in this thread until you approve, edit, or decline it; nothing reaches the agent before you approve.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
   }
 

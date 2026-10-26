@@ -11776,6 +11776,8 @@ private struct AIChatView: View {
         Divider()
       }
 
+      AIChatGuestMessagesPanel()
+
       AIChatComposerView(
         focusOnAppear: presentation != .assistantPanel,
         compact: presentation.isCompact

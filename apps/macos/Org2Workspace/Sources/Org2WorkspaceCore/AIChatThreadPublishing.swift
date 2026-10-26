@@ -7,7 +7,8 @@ import Foundation
 /// A read-only snapshot of one AI chat thread, prepared for a live local link.
 ///
 /// Only delivered conversation text is included. Attached corpus context,
-/// reasoning, tool activity, queued drafts, and failed sends stay private.
+/// reasoning, tool activity, queued drafts, and failed sends stay private,
+/// and known secret patterns are redacted from what remains.
 struct AIChatThreadPublicationSnapshot: Sendable {
   struct Attachment: Sendable, Equatable {
     let fileName: String
@@ -35,6 +36,8 @@ struct AIChatThreadPublicationSnapshot: Sendable {
   let appearanceMode: WorkspaceAppearanceMode
   let lightTheme: WorkspaceTheme
   let darkTheme: WorkspaceTheme
+  /// Present while the link accepts guest messages; guest requests echo it.
+  var guestNonce: String? = nil
 
   static let embeddedImageByteLimit = 4 * 1_024 * 1_024
 
@@ -52,7 +55,7 @@ struct AIChatThreadPublicationSnapshot: Sendable {
               message.deliveryStatus == .sent || message.deliveryStatus == .interrupted,
               !queuedMessageIDs.contains(message.id)
         else { return nil }
-        let text = AIChatContextPresentation(message.content).userText
+        let text = AIChatSecretRedactor.redacted(AIChatContextPresentation(message.content).userText)
         let attachments = message.attachments.map(Self.attachment)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty
         else { return nil }
@@ -77,7 +80,13 @@ struct AIChatThreadPublicationSnapshot: Sendable {
             ? WorkspaceProductIdentity.displayName
             : assistantTitles[message.id] ?? message.authorLabel ?? defaultAssistantTitle,
           createdAt: message.createdAt,
-          text: formatted ? AIChatMessageOrgNormalizer.normalized(message.content) : message.content,
+          // Redact before normalizing so a rewrite cannot split a token, and
+          // after so normalization cannot reassemble one.
+          text: AIChatSecretRedactor.redacted(
+            formatted
+              ? AIChatMessageOrgNormalizer.normalized(AIChatSecretRedactor.redacted(message.content))
+              : message.content
+          ),
           formatted: formatted,
           attachments: message.attachments.map(Self.attachment)
         )
@@ -92,7 +101,7 @@ struct AIChatThreadPublicationSnapshot: Sendable {
       ? try? attachment.loadedDataURLString()
       : nil
     return Attachment(
-      fileName: attachment.fileName,
+      fileName: AIChatSecretRedactor.redacted(attachment.fileName),
       mimeType: attachment.mimeType,
       imageDataURL: dataURL
     )
@@ -153,6 +162,7 @@ enum AIChatThreadPublicationPage {
     }
     add(snapshot.title)
     add(snapshot.respondingStatus ?? "")
+    add(snapshot.guestNonce ?? "")
     add(themeStylesheet(for: snapshot))
     for message in snapshot.messages {
       add(message.id.uuidString)
@@ -189,6 +199,7 @@ enum AIChatThreadPublicationPage {
     let empty = snapshot.messages.isEmpty
       ? "<p class=\"empty\">No messages yet. New messages appear here automatically.</p>"
       : ""
+    let guestAttribute = snapshot.guestNonce.map { " data-guest-nonce=\"\(escape($0))\"" } ?? ""
     return """
     <!doctype html>
     <html lang="en">
@@ -201,12 +212,12 @@ enum AIChatThreadPublicationPage {
     <title>\(escape(title)) · \(WorkspaceProductIdentity.displayName)</title>
     \(SharePreviewMetadata.tags(title: title, description: previewDescription(snapshot)))
     <style id="org2-app-document-style">\(rendererStylesheet ?? "")</style>
-    <style id="openorg-chat-page-style">\(pageStylesheet)</style>
+    <style id="openorg-chat-page-style">\(pageStylesheet)\(AIChatGuestMessageHTTP.stylesheet)</style>
     <style id="openorg-chat-theme">\(themeStylesheet(for: snapshot))</style>
     </head>
     <body>
     <div class="live-bar"><span id="openorg-live-status" data-state="live">Live</span></div>
-    <div id="openorg-live-root">
+    <div id="openorg-live-root"\(guestAttribute)>
     <header class="thread-header">
     <h1>\(escape(title))</h1>
     <p class="thread-meta">\(count) message\(count == 1 ? "" : "s")\(updated)</p>
@@ -216,8 +227,10 @@ enum AIChatThreadPublicationPage {
     </section>
     \(empty)\(responding)
     </div>
+    \(AIChatGuestMessageHTTP.composerHTML)
     <footer class="page-footer">Shared read-only from \(WorkspaceProductIdentity.displayName). New messages appear automatically while \(WorkspaceProductIdentity.displayName) keeps sharing the thread.</footer>
     \(LocalDocumentPublicationHost.liveUpdateScriptElement)
+    \(AIChatGuestMessageHTTP.scriptElement)
     </body>
     </html>
 
@@ -763,12 +776,13 @@ extension WorkspaceStore {
     )
     return AIChatThreadPublicationSnapshot(
       threadID: thread.id,
-      title: thread.title,
+      title: AIChatSecretRedactor.redacted(thread.title),
       messages: messages,
       respondingStatus: chatThreadRespondingStatus(for: thread.id),
       appearanceMode: WorkspaceAppearanceMode(rawValue: appearance.appearanceMode) ?? appearanceMode,
       lightTheme: WorkspaceThemeCatalog.theme(id: appearance.lightThemeID, for: .light),
-      darkTheme: WorkspaceThemeCatalog.theme(id: appearance.darkThemeID, for: .dark)
+      darkTheme: WorkspaceThemeCatalog.theme(id: appearance.darkThemeID, for: .dark),
+      guestNonce: aiChatGuestMessageQueue.nonce(forThread: thread.id)
     )
   }
 

@@ -1397,6 +1397,8 @@ public final class LocalDocumentPublicationHost: @unchecked Sendable {
   private var restorationError: LocalDocumentPublicationHostError?
   private var documents: [String: HostedDocument] = [:]
   private var connections: [UUID: MobileRemoteHTTPConnection] = [:]
+  /// Guest messages for live thread links. Revoking a link clears its queue.
+  let guestMessages = AIChatGuestMessageQueue()
 
   public init(
     bindHost: String = "0.0.0.0",
@@ -1520,6 +1522,7 @@ public final class LocalDocumentPublicationHost: @unchecked Sendable {
       stateLock.unlock()
       throw LocalDocumentPublicationHostError.persistenceFailed(error.localizedDescription)
     }
+    guestMessages.disable(shareID: publicationID)
     if let artifactURL = removedDocument.artifactURL {
       try? FileManager.default.removeItem(at: artifactURL)
     }
@@ -1537,6 +1540,7 @@ public final class LocalDocumentPublicationHost: @unchecked Sendable {
       stateLock.unlock()
       throw LocalDocumentPublicationHostError.persistenceFailed(error.localizedDescription)
     }
+    guestMessages.disableAll()
     for document in removedDocuments.values {
       if let artifactURL = document.artifactURL {
         try? FileManager.default.removeItem(at: artifactURL)
@@ -1616,6 +1620,7 @@ public final class LocalDocumentPublicationHost: @unchecked Sendable {
     listeningPort = nil
     documents = [:]
     stateLock.unlock()
+    guestMessages.disableAll()
     activeListener?.cancel()
 
     connectionLock.lock()
@@ -1731,12 +1736,24 @@ public final class LocalDocumentPublicationHost: @unchecked Sendable {
     connectionLock.unlock()
   }
 
-  private func response(to request: MobileRemoteHTTPRequest) -> MobileRemoteHTTPResponse {
+  func response(to request: MobileRemoteHTTPRequest) -> MobileRemoteHTTPResponse {
+    let requestPath = URLComponents(string: request.path)?.path ?? request.path
+    let components = requestPath.split(separator: "/", omittingEmptySubsequences: true)
+    if components.first == "a", components.count >= 3, components[2] == "guest" {
+      let token = String(components[1])
+      guard stateLock.withLock({ documents[token] }) != nil else {
+        return .error("This publication is unavailable or has been revoked.", statusCode: 404)
+      }
+      return AIChatGuestMessageHTTP.response(
+        to: request,
+        shareID: token,
+        route: components.dropFirst(3).map(String.init),
+        queue: guestMessages
+      )
+    }
     guard request.method == "GET" || request.method == "HEAD" else {
       return .error("Not found.", statusCode: 404)
     }
-    let requestPath = URLComponents(string: request.path)?.path ?? request.path
-    let components = requestPath.split(separator: "/", omittingEmptySubsequences: true)
     guard components.first == "a",
           components.count == 2 || (components.count == 3 && components[2] == "revision")
     else {
@@ -1796,9 +1813,12 @@ public final class LocalDocumentPublicationHost: @unchecked Sendable {
     guard isHTML else {
       return "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
     }
-    // A live page may run exactly one script, pinned by hash, that polls this
-    // same origin. Every other publication stays script-free.
-    let live = isLive ? " script-src '\(liveUpdateScriptHash)'; connect-src 'self';" : ""
+    // A live page may run only its pinned scripts: the poller and the guest
+    // composer, which talk to this same origin. Every other publication
+    // stays script-free.
+    let live = isLive
+      ? " script-src '\(liveUpdateScriptHash)' '\(AIChatGuestMessageHTTP.scriptHash)'; connect-src 'self';"
+      : ""
     return "default-src 'none'; img-src data:; style-src 'unsafe-inline';\(live) base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
   }
 

@@ -174,12 +174,18 @@ final class AIChatThreadPublishingTests: XCTestCase {
     let revision = AIChatThreadPublicationPage.revision(snapshot: snapshot, bodies: [:])
     XCTAssertTrue(html.contains("<meta name=\"openorg-revision\" content=\"\(revision)\">"))
 
-    // The only script on the page must hash to the value the host allows.
+    // Every script on the page must hash to a value the host allows.
     let scripts = html.components(separatedBy: "<script>").dropFirst()
-    XCTAssertEqual(scripts.count, 1)
-    let script = try XCTUnwrap(scripts.first?.components(separatedBy: "</script>").first)
-    let hash = "sha256-" + Data(SHA256.hash(data: Data(script.utf8))).base64EncodedString()
-    XCTAssertEqual(hash, LocalDocumentPublicationHost.liveUpdateScriptHash)
+    XCTAssertEqual(scripts.count, 2)
+    let hashes = try scripts.map { part in
+      let script = try XCTUnwrap(part.components(separatedBy: "</script>").first)
+      return "sha256-" + Data(SHA256.hash(data: Data(script.utf8))).base64EncodedString()
+    }
+    XCTAssertEqual(hashes, [LocalDocumentPublicationHost.liveUpdateScriptHash, AIChatGuestMessageHTTP.scriptHash])
+    let policy = LocalDocumentPublicationHost.contentSecurityPolicy(isHTML: true, isLive: true)
+    for hash in hashes {
+      XCTAssertTrue(policy.contains("'\(hash)'"))
+    }
 
     let longer = makeSnapshot(
       title: "Plan <b>",

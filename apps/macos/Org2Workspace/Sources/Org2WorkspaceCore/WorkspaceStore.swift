@@ -3249,6 +3249,11 @@ public final class WorkspaceStore {
   public internal(set) var localDocumentPublications: [LocalDocumentPublication] = []
   /// Threads whose live share page is being rendered right now.
   public internal(set) var publishingChatThreadIDs: Set<UUID> = []
+  /// Guest messages from live thread links waiting for the owner's decision.
+  public internal(set) var aiChatGuestSubmissions: [AIChatGuestSubmission] = []
+  /// Threads whose live link on this Mac accepts guest messages.
+  public internal(set) var aiChatGuestMessageThreadIDs: Set<UUID> = []
+  @ObservationIgnored var isObservingAIChatGuestMessages = false
   @ObservationIgnored var chatThreadPublicationSignatures: [UUID: AIChatThreadPublicationSignature] = [:]
   @ObservationIgnored var chatThreadPublicationMonitor: Task<Void, Never>?
   /// Uses this store's CLI so a headless server renders with its configured
