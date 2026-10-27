@@ -928,7 +928,8 @@ struct RunCenterDetail: View {
 
   @ViewBuilder
   private func approvalReviewMaterial(_ approval: AgentRunApprovalItem) -> some View {
-    if let note = approval.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+    if let note = approval.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty,
+       !RunDetailPresentation.approvalNoteRepeatsAction(note: note, action: approval.action) {
       VStack(alignment: .leading, spacing: 4) {
         Text("Approval details").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
         Text(note).font(.callout).textSelection(.enabled)
@@ -1495,7 +1496,24 @@ struct ApprovalsView: View {
         .disabled(store.isLoadingApprovals)
       }
 
-      ApprovalControls(filterFocused: $filterFocused)
+      HStack(spacing: 10) {
+        ApprovalControls(filterFocused: $filterFocused)
+        Picker("Queue", selection: Binding(
+          get: { store.showsSnoozedApprovals },
+          set: { store.showsSnoozedApprovals = $0 }
+        )) {
+          Text("Pending").tag(false)
+          Text(store.snoozedApprovalItems.isEmpty ? "Snoozed" : "Snoozed (\(store.snoozedApprovalItems.count))").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("Snoozed approvals stay pending and return on their own when the snooze ends")
+      }
+      .padding(.horizontal, WorkspaceDesign.contentInset)
+      .padding(.bottom, 10)
+
+      Divider()
 
       if store.hasBulkApprovalSelection {
         ApprovalBulkActionBar(
@@ -1517,27 +1535,6 @@ struct ApprovalsView: View {
           }
         )
       }
-
-      HStack(spacing: 10) {
-        MetricView(title: "Visible", value: "\(store.visibleApprovalItems.count)")
-        MetricView(title: "Total", value: "\(store.approvalItems.count)")
-        Spacer(minLength: 0)
-        Picker("Queue", selection: Binding(
-          get: { store.showsSnoozedApprovals },
-          set: { store.showsSnoozedApprovals = $0 }
-        )) {
-          Text("Pending").tag(false)
-          Text(store.snoozedApprovalItems.isEmpty ? "Snoozed" : "Snoozed (\(store.snoozedApprovalItems.count))").tag(true)
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
-        .help("Snoozed approvals stay pending and return on their own when the snooze ends")
-      }
-      .padding(.horizontal, WorkspaceDesign.contentInset)
-      .padding(.bottom, 12)
-
-      Divider()
 
       approvalList
         .workspaceActionMotion(value: store.approvalItems.map(\.id))
@@ -1630,6 +1627,10 @@ struct ApprovalsView: View {
     }
     let snoozed = store.snoozedApprovalItems.count
     let snoozedSuffix = snoozed == 0 ? "" : " · \(snoozed) snoozed"
+    let total = store.approvalItems.count
+    if !store.approvalFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, total > count {
+      return "\(count) of \(total) pending\(snoozedSuffix)"
+    }
     return "\(count) pending approval\(count == 1 ? "" : "s")\(snoozedSuffix)"
   }
 
@@ -1779,6 +1780,19 @@ struct ApprovalsView: View {
               .disabled(store.isApprovalActionInProgress(item))
             }
             Button {
+              store.promptAndRejectApproval(item)
+            } label: {
+              Label("Reject…", systemImage: "xmark.octagon")
+            }
+            .disabled(store.isApprovalActionInProgress(item))
+            Divider()
+            Button {
+              discussionMessage = "I need to discuss this approval item before deciding."
+              discussionItem = item
+            } label: {
+              Label("Discuss in AI Chat…", systemImage: "paperplane")
+            }
+            Button {
               store.copyApprovalDiscussionText(item)
             } label: {
               Label("Copy Discussion Text", systemImage: "doc.on.doc")
@@ -1836,8 +1850,6 @@ private struct ApprovalControls: View {
       }
     }
     .controlSize(.small)
-    .padding(.horizontal, WorkspaceDesign.contentInset)
-    .padding(.bottom, 12)
     .onAppear { filterDraft = store.approvalFilter }
     .onChange(of: store.approvalFilter) {
       if filterDraft != store.approvalFilter {
@@ -2004,13 +2016,20 @@ private struct ApprovalRow: View {
   let repairSource: (() -> Void)?
   let discuss: () -> Void
 
+  @State private var isHovered = false
+
   private var isActionInProgress: Bool {
     isApproving || isRejecting || isCompletingExternally || isRepairingSource || isSnoozing
   }
 
+  /// Full actions only on the row being reviewed; hover gets a compact
+  /// cluster that does not change the row height. Every action is also in
+  /// the context menu and the bulk bar.
+  private var showsActionBar: Bool { isSelected || isActionInProgress }
+
   var body: some View {
-    let bodyPreview = item.displayBodyPreview
-    VStack(alignment: .leading, spacing: 8) {
+    let summary = item.listSummary
+    VStack(alignment: .leading, spacing: 5) {
       HStack(alignment: .center, spacing: 8) {
         Button {
           toggleBulkSelection()
@@ -2018,163 +2037,74 @@ private struct ApprovalRow: View {
           AgendaBulkSelectionCheckbox(isChecked: isBulkSelected, isEnabled: true)
         }
         .buttonStyle(.plain)
+        .opacity(isBulkSelected || isHovered || isSelected ? 1 : 0.45)
         .accessibilityLabel(isBulkSelected ? "Remove from bulk selection" : "Add to bulk selection")
         .help(isBulkSelected ? "Remove from bulk selection" : "Add to bulk selection")
 
-        StatusPill(text: item.status)
-        Text(Org2Display.cleanInline(item.title))
-          .font(.body.weight(.semibold))
-          .lineLimit(2)
-      }
-
-      if !bodyPreview.isEmpty {
-        Text(bodyPreview)
-          .font(.callout)
-          .foregroundStyle(.secondary)
-          .lineLimit(3)
-      }
-
-      if let runGoal = item.runGoal {
-        VStack(alignment: .leading, spacing: 3) {
-          Label(runGoal, systemImage: "clock.arrow.circlepath")
-            .font(.callout.weight(.medium))
-            .lineLimit(2)
-          if let dependency = item.runDependencyText {
-            Text(dependency)
-              .font(.caption.weight(.medium))
-              .foregroundStyle(item.runPendingApprovalCount == 1 ? Color.orange : Color.secondary)
-          }
+        if item.isUrgent {
+          StatusPill(text: "urgent")
         }
-      }
-
-      if let until = item.snoozedUntilDate, item.isSnoozed() {
-        Label(
-          "Snoozed until \(until.formatted(date: .abbreviated, time: item.supportsTimedSnooze ? .shortened : .omitted))",
-          systemImage: "moon.zzz"
-        )
-        .font(.caption.weight(.medium))
-        .foregroundStyle(.indigo)
-      }
-
-      HStack(spacing: 8) {
         if let todo = item.todo {
           StatusPill(text: todo)
+        } else if item.status != "pending" {
+          StatusPill(text: item.status)
         }
-        Label(sourceReference, systemImage: "doc.text")
+        Text(Org2Display.cleanInline(item.title))
+          .font(.body.weight(.semibold))
           .lineLimit(1)
-          .truncationMode(.middle)
-        Spacer(minLength: 0)
+          .truncationMode(.tail)
+          .layoutPriority(1)
+
+        Spacer(minLength: 8)
+
+        ZStack(alignment: .trailing) {
+          metaText.opacity(isHovered && !showsActionBar ? 0 : 1)
+          if isHovered && !showsActionBar {
+            hoverActions
+          }
+        }
+        .frame(height: 18)
       }
-      .font(.caption)
-      .foregroundStyle(.secondary)
 
-      HStack(spacing: 6) {
-        Button {
-          approve()
-        } label: {
-          if isApproving {
-            HStack(spacing: 6) {
-              WorkspaceActivityIndicator(size: .mini)
-              Text("Approving")
-            }
-          } else {
-            Label("Approve", systemImage: "checkmark")
-          }
-        }
-        .buttonStyle(WorkspaceActionButtonStyle())
-        .disabled(isActionInProgress)
-
-        if item.isSnoozed() {
-          Button {
-            wake()
-          } label: {
-            Label("Wake", systemImage: "alarm")
-          }
-          .buttonStyle(WorkspaceActionButtonStyle())
-          .disabled(isActionInProgress)
-          .help("Return this approval to Pending now")
+      VStack(alignment: .leading, spacing: 3) {
+        if !summary.isEmpty {
+          Text(summary)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .lineLimit(isSelected ? 3 : 1)
         }
 
-        Menu {
-          ApprovalSnoozeMenuContent(
-            allowsTime: item.supportsTimedSnooze,
-            snooze: snooze,
-            pickDate: pickSnoozeDate
+        if let context = item.listRunContext {
+          Label(context, systemImage: "clock.arrow.circlepath")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+
+        if let note = item.listDecisionNote {
+          Label(note, systemImage: "exclamationmark.circle")
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.orange)
+            .lineLimit(2)
+        }
+
+        if let until = item.snoozedUntilDate, item.isSnoozed() {
+          Label(
+            "Snoozed until \(until.formatted(date: .abbreviated, time: item.supportsTimedSnooze ? .shortened : .omitted))",
+            systemImage: "moon.zzz"
           )
-        } label: {
-          if isSnoozing {
-            HStack(spacing: 6) {
-              WorkspaceActivityIndicator(size: .mini)
-              Text("Snoozing")
-            }
-          } else {
-            Label("Snooze", systemImage: "moon.zzz")
-          }
+          .font(.caption.weight(.medium))
+          .foregroundStyle(.indigo)
         }
-        .menuStyle(.button)
-        .buttonStyle(WorkspaceActionButtonStyle())
-        .fixedSize()
-        .disabled(isActionInProgress)
-        .help(item.supportsTimedSnooze
-          ? "Hide this approval until later. It stays pending and returns on its own."
-          : "Schedule this approval for a later day. It stays pending and returns on that day.")
-
-        Button {
-          markDoneElsewhere()
-        } label: {
-          if isCompletingExternally {
-            HStack(spacing: 6) {
-              WorkspaceActivityIndicator(size: .mini)
-              Text("Finishing")
-            }
-          } else {
-            Label("Done Elsewhere…", systemImage: "checkmark.circle")
-          }
-        }
-        .buttonStyle(WorkspaceActionButtonStyle())
-        .disabled(isActionInProgress)
-        .help("Record that this outcome was completed outside Celorga")
-
-        Button {
-          discuss()
-        } label: {
-          Label("Discuss", systemImage: "paperplane")
-        }
-        .buttonStyle(WorkspaceActionButtonStyle())
-
-        if let requestChanges {
-          Button {
-            requestChanges()
-          } label: {
-            Label("Request Changes…", systemImage: "arrow.uturn.backward")
-          }
-          .buttonStyle(WorkspaceActionButtonStyle())
-          .disabled(isActionInProgress)
-        }
-
-        Button {
-          reject()
-        } label: {
-          if isRejecting {
-            HStack(spacing: 6) {
-              WorkspaceActivityIndicator(size: .mini)
-              Text("Rejecting")
-            }
-          } else {
-            Label("Reject", systemImage: "xmark.octagon")
-          }
-        }
-        .buttonStyle(WorkspaceActionButtonStyle())
-        .disabled(isActionInProgress)
-
-        Button {
-          copy()
-        } label: {
-          Label("Copy", systemImage: "doc.on.doc")
-        }
-        .buttonStyle(WorkspaceActionButtonStyle())
       }
-      .controlSize(.small)
+      .padding(.leading, 26)
+
+      if showsActionBar {
+        actionBar
+          .padding(.leading, 26)
+          .padding(.top, 4)
+          .transition(.opacity)
+      }
 
       if let actionError {
         VStack(alignment: .leading, spacing: 6) {
@@ -2207,6 +2137,126 @@ private struct ApprovalRow: View {
       }
     }
     .workspaceSelectableRow(isSelected: isSelected, verticalPadding: 8)
+    .onHover { isHovered = $0 }
+    .help(sourceReference)
+  }
+
+  private var metaText: some View {
+    let age = item.requestedAt
+      .flatMap(AgentRunTimestampPresentation.date(from:))
+      .map { $0.formatted(.relative(presentation: .named, unitsStyle: .abbreviated)) }
+    return Text([item.compactSourceLabel, age].compactMap { $0 }.joined(separator: " · "))
+      .font(.caption)
+      .foregroundStyle(.tertiary)
+      .lineLimit(1)
+      .fixedSize()
+  }
+
+  private var hoverActions: some View {
+    HStack(spacing: 2) {
+      Button(action: approve) {
+        Image(systemName: "checkmark")
+      }
+      .help("Approve")
+      Menu {
+        ApprovalSnoozeMenuContent(allowsTime: item.supportsTimedSnooze, snooze: snooze, pickDate: pickSnoozeDate)
+      } label: {
+        Image(systemName: "moon.zzz")
+      }
+      .menuIndicator(.hidden)
+      .help("Snooze")
+      Button(action: reject) {
+        Image(systemName: "xmark")
+      }
+      .help("Reject")
+    }
+    .buttonStyle(.borderless)
+    .menuStyle(.borderlessButton)
+    .controlSize(.small)
+    .fixedSize()
+  }
+
+  private var actionBar: some View {
+    HStack(spacing: 6) {
+      Button(action: approve) {
+        if isApproving {
+          HStack(spacing: 6) {
+            WorkspaceActivityIndicator(size: .mini)
+            Text("Approving")
+          }
+        } else {
+          Text("Approve")
+        }
+      }
+      .buttonStyle(RunPrimaryButtonStyle(tint: WorkspaceDesign.themed(.done)))
+      .disabled(isActionInProgress)
+
+      if item.isSnoozed() {
+        Button("Wake", action: wake)
+          .buttonStyle(RunSecondaryButtonStyle())
+          .disabled(isActionInProgress)
+          .help("Return this approval to Pending now")
+      }
+
+      Menu {
+        ApprovalSnoozeMenuContent(allowsTime: item.supportsTimedSnooze, snooze: snooze, pickDate: pickSnoozeDate)
+      } label: {
+        if isSnoozing {
+          HStack(spacing: 6) {
+            WorkspaceActivityIndicator(size: .mini)
+            Text("Snoozing")
+          }
+        } else {
+          Text("Snooze")
+        }
+      }
+      .menuStyle(.button)
+      .buttonStyle(RunSecondaryButtonStyle())
+      .fixedSize()
+      .disabled(isActionInProgress)
+      .help(item.supportsTimedSnooze
+        ? "Hide this approval until later. It stays pending and returns on its own."
+        : "Schedule this approval for a later day. It stays pending and returns on that day.")
+
+      Button(action: reject) {
+        if isRejecting {
+          HStack(spacing: 6) {
+            WorkspaceActivityIndicator(size: .mini)
+            Text("Rejecting")
+          }
+        } else {
+          Text("Reject")
+        }
+      }
+      .buttonStyle(RunSecondaryButtonStyle())
+      .disabled(isActionInProgress)
+
+      Menu {
+        if let requestChanges {
+          Button("Request Changes…", action: requestChanges)
+        }
+        Button("Mark Done Elsewhere…", action: markDoneElsewhere)
+        Divider()
+        Button("Discuss in AI Chat…", action: discuss)
+        Button("Copy Discussion Text", action: copy)
+      } label: {
+        if isCompletingExternally {
+          HStack(spacing: 6) {
+            WorkspaceActivityIndicator(size: .mini)
+            Text("Finishing")
+          }
+        } else {
+          Image(systemName: "ellipsis")
+        }
+      }
+      .menuStyle(.button)
+      .menuIndicator(.hidden)
+      .buttonStyle(RunSecondaryButtonStyle())
+      .fixedSize()
+      .disabled(isActionInProgress)
+      .help("More actions")
+    }
+    .controlSize(.small)
   }
 }
 

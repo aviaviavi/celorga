@@ -180,6 +180,18 @@ enum RunDetailPresentation {
     return "\(pending) of \(total) need\(pending == 1 ? "s" : "") a decision"
   }
 
+  /// Agents often store the same review text as both the action and the note;
+  /// the decision card shows it once.
+  static func approvalNoteRepeatsAction(note: String, action: String) -> Bool {
+    let collapse: (String) -> String = {
+      $0.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
+    let normalizedNote = collapse(note)
+    let normalizedAction = collapse(action)
+    guard !normalizedNote.isEmpty else { return true }
+    return normalizedAction.contains(normalizedNote)
+  }
+
   static func reviewBadge(_ reviewStatus: String?, runFinished: Bool) -> RunBadgePresentation? {
     switch reviewStatus {
     case "review-required":

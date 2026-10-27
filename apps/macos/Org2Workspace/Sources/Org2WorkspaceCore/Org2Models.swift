@@ -1509,6 +1509,85 @@ public struct ApprovalItem: Identifiable, Hashable, Sendable, Decodable {
     Org2Display.cleanBlockPreview(body, maxCharacters: 220)
   }
 
+  /// One scannable line for the Review queue. Drops empty fields such as
+  /// `Cc: (none)`, machine detail (fingerprints, provider IDs, hashes), and any
+  /// field whose value the title already states. The full body stays in the
+  /// detail pane.
+  public var listSummary: String {
+    let normalizedTitle = Self.normalizedWords(title).joined(separator: " ")
+    var parts: [String] = []
+    for rawLine in Org2Display.cleanBlock(body).split(whereSeparator: \.isNewline) {
+      let line = rawLine.trimmingCharacters(in: .whitespaces)
+      guard !line.isEmpty, !Self.looksLikeMachineToken(line) else { continue }
+      if let colon = line.firstIndex(of: ":") {
+        let key = line[..<colon].trimmingCharacters(in: .whitespaces)
+        let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        let isField = !key.isEmpty && key.count <= 24 && key.split(separator: " ").count <= 3
+        if isField {
+          let lowerKey = key.lowercased()
+          if value.isEmpty || value == "(none)" || value.lowercased() == "none" { continue }
+          if Self.machineFieldKeys.contains(where: { lowerKey.contains($0) }) { continue }
+          let normalizedValue = Self.normalizedWords(value).joined(separator: " ")
+          if !normalizedValue.isEmpty, normalizedTitle.contains(normalizedValue) { continue }
+        }
+      }
+      parts.append(line)
+    }
+    return parts.joined(separator: " · ").trimmedForDisplay(maxCharacters: 200)
+  }
+
+  /// The run goal, unless it only restates the approval title.
+  public var listRunContext: String? {
+    guard let runGoal = runGoal?.trimmingCharacters(in: .whitespacesAndNewlines), !runGoal.isEmpty else {
+      return nil
+    }
+    let stop: Set<String> = ["approve", "review", "send", "the", "a", "an", "to", "draft", "and", "for", "of"]
+    let goalWords = Set(Self.normalizedWords(runGoal)).subtracting(stop)
+    let titleWords = Set(Self.normalizedWords(title)).subtracting(stop)
+    guard !goalWords.isEmpty else { return nil }
+    let overlap = Double(goalWords.intersection(titleWords).count) / Double(goalWords.union(titleWords).count)
+    return overlap >= 0.6 ? nil : runGoal
+  }
+
+  /// A queue note only when deciding this approval does something other than
+  /// the ordinary case (it is the run's last approval and resumes the run).
+  public var listDecisionNote: String? {
+    guard isRunApproval else { return nil }
+    if let runStatus, !runStatus.isEmpty, runStatus != "waiting-approval" {
+      return "Run is \(runStatus)"
+    }
+    if let pending = runPendingApprovalCount, pending > 1 {
+      return "1 of \(pending) approvals pending on this run"
+    }
+    guard let effect = runDecisionEffect, effect != Self.ordinaryRunDecisionEffect else { return nil }
+    return effect
+  }
+
+  /// Short source label for the queue, such as `Run 0d7494b9`.
+  public var compactSourceLabel: String {
+    if let runId { return "Run \(runId.prefix(8))" }
+    return "\(URL(fileURLWithPath: file).lastPathComponent):\(line)"
+  }
+
+  static let ordinaryRunDecisionEffect = "This is the last pending approval; approving it resumes the run."
+
+  private static let machineFieldKeys = ["fingerprint", "provider draft", "hash", "message id", "thread id", "session"]
+
+  private static func normalizedWords(_ text: String) -> [String] {
+    Org2Display.cleanInline(text)
+      .lowercased()
+      .split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "@" || $0 == ".") })
+      .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".")) }
+      .filter { !$0.isEmpty }
+  }
+
+  /// Hex or UUID fragments that wrap onto their own line.
+  private static func looksLikeMachineToken(_ line: String) -> Bool {
+    guard line.count >= 8, !line.contains(" ") else { return false }
+    let allowed = CharacterSet(charactersIn: "0123456789abcdefABCDEF-:")
+    return line.unicodeScalars.allSatisfy { allowed.contains($0) }
+  }
+
   public var discussionText: String {
     """
     OpenClaw approval thread:
