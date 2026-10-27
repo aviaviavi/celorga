@@ -7,6 +7,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rm,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -426,7 +427,88 @@ async function aggregateChatShape(root) {
   }
 }
 
-async function inspectShardedChatStore(transcriptPath) {
+// The live app rewrites the sharded store while it runs: a marker can name a
+// manifest that is replaced moments later. Retry a torn read a few times.
+async function inspectShardedChatStore(transcriptPath, attempts = 5) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await inspectShardedChatStoreOnce(transcriptPath);
+    } catch (error) {
+      if (attempt >= attempts || !isTornChatStoreRead(error)) throw error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 100 * attempt));
+    }
+  }
+}
+
+function isTornChatStoreRead(error) {
+  return error?.code === "ENOENT"
+    || /digest mismatch|Missing sharded AI chat thread/u.test(String(error?.message ?? ""));
+}
+
+async function referencedStoreManifests(storeRoot) {
+  const pointers = [];
+  for (const directory of ["heads", "."]) {
+    let names;
+    try {
+      names = await readdir(join(storeRoot, directory));
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+    for (const name of names) {
+      if (!name.endsWith(".json") || name.startsWith(".")) continue;
+      if (directory === "." && !name.startsWith("migration-marker")) continue;
+      try {
+        pointers.push(JSON.parse(await readFile(join(storeRoot, directory, name), "utf8")));
+      } catch {
+        // A torn or foreign pointer names nothing worth keeping.
+      }
+    }
+  }
+  const names = new Set();
+  for (const pointer of pointers) {
+    for (const value of [pointer?.currentManifest, pointer?.previousManifest]) {
+      if (typeof value === "string" && basename(value) === value) names.add(value);
+    }
+  }
+  return names;
+}
+
+async function newestStoreHead(storeRoot) {
+  let names;
+  try {
+    names = await readdir(join(storeRoot, "heads"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    throw error;
+  }
+  let newest;
+  for (const name of names) {
+    if (!name.endsWith(".json") || name.startsWith(".")) continue;
+    let head;
+    try {
+      head = JSON.parse(await readFile(join(storeRoot, "heads", name), "utf8"));
+    } catch {
+      continue;
+    }
+    if (!/^(org2|celorga):ai-chat-transcript-head:v1$/u.test(String(head?.schema))
+        || head.version !== 1
+        || typeof head.currentManifest !== "string"
+        || basename(head.currentManifest) !== head.currentManifest
+        || !isSHA256(head.currentDigest)) {
+      continue;
+    }
+    const generation = Number(head.currentGeneration ?? 0);
+    if (!newest
+        || generation > newest.generation
+        || (generation === newest.generation && head.currentManifest > newest.currentManifest)) {
+      newest = { ...head, generation };
+    }
+  }
+  return newest;
+}
+
+async function inspectShardedChatStoreOnce(transcriptPath) {
   const storeRoot = join(dirname(transcriptPath), `${basename(transcriptPath, extname(transcriptPath))}.store`);
   const markerPath = join(storeRoot, "migration-marker.json");
   let markerBytes = 0;
@@ -448,6 +530,13 @@ async function inspectShardedChatStore(transcriptPath) {
     expectedManifestDigest = marker.currentDigest;
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
+  }
+  // Stores with per-writer heads ignore the historical marker; the newest
+  // head generation is the current commit.
+  const head = await newestStoreHead(storeRoot);
+  if (head) {
+    manifestPath = join(storeRoot, "manifests", head.currentManifest);
+    expectedManifestDigest = head.currentDigest;
   }
 
   let manifestInfo;
@@ -738,12 +827,28 @@ export async function cloneReadOnlyPerformanceCorpus(corpusRoot, outputDirectory
   const targetTranscript = join(targetRoot, ".org2", "openclaw-chat.json");
   const copiedChatTranscript = await copyFileIfPresent(sourceTranscript, targetTranscript);
   const sourceStore = join(sourceRoot, ".org2", "openclaw-chat.store");
-  const storePaths = await collectRegularFiles(sourceStore);
-  const chatStoreFileCount = await copyRelativeFiles(
-    sourceStore,
-    join(targetRoot, ".org2", "openclaw-chat.store"),
-    storePaths
-  );
+  const targetStore = join(targetRoot, ".org2", "openclaw-chat.store");
+  // Copy a consistent snapshot of a store the live app may be rewriting.
+  let chatStoreFileCount = 0;
+  for (let attempt = 1; ; attempt += 1) {
+    await rm(targetStore, { recursive: true, force: true });
+    // Historical manifests (gigabytes on a long-lived store) are recovery
+    // material; the app loads only the commits that heads and markers name.
+    const referencedManifests = await referencedStoreManifests(sourceStore);
+    const storePaths = (await collectRegularFiles(sourceStore)).filter((relativePath) => {
+      const parts = relativePath.split(sep);
+      if (parts[0] === "manifests" && parts.length === 2) return referencedManifests.has(parts[1]);
+      return !parts[0].startsWith("recovery-backup-");
+    });
+    chatStoreFileCount = await copyRelativeFiles(sourceStore, targetStore, storePaths);
+    try {
+      await inspectShardedChatStoreOnce(targetTranscript);
+      break;
+    } catch (error) {
+      if (attempt >= 5 || !isTornChatStoreRead(error)) throw error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 100 * attempt));
+    }
+  }
 
   const cloneConfiguration = sanitizePerformanceCloneConfiguration(sourceConfiguration);
   await writeFile(

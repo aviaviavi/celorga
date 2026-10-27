@@ -2258,6 +2258,54 @@ final class OpenOrgPerformanceGateTests: XCTestCase {
     )
   }
 
+  /// The Review page re-renders as each of a bulk selection's approvals
+  /// starts and finishes snoozing. No single frame may stall long enough for
+  /// the spinning cursor.
+  func testBulkSnoozeOnTheReviewPageKeepsFramesShort() async throws {
+    let store = try WorkspaceStore(cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()))
+    store.corpusRoot = FileManager.default.temporaryDirectory
+      .appendingPathComponent("celorga-bulk-snooze-ui-\(UUID().uuidString)", isDirectory: true)
+    store.deferredAgentRunsRefreshDelayNanoseconds = 60_000_000_000
+    let runs = try ApprovalBulkSnoozePerformanceTests.runs(count: 12_600)
+    store.replaceAgentRunsForTesting(runs)
+    let queue = (0..<24).map { ApprovalBulkSnoozePerformanceTests.queueItem(run: runs[$0], index: $0) }
+    store.replaceApprovalItemsForTesting(queue)
+    store.approvalQueueLoaderForTesting = { (queue, []) }
+    let runsByID = Dictionary(uniqueKeysWithValues: runs.map { ($0.id, $0) })
+    store.agentRunApprovalSnoozeForTesting = { runID, _, _ in
+      try await Task.sleep(nanoseconds: 20_000_000)
+      return try XCTUnwrap(runsByID[runID])
+    }
+    store.selectedSurface = .approvals
+    store.runsAndReviewPage = .review
+
+    let harness = WorkspaceRenderPerformanceHarness(store: store)
+    defer { harness.close() }
+    try await harness.waitForVisibleDestination(.approvals, runPage: .review, store: store)
+    for item in queue.prefix(15) {
+      store.toggleApprovalItemBulkSelection(item)
+    }
+    await harness.drawAfterDeferredViewUpdates()
+
+    var frames: [Double] = []
+    let snooze = Task { @MainActor in
+      await store.snoozeSelectedApprovals(until: Date().addingTimeInterval(3 * 3600))
+    }
+    let deadline = CACurrentMediaTime() + 1.5
+    while CACurrentMediaTime() < deadline {
+      try await Task.sleep(nanoseconds: 4_000_000)
+      let start = CACurrentMediaTime()
+      harness.draw()
+      frames.append((CACurrentMediaTime() - start) * 1_000)
+    }
+    await snooze.value
+    XCTAssertEqual(store.bulkApprovalSelectionCount, 0)
+    let longest = frames.max() ?? 0
+    let total = frames.reduce(0, +)
+    print("PERFORMANCE bulk-snooze-review-frames: count=\(frames.count) max=\(String(format: "%.1f", longest)) ms total=\(String(format: "%.1f", total)) ms")
+    XCTAssertLessThan(longest, 250, "a Review frame took \(longest) ms during bulk snooze")
+  }
+
   func testReleaseBuildStaysResponsiveAtRealCorpusShape() async throws {
     guard let environment = try performanceEnvironment() else {
       throw XCTSkip("Run through npm run test:macos-performance to generate the scale fixture")
@@ -2317,7 +2365,15 @@ final class OpenOrgPerformanceGateTests: XCTestCase {
       shapeVersion: environment.shape.version,
       budgets: environment.budgets
     )
-    try await waitUntil(timeout: 30, description: "the initial resolver/search projection") {
+    let expectedResolverNodes = environment.shape.documents.activeFileCount
+      - (environment.shape.documents.extensionMix["csv"] ?? 0)
+    try await waitUntil(
+      timeout: 30,
+      description: "the initial resolver/search projection",
+      diagnostics: {
+        "building=\(store.isBuildingSearchIndex) nodes=\(store.orgRoamLinkResolver.nodes.count) expected>=\(expectedResolverNodes) files=\(store.corpusFiles.count)"
+      }
+    ) {
       !store.isBuildingSearchIndex
         && store.orgRoamLinkResolver.nodes.count >= (
           environment.shape.documents.activeFileCount
@@ -5154,6 +5210,7 @@ final class OpenOrgPerformanceGateTests: XCTestCase {
   private func waitUntil(
     timeout: TimeInterval,
     description: String,
+    diagnostics: @MainActor () -> String = { "" },
     condition: @escaping @MainActor () -> Bool
   ) async throws {
     let deadline = CACurrentMediaTime() + timeout
@@ -5161,7 +5218,8 @@ final class OpenOrgPerformanceGateTests: XCTestCase {
       if condition() { return }
       try await Task.sleep(nanoseconds: 10_000_000)
     }
-    XCTFail("Timed out waiting for \(description)")
+    let detail = diagnostics()
+    XCTFail("Timed out waiting for \(description)\(detail.isEmpty ? "" : " (\(detail))")")
     throw PerformanceHarnessError.timedOut
   }
 }

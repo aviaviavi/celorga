@@ -1,6 +1,6 @@
 {
   "$schema": "org2:openorg-performance-corpus-shape:v1",
-  "version": 4,
+  "version": 5,
   "description": "Aggregate, privacy-safe union of the root-heavy and zoned OpenOrg corpus layouts. It preserves both workloads without corpus text, file names, IDs, or source paths.",
   "privacy": {
     "containsCorpusContent": false,
@@ -8,27 +8,45 @@
     "containsSourcePaths": false
   },
   "documents": {
-    "activeFileCount": 5747,
+    "activeFileCount": 7534,
     "rootFileCount": 1934,
     "extensionMix": {
-      "csv": 93,
-      "md": 128,
-      "org": 3239,
-      "org2": 2287
+      "csv": 360,
+      "md": 140,
+      "org": 4634,
+      "org2": 2400
     },
     "zones": [
-      { "kind": "notes", "fileCount": 1285 },
-      { "kind": "daily", "fileCount": 1449 },
-      { "kind": "agents", "fileCount": 34 },
-      { "kind": "meetings", "fileCount": 336 },
-      { "kind": "views", "fileCount": 530 },
-      { "kind": "other", "fileCount": 179 }
+      {
+        "kind": "notes",
+        "fileCount": 1500
+      },
+      {
+        "kind": "daily",
+        "fileCount": 1600
+      },
+      {
+        "kind": "agents",
+        "fileCount": 100
+      },
+      {
+        "kind": "meetings",
+        "fileCount": 560
+      },
+      {
+        "kind": "views",
+        "fileCount": 1500
+      },
+      {
+        "kind": "other",
+        "fileCount": 340
+      }
     ],
     "sizeBytes": {
-      "p50": 2385,
-      "p90": 18654,
-      "p95": 37419,
-      "p99": 197885,
+      "p50": 4500,
+      "p90": 29000,
+      "p95": 80000,
+      "p99": 1400000,
       "max": 23064423
     },
     "largeDocumentWorkload": {
@@ -39,17 +57,17 @@
     }
   },
   "chat": {
-    "threadCount": 512,
-    "activeThreadCount": 16,
-    "archivedThreadCount": 496,
-    "messageCount": 4500,
-    "maxMessagesPerThread": 384,
-    "attachmentBytes": 25736872,
+    "threadCount": 2400,
+    "activeThreadCount": 48,
+    "archivedThreadCount": 2352,
+    "messageCount": 12000,
+    "maxMessagesPerThread": 512,
+    "attachmentBytes": 64000000,
     "largestMessageBytes": 80973,
-    "encodedTranscriptBytes": 41338378
+    "encodedTranscriptBytes": 150000000
   },
   "workspaceScale": {
-    "agentRunCount": 8000,
+    "agentRunCount": 15000,
     "approvalItemCount": 500,
     "externalThreadCount": 250,
     "sourceProfileCount": 12

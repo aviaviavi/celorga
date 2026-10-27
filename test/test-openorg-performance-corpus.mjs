@@ -347,6 +347,38 @@ try {
     })}\n`
   );
 
+  // A store with per-writer heads ignores a stale historical marker, and the
+  // clone skips manifests no head or marker names.
+  await writeFile(
+    markerPath,
+    `${JSON.stringify({
+      schema: "org2:ai-chat-transcript-store-marker:v1",
+      version: 1,
+      currentManifest: "garbage-collected.json",
+      currentDigest: "a".repeat(64),
+    })}\n`
+  );
+  await mkdir(join(privateSource, ".org2", "openclaw-chat.store", "heads"), { recursive: true });
+  await writeFile(
+    join(privateSource, ".org2", "openclaw-chat.store", "heads", "writer-1.json"),
+    `${JSON.stringify({
+      schema: "org2:ai-chat-transcript-head:v1",
+      version: 1,
+      currentGeneration: 7,
+      currentManifest: "commit-v2.json",
+      currentDigest: sha256(version2ManifestData),
+    })}\n`
+  );
+  await writeFile(
+    join(privateSource, ".org2", "openclaw-chat.store", "manifests", "historical.json"),
+    "{}\n"
+  );
+  const headProfile = await profilePerformanceCorpus(
+    privateSource,
+    join(temporaryRoot, "sharded-head-profile.json")
+  );
+  assert.equal(headProfile.chat.messageCount, 4, "the newest writer head names the current commit");
+
   const sourceDocumentPath = join(privateSource, "notes", "private-name.org2");
   const sourceTranscriptPath = join(privateSource, ".org2", "openclaw-chat.json");
   const sourceDocumentDigest = sha256(await readFile(sourceDocumentPath));
@@ -355,7 +387,9 @@ try {
   assert.equal(clone.documentCount, 1);
   assert.equal(clone.runFileCount, 1);
   assert.equal(clone.copiedChatTranscript, true);
-  assert.equal(clone.chatStoreFileCount, 7);
+  assert.equal(clone.chatStoreFileCount, 8);
+  await assert.rejects(access(join(privateClone, ".org2", "openclaw-chat.store", "manifests", "historical.json")));
+  await access(join(privateClone, ".org2", "openclaw-chat.store", "manifests", "commit-v2.json"));
   await access(join(privateClone, "notes", "private-name.org2"));
   await access(join(privateClone, ".org2", "runs", "private-run.org2"));
   await access(join(privateClone, ".org2", "openclaw-chat.store", "manifest.json"));
@@ -463,25 +497,25 @@ try {
     new URL("./fixtures/openorg-performance-corpus-shape-v1.json", import.meta.url),
     "utf8"
   ));
-  assert.equal(unionShape.version, 4);
-  assert.equal(unionShape.documents.activeFileCount, 5_747);
+  assert.equal(unionShape.version, 5);
+  assert.equal(unionShape.documents.activeFileCount, 7_534);
   assert.equal(unionShape.documents.rootFileCount, 1_934);
   assert.deepEqual(unionShape.documents.extensionMix, {
-    csv: 93,
-    md: 128,
-    org: 3_239,
-    org2: 2_287,
+    csv: 360,
+    md: 140,
+    org: 4_634,
+    org2: 2_400,
   });
   const unionZones = Object.fromEntries(
     unionShape.documents.zones.map((zone) => [zone.kind, zone.fileCount])
   );
   assert.deepEqual(unionZones, {
-    notes: 1_285,
-    daily: 1_449,
-    agents: 34,
-    meetings: 336,
-    views: 530,
-    other: 179,
+    notes: 1_500,
+    daily: 1_600,
+    agents: 100,
+    meetings: 560,
+    views: 1_500,
+    other: 340,
   });
   assert.equal(
     unionShape.documents.rootFileCount
