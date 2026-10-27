@@ -1024,6 +1024,12 @@ extension WorkspaceStore {
 
   public func noteSourceEditorLocalTextChanged(_ text: String) {
     guard isEditingEntry else { return }
+    // The editor republishes text it already published (a delayed Vim or
+    // typing publish, or the binding echoing a save). Counting that as a new
+    // edit marked a just-saved draft dirty, so Save & Done stayed open until
+    // a second click.
+    let current = sourceEditorLocalDraftText ?? editableEntryText
+    if text.utf8.count == current.utf8.count, text == current { return }
     sourceEditorLocalDraftText = text
     sourceEditorDraftGeneration &+= 1
   }

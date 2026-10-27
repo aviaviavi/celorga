@@ -100,6 +100,59 @@ final class SaveAndDoneRenderTests: XCTestCase {
     XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), final)
   }
 
+  /// After a save, the editor can publish the text it already published
+  /// (Vim's delayed publish, or the binding echoing the saved text). That
+  /// echo is not an edit; it kept Save & Done open until a second click.
+  @MainActor
+  func testSaveAndDoneClosesOnTheFirstClickWhenTheEditorEchoesSavedText() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-save-and-done-echo-\(UUID().uuidString)", isDirectory: true)
+    let suite = "org2-save-and-done-echo-\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer {
+      try? FileManager.default.removeItem(at: root)
+      defaults.removePersistentDomain(forName: suite)
+    }
+    let file = root.appendingPathComponent("note.org")
+    try "* Note\nOriginal body\n".write(to: file, atomically: true, encoding: .utf8)
+
+    let store = try WorkspaceStore(
+      cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()),
+      defaults: defaults,
+      legacyDefaultsDomains: []
+    )
+    store.formatOrgFilesOnSave = false
+    store.orgCryptEncryptOnSave = false
+    store.setCorpusRoot(root, persistsDefault: false)
+    let edited = "* Note\nEdited body\n"
+    let echo = SaveAndDoneEchoFlag()
+    store.entryHTMLRendererForTesting = { text, _, _, _ in
+      if text.contains("Edited") {
+        // The editor's delayed publish lands while the saved page renders.
+        await MainActor.run {
+          guard !echo.fired else { return }
+          echo.fired = true
+          store.noteSourceEditorLocalTextChanged(edited)
+        }
+      }
+      return "<html><body>\(text)</body></html>"
+    }
+    store.selectCorpusFile(CorpusFile(path: file.path, relativePath: "note.org", modifiedAt: nil, byteCount: nil))
+    try await waitUntil { store.selectedEntryHTML?.contains("Original body") == true }
+
+    store.beginEditingSelectedEntry()
+    store.sourceEditorInteraction.text = edited
+    store.noteSourceEditorLocalTextChanged(edited)
+    XCTAssertTrue(store.entryEditorHasUnsavedChanges)
+
+    await store.saveAndFinishActiveEdit()
+
+    XCTAssertTrue(echo.fired)
+    XCTAssertFalse(store.isEditingEntry, "One Save & Done click must leave the editor")
+    XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), edited)
+  }
+
   @MainActor
   func testRenderWaitIsBoundedSoASlowRenderNeverTrapsTheEditor() async throws {
     let suite = "org2-save-and-done-bound-\(UUID().uuidString)"
@@ -118,4 +171,8 @@ final class SaveAndDoneRenderTests: XCTestCase {
     while !predicate(), Date() < deadline { try await Task.sleep(nanoseconds: 20_000_000) }
     XCTAssertTrue(predicate())
   }
+}
+
+private final class SaveAndDoneEchoFlag: @unchecked Sendable {
+  var fired = false
 }
