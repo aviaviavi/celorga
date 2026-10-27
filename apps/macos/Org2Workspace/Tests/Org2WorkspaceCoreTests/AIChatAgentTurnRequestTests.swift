@@ -57,12 +57,50 @@ final class AIChatAgentTurnRequestTests: XCTestCase {
 
   func testResponderTokensResolveByIDOrMentionWithinTheRoom() {
     let resolved = AIChatAgentTurnRequests.resolveResponderTokens(
-      ["@OpenClaw", "builtin.codex", "codex", "claude", "nobody"],
+      ["@OpenClaw", "builtin.codex", "codex", "nobody"],
       roomDestinationIDs: [codex, openClaw],
       destinations: destinations
     )
     XCTAssertEqual(resolved.destinationIDs, [openClaw, codex])
-    XCTAssertEqual(resolved.unresolved, ["claude", "nobody"])
+    XCTAssertEqual(resolved.unresolved, ["nobody"])
+  }
+
+  /// A person's @mention reaches any enabled agent and adds it to the room;
+  /// an explicit `--request-turn` from an agent must resolve the same way
+  /// (by mention or destination ID) instead of failing for a non-member.
+  func testResponderTokensReachEnabledAgentsOutsideTheRoomLikeAPersonsMention() throws {
+    let dot = AIChatDestinationConfiguration(
+      id: "9a3e6f1c-0000-4000-8000-000000000001",
+      name: "Helper",
+      mention: "helper",
+      adapter: .openAIDot
+    )
+    let disabled = AIChatDestinationConfiguration(
+      id: "9a3e6f1c-0000-4000-8000-000000000002",
+      name: "Off",
+      mention: "off",
+      adapter: .openAIDot,
+      isEnabled: false
+    )
+    let all = destinations + [dot, disabled]
+    let byMention = AIChatAgentTurnRequests.resolveResponderTokens(
+      ["helper", "off"],
+      roomDestinationIDs: [codex, openClaw],
+      destinations: all
+    )
+    XCTAssertEqual(byMention.destinationIDs, [dot.id])
+    XCTAssertEqual(byMention.unresolved, ["off"])
+    XCTAssertEqual(AIChatAgentTurnRequests.resolveResponderTokens(
+      [dot.id.uppercased()],
+      roomDestinationIDs: [codex, openClaw],
+      destinations: all
+    ).destinationIDs, [dot.id])
+    // `all` still means the agents already in the room.
+    XCTAssertEqual(AIChatAgentTurnRequests.resolveResponderTokens(
+      ["all"],
+      roomDestinationIDs: [codex, openClaw],
+      destinations: all
+    ).destinationIDs.sorted(), [codex, openClaw].sorted())
   }
 
   func testConsecutiveCountResetsOnAPersonsMessage() {

@@ -41,14 +41,17 @@ enum AIChatAgentTurnRequests {
   }
 
   /// Resolves `--request-turn` tokens (destination IDs or mentions, without
-  /// `@`) against the room's enabled agents.
+  /// `@`). Like a person's @mention, an explicit request may name any enabled
+  /// agent; one outside the room joins it when its turn is queued. `all` and
+  /// `both` still mean the agents already in the room.
   nonisolated static func resolveResponderTokens(
     _ tokens: [String],
     roomDestinationIDs: [String],
     destinations: [AIChatDestinationConfiguration]
   ) -> (destinationIDs: [String], unresolved: [String]) {
     let room = Set(roomDestinationIDs)
-    let candidates = destinations.filter { $0.isEnabled && room.contains($0.id) }
+    let candidates = destinations.filter(\.isEnabled)
+    let roomCandidates = candidates.filter { room.contains($0.id) }
     var resolved: [String] = []
     var unresolved: [String] = []
     for rawToken in tokens {
@@ -56,7 +59,7 @@ enum AIChatAgentTurnRequests {
       if token.hasPrefix("@") { token.removeFirst() }
       guard !token.isEmpty else { continue }
       if token == "all" || token == "both" {
-        for candidate in candidates where !resolved.contains(candidate.id) {
+        for candidate in roomCandidates where !resolved.contains(candidate.id) {
           resolved.append(candidate.id)
         }
         continue

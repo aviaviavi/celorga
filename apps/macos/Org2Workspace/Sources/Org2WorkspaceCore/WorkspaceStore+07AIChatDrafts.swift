@@ -2624,7 +2624,7 @@ extension WorkspaceStore {
       }
       if !resolved.unresolved.isEmpty {
         let names = resolved.unresolved.map { "@\($0)" }.joined(separator: ", ")
-        notices.append("\(requesterLabel) asked \(names) to respond, but no enabled agent in this room has that name.")
+        notices.append("\(requesterLabel) asked \(names) to respond, but no enabled agent has that name.")
       }
     }
     guard !requestedIDs.isEmpty || !notices.isEmpty else { return (messages, []) }
@@ -2645,6 +2645,18 @@ extension WorkspaceStore {
       notices.append(limit == 0
         ? "\(requesterLabel) asked \(names) to respond, but agent hand-offs are off in this room."
         : "\(requesterLabel) asked \(names) to respond, but agents already started \(limit) turn\(limit == 1 ? "" : "s") in a row here. Reply to let them continue, or raise the limit in the room's Default menu or Settings → AI Chat.")
+    }
+
+    // An explicitly requested agent outside the room joins it, as it would
+    // when a person @mentions it.
+    let joining = accepted.filter { !thread.roomDestinationIDs.contains($0) }
+    if !joining.isEmpty,
+       let index = aiChatThreads.firstIndex(where: { $0.id == thread.id }) {
+      let current = aiChatThreads[index]
+      let participants = (current.roomDestinationIDs + joining).reduce(into: [String]()) {
+        if !$0.contains($1) { $0.append($1) }
+      }
+      aiChatThreads[index] = current.replacingAIChatMetadata(roomDestinationIDs: participants)
     }
 
     var nextMessages = messages
