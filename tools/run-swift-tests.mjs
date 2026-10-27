@@ -50,14 +50,23 @@ export const SWIFT_TIMING_TESTS = [
   ...SWIFT_TIMING_CASES.map((id) => `${id}$`),
 ].join("|");
 
+// A test phase that prints nothing for this long is treated as hung: one stuck
+// test otherwise blocks the whole run until CI's job timeout.
+export const SWIFT_TEST_IDLE_TIMEOUT_SECONDS = 600;
+
 export function parseSwiftTestOptions(argv, cpuCount = availableParallelism()) {
-  const options = { jobs: Math.max(1, Math.min(4, Math.floor(cpuCount / 2))), configuration: "debug" };
+  const options = {
+    jobs: Math.max(1, Math.min(4, Math.floor(cpuCount / 2))),
+    configuration: "debug",
+    idleTimeoutSeconds: SWIFT_TEST_IDLE_TIMEOUT_SECONDS,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (["--jobs", "--configuration", "--scratch-path", "--report"].includes(arg)) {
+    if (["--jobs", "--configuration", "--scratch-path", "--report", "--idle-timeout"].includes(arg)) {
       const value = argv[++i];
       if (!value || value.startsWith("--")) throw new Error(`${arg} requires a value`);
       if (arg === "--jobs") options.jobs = Number(value);
+      else if (arg === "--idle-timeout") options.idleTimeoutSeconds = Number(value);
       else if (arg === "--configuration") options.configuration = value;
       else if (arg === "--scratch-path") options.scratchPath = resolve(value);
       else options.report = resolve(value);
@@ -68,6 +77,7 @@ export function parseSwiftTestOptions(argv, cpuCount = availableParallelism()) {
   }
   if (!Number.isInteger(options.jobs) || options.jobs < 1) throw new Error("--jobs must be a positive integer");
   if (!["debug", "release"].includes(options.configuration)) throw new Error("--configuration must be debug or release");
+  if (!(options.idleTimeoutSeconds > 0)) throw new Error("--idle-timeout must be a positive number of seconds");
   return options;
 }
 
@@ -94,21 +104,46 @@ export function swiftInvocation(platform, arm64) {
     : { command: "swift", prefix: [] };
 }
 
-function runSwift(args) {
+// Names the XCTest cases still running on this machine.
+function runningXCTests() {
+  const ps = spawnSync("/bin/ps", ["-axo", "command="], { encoding: "utf8" });
+  return (ps.stdout || "").split("\n")
+    .map((line) => line.match(/xctest -XCTest (\S+)/)?.[1])
+    .filter(Boolean);
+}
+
+function runSwift(args, { idleTimeoutSeconds } = {}) {
   const arm64 = process.platform === "darwin"
     && spawnSync("/usr/sbin/sysctl", ["-n", "hw.optional.arm64"], { encoding: "utf8" }).stdout?.trim() === "1";
   const { command, prefix } = swiftInvocation(process.platform, arm64);
   const started = performance.now();
   return new Promise((done) => {
-    const child = spawn(command, [...prefix, ...args], { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"] });
+    // Own process group, so a hung run can be stopped with every XCTest worker.
+    const child = spawn(command, [...prefix, ...args], { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"], detached: true });
     let output = "";
-    child.stdout.on("data", (chunk) => { output += chunk; process.stdout.write(chunk); });
-    child.stderr.on("data", (chunk) => { output += chunk; process.stderr.write(chunk); });
+    let hungTests;
+    let watchdog;
+    const armWatchdog = () => {
+      if (!idleTimeoutSeconds) return;
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        hungTests = runningXCTests();
+        console.error(`No test output for ${idleTimeoutSeconds}s; stopping hung tests: ${hungTests.join(", ") || "(none found)"}`);
+        try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+      }, idleTimeoutSeconds * 1000);
+    };
+    armWatchdog();
+    child.stdout.on("data", (chunk) => { output += chunk; process.stdout.write(chunk); armWatchdog(); });
+    child.stderr.on("data", (chunk) => { output += chunk; process.stderr.write(chunk); armWatchdog(); });
     child.once("error", (error) => { console.error(error.message); });
-    child.once("close", (code, signal) => done({
-      code: code ?? 1, signal, durationMs: performance.now() - started,
-      buildSeconds: Number(output.match(/Build complete! \(([\d.]+)s\)/)?.[1]) || 0,
-    }));
+    child.once("close", (code, signal) => {
+      clearTimeout(watchdog);
+      done({
+        code: hungTests ? 1 : code ?? 1, signal, durationMs: performance.now() - started,
+        buildSeconds: Number(output.match(/Build complete! \(([\d.]+)s\)/)?.[1]) || 0,
+        ...(hungTests ? { hungTests } : {}),
+      });
+    });
   });
 }
 
@@ -116,11 +151,16 @@ export async function runSwiftSuite(options, run = runSwift) {
   const started = performance.now();
   const phases = [];
   for (const job of swiftTestPlan(options)) {
-    const result = await run(job.args);
+    // A build can stay quiet while one large file compiles, so only test
+    // phases get the idle watchdog.
+    const result = await run(job.args, {
+      idleTimeoutSeconds: job.phase === "build" ? undefined : options.idleTimeoutSeconds,
+    });
     phases.push({ ...job, ...result });
     // Never run stale binaries after a failed build. Correctness failures still
     // allow timing checks to run, but remain failures with no automatic retry.
-    if ((job.phase === "build" && result.code !== 0) || result.signal) break;
+    // A test phase stopped by the watchdog still lets the timing phase run.
+    if ((job.phase === "build" && result.code !== 0) || (result.signal && !result.hungTests)) break;
   }
   return { jobs: options.jobs, durationMs: performance.now() - started, ok: phases.every((p) => p.code === 0), phases };
 }
@@ -128,7 +168,7 @@ export async function runSwiftSuite(options, run = runSwift) {
 async function main() {
   const options = parseSwiftTestOptions(process.argv.slice(2));
   if (options.help) {
-    console.log("Usage: node tools/run-swift-tests.mjs [--jobs N] [--serial] [--skip-build] [--configuration debug|release] [--scratch-path DIR] [--report FILE]");
+    console.log("Usage: node tools/run-swift-tests.mjs [--jobs N] [--serial] [--skip-build] [--configuration debug|release] [--scratch-path DIR] [--report FILE] [--idle-timeout SECONDS]");
     return;
   }
   console.log(options.serial ? "Running all Swift tests serially" : `Running Swift correctness on ${options.jobs} workers, then timing checks serially`);

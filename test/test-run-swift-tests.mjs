@@ -67,6 +67,26 @@ const buildFailure = await runSwiftSuite(options, async () => {
 assert.equal(buildCalls, 1, "failed compilation must not execute stale test binaries");
 assert.equal(buildFailure.ok, false);
 
+const watched = [];
+await runSwiftSuite({ ...options, idleTimeoutSeconds: 42 }, async (args, settings) => {
+  watched.push(settings?.idleTimeoutSeconds);
+  return { code: 0, durationMs: 1 };
+});
+assert.deepEqual(watched, [undefined, 42, 42], "only test phases are stopped when they go quiet");
+assert.equal(parseSwiftTestOptions([]).idleTimeoutSeconds, 600);
+assert.equal(parseSwiftTestOptions(["--idle-timeout", "90"]).idleTimeoutSeconds, 90);
+assert.throws(() => parseSwiftTestOptions(["--idle-timeout", "0"]), /idle-timeout/);
+const hungCalls = [];
+const hung = await runSwiftSuite(options, async (args) => {
+  hungCalls.push(args);
+  return hungCalls.length === 2
+    ? { code: 1, signal: "SIGKILL", hungTests: ["Suite/testHangs"], durationMs: 1 }
+    : { code: 0, durationMs: 1 };
+});
+assert.equal(hungCalls.length, 3, "a hung correctness phase still leaves timing measured");
+assert.equal(hung.ok, false);
+assert.deepEqual(hung.phases[1].hungTests, ["Suite/testHangs"]);
+
 assert.deepEqual(swiftInvocation("darwin", true), { command: "/usr/bin/arch", prefix: ["-arm64", "swift"] });
 assert.deepEqual(swiftInvocation("darwin", false), { command: "swift", prefix: [] });
 assert.deepEqual(swiftInvocation("linux", true), { command: "swift", prefix: [] });
