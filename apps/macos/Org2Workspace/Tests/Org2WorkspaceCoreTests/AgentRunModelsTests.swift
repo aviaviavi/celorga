@@ -540,6 +540,26 @@ final class AgentRunModelsTests: XCTestCase {
     XCTAssertTrue(rejectedBoundary.approvedCurrentApprovalBoundary.isEmpty)
   }
 
+  func testApprovalContinuationThreadIsNotLabeledApprovedWhenNothingWasApproved() {
+    let declined = WorkspaceStore.approvalContinuationThreadLabels(
+      kind: "run", hasSessionKey: false, hasApprovedAction: false
+    )
+    XCTAssertEqual(declined.titlePrefix, "Declined run")
+    XCTAssertFalse(declined.status.localizedCaseInsensitiveContains("approved"))
+
+    let approved = WorkspaceStore.approvalContinuationThreadLabels(
+      kind: "run", hasSessionKey: true, hasApprovedAction: true
+    )
+    XCTAssertEqual(approved.titlePrefix, "Approved run")
+    XCTAssertEqual(approved.status, "Continuing approved run")
+
+    let declinedDraft = WorkspaceStore.approvalContinuationThreadLabels(
+      kind: "external-draft", hasSessionKey: false, hasApprovedAction: false
+    )
+    XCTAssertEqual(declinedDraft.titlePrefix, "Declined draft")
+    XCTAssertFalse(declinedDraft.status.localizedCaseInsensitiveContains("send"))
+  }
+
   @MainActor
   func testApprovingCorrelatedPlainRunRequestsGenericContinuation() async throws {
     let root = FileManager.default.temporaryDirectory

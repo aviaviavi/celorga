@@ -9196,21 +9196,11 @@ extension WorkspaceStore {
       if existing.isSettled { reopenAIChatThread(existing.id) }
       thread = aiChatThreads.first(where: { $0.id == existing.id }) ?? existing
     } else {
-      let titlePrefix: String
-      let continuationStatus: String
-      switch continuation.kind {
-      case "workflow":
-        titlePrefix = "Workflow"
-        continuationStatus = "Continuing approved workflow"
-      case "external-draft":
-        titlePrefix = "Approved draft"
-        continuationStatus = "Sending approved draft"
-      default:
-        titlePrefix = "Approved run"
-        continuationStatus = continuation.sessionKey == nil
-          ? "Continuing approved run in a new OpenClaw session"
-          : "Continuing approved run"
-      }
+      let (titlePrefix, continuationStatus) = Self.approvalContinuationThreadLabels(
+        kind: continuation.kind,
+        hasSessionKey: continuation.sessionKey != nil,
+        hasApprovedAction: !run.approvedCurrentApprovalBoundary.isEmpty
+      )
       thread = createAIChatThread(
         title: "\(titlePrefix): \(run.goal)",
         statusText: continuationStatus,
@@ -9777,6 +9767,33 @@ extension WorkspaceStore {
 
   nonisolated static let agentRunApprovalContinuationFailureReason =
     "Approved actions are recorded, but OpenClaw did not accept the continuation. After restoring the OpenClaw connection, choose Resume and then Continue approved work; do not repeat the approval or create a replacement run."
+
+  /// Title prefix and status for the chat thread that continues a run after its
+  /// approval boundary is decided. A boundary with no approved item (every item
+  /// rejected or canceled) must not be labeled as approved work.
+  nonisolated static func approvalContinuationThreadLabels(
+    kind: String,
+    hasSessionKey: Bool,
+    hasApprovedAction: Bool
+  ) -> (titlePrefix: String, status: String) {
+    switch kind {
+    case "workflow":
+      return ("Workflow", "Continuing approved workflow")
+    case "external-draft":
+      return hasApprovedAction
+        ? ("Approved draft", "Sending approved draft")
+        : ("Declined draft", "Recording the declined draft")
+    default:
+      guard hasApprovedAction else {
+        return ("Declined run", hasSessionKey
+          ? "Recording the declined approval"
+          : "Recording the declined approval in a new OpenClaw session")
+      }
+      return ("Approved run", hasSessionKey
+        ? "Continuing approved run"
+        : "Continuing approved run in a new OpenClaw session")
+    }
+  }
 
   nonisolated static func approvedRunContinuationSessionKey(
     runID: String,
