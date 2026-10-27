@@ -335,12 +335,9 @@ final class WorkspaceTabsTests: XCTestCase {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
-    let source = try String(
-      contentsOf: packageRoot.appendingPathComponent(
+    let source = try SplitSourceText.read(packageRoot.appendingPathComponent(
         "Sources/Org2WorkspaceCore/ContentView.swift"
-      ),
-      encoding: .utf8
-    )
+      ))
 
     XCTAssertTrue(source.contains("workspaceTabID: store.selectedWorkspaceTabID"))
     XCTAssertTrue(source.contains(".environment(\\.workspaceTabID, workspaceTabID)"))

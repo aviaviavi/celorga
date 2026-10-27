@@ -32,10 +32,7 @@ final class SourceCatalogTests: XCTestCase {
   func testSourcesViewHasNoPerTypeButtons() throws {
     let packageRoot = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-    let contentView = try String(
-      contentsOf: packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"),
-      encoding: .utf8
-    )
+    let contentView = try SplitSourceText.read(packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"))
     for hardCoded in [#"profile.type == "email""#, #"profile.type == "notion""#, "Add Email Source", #""Connect Notion""#] {
       XCTAssertFalse(contentView.contains(hardCoded), hardCoded)
     }

@@ -104,7 +104,7 @@ final class WorkspaceLazyCollectionTests: XCTestCase {
   }
 
   func testEveryConvertedProductionCollectionUsesTheReusableLazyShell() throws {
-    let source = try String(contentsOf: contentViewSourceURL, encoding: .utf8)
+    let source = try SplitSourceText.read(contentViewSourceURL)
     let scopes: [ConvertedCollectionScope] = [
       .init(name: "ExternalThreadsView", nextName: "ExternalThreadRow"),
       .init(name: "GoalsView", nextName: "AgentGoalRow"),
@@ -175,12 +175,12 @@ final class WorkspaceLazyCollectionTests: XCTestCase {
     in source: String
   ) throws -> Substring {
     let start = try XCTUnwrap(
-      source.range(of: "private struct \(name): View"),
+      source.range(of: "struct \(name): View"),
       "Missing \(name) in ContentView.swift"
     )
     let end = try XCTUnwrap(
       source.range(
-        of: "private struct \(nextName)",
+        of: "struct \(nextName)",
         range: start.upperBound..<source.endIndex
       ),
       "Missing scope boundary \(nextName) after \(name)"

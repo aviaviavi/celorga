@@ -89,11 +89,8 @@ final class WorkspaceDisplayCacheTests: XCTestCase {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
-    let source = try String(
-      contentsOf: packageRoot
-        .appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"),
-      encoding: .utf8
-    )
+    let source = try SplitSourceText.read(packageRoot
+        .appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"))
 
     XCTAssertFalse(source.contains("OutlineGroup("))
     XCTAssertTrue(source.contains("CorpusFileTreePresentation.visibleRows"))

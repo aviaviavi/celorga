@@ -486,8 +486,11 @@ public struct Org2CLI: Sendable {
     }
     defer { argumentTransport.removeTemporaryFiles() }
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = [node ?? "node"] + argumentTransport.nodeOptions
-      + [scriptPath.path] + argumentTransport.directArguments
+    var processArguments: [String] = [node ?? "node"]
+    processArguments.append(contentsOf: argumentTransport.nodeOptions)
+    processArguments.append(scriptPath.path)
+    processArguments.append(contentsOf: argumentTransport.directArguments)
+    process.arguments = processArguments
     process.currentDirectoryURL = repoRoot
     process.environment = Self.processEnvironment().merging(environment) { _, override in override }
 

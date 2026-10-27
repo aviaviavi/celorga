@@ -27,16 +27,13 @@ final class WorkspaceListSelectionTests: XCTestCase {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
-    let source = try String(
-      contentsOf: packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"),
-      encoding: .utf8
-    )
+    let source = try SplitSourceText.read(packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"))
     let fieldsStart = try XCTUnwrap(
-      source.range(of: "private struct AutomationAIConfigurationFields: View")
+      source.range(of: "struct AutomationAIConfigurationFields: View")
     )
     let editorStart = try XCTUnwrap(
       source.range(
-        of: "private struct AutomationScheduleEditor: View",
+        of: "struct AutomationScheduleEditor: View",
         range: fieldsStart.upperBound..<source.endIndex
       )
     )
@@ -56,10 +53,7 @@ final class WorkspaceListSelectionTests: XCTestCase {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
-    let contentView = try String(
-      contentsOf: packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"),
-      encoding: .utf8
-    )
+    let contentView = try SplitSourceText.read(packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"))
     let settings = try String(
       contentsOf: packageRoot.appendingPathComponent("Sources/Org2Workspace/MobileRemoteSettingsView.swift"),
       encoding: .utf8
@@ -82,7 +76,7 @@ final class WorkspaceListSelectionTests: XCTestCase {
       .deletingLastPathComponent()
     let contentViewSource = packageRoot
       .appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift")
-    let source = try String(contentsOf: contentViewSource, encoding: .utf8)
+    let source = try SplitSourceText.read(contentViewSource)
 
     XCTAssertTrue(source.contains(#"Label("Refresh All", systemImage: "arrow.clockwise")"#))
     XCTAssertTrue(source.contains("Task { await store.refreshCorpusFiles() }"))
@@ -100,14 +94,11 @@ final class WorkspaceListSelectionTests: XCTestCase {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
-    let source = try String(
-      contentsOf: packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"),
-      encoding: .utf8
-    )
-    let meetingsStart = try XCTUnwrap(source.range(of: "private struct MeetingsView: View"))
+    let source = try SplitSourceText.read(packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"))
+    let meetingsStart = try XCTUnwrap(source.range(of: "struct MeetingsView: View"))
     let nextViewStart = try XCTUnwrap(
       source.range(
-        of: "private struct MeetingTranscriptionProgressView",
+        of: "struct MeetingTranscriptionProgressView",
         range: meetingsStart.upperBound..<source.endIndex
       )
     )
@@ -131,14 +122,8 @@ final class WorkspaceListSelectionTests: XCTestCase {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
-    let contentView = try String(
-      contentsOf: packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"),
-      encoding: .utf8
-    )
-    let workspaceStore = try String(
-      contentsOf: packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/WorkspaceStore.swift"),
-      encoding: .utf8
-    )
+    let contentView = try SplitSourceText.read(packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"))
+    let workspaceStore = try SplitSourceText.read(packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/WorkspaceStore.swift"))
 
     XCTAssertTrue(contentView.contains(#"Label(isRunning ? "Working" : "Run Now""#))
     XCTAssertTrue(contentView.contains(#"Button(schedule.enabled ? "Pause Schedule" : "Resume Schedule")"#))
@@ -155,10 +140,7 @@ final class WorkspaceListSelectionTests: XCTestCase {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
-    let contentView = try String(
-      contentsOf: packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"),
-      encoding: .utf8
-    )
+    let contentView = try SplitSourceText.read(packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"))
 
     XCTAssertFalse(contentView.contains(#"Label("Metabase Credentials…", systemImage: "key")"#))
     XCTAssertTrue(contentView.contains(#"Button("Update Credentials")"#))
@@ -173,10 +155,10 @@ final class WorkspaceListSelectionTests: XCTestCase {
       .deletingLastPathComponent()
     let contentViewSource = packageRoot
       .appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift")
-    let source = try String(contentsOf: contentViewSource, encoding: .utf8)
-    let contextPaneStart = try XCTUnwrap(source.range(of: "private struct NodeContextPane: View"))
+    let source = try SplitSourceText.read(contentViewSource)
+    let contextPaneStart = try XCTUnwrap(source.range(of: "struct NodeContextPane: View"))
     let overviewStart = try XCTUnwrap(
-      source.range(of: "private struct NodeContextOverview: View", range: contextPaneStart.upperBound..<source.endIndex)
+      source.range(of: "struct NodeContextOverview: View", range: contextPaneStart.upperBound..<source.endIndex)
     )
     let contextPane = source[contextPaneStart.lowerBound..<overviewStart.lowerBound]
 
@@ -274,7 +256,7 @@ final class WorkspaceListSelectionTests: XCTestCase {
     let settings = try String(contentsOf: settingsSource, encoding: .utf8)
     let contentViewSource = packageRoot
       .appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift")
-    let contentView = try String(contentsOf: contentViewSource, encoding: .utf8)
+    let contentView = try SplitSourceText.read(contentViewSource)
 
     XCTAssertFalse(settings.contains(".onAppear {\n      store.refreshAudioSettingsStatus()"))
     XCTAssertTrue(contentView.contains("Task { await store.refreshAudioSettingsStatusAsync() }"))
@@ -288,7 +270,7 @@ final class WorkspaceListSelectionTests: XCTestCase {
       .deletingLastPathComponent()
     let contentViewSource = packageRoot
       .appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift")
-    let source = try String(contentsOf: contentViewSource, encoding: .utf8)
+    let source = try SplitSourceText.read(contentViewSource)
 
     XCTAssertTrue(source.contains(".task(id: store.meetingTranscriptionProvider)"))
     XCTAssertTrue(source.contains("await store.connectFluidVoice()"))
@@ -305,7 +287,7 @@ final class WorkspaceListSelectionTests: XCTestCase {
       .deletingLastPathComponent()
     let contentViewSource = packageRoot
       .appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift")
-    let source = try String(contentsOf: contentViewSource, encoding: .utf8)
+    let source = try SplitSourceText.read(contentViewSource)
 
     // Compare with whitespace collapsed so layout-only reindentation of the
     // run detail's decision card does not hide a real selection regression.
@@ -348,10 +330,7 @@ final class WorkspaceListSelectionTests: XCTestCase {
       contentsOf: packageRoot.appendingPathComponent("Sources/Org2Workspace/Org2WorkspaceApp.swift"),
       encoding: .utf8
     )
-    let contentSource = try String(
-      contentsOf: packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"),
-      encoding: .utf8
-    )
+    let contentSource = try SplitSourceText.read(packageRoot.appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"))
 
     XCTAssertTrue(appSource.contains("CommandGroup(after: .help)"))
     XCTAssertTrue(appSource.contains("Button(\"Getting Started\")"))
@@ -417,7 +396,7 @@ final class WorkspaceListSelectionTests: XCTestCase {
       .deletingLastPathComponent()
     let contentViewSource = packageRoot
       .appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift")
-    let source = try String(contentsOf: contentViewSource, encoding: .utf8)
+    let source = try SplitSourceText.read(contentViewSource)
 
     XCTAssertTrue(source.contains(".task(id: store.searchFocusToken)"))
     XCTAssertTrue(source.contains(
@@ -516,7 +495,7 @@ final class WorkspaceListSelectionTests: XCTestCase {
       .deletingLastPathComponent()
     let contentView = packageRoot
       .appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift")
-    let source = try String(contentsOf: contentView, encoding: .utf8)
+    let source = try SplitSourceText.read(contentView)
 
     XCTAssertNotNil(source.range(
       of: #"ReadableListSelectionModifier\(\s*isSelected:\s*isSidebarSurfaceSelected\(surface\),\s*verticalPadding:\s*4\s*\)"#,
@@ -635,7 +614,7 @@ final class WorkspaceListSelectionTests: XCTestCase {
       .deletingLastPathComponent()
     let contentView = packageRoot
       .appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift")
-    let source = try String(contentsOf: contentView, encoding: .utf8)
+    let source = try SplitSourceText.read(contentView)
 
     XCTAssertFalse(source.contains("contextualThreadID"))
     XCTAssertFalse(source.contains("contextThread:"))

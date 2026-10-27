@@ -304,9 +304,14 @@ struct AIChatThreadOutputs: Equatable, Sendable {
       count >= 2 && Double(count) >= threshold && isEligibleFolder(folder, corpusRoot: corpusRoot, home: home)
     }
     // Deepest wins; ties go to the folder holding more outputs, then by name.
-    return candidates.keys.max {
-      ($0.split(separator: "/").count, candidates[$0] ?? 0, $1)
-        < ($1.split(separator: "/").count, candidates[$1] ?? 0, $0)
+    func depth(_ folder: String) -> Int { folder.split(separator: "/").count }
+    return candidates.keys.max { (lhs: String, rhs: String) -> Bool in
+      let lhsDepth = depth(lhs), rhsDepth = depth(rhs)
+      if lhsDepth != rhsDepth { return lhsDepth < rhsDepth }
+      let lhsCount: Int = candidates[lhs] ?? 0
+      let rhsCount: Int = candidates[rhs] ?? 0
+      if lhsCount != rhsCount { return lhsCount < rhsCount }
+      return rhs < lhs
     }
   }
 

@@ -293,10 +293,17 @@ struct NodeNeighborhoodDrawing: View {
   private func positions(size: CGSize) -> [String: CGPoint] {
     var positions = moved
     let neighbors = graph.nodes.filter { $0.id != graph.focus.id }
-    if positions[graph.focus.id] == nil { positions[graph.focus.id] = CGPoint(x: size.width / 2, y: size.height / 2) }
+    let centerX: CGFloat = size.width / 2
+    let centerY: CGFloat = size.height / 2
+    if positions[graph.focus.id] == nil { positions[graph.focus.id] = CGPoint(x: centerX, y: centerY) }
+    let radiusX: CGFloat = max(20, centerX - 48)
+    let radiusY: CGFloat = centerY - 35
+    let count = Double(max(neighbors.count, 1))
     for (index, node) in neighbors.enumerated() where positions[node.id] == nil {
-      let angle = Double(index) / Double(max(neighbors.count, 1)) * .pi * 2 - .pi / 2
-      positions[node.id] = CGPoint(x: size.width / 2 + cos(angle) * max(20, size.width / 2 - 48), y: size.height / 2 + sin(angle) * (size.height / 2 - 35))
+      let angle: Double = Double(index) / count * Double.pi * 2 - Double.pi / 2
+      let x: CGFloat = centerX + CGFloat(cos(angle)) * radiusX
+      let y: CGFloat = centerY + CGFloat(sin(angle)) * radiusY
+      positions[node.id] = CGPoint(x: x, y: y)
     }
     return positions
   }

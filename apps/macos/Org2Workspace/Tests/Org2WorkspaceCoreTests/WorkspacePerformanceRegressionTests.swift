@@ -71,14 +71,11 @@ final class WorkspacePerformanceRegressionTests: XCTestCase {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
-    let source = try String(
-      contentsOf: packageRoot
-        .appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"),
-      encoding: .utf8
-    )
-    let detailStart = try XCTUnwrap(source.range(of: "private struct RunCenterDetail: View"))
+    let source = try SplitSourceText.read(packageRoot
+        .appendingPathComponent("Sources/Org2WorkspaceCore/ContentView.swift"))
+    let detailStart = try XCTUnwrap(source.range(of: "struct RunCenterDetail: View"))
     let detailEnd = try XCTUnwrap(source.range(
-      of: "private struct RunCompletionSheet: View",
+      of: "struct RunCompletionSheet: View",
       range: detailStart.upperBound..<source.endIndex
     ))
     let detail = String(source[detailStart.lowerBound..<detailEnd.lowerBound])

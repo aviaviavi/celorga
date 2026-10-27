@@ -248,7 +248,7 @@ final class WorkspaceDocumentMutationLaneTests: XCTestCase {
       .deletingLastPathComponent()
     let storeURL = packageRoot
       .appendingPathComponent("Sources/Org2WorkspaceCore/WorkspaceStore.swift")
-    let source = try String(contentsOf: storeURL, encoding: .utf8)
+    let source = try SplitSourceText.read(storeURL)
 
     for forbidden in [
       "updatedSource.write(to:",
