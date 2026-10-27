@@ -4,6 +4,22 @@ All notable changes to the Celorga VS Code extension (formerly Org2) are documen
 
 ## Unreleased
 
+## 0.10.0 - 2026-10-27
+
+## Highlights
+
+- **Secrets for agents**: secure credential requests on macOS, secret redaction in shared threads, and guest-message approvals.
+- **Review and approvals**: a scannable Review queue, keyboard navigation, Org-style snoozing, optional rejection reasons, and Request Changes handoffs.
+- **Editor and search**: optional Vim mode, AI revision alternatives, web link previews, reliable Save & Done, and faster ranked search.
+- **Agents and chat**: shared AI rooms, per-agent reasoning settings, configurable turn limits, warm OpenCode servers, DeepSeek and OpenAI destinations, reviewed file renames and trash, and persistent thread drafts.
+- **Automation**: TODO-state and pull-request triggers, overlapping scheduled runs, clearer stop reasons, workspace coordination, and opt-in attention notifications.
+- **Org tooling**: flexible capture datetrees, repeater cancellation, archive parent IDs, and priority linting.
+- **Calendar and meetings**: connected Google Calendar sync and stable navigation when transcription completes.
+- **iPhone**: Push to Talk and walkie-talkie approval fixes, voice selection, optional speaker routing, and notification fixes.
+- **macOS**: Dock and Cmd-Tab presence, plus fixes for navigation, bulk snooze, and launch stalls.
+
+Includes reliability improvements for remote agents, chat synchronization, and test infrastructure.
+
 ## 0.9.1 - 2026-10-15
 
 ## Fixes

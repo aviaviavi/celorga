@@ -1,6 +1,6 @@
 {
   "name": "celorga",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "Celorga: a local-first workspace runtime and CLI for structured plain text (Org documents), agents, and durable work.",
   "homepage": "https://celorga.io",
   "keywords": [
