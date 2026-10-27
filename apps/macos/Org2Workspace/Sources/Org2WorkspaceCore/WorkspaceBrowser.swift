@@ -480,7 +480,7 @@ struct WorkspaceWebView: NSViewRepresentable {
 
     func attach(_ webView: WKWebView) {
       self.webView = webView
-      let publish: (WKWebView) -> Void = { [weak self] webView in
+      let publish: @Sendable (WKWebView) -> Void = { [weak self] webView in
         MainActor.assumeIsolated { self?.publish(webView) }
       }
       observations = [

@@ -63,7 +63,7 @@ final class AIChatTranscriptDocumentTests: XCTestCase {
   }
   private func update(_ view: WKWebView, _ payload: AIChatTranscriptHTML.Payload) async throws {
     let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(payload))
-    try await view.callAsyncJavaScript("window.__transcriptUpdate(data)", arguments: ["data": object], in: nil, in: .page)
+    view.callAsyncJavaScript("window.__transcriptUpdate(data)", arguments: ["data": object], in: nil, in: .page)
     try await Task.sleep(for: .milliseconds(80))
   }
 

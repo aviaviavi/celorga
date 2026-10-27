@@ -805,6 +805,13 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
 
   @MainActor
   final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    /// Runs a script whose result is not needed. Calling the completion-handler
+    /// form from a synchronous function keeps it fire-and-forget without
+    /// bridging WebKit's non-Sendable result into an async context.
+    static func evaluateWithoutResult(_ script: String, in webView: WKWebView?) {
+      webView?.evaluateJavaScript(script, completionHandler: nil)
+    }
+
     nonisolated static let viewportMessageHandlerName = "org2ViewportSourceLine"
     nonisolated static let tableViewMessageHandlerName = "org2TableView"
     nonisolated static let tableFormulaMessageHandlerName = "org2TableFormula"
@@ -1683,9 +1690,9 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
         guard let preview = await OrgLinkHoverPreview.load(path: path, line: reference.line, relativePath: relative),
               !Task.isCancelled
         else { return }
-        self.webView?.evaluateJavaScript(
+        Self.evaluateWithoutResult(
           "window.__org2ShowLinkPreview?.(\(token), \(preview.scriptPayload));",
-          completionHandler: nil
+          in: self.webView
         )
         self.recordUsageEvent(.linkPreview, ["kind": target.hasPrefix("id:") ? "id" : "file"])
       }

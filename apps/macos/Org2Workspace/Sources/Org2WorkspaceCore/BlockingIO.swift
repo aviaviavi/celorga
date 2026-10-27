@@ -31,7 +31,6 @@ enum BlockingIO {
 
   /// Waits for a child process to exit without occupying a cooperative thread.
   static func terminationStatus(of process: Process) async -> Int32 {
-    nonisolated(unsafe) let process = process
     return await run {
       process.waitUntilExit()
       return process.terminationStatus

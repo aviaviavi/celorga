@@ -15,7 +15,7 @@ final class AIChatDocumentTests: XCTestCase {
     // The production handler reports geometry to SwiftUI; this fixture keeps a fixed viewport.
     try await view.evaluateJavaScript("window.webkit = {messageHandlers: {chatHeight: {postMessage: function() {}}}}; null;")
     try await view.evaluateJavaScript(AIChatDocumentHTML.updateScript)
-    try await view.callAsyncJavaScript("window.__chatUpdate(html)", arguments: ["html": html], in: nil, in: .page)
+    view.callAsyncJavaScript("window.__chatUpdate(html)", arguments: ["html": html], in: nil, in: .page)
     return view
   }
 
@@ -166,7 +166,7 @@ final class AIChatDocumentTests: XCTestCase {
     <main><p>See d1dd78ea-be29-4045-b609-624e071e4ab2 and <code>d1dd78ea-be29-4045-b609-624e071e4ab2</code>, \
     not 00000000-0000-4000-8000-000000000000.</p><pre>d1dd78ea-be29-4045-b609-624e071e4ab2</pre></main>
     """
-    try await view.callAsyncJavaScript(
+    view.callAsyncJavaScript(
       "window.__chatUpdate(html, [], threads)",
       arguments: ["html": html, "threads": links],
       in: nil,
@@ -198,7 +198,7 @@ final class AIChatDocumentTests: XCTestCase {
     XCTAssertTrue(selected?.contains("First paragraph.") == true)
     XCTAssertTrue(selected?.contains("Second item.") == true)
     XCTAssertTrue(selected?.contains("Third cell.") == true)
-    try await view.callAsyncJavaScript("window.__chatUpdate(html)", arguments: ["html": "<main><p>Updated response.</p></main>"], in: nil, in: .page)
+    view.callAsyncJavaScript("window.__chatUpdate(html)", arguments: ["html": "<main><p>Updated response.</p></main>"], in: nil, in: .page)
     let retained = try await view.evaluateJavaScript("getSelection().toString()") as? String
     XCTAssertEqual(retained, selected)
     try await view.evaluateJavaScript("getSelection().removeAllRanges(); document.dispatchEvent(new Event('selectionchange'));")

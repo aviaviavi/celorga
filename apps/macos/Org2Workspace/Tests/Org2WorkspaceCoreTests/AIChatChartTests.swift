@@ -54,7 +54,7 @@ final class AIChatChartTests: XCTestCase {
     try await view.evaluateJavaScript("window.webkit = {messageHandlers: {chatHeight: {postMessage: function() {}}}}; null;")
     try await view.evaluateJavaScript(AIChatDocumentHTML.updateScript)
     try await view.evaluateJavaScript(chartScript + "; null;")
-    try await view.callAsyncJavaScript("window.__chatUpdate(html)", arguments: ["html": html], in: nil, in: .page)
+    view.callAsyncJavaScript("window.__chatUpdate(html)", arguments: ["html": html], in: nil, in: .page)
 
     let result = try await view.evaluateJavaScript("""
       (() => {

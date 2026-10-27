@@ -19,6 +19,16 @@ private struct ServerConfiguration: Decodable {
   let localAgentFilesystemAccess: String?
 }
 
+/// Turns off Keychain user-interaction prompts for this process.
+/// `SecKeychainSetUserInteractionAllowed` is deprecated with no replacement,
+/// and a headless relay must never block on a dialog, so resolve it at run
+/// time instead of linking the deprecated symbol directly.
+private func disableKeychainUserInteraction() {
+  typealias SetUserInteractionAllowed = @convention(c) (DarwinBoolean) -> OSStatus
+  guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "SecKeychainSetUserInteractionAllowed") else { return }
+  _ = unsafeBitCast(symbol, to: SetUserInteractionAllowed.self)(false)
+}
+
 /// The CLI owns process supervision and the private control socket. This worker
 /// owns the same chat/relay implementation as the desktop, without any windows.
 @main
@@ -34,7 +44,7 @@ struct OpenOrgServer {
       // A LaunchAgent cannot answer Keychain dialogs. Blocking reads can
       // exhaust Swift's cooperative executor and freeze the entire relay.
       // Keep this policy process-local; the desktop retains interactive access.
-      SecKeychainSetUserInteractionAllowed(false)
+      disableKeychainUserInteraction()
       guard CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--config" else {
         throw CocoaError(.fileReadInvalidFileName)
       }
