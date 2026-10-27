@@ -122,12 +122,16 @@ final class OrgCryptPeekTests: XCTestCase {
     // The agent socket path must stay short, so the home lives in /tmp.
     let home = "/tmp/o2pk-\(UUID().uuidString.prefix(8))"
     defer {
+      // gpgconf lives beside the real gpg binary, which is often behind a
+      // symlink (for example /usr/local/bin/gpg -> /usr/local/MacGPG2/bin/gpg2).
+      // A missing gpgconf leaves this throwaway agent running.
+      let gpgconf = URL(fileURLWithPath: gpg).resolvingSymlinksInPath()
+        .deletingLastPathComponent().appendingPathComponent("gpgconf")
       let kill = Process()
-      kill.executableURL = URL(fileURLWithPath: URL(fileURLWithPath: gpg).deletingLastPathComponent().appendingPathComponent("gpgconf").path)
+      kill.executableURL = gpgconf
       kill.arguments = ["--kill", "gpg-agent"]
       kill.environment = ["GNUPGHOME": home]
-      try? kill.run()
-      kill.waitUntilExit()
+      if (try? kill.run()) != nil { kill.waitForExit(timeout: 10) }
       try? FileManager.default.removeItem(atPath: home)
     }
     let wrapper = root.appendingPathComponent("gpg-isolated.sh")

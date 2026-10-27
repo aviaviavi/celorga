@@ -227,8 +227,7 @@ final class AIChatInboxTests: XCTestCase {
     daemon.standardError = FileHandle.nullDevice
     try daemon.run()
     defer {
-      if daemon.isRunning { daemon.terminate() }
-      daemon.waitUntilExit()
+      daemon.terminateAndWaitForExit()
     }
     let socketDeadline = Date().addingTimeInterval(3)
     while !FileManager.default.fileExists(atPath: socketPath.path), Date() < socketDeadline {

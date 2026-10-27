@@ -5112,7 +5112,7 @@ final class OpenOrgPerformanceGateTests: XCTestCase {
     let pipe = Pipe()
     process.standardOutput = pipe
     try process.run()
-    process.waitUntilExit()
+    process.waitForExit()
     let output = String(
       decoding: pipe.fileHandleForReading.readDataToEndOfFile(),
       as: UTF8.self

@@ -718,7 +718,7 @@ final class AudioApprovalHostTests: XCTestCase {
     process.standardError = Pipe()
     try process.run()
     let data = output.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
+    process.waitForExit()
     XCTAssertEqual(process.terminationStatus, 0, "celorga \(arguments.joined(separator: " ")) failed")
     let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     return (json["run"] as? [String: Any]) ?? json
@@ -763,7 +763,7 @@ final class AudioApprovalHostTests: XCTestCase {
     process.standardOutput = output
     try process.run()
     let data = output.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
+    process.waitForExit()
     XCTAssertEqual(process.terminationStatus, 0)
     let result = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: String])
     return DemoApproval(runID: try XCTUnwrap(result["runID"]), approvalID: try XCTUnwrap(result["approvalID"]),

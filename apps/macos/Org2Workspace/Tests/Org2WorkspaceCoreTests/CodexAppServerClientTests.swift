@@ -1330,6 +1330,7 @@ final class CodexAppServerClientTests: XCTestCase {
       sshExecutableURL: fakeSSH,
       transport: .managedRemote(sshHost: "remote.example"),
       requestTimeoutNanoseconds: 5_000_000_000,
+      initializeRequestTimeoutNanoseconds: 30_000_000_000,
       eventHandler: { _ in },
       dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
     )
@@ -1563,6 +1564,7 @@ final class CodexAppServerClientTests: XCTestCase {
       executableURL: executable,
       requestTimeoutNanoseconds: 1_000_000_000,
       threadResumeRequestTimeoutNanoseconds: 3_000_000_000,
+      initializeRequestTimeoutNanoseconds: 30_000_000_000,
       eventHandler: { _ in },
       dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
     )
@@ -1617,6 +1619,7 @@ final class CodexAppServerClientTests: XCTestCase {
       executableURL: executable,
       requestTimeoutNanoseconds: 5_000_000_000,
       threadResumeRequestTimeoutNanoseconds: 100_000_000,
+      initializeRequestTimeoutNanoseconds: 30_000_000_000,
       eventHandler: { _ in },
       dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
     )
@@ -1692,6 +1695,7 @@ final class CodexAppServerClientTests: XCTestCase {
       executableURL: executable,
       requestTimeoutNanoseconds: 5_000_000_000,
       threadResumeRequestTimeoutNanoseconds: 100_000_000,
+      initializeRequestTimeoutNanoseconds: 30_000_000_000,
       eventHandler: { _ in },
       dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
     )
@@ -1818,8 +1822,7 @@ final class CodexAppServerClientTests: XCTestCase {
     daemon.standardError = daemonError
     try daemon.run()
     defer {
-      if daemon.isRunning { daemon.terminate() }
-      daemon.waitUntilExit()
+      daemon.terminateAndWaitForExit()
     }
     let socketDeadline = Date().addingTimeInterval(3)
     while !FileManager.default.fileExists(atPath: socketPath.path), Date() < socketDeadline {
@@ -1860,6 +1863,7 @@ final class CodexAppServerClientTests: XCTestCase {
         sshExecutableURL: fakeSSH,
         transport: .managedRemote(sshHost: "isolated.test"),
         requestTimeoutNanoseconds: 2_000_000_000,
+        initializeRequestTimeoutNanoseconds: 30_000_000_000,
         eventHandler: { event in await startRecorder.record(event) },
         dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
       )
@@ -2090,8 +2094,7 @@ final class CodexAppServerClientTests: XCTestCase {
     daemon.standardError = daemonError
     try daemon.run()
     defer {
-      if daemon.isRunning { daemon.terminate() }
-      daemon.waitUntilExit()
+      daemon.terminateAndWaitForExit()
     }
     let socketDeadline = Date().addingTimeInterval(3)
     while !FileManager.default.fileExists(atPath: socketPath.path), Date() < socketDeadline {
@@ -2123,6 +2126,7 @@ final class CodexAppServerClientTests: XCTestCase {
         sshExecutableURL: fakeSSH,
         transport: .managedRemote(sshHost: "isolated.test"),
         requestTimeoutNanoseconds: 2_000_000_000,
+        initializeRequestTimeoutNanoseconds: 30_000_000_000,
         eventHandler: { _ in },
         dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
       )
@@ -2284,8 +2288,7 @@ final class CodexAppServerClientTests: XCTestCase {
     daemon.standardError = FileHandle.nullDevice
     try daemon.run()
     defer {
-      if daemon.isRunning { daemon.terminate() }
-      daemon.waitUntilExit()
+      daemon.terminateAndWaitForExit()
     }
     let socketDeadline = Date().addingTimeInterval(3)
     while !FileManager.default.fileExists(atPath: socketPath.path), Date() < socketDeadline {
@@ -2317,6 +2320,7 @@ final class CodexAppServerClientTests: XCTestCase {
         sshExecutableURL: fakeSSH,
         transport: .managedRemote(sshHost: "isolated.test"),
         requestTimeoutNanoseconds: 1_000_000_000,
+        initializeRequestTimeoutNanoseconds: 30_000_000_000,
         eventHandler: { _ in },
         dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
       )
@@ -2429,6 +2433,7 @@ final class CodexAppServerClientTests: XCTestCase {
       sshExecutableURL: fakeSSH,
       transport: .managedRemote(sshHost: "remote.example"),
       requestTimeoutNanoseconds: 5_000_000_000,
+      initializeRequestTimeoutNanoseconds: 30_000_000_000,
       eventHandler: { _ in },
       dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
     )
@@ -2493,6 +2498,7 @@ final class CodexAppServerClientTests: XCTestCase {
       sshExecutableURL: fakeSSH,
       transport: .managedRemote(sshHost: "remote.example"),
       requestTimeoutNanoseconds: 2_000_000_000,
+      initializeRequestTimeoutNanoseconds: 30_000_000_000,
       eventHandler: { _ in },
       dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
     )
@@ -2560,6 +2566,7 @@ final class CodexAppServerClientTests: XCTestCase {
       sshExecutableURL: fakeSSH,
       transport: .managedRemote(sshHost: "remote.example"),
       requestTimeoutNanoseconds: 2_000_000_000,
+      initializeRequestTimeoutNanoseconds: 30_000_000_000,
       eventHandler: { _ in },
       dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
     )
@@ -2616,6 +2623,7 @@ final class CodexAppServerClientTests: XCTestCase {
       sshExecutableURL: fakeSSH,
       transport: .managedRemote(sshHost: "remote.example"),
       requestTimeoutNanoseconds: 1_000_000_000,
+      initializeRequestTimeoutNanoseconds: 30_000_000_000,
       eventHandler: { event in await recorder.record(event) },
       dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
     )
@@ -2676,6 +2684,7 @@ final class CodexAppServerClientTests: XCTestCase {
       sshExecutableURL: fakeSSH,
       transport: .managedRemote(sshHost: "remote.example"),
       requestTimeoutNanoseconds: 1_000_000_000,
+      initializeRequestTimeoutNanoseconds: 30_000_000_000,
       eventHandler: { event in await recorder.record(event) },
       dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
     )
@@ -2749,6 +2758,7 @@ final class CodexAppServerClientTests: XCTestCase {
       sshExecutableURL: fakeSSH,
       transport: .managedRemote(sshHost: "remote.example"),
       requestTimeoutNanoseconds: 1_000_000_000,
+      initializeRequestTimeoutNanoseconds: 30_000_000_000,
       eventHandler: { _ in },
       dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
     )
@@ -2998,6 +3008,7 @@ final class CodexAppServerClientTests: XCTestCase {
       sshExecutableURL: fakeSSH,
       transport: .managedRemote(sshHost: "remote.example"),
       requestTimeoutNanoseconds: 2_000_000_000,
+      initializeRequestTimeoutNanoseconds: 30_000_000_000,
       eventHandler: { event in await recorder.record(event) },
       dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
     )
@@ -3401,8 +3412,7 @@ final class CodexAppServerClientTests: XCTestCase {
     daemon.standardError = FileHandle.nullDevice
     try daemon.run()
     defer {
-      if daemon.isRunning { daemon.terminate() }
-      daemon.waitUntilExit()
+      daemon.terminateAndWaitForExit()
     }
     let socketDeadline = Date().addingTimeInterval(3)
     while !FileManager.default.fileExists(atPath: socketPath.path), Date() < socketDeadline {
@@ -3434,6 +3444,7 @@ final class CodexAppServerClientTests: XCTestCase {
         sshExecutableURL: fakeSSH,
         transport: .managedRemote(sshHost: "isolated.test"),
         requestTimeoutNanoseconds: 1_000_000_000,
+        initializeRequestTimeoutNanoseconds: 30_000_000_000,
         eventHandler: { _ in },
         dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
       )

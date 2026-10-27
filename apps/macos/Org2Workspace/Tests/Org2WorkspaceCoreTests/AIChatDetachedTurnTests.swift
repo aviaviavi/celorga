@@ -473,7 +473,7 @@ final class AIChatDetachedTurnTests: XCTestCase {
     XCTAssertTrue(firstLines[0].contains("openorg_server"))
     XCTAssertTrue(firstLines[1].contains("ses_detached"))
     try run.output.close()
-    run.process.waitUntilExit()
+    run.process.waitForExit()
 
     let attach = try runPython(
       python,
@@ -818,8 +818,7 @@ final class AIChatDetachedTurnTests: XCTestCase {
       probe.arguments = ["-c", "import sys"]
       probe.standardOutput = FileHandle.nullDevice
       probe.standardError = FileHandle.nullDevice
-      try? probe.run()
-      probe.waitUntilExit()
+      guard (try? probe.run()) != nil, probe.waitForExit(timeout: 10) else { continue }
       if probe.terminationStatus == 0 { return URL(fileURLWithPath: path) }
     }
     throw XCTSkip("python3 is not available")
@@ -891,7 +890,7 @@ final class AIChatDetachedTurnTests: XCTestCase {
   ) throws -> (status: Int32, output: String) {
     let run = try startPython(python, source: source, input: input, environment: environment)
     let data = try run.output.readToEnd() ?? Data()
-    run.process.waitUntilExit()
+    run.process.waitForExit()
     return (run.process.terminationStatus, String(decoding: data, as: UTF8.self))
   }
 

@@ -145,7 +145,7 @@ final class OpenCodeClientTests: XCTestCase {
     try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: payload))
     try input.fileHandleForWriting.close()
     let streamed = String(decoding: try output.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
-    process.waitUntilExit()
+    process.waitForExit()
     XCTAssertEqual(process.terminationStatus, 0, streamed)
 
     let delivered = try String(contentsOf: root.appendingPathComponent("stdin"), encoding: .utf8)
