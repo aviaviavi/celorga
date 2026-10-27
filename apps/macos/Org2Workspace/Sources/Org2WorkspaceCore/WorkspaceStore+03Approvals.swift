@@ -1441,6 +1441,10 @@ extension WorkspaceStore {
     searchIndexStatusText = "Indexing search..."
 
     searchIndexTask = Task { [cli] in
+      if cli.hasSearchService {
+        // Serve searches from the existing index while it is rebuilt.
+        Task.detached(priority: .utility) { await cli.prewarmSearchService(corpusRoot: corpusRoot) }
+      }
       do {
         let payload: SearchIndexBuildPayload = try await cli.runJSON([
           "index",
@@ -1460,6 +1464,10 @@ extension WorkspaceStore {
           let skipped = payload.skippedFiles > 0 ? ", \(payload.skippedFiles) skipped" : ""
           self.searchIndexStatusText = "\(payload.fileCount) files, \(payload.lineCount) lines indexed\(skipped)"
         }
+        // Load the fresh index into the search worker now, so the first
+        // query after launch or a corpus change does not pay for it.
+        guard !Task.isCancelled, cli.hasSearchService else { return }
+        await cli.prewarmSearchService(corpusRoot: corpusRoot)
       } catch {
         guard !Task.isCancelled else { return }
         await MainActor.run {
@@ -1567,6 +1575,21 @@ extension WorkspaceStore {
       let payload: SearchPayload
       if let workspaceSearchLoaderForTesting {
         payload = try await workspaceSearchLoaderForTesting(query, arguments)
+      } else if !federates, cli.hasSearchService {
+        // The warm worker answers in well under a second; a one-shot CLI
+        // process spends seconds starting Node and reading the index.
+        do {
+          payload = try await cli.searchIndexedCorpus(
+            query,
+            corpusRoot: corpusRoot,
+            limit: Self.workspaceSearchCandidateLimit,
+            context: 1
+          )
+        } catch is CancellationError {
+          throw CancellationError()
+        } catch {
+          payload = try await cli.runJSON(arguments)
+        }
       } else {
         payload = try await cli.runJSON(arguments)
       }

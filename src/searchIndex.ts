@@ -381,7 +381,16 @@ export function loadCompatibleSearchIndex(options: {
   return { index, path: indexPath };
 }
 
-export function searchIndexedCorpus(index: Org2SearchIndex, options: Org2SearchOptions): Org2SearchHit[] {
+/**
+ * `mayContain` lets a long-lived caller skip whole files with a cached
+ * lower-cased copy of their text; it must never reject a file that has a
+ * matching line.
+ */
+export function searchIndexedCorpus(
+  index: Org2SearchIndex,
+  options: Org2SearchOptions,
+  mayContain?: (file: Org2SearchIndexFile, needle: string) => boolean,
+): Org2SearchHit[] {
   const hits: Org2SearchHit[] = [];
   const matcher = literalCaseInsensitiveMatcher(options.query);
   const fileZoneFilters = options.fileZoneFilters.map((zone) => zone.toLowerCase()).filter(Boolean);
@@ -389,6 +398,7 @@ export function searchIndexedCorpus(index: Org2SearchIndex, options: Org2SearchO
   for (const file of index.files) {
     const normalizedFile = file.path.toLowerCase();
     if (fileZoneFilters.length && !fileZoneFilters.some((zone) => normalizedFile.includes(zone))) continue;
+    if (mayContain && !mayContain(file, matcher.needle)) continue;
     if (file.headings && index.todoWorkflowVersion === 1 && file.todoConfiguration === todoConfigurationKey(file.path)) {
       collectSearchHitsForIndexedFile(file, matcher, options, hits);
     } else {
