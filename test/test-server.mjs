@@ -18,7 +18,7 @@ assert.match(
   "the headless filesystem policy must also control OpenClaw local edits",
 );
 const workspaceStoreSource = fs.readFileSync(
-  path.resolve("apps/macos/Org2Workspace/Sources/Org2WorkspaceCore/WorkspaceStore.swift"),
+  path.resolve("apps/macos/Org2Workspace/Sources/Org2WorkspaceCore/WorkspaceStore+01Sources.swift"),
   "utf8",
 );
 assert.match(

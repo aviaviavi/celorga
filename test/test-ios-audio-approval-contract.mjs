@@ -29,7 +29,7 @@ const broker = read("src/audioApprovalBroker.ts");
 const macProtocol = read(`${mac}/MobileRemoteProtocol.swift`);
 const macCoordinator = read(`${mac}/MobileRemoteCoordinator.swift`);
 const macPush = read(`${mac}/MobileRemotePushNotifications.swift`);
-const macStore = read(`${mac}/WorkspaceStore.swift`);
+const macStore = read(`${mac}/WorkspaceStore+08AIChatConfiguration.swift`);
 const pbxproj = read("apps/ios/Org2Mobile/Org2Mobile.xcodeproj/project.pbxproj");
 
 // 1. Spoken phrase tables are identical in Swift and TypeScript.
