@@ -193,6 +193,35 @@ final class OpenCodeClientTests: XCTestCase {
     XCTAssertEqual(loggedEvents, ["session:ses_123", "tool:tool-1:Searching:succeeded", "text:Yes."])
   }
 
+  /// OpenCode emits a text part per step. Concatenating them produced one
+  /// unbroken wall ("…the bulk-snooze path:The harness crashes…").
+  func testJSONStreamKeepsTheFinalTextPartAsTheReplyAndEarlierPartsAsNarration() async {
+    var decoder = OpenCodeStreamDecoder()
+    let events = EventLog()
+    let record: @Sendable (OpenCodeEvent) async -> Void = { event in
+      switch event {
+      case .textDelta(let text): await events.append("delta:\(text)")
+      case .replyReplaced(let text): await events.append("replaced:\(text)")
+      case .reasoning(let id, let text): await events.append("narration:\(id):\(text)")
+      default: break
+      }
+    }
+    await decoder.consume(#"{"type":"text","sessionID":"ses_1","part":{"id":"t-1","text":"Let me check the parser:"}}"#, eventHandler: record)
+    await decoder.consume(#"{"type":"tool_use","sessionID":"ses_1","part":{"id":"tool-1","tool":"read","state":{"status":"completed"}}}"#, eventHandler: record)
+    await decoder.consume(#"{"type":"text","sessionID":"ses_1","part":{"id":"t-2","text":"Found it. Fixing:"}}"#, eventHandler: record)
+    await decoder.consume(#"{"type":"text","sessionID":"ses_1","part":{"id":"t-3","text":"Summary\n\nThe parser now handles tabs."}}"#, eventHandler: record)
+
+    XCTAssertEqual(decoder.result.reply, "Summary\n\nThe parser now handles tabs.")
+    let recorded = await events.values
+    XCTAssertEqual(recorded, [
+      "delta:Let me check the parser:",
+      "narration:narration-t-1:Let me check the parser:",
+      "replaced:Found it. Fixing:",
+      "narration:narration-t-2:Found it. Fixing:",
+      "replaced:Summary\n\nThe parser now handles tabs.",
+    ])
+  }
+
   func testInlineConfigurationMapsReadOnlyPermissions() throws {
     let configuration = try OpenCodeClient.inlineConfiguration(
       systemPrompt: "Use the Org2 rules.",

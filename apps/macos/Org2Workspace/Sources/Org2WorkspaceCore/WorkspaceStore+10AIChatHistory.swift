@@ -326,6 +326,14 @@ extension WorkspaceStore {
       handleCLIChatSessionStarted(sessionID, threadID: threadID, title: "OpenCode")
     case .textDelta(let delta):
       handleCLIChatTextDelta(delta, threadID: threadID, title: "OpenCode")
+    case .replyReplaced(let reply):
+      guard aiChatThreads.contains(where: { $0.id == threadID }) else { return }
+      aiChatLastEventAtByThreadID[threadID] = Date()
+      aiChatLiveState.noteEvent(for: threadID, coalesced: true)
+      aiChatLiveState.replaceStreamingReply(reply, for: threadID, coalesced: true)
+      if selectedAIChatThreadID == threadID, canPublishAIChatRuntimeState(for: threadID) {
+        aiChatStatusText = "OpenCode is replying"
+      }
     case .activity(let id, let title, let status):
       handleCLIChatActivity(
         id: id,

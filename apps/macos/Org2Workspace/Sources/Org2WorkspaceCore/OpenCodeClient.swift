@@ -49,6 +49,9 @@ public enum OpenCodeEvent: Sendable {
   case sessionStarted(sessionID: String)
   case reasoning(id: String, text: String)
   case textDelta(String)
+  /// A later text part replaced the reply so far; the earlier part was
+  /// working narration and arrives separately as `.reasoning`.
+  case replyReplaced(String)
   case activity(id: String, title: String, status: AIChatRunActivity.Status)
   case warning(String)
 }
@@ -72,6 +75,8 @@ struct OpenCodeStreamResult: Equatable, Sendable {
 
 struct OpenCodeStreamDecoder: Sendable {
   private(set) var result = OpenCodeStreamResult()
+  private var currentTextPartID: String?
+  private var textPartCount = 0
 
   mutating func consume(
     _ line: String,
@@ -95,9 +100,36 @@ struct OpenCodeStreamDecoder: Sendable {
             let text = part["text"] as? String,
             !text.isEmpty
       else { return }
-      result.reply += text
       result.succeeded = true
-      await eventHandler(.textDelta(text))
+      guard let partID = part["id"] as? String, !partID.isEmpty else {
+        // Without part identity the text can only be a continuation.
+        result.reply += text
+        await eventHandler(.textDelta(text))
+        return
+      }
+      if partID == currentTextPartID {
+        // The same part again carries its complete, newer text.
+        result.reply = text
+        await eventHandler(.replyReplaced(text))
+        return
+      }
+      textPartCount += 1
+      let earlier = result.reply.trimmingCharacters(in: .whitespacesAndNewlines)
+      let earlierID = currentTextPartID ?? "text-\(textPartCount - 1)"
+      currentTextPartID = partID
+      guard !earlier.isEmpty else {
+        result.reply = text
+        await eventHandler(.textDelta(text))
+        return
+      }
+      // OpenCode emits one text part per step. Text before a later step is
+      // narration between tool calls ("Let me check…"); concatenating every
+      // part made one unbroken wall of text. The reply is the final part, as
+      // with Claude Code's result and Codex's final message, and each earlier
+      // part stays in the run's activity feed.
+      await eventHandler(.reasoning(id: "narration-\(earlierID)", text: earlier))
+      result.reply = text
+      await eventHandler(.replyReplaced(text))
     case "reasoning":
       guard let part = object["part"] as? [String: Any],
             let text = (part["text"] as? String)?
