@@ -207,6 +207,7 @@ final class AIChatInboxTests: XCTestCase {
     let socketPath = controlDirectory.appendingPathComponent("app-server-control.sock")
     let startLog = root.appendingPathComponent("physical-starts.jsonl")
     let acceptedPath = root.appendingPathComponent("accepted-attempt.json")
+    let visibilityPath = root.appendingPathComponent("accepted-turn-visible")
     let daemonScript = root.appendingPathComponent("fake-daemon.py")
     try CodexAppServerClientTests.fakeManagedRemoteDaemonScript.write(
       to: daemonScript,
@@ -221,7 +222,8 @@ final class AIChatInboxTests: XCTestCase {
       startLog.path,
       acceptedPath.path,
       "0",
-      "drop-response-first"
+      "drop-response-first",
+      visibilityPath.path
     ]
     daemon.standardOutput = FileHandle.nullDevice
     daemon.standardError = FileHandle.nullDevice
@@ -315,6 +317,9 @@ final class AIChatInboxTests: XCTestCase {
 
     destination.workspaceRoot = root.path
     store.updateAIChatDestination(destination)
+    // Keep the lost response unconfirmed until this test explicitly exposes
+    // the accepted turn, rather than depending on the adapter's read count.
+    try Data().write(to: visibilityPath)
     let receipt = await store.retryAIChatMessageAwaitingDelivery(messageID, timeout: .seconds(8))
     XCTAssertEqual(receipt.state, .started)
     XCTAssertEqual(receipt.messageID, messageID)

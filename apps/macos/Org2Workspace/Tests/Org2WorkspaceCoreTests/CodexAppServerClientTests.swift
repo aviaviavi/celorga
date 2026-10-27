@@ -3564,6 +3564,7 @@ final class CodexAppServerClientTests: XCTestCase {
   socket_path, count_path, accepted_path = sys.argv[1:4]
   required_reads = int(sys.argv[4]) if len(sys.argv) > 4 else 0
   mode = sys.argv[5] if len(sys.argv) > 5 else "completed"
+  visibility_path = sys.argv[6] if len(sys.argv) > 6 else None
   fail_first = mode in (
       "fail-first",
       "missing-id-first",
@@ -3677,7 +3678,9 @@ final class CodexAppServerClientTests: XCTestCase {
                   turns = []
                   if (
                       os.path.exists(accepted_path)
-                      and (not drop_response_first or current_read_count > 4)
+                      and (not drop_response_first or (
+                          os.path.exists(visibility_path) if visibility_path else current_read_count > 4
+                      ))
                   ):
                       with open(accepted_path, "r", encoding="utf-8") as handle:
                           accepted = json.load(handle)
