@@ -122,6 +122,20 @@ struct ApprovalEntry: Identifiable, Hashable, Codable {
   var requestedAt: String? = nil
   /// "urgent" or absent. Set explicitly by the requester.
   var priority: String? = nil
+  /// ISO time a snoozed approval returns to the queue.
+  var snoozedUntil: String? = nil
+
+  var snoozedUntilDate: Date? {
+    guard let snoozedUntil, !snoozedUntil.isEmpty else { return nil }
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return fractional.date(from: snoozedUntil) ?? ISO8601DateFormatter().date(from: snoozedUntil)
+  }
+
+  func isSnoozed(at now: Date = Date()) -> Bool {
+    guard let until = snoozedUntilDate else { return false }
+    return until > now
+  }
 
   var isRunApproval: Bool {
     kind == "run" && runID != nil && approvalID != nil
@@ -151,6 +165,47 @@ struct ApprovalEntry: Identifiable, Hashable, Codable {
 
     \(body.trimmedForDisplay(maxCharacters: 900))
     """
+  }
+}
+
+/// Snooze presets for approvals. Mirrors the Mac app's `ApprovalSnoozeOption`.
+enum ApprovalSnoozeOption: String, CaseIterable, Identifiable {
+  case threeHours
+  case tomorrowMorning
+  case nextMonday
+  case nextWeek
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .threeHours: "For 3 Hours"
+    case .tomorrowMorning: "Until Tomorrow Morning"
+    case .nextMonday: "Until Monday Morning"
+    case .nextWeek: "For a Week"
+    }
+  }
+
+  /// Headline approvals snooze with a SCHEDULED date on the Mac, so they take whole days.
+  var isWholeDay: Bool { self != .threeHours }
+
+  func wakeDate(from now: Date = Date(), calendar: Calendar = .current) -> Date {
+    func morning(daysAfter days: Int) -> Date {
+      let day = calendar.date(byAdding: .day, value: days, to: calendar.startOfDay(for: now)) ?? now
+      return calendar.date(bySettingHour: 9, minute: 0, second: 0, of: day) ?? day
+    }
+    switch self {
+    case .threeHours:
+      return now.addingTimeInterval(3 * 60 * 60)
+    case .tomorrowMorning:
+      return morning(daysAfter: 1)
+    case .nextMonday:
+      let weekday = calendar.component(.weekday, from: now)
+      let delta = (9 - weekday) % 7 == 0 ? 7 : (9 - weekday) % 7
+      return morning(daysAfter: delta)
+    case .nextWeek:
+      return morning(daysAfter: 7)
+    }
   }
 }
 

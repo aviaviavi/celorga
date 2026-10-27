@@ -1393,6 +1393,9 @@ public struct ApprovalItem: Identifiable, Hashable, Sendable, Decodable {
   public let decisionKeys: [String]?
   /// "urgent" or absent (normal). Orders interrupting prompts; never inferred from age.
   public let priority: String?
+  /// ISO time a snoozed approval returns to the queue (`celorga approvals --include-snoozed`).
+  /// Run approvals carry it in run state; headline approvals derive it from a future SCHEDULED date.
+  public let snoozedUntil: String?
 
   public init(
     title: String,
@@ -1420,7 +1423,8 @@ public struct ApprovalItem: Identifiable, Hashable, Sendable, Decodable {
     runApprovalCount: Int? = nil,
     runDecisionEffect: String? = nil,
     decisionKeys: [String]? = nil,
-    priority: String? = nil
+    priority: String? = nil,
+    snoozedUntil: String? = nil
   ) {
     self.kind = kind
     self.title = title
@@ -1448,9 +1452,41 @@ public struct ApprovalItem: Identifiable, Hashable, Sendable, Decodable {
     self.runDecisionEffect = runDecisionEffect
     self.decisionKeys = decisionKeys
     self.priority = priority
+    self.snoozedUntil = snoozedUntil
   }
 
   public var isUrgent: Bool { priority == "urgent" }
+
+  public var snoozedUntilDate: Date? {
+    guard let snoozedUntil, !snoozedUntil.isEmpty else { return nil }
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return fractional.date(from: snoozedUntil) ?? ISO8601DateFormatter().date(from: snoozedUntil)
+  }
+
+  /// Hidden from the default queue until `snoozedUntil`; it wakes by the clock alone.
+  public func isSnoozed(at now: Date = Date()) -> Bool {
+    guard let until = snoozedUntilDate else { return false }
+    return until > now
+  }
+
+  /// Run approvals snooze to an exact time. Headline approvals snooze the Org way, with a
+  /// SCHEDULED date, so they only take whole days.
+  public var supportsTimedSnooze: Bool { isRunApproval }
+
+  /// The same item with a different snooze state, used for optimistic queue updates.
+  public func withSnoozedUntil(_ value: String?) -> ApprovalItem {
+    ApprovalItem(
+      title: title, status: status, todo: todo, level: level, file: file, line: line,
+      idValue: idValue, properties: properties, body: body, tags: tags, kind: kind,
+      approvalId: approvalId, fingerprint: fingerprint, action: action, riskClass: riskClass,
+      requestedRole: requestedRole, requestedFrom: requestedFrom, requestedAt: requestedAt,
+      runId: runId, runGoal: runGoal, runStatus: runStatus,
+      runPendingApprovalCount: runPendingApprovalCount, runApprovalCount: runApprovalCount,
+      runDecisionEffect: runDecisionEffect, decisionKeys: decisionKeys, priority: priority,
+      snoozedUntil: value
+    )
+  }
 
   public var id: String {
     if let runId, let approvalId { return "run:\(runId):\(approvalId)" }
@@ -1534,6 +1570,7 @@ public struct ApprovalItem: Identifiable, Hashable, Sendable, Decodable {
       runGoal,
       runStatus,
       runDecisionEffect,
+      snoozedUntil.map { _ in "snoozed" },
       decisionKeys?.joined(separator: " "),
       tags.joined(separator: " "),
       properties.map { "\($0.key) \($0.value)" }.joined(separator: "\n")
@@ -1541,6 +1578,51 @@ public struct ApprovalItem: Identifiable, Hashable, Sendable, Decodable {
       .compactMap { $0 }
       .joined(separator: "\n")
       .lowercased()
+  }
+}
+
+/// Snooze presets for approvals, the equivalent of moving an Org SCHEDULED date forward.
+public enum ApprovalSnoozeOption: String, CaseIterable, Identifiable, Sendable {
+  case threeHours
+  case tomorrowMorning
+  case nextMonday
+  case nextWeek
+
+  public var id: String { rawValue }
+
+  public var title: String {
+    switch self {
+    case .threeHours: "For 3 Hours"
+    case .tomorrowMorning: "Until Tomorrow Morning"
+    case .nextMonday: "Until Monday Morning"
+    case .nextWeek: "For a Week"
+    }
+  }
+
+  /// Whole-day presets also work for headline approvals, which snooze with a SCHEDULED date.
+  public var isWholeDay: Bool { self != .threeHours }
+
+  public static let morningHour = 9
+
+  public func wakeDate(from now: Date = Date(), calendar: Calendar = .current) -> Date {
+    switch self {
+    case .threeHours:
+      return now.addingTimeInterval(3 * 60 * 60)
+    case .tomorrowMorning:
+      return Self.morning(daysAfter: 1, from: now, calendar: calendar)
+    case .nextMonday:
+      let weekday = calendar.component(.weekday, from: now)
+      // Sunday = 1, Monday = 2. On a Monday this is next week's Monday.
+      let delta = (9 - weekday) % 7 == 0 ? 7 : (9 - weekday) % 7
+      return Self.morning(daysAfter: delta, from: now, calendar: calendar)
+    case .nextWeek:
+      return Self.morning(daysAfter: 7, from: now, calendar: calendar)
+    }
+  }
+
+  static func morning(daysAfter days: Int, from now: Date, calendar: Calendar) -> Date {
+    let day = calendar.date(byAdding: .day, value: days, to: calendar.startOfDay(for: now)) ?? now
+    return calendar.date(bySettingHour: morningHour, minute: 0, second: 0, of: day) ?? day
   }
 }
 

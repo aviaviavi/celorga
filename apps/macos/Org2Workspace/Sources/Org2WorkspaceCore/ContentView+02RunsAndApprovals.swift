@@ -1479,6 +1479,7 @@ struct ApprovalsView: View {
   @State private var bulkRejectionPresented = false
   @State private var bulkRejectionReason = ""
   @State private var bulkRejectionEndStatus: TodoEditStatus = .canceled
+  @State private var snoozeDateRequest: ApprovalSnoozeDateRequest?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -1498,6 +1499,13 @@ struct ApprovalsView: View {
 
       if store.hasBulkApprovalSelection {
         ApprovalBulkActionBar(
+          pickSnoozeDate: {
+            let selected = store.visibleApprovalItems.filter { store.isApprovalItemBulkSelected($0) }
+            snoozeDateRequest = ApprovalSnoozeDateRequest(
+              item: nil,
+              allowsTime: !selected.isEmpty && selected.allSatisfy(\.supportsTimedSnooze)
+            )
+          },
           markDoneElsewhere: {
             bulkExternalCompletionSummary = ""
             bulkExternalCompletionPresented = true
@@ -1513,6 +1521,18 @@ struct ApprovalsView: View {
       HStack(spacing: 10) {
         MetricView(title: "Visible", value: "\(store.visibleApprovalItems.count)")
         MetricView(title: "Total", value: "\(store.approvalItems.count)")
+        Spacer(minLength: 0)
+        Picker("Queue", selection: Binding(
+          get: { store.showsSnoozedApprovals },
+          set: { store.showsSnoozedApprovals = $0 }
+        )) {
+          Text("Pending").tag(false)
+          Text(store.snoozedApprovalItems.isEmpty ? "Snoozed" : "Snoozed (\(store.snoozedApprovalItems.count))").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("Snoozed approvals stay pending and return on their own when the snooze ends")
       }
       .padding(.horizontal, WorkspaceDesign.contentInset)
       .padding(.bottom, 12)
@@ -1561,6 +1581,16 @@ struct ApprovalsView: View {
         Task { await store.completeSelectedApprovalsExternally(summary: summary) }
       }
     }
+    .sheet(item: $snoozeDateRequest) { request in
+      ApprovalSnoozeDateSheet(allowsTime: request.allowsTime) { until in
+        snoozeDateRequest = nil
+        if let item = request.item {
+          Task { await store.snoozeApproval(item, until: until) }
+        } else {
+          Task { await store.snoozeSelectedApprovals(until: until) }
+        }
+      }
+    }
     .sheet(isPresented: $bulkRejectionPresented) {
       BulkApprovalRejectionSheet(
         count: store.bulkApprovalSelectionCount,
@@ -1594,7 +1624,13 @@ struct ApprovalsView: View {
   }
 
   private var headerSubtitle: String {
-    "\(store.visibleApprovalItems.count) pending approval\(store.visibleApprovalItems.count == 1 ? "" : "s")"
+    let count = store.visibleApprovalItems.count
+    if store.showsSnoozedApprovals {
+      return "\(count) snoozed approval\(count == 1 ? "" : "s")"
+    }
+    let snoozed = store.snoozedApprovalItems.count
+    let snoozedSuffix = snoozed == 0 ? "" : " · \(snoozed) snoozed"
+    return "\(count) pending approval\(count == 1 ? "" : "s")\(snoozedSuffix)"
   }
 
   @ViewBuilder
@@ -1608,7 +1644,10 @@ struct ApprovalsView: View {
       WorkspaceLoadingStateView("Loading approvals")
       Spacer()
     } else if store.visibleApprovalItems.isEmpty {
-      if store.approvalFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      if store.showsSnoozedApprovals,
+         store.approvalFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        EmptyStateView(title: "Nothing Snoozed", detail: "Snoozed approvals wait here until their time comes, then return to Pending.")
+      } else if store.approvalFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         EmptyStateView(title: "No Approvals", detail: "No pending approval candidates matched.", action: "Refresh") {
           Task { await store.refreshApprovals(updatesStatus: true) }
         }
@@ -1627,9 +1666,15 @@ struct ApprovalsView: View {
             isRejecting: store.isRejectingApproval(item),
             isCompletingExternally: store.isCompletingApprovalExternally(item),
             isRepairingSource: store.isRepairingApprovalSource(item),
+            isSnoozing: store.isSnoozingApproval(item),
             actionError: store.approvalActionError(item),
             toggleBulkSelection: { store.toggleApprovalItemBulkSelection(item) },
             approve: { Task { await store.approve(item) } },
+            snooze: { option in Task { await store.snoozeApproval(item, option: option) } },
+            pickSnoozeDate: {
+              snoozeDateRequest = ApprovalSnoozeDateRequest(item: item, allowsTime: item.supportsTimedSnooze)
+            },
+            wake: { Task { await store.wakeApproval(item) } },
             markDoneElsewhere: {
               externalCompletionSummary = ""
               externalCompletionItem = item
@@ -1695,6 +1740,26 @@ struct ApprovalsView: View {
               Task { await store.approve(item) }
             } label: {
               Label("Approve", systemImage: "checkmark")
+            }
+            .disabled(store.isApprovalActionInProgress(item))
+            if item.isSnoozed() {
+              Button {
+                Task { await store.wakeApproval(item) }
+              } label: {
+                Label("Wake Now", systemImage: "alarm")
+              }
+              .disabled(store.isApprovalActionInProgress(item))
+            }
+            Menu {
+              ApprovalSnoozeMenuContent(
+                allowsTime: item.supportsTimedSnooze,
+                snooze: { option in Task { await store.snoozeApproval(item, option: option) } },
+                pickDate: {
+                  snoozeDateRequest = ApprovalSnoozeDateRequest(item: item, allowsTime: item.supportsTimedSnooze)
+                }
+              )
+            } label: {
+              Label(item.isSnoozed() ? "Snooze Again" : "Snooze", systemImage: "moon.zzz")
             }
             .disabled(store.isApprovalActionInProgress(item))
             Button {
@@ -1804,6 +1869,7 @@ private struct ApprovalControls: View {
 
 private struct ApprovalBulkActionBar: View {
   @Environment(WorkspaceStore.self) private var store
+  let pickSnoozeDate: () -> Void
   let markDoneElsewhere: () -> Void
   let reject: () -> Void
 
@@ -1827,6 +1893,27 @@ private struct ApprovalBulkActionBar: View {
       } label: {
         Label("Approve", systemImage: "checkmark.seal")
       }
+
+      if store.showsSnoozedApprovals {
+        Button {
+          Task { await store.wakeSelectedApprovals() }
+        } label: {
+          Label("Wake", systemImage: "alarm")
+        }
+      }
+
+      Menu {
+        ApprovalSnoozeMenuContent(
+          allowsTime: store.visibleApprovalItems
+            .filter { store.isApprovalItemBulkSelected($0) }
+            .allSatisfy(\.supportsTimedSnooze),
+          snooze: { option in Task { await store.snoozeSelectedApprovals(until: option.wakeDate()) } },
+          pickDate: pickSnoozeDate
+        )
+      } label: {
+        Label("Snooze", systemImage: "moon.zzz")
+      }
+      .fixedSize()
 
       Button {
         markDoneElsewhere()
@@ -1903,9 +1990,13 @@ private struct ApprovalRow: View {
   let isRejecting: Bool
   let isCompletingExternally: Bool
   let isRepairingSource: Bool
+  let isSnoozing: Bool
   let actionError: String?
   let toggleBulkSelection: () -> Void
   let approve: () -> Void
+  let snooze: (ApprovalSnoozeOption) -> Void
+  let pickSnoozeDate: () -> Void
+  let wake: () -> Void
   let markDoneElsewhere: () -> Void
   let requestChanges: (() -> Void)?
   let reject: () -> Void
@@ -1914,7 +2005,7 @@ private struct ApprovalRow: View {
   let discuss: () -> Void
 
   private var isActionInProgress: Bool {
-    isApproving || isRejecting || isCompletingExternally || isRepairingSource
+    isApproving || isRejecting || isCompletingExternally || isRepairingSource || isSnoozing
   }
 
   var body: some View {
@@ -1956,6 +2047,15 @@ private struct ApprovalRow: View {
         }
       }
 
+      if let until = item.snoozedUntilDate, item.isSnoozed() {
+        Label(
+          "Snoozed until \(until.formatted(date: .abbreviated, time: item.supportsTimedSnooze ? .shortened : .omitted))",
+          systemImage: "moon.zzz"
+        )
+        .font(.caption.weight(.medium))
+        .foregroundStyle(.indigo)
+      }
+
       HStack(spacing: 8) {
         if let todo = item.todo {
           StatusPill(text: todo)
@@ -1983,6 +2083,41 @@ private struct ApprovalRow: View {
         }
         .buttonStyle(WorkspaceActionButtonStyle())
         .disabled(isActionInProgress)
+
+        if item.isSnoozed() {
+          Button {
+            wake()
+          } label: {
+            Label("Wake", systemImage: "alarm")
+          }
+          .buttonStyle(WorkspaceActionButtonStyle())
+          .disabled(isActionInProgress)
+          .help("Return this approval to Pending now")
+        }
+
+        Menu {
+          ApprovalSnoozeMenuContent(
+            allowsTime: item.supportsTimedSnooze,
+            snooze: snooze,
+            pickDate: pickSnoozeDate
+          )
+        } label: {
+          if isSnoozing {
+            HStack(spacing: 6) {
+              WorkspaceActivityIndicator(size: .mini)
+              Text("Snoozing")
+            }
+          } else {
+            Label("Snooze", systemImage: "moon.zzz")
+          }
+        }
+        .menuStyle(.button)
+        .buttonStyle(WorkspaceActionButtonStyle())
+        .fixedSize()
+        .disabled(isActionInProgress)
+        .help(item.supportsTimedSnooze
+          ? "Hide this approval until later. It stays pending and returns on its own."
+          : "Schedule this approval for a later day. It stays pending and returns on that day.")
 
         Button {
           markDoneElsewhere()
@@ -2072,6 +2207,67 @@ private struct ApprovalRow: View {
       }
     }
     .workspaceSelectableRow(isSelected: isSelected, verticalPadding: 8)
+  }
+}
+
+struct ApprovalSnoozeDateRequest: Identifiable {
+  let id = UUID()
+  /// nil snoozes the bulk selection.
+  let item: ApprovalItem?
+  let allowsTime: Bool
+}
+
+private struct ApprovalSnoozeMenuContent: View {
+  let allowsTime: Bool
+  let snooze: (ApprovalSnoozeOption) -> Void
+  let pickDate: () -> Void
+
+  var body: some View {
+    ForEach(ApprovalSnoozeOption.allCases.filter { allowsTime || $0.isWholeDay }) { option in
+      Button(option.title) { snooze(option) }
+    }
+    Divider()
+    Button("Pick a Date…") { pickDate() }
+  }
+}
+
+private struct ApprovalSnoozeDateSheet: View {
+  @Environment(\.dismiss) private var dismiss
+  let allowsTime: Bool
+  let snooze: (Date) -> Void
+  @State private var date = ApprovalSnoozeOption.tomorrowMorning.wakeDate()
+
+  private var minimumDate: Date {
+    allowsTime
+      ? Date().addingTimeInterval(60)
+      : Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date())) ?? Date()
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text("Snooze Until").font(.title2.weight(.semibold))
+      Text(allowsTime
+        ? "The approval stays pending and returns to the queue at this time."
+        : "Headline approvals snooze with a SCHEDULED date, so they return at the start of the chosen day.")
+        .foregroundStyle(.secondary)
+      DatePicker(
+        "Wake",
+        selection: $date,
+        in: minimumDate...,
+        displayedComponents: allowsTime ? [.date, .hourAndMinute] : [.date]
+      )
+      .datePickerStyle(.graphical)
+      HStack {
+        Spacer()
+        Button("Cancel") { dismiss() }
+        Button("Snooze") {
+          snooze(allowsTime ? date : Calendar.current.startOfDay(for: date))
+        }
+        .keyboardShortcut(.defaultAction)
+      }
+    }
+    .padding(22)
+    .frame(width: 420)
   }
 }
 

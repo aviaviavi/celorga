@@ -22,6 +22,8 @@ import {
   completeAgentRunExternally,
   createAgentRun,
   decideAgentRunApproval,
+  resolveApprovalSnoozeUntil,
+  snoozeAgentRunApproval,
   forkAgentRun,
   listAgentRuns,
   listAgentRunSnapshots,
@@ -264,6 +266,8 @@ const HELP = `Agentic workspace commands:
   celorga run validation ID --name NAME --status passed|failed|warning|skipped
   celorga run approval-request ID --title TEXT --action TEXT [--risk CLASS] [--priority normal|urgent] [--role ROLE]
   celorga run approval-decide ID APPROVAL --decision approved|rejected|revised|canceled --actor NAME [--fingerprint SHA256] [--if-revision SHA256] [--note TEXT] [--receipt TEXT]
+  celorga run approval-snooze ID APPROVAL (--until 2h|1d|1w|YYYY-MM-DD|ISO | --wake) [--actor NAME] [--fingerprint SHA256] [--if-revision SHA256]
+    Hides a pending approval from \`celorga approvals\` until the time passes; it stays pending and the run is unchanged.
   celorga run approval-resolve --decision-key PROVIDER_KEY [--json]
   celorga run approval-reconcile [--apply] [--json]
   celorga review list [--status pending] | celorga review show RUN
@@ -1517,6 +1521,14 @@ async function runCommand(parsed: ParsedArgs): Promise<void> {
       return;
     }
     run = decideAgentRunApproval(existing, required(parsed.positional[2], "approval id is required"), choice(flag(parsed, "decision"), AGENT_RUN_APPROVAL_DECISIONS, "approval decision"), { actor: required(flag(parsed, "actor"), "--actor is required"), actorRole: flag(parsed, "role"), fingerprint: flag(parsed, "fingerprint"), note: flag(parsed, "note"), receipt: flag(parsed, "receipt") });
+  }
+  else if (action === "approval-snooze") {
+    const approvalId = required(parsed.positional[2], "approval id is required");
+    const wake = enabled(parsed, "wake");
+    const untilRaw = flag(parsed, "until");
+    if (wake === Boolean(untilRaw)) throw new Error("approval-snooze needs exactly one of --until TIME or --wake");
+    run = snoozeAgentRunApproval(existing, approvalId, wake ? null : resolveApprovalSnoozeUntil(untilRaw!), { actor: flag(parsed, "actor"), fingerprint: flag(parsed, "fingerprint") });
+    if (run === existing) { output(parsed, run, `${run.id}: ${approvalId} is not snoozed`); return; }
   }
   else if (action === "fork") { run = forkAgentRun(existing, { id: flag(parsed, "id"), actor: flag(parsed, "actor"), fromEventId: flag(parsed, "event") }); const file = saveAgentRun(corpus, run, { expectedRevision: null }); output(parsed, { run, file }, `forked ${existing.id} -> ${run.id}`); return; }
   else throw new Error(`unknown run action: ${action}`);

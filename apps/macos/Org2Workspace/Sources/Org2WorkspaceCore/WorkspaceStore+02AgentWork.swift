@@ -281,6 +281,7 @@ extension WorkspaceStore {
           "approvals",
           "--dir", corpusRoot.path,
           "--recursive",
+          "--include-snoozed",
           "--format", "json"
         ]
         for runID in runDetailIDsBeforeRefresh.sorted() {
@@ -300,7 +301,11 @@ extension WorkspaceStore {
           requestApprovalRefreshAfterStaleScan(updatesStatus: updatesStatus)
           return
         }
-        let nextApprovalItems = Self.sortedApprovalItems(payload.items)
+        let partitionedApprovalItems = Self.partitionSnoozedApprovalItems(
+          Self.sortedApprovalItems(payload.items)
+        )
+        let nextApprovalItems = partitionedApprovalItems.awake
+        let nextSnoozedApprovalItems = partitionedApprovalItems.snoozed
         let currentApprovalItems = approvalItems
         let approvalsChanged = await Task.detached(priority: .utility) {
           currentApprovalItems != nextApprovalItems
@@ -315,6 +320,10 @@ extension WorkspaceStore {
         if approvalsChanged {
           approvalItems = nextApprovalItems
         }
+        if snoozedApprovalItems != nextSnoozedApprovalItems {
+          snoozedApprovalItems = nextSnoozedApprovalItems
+        }
+        scheduleApprovalSnoozeWake()
         syncApprovalSelectionAfterRefresh()
         let inlineRunDetails = payload.runDetails ?? []
         applyRefreshedApprovalRuns(inlineRunDetails)

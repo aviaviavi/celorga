@@ -1353,7 +1353,8 @@ extension WorkspaceStore {
       )
     }
     let receipt = MobileRemoteApprovalDecisionRequest.normalizedReceipt(rawReceipt)
-    guard let item = approvalItems.first(where: { $0.id == itemID }) else {
+    guard let item = approvalItems.first(where: { $0.id == itemID })
+      ?? snoozedApprovalItems.first(where: { $0.id == itemID }) else {
       if hasExactIdentity {
         // A replay of a decision this host already recorded with the same receipt returns
         // the original outcome. Anything else is refused: an exact decision must never
@@ -1617,34 +1618,7 @@ extension WorkspaceStore {
     }
     return MobileRemoteWorkspaceSnapshot(
       agenda: agendaItems,
-      approvals: approvalItems.map { item in
-        MobileRemoteApprovalItem(
-          id: item.id,
-          title: item.title,
-          status: item.status,
-          todo: item.todo,
-          level: item.level,
-          file: item.file,
-          line: item.line,
-          sourceID: item.idValue,
-          properties: item.properties,
-          body: item.body,
-          tags: item.tags,
-          kind: item.kind,
-          runID: item.runId,
-          approvalID: item.approvalId,
-          fingerprint: item.fingerprint,
-          action: item.action,
-          riskClass: item.riskClass,
-          requestedRole: item.requestedRole,
-          requestedFrom: item.requestedFrom,
-          requestedAt: item.requestedAt,
-          runGoal: item.runGoal,
-          runStatus: item.runStatus,
-          runDecisionEffect: item.runDecisionEffect,
-          priority: item.priority
-        )
-      },
+      approvals: approvalItems.map(Self.mobileRemoteApprovalItem),
       workflows: agentWorkflows.map { workflow in
         MobileRemoteWorkflowItem(
           id: workflow.id,
@@ -1667,8 +1641,86 @@ extension WorkspaceStore {
         )
       },
       approvalDecisionReceipt: decisionReceipt,
-      approvalHistory: Self.mobileRemoteApprovalHistory(from: agentRuns)
+      approvalHistory: Self.mobileRemoteApprovalHistory(from: agentRuns),
+      snoozedApprovals: snoozedApprovalItems.map(Self.mobileRemoteApprovalItem)
     )
+  }
+
+  nonisolated static func mobileRemoteApprovalItem(_ item: ApprovalItem) -> MobileRemoteApprovalItem {
+    MobileRemoteApprovalItem(
+      id: item.id,
+      title: item.title,
+      status: item.status,
+      todo: item.todo,
+      level: item.level,
+      file: item.file,
+      line: item.line,
+      sourceID: item.idValue,
+      properties: item.properties,
+      body: item.body,
+      tags: item.tags,
+      kind: item.kind,
+      runID: item.runId,
+      approvalID: item.approvalId,
+      fingerprint: item.fingerprint,
+      action: item.action,
+      riskClass: item.riskClass,
+      requestedRole: item.requestedRole,
+      requestedFrom: item.requestedFrom,
+      requestedAt: item.requestedAt,
+      runGoal: item.runGoal,
+      runStatus: item.runStatus,
+      runDecisionEffect: item.runDecisionEffect,
+      priority: item.priority,
+      snoozedUntil: item.snoozedUntil
+    )
+  }
+
+  /// Snoozes or wakes one approval for the paired phone, then returns a fresh snapshot.
+  public func snoozeMobileRemoteApproval(
+    itemID: String,
+    until: Date?,
+    expectedRunID: String? = nil,
+    expectedApprovalID: String? = nil,
+    expectedFingerprint: String? = nil
+  ) async throws -> MobileRemoteWorkspaceSnapshot {
+    await refreshApprovals(updatesStatus: false)
+    guard let item = approvalItems.first(where: { $0.id == itemID })
+      ?? snoozedApprovalItems.first(where: { $0.id == itemID }) else {
+      throw CocoaError(
+        .fileWriteUnknown,
+        userInfo: [NSLocalizedDescriptionKey: "This approval is no longer pending. Nothing was changed."]
+      )
+    }
+    if expectedRunID != nil || expectedApprovalID != nil || expectedFingerprint != nil {
+      guard expectedRunID == item.runId,
+            expectedApprovalID == item.approvalId,
+            expectedFingerprint == item.fingerprint
+      else {
+        throw CocoaError(
+          .fileWriteUnknown,
+          userInfo: [NSLocalizedDescriptionKey: "The approval changed after it was read. Nothing was changed; review it again."]
+        )
+      }
+    }
+    if let until, until <= Date() {
+      throw CocoaError(
+        .validationMissingMandatoryProperty,
+        userInfo: [NSLocalizedDescriptionKey: "Choose a snooze time in the future."]
+      )
+    }
+    guard !isApprovalActionInProgress(item) else {
+      throw CocoaError(
+        .fileWriteUnknown,
+        userInfo: [NSLocalizedDescriptionKey: "This approval is already being updated."]
+      )
+    }
+    await setApprovalSnooze(item, until: until, updatesApprovalQueue: true)
+    if let error = approvalActionErrorsByItemID[item.id] {
+      throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: error])
+    }
+    invalidateMobileRemoteWorkspaceSnapshot()
+    return currentMobileRemoteWorkspaceSnapshot()
   }
 
   nonisolated static func mobileRemoteApprovalHistory(from runs: [AgentRunItem]) -> [MobileRemoteApprovalHistoryItem] {

@@ -2031,6 +2031,7 @@ enum ApprovalActionKind {
   case approve
   case reject
   case externalCompletion
+  case snooze
 }
 
 enum ApprovalSourceRepairRetry {
@@ -2451,6 +2452,20 @@ public final class WorkspaceStore {
       approvalQueueChangeHandler(approvalItems)
     }
   }
+  /// Pending approvals hidden until their snooze time passes. Kept apart from
+  /// `approvalItems` so counts, badges, phone prompts, and digests only see awake work.
+  public internal(set) var snoozedApprovalItems: [ApprovalItem] = [] {
+    didSet { rebuildApprovalDisplayCache() }
+  }
+  /// Shows the snoozed list in place of the pending queue.
+  public var showsSnoozedApprovals = false {
+    didSet {
+      guard oldValue != showsSnoozedApprovals else { return }
+      bulkSelectedApprovalItemIDs = []
+      rebuildApprovalDisplayCache()
+    }
+  }
+  @ObservationIgnored var approvalSnoozeWakeTask: Task<Void, Never>?
   public var approvalFilter = "" {
     didSet {
       guard oldValue != approvalFilter else { return }
@@ -2526,6 +2541,7 @@ public final class WorkspaceStore {
   public internal(set) var approvingApprovalItemIDs: Set<ApprovalItem.ID> = []
   public internal(set) var rejectingApprovalItemIDs: Set<ApprovalItem.ID> = []
   public internal(set) var externallyCompletingApprovalItemIDs: Set<ApprovalItem.ID> = []
+  public internal(set) var snoozingApprovalItemIDs: Set<ApprovalItem.ID> = []
   public internal(set) var repairingApprovalSourceItemIDs: Set<ApprovalItem.ID> = []
   public internal(set) var approvalActionErrorsByItemID: [ApprovalItem.ID: String] = [:]
   @ObservationIgnored var approvalSourceRepairRetriesByItemID: [ApprovalItem.ID: ApprovalSourceRepairRetry] = [:]
@@ -3786,6 +3802,11 @@ public final class WorkspaceStore {
     _ approvalID: String,
     _ decision: String,
     _ note: String?
+  ) async throws -> AgentRunItem)?
+  var agentRunApprovalSnoozeForTesting: ((
+    _ runID: String,
+    _ approvalID: String,
+    _ until: Date?
   ) async throws -> AgentRunItem)?
   var agentRunSourceReconciliationForTesting: ((_ runID: String) async throws -> Void)?
   var agentRunListLoaderForTesting: (() async throws -> [AgentRunItem])?

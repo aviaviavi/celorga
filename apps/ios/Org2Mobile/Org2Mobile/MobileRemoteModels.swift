@@ -72,6 +72,14 @@ struct MobileRemoteAudioApprovalSnoozeRequest: Codable {
   let until: Date
 }
 
+/// Snooze (`until` set) or wake (`until == nil`) one queue approval on the Mac.
+struct MobileRemoteApprovalSnoozeRequest: Codable {
+  let until: Date?
+  let runID: String?
+  let approvalID: String?
+  let fingerprint: String?
+}
+
 struct MobileRemoteAudioApprovalSnoozeResponse: Codable {
   let snoozedUntil: Date
 }
@@ -358,6 +366,8 @@ struct MobileRemoteWorkspaceSnapshot: Codable, Hashable {
   let workflows: [MobileRemoteWorkflowItem]
   let approvalDecisionReceipt: MobileRemoteApprovalDecisionReceipt?
   var approvalHistory: [MobileRemoteApprovalHistoryItem]? = nil
+  /// Pending approvals hidden until their snooze ends. Older Macs omit it.
+  var snoozedApprovals: [MobileRemoteApprovalItem]? = nil
 }
 
 struct MobileRemoteApprovalHistoryItem: Codable, Hashable, Identifiable {
@@ -445,6 +455,7 @@ struct MobileRemoteApprovalItem: Codable, Hashable, Identifiable {
   let runStatus: String?
   let runDecisionEffect: String?
   var priority: String? = nil
+  var snoozedUntil: String? = nil
 
   var localEntry: ApprovalEntry {
     ApprovalEntry(
@@ -467,7 +478,8 @@ struct MobileRemoteApprovalItem: Codable, Hashable, Identifiable {
       riskClass: riskClass,
       requestedFrom: requestedFrom,
       requestedAt: requestedAt,
-      priority: priority
+      priority: priority,
+      snoozedUntil: snoozedUntil
     )
   }
 }

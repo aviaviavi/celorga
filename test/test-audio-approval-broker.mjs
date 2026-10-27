@@ -85,6 +85,10 @@ assert.deepEqual(pendingAudioTargets([runB, runA]).map((t) => t.runId), ["run-a"
 {
   const urgentB = { ...runB, approvals: runB.approvals.map((approval) => ({ ...approval, priority: "urgent" })) };
   assert.deepEqual(pendingAudioTargets([runA, urgentB]).map((t) => t.runId), ["run-b", "run-a"], "explicit urgency outranks age");
+  // A queue snooze on the approval itself also keeps it out of audio prompts until it wakes.
+  const snoozedA = { ...runA, approvals: runA.approvals.map((approval) => ({ ...approval, snoozedUntil: T2 })) };
+  assert.deepEqual(pendingAudioTargets([snoozedA, runB], new Date(T1)).map((t) => t.runId), ["run-b"], "durably snoozed approvals are not prompted");
+  assert.deepEqual(pendingAudioTargets([snoozedA, runB], new Date(T2)).map((t) => t.runId), ["run-a", "run-b"], "they return when the snooze ends");
 }
 let state = selectActiveAudioPrompt(createAudioBrokerState(), [runA, runB], T1);
 assert.equal(state.active.target.runId, "run-a");

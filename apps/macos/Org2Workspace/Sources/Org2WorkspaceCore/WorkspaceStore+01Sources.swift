@@ -981,6 +981,10 @@ extension WorkspaceStore {
     )
     agenda = cachedWorkspace?.agenda
     approvalItems = cachedWorkspace?.approvalItems ?? []
+    snoozedApprovalItems = []
+    showsSnoozedApprovals = false
+    approvalSnoozeWakeTask?.cancel()
+    approvalSnoozeWakeTask = nil
     selectedAgendaItemID = cachedWorkspace?.selectedAgendaItemID
     agendaSelectionAnchor = selectedAgendaItemID.flatMap { selectedID in
       visibleAgendaItems.first(where: { $0.id == selectedID }).map(AgendaSelectionAnchor.init)

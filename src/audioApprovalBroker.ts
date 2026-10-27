@@ -28,6 +28,7 @@ import {
   agentRunApprovalFingerprint,
   currentAgentRunApprovalBoundary,
   decideAgentRunApproval,
+  isAgentRunApprovalSnoozed,
   loadAgentRunSnapshot,
   saveAgentRun,
   type AgentRun,
@@ -111,13 +112,15 @@ function sameTarget(a: AudioApprovalTarget, b: AudioApprovalTarget): boolean {
 }
 
 /** Pending approvals on the current approval boundary of waiting runs: explicitly urgent first, then oldest. */
-export function pendingAudioTargets(runs: AgentRun[]): Array<AudioApprovalTarget & { requestedAt: string; urgent: boolean }> {
+export function pendingAudioTargets(runs: AgentRun[], now: Date = new Date()): Array<AudioApprovalTarget & { requestedAt: string; urgent: boolean }> {
   const targets: Array<AudioApprovalTarget & { requestedAt: string; urgent: boolean }> = [];
   for (const run of runs) {
     if (run.status !== "waiting-approval") continue;
     for (const approval of currentAgentRunApprovalBoundary(run)) {
       if (approval.status !== "pending") continue;
       if (approval.fingerprint !== agentRunApprovalFingerprint(approval)) continue;
+      // A durably snoozed approval (queue snooze) is not prompted until it wakes.
+      if (isAgentRunApprovalSnoozed(approval, now)) continue;
       targets.push({ runId: run.id, approvalId: approval.id, fingerprint: approval.fingerprint, requestedAt: approval.requestedAt, urgent: approval.priority === "urgent" });
     }
   }
@@ -135,7 +138,7 @@ export function pendingAudioTargets(runs: AgentRun[]): Array<AudioApprovalTarget
 export function selectActiveAudioPrompt(state: AudioBrokerState, runs: AgentRun[], nowIso: string): AudioBrokerState {
   const now = Date.parse(nowIso);
   const snoozed = state.snoozed.filter((entry) => Date.parse(entry.until) > now);
-  const candidates = pendingAudioTargets(runs).filter((target) =>
+  const candidates = pendingAudioTargets(runs, new Date(now)).filter((target) =>
     !snoozed.some((entry) => sameTarget(entry, target)));
   if (state.active && candidates.some((target) => sameTarget(target, state.active!.target))) {
     return { ...state, snoozed };

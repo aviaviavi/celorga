@@ -62,6 +62,7 @@ import {
   agentRunApprovalDecisionKeys,
   agentRunPath,
   currentAgentRunApprovalBoundary,
+  isAgentRunApprovalSnoozed,
   loadAgentRun,
   listAgentRunsWithApprovals,
   type AgentRun,
@@ -744,6 +745,8 @@ type ApprovalQueueItem = {
   runDecisionEffect?: string;
   decisionKeys?: string[];
   priority?: string;
+  /** ISO time a snoozed approval returns to the queue. Present only while snoozed. */
+  snoozedUntil?: string;
 };
 
 type ApprovalQueuePayload = {
@@ -758,6 +761,8 @@ type ApprovalQueuePayload = {
     rebuilt?: boolean;
   };
   skippedCandidates?: number;
+  /** Pending approvals hidden because they are snoozed (omitted when zero). */
+  snoozedCount?: number;
   items: ApprovalQueueItem[];
   runDetails?: AgentRun[];
 };
@@ -1162,7 +1167,36 @@ function approvalItemFromHeadline(
     properties,
     body: approvalBody(sourceLines, sourceRange, headline.children),
     tags: headline.tags ?? [],
+    ...snoozedUntilFromScheduledPlanning(headline),
   };
+}
+
+/**
+ * A headline approval SCHEDULED in the future is snoozed, as in Org, where a future
+ * SCHEDULED date keeps a TODO out of today's list. A SCHEDULED delay cookie
+ * (`<2026-11-02 Mon -2d>`) pushes the return time out by that many days.
+ */
+function snoozedUntilFromScheduledPlanning(headline: HeadlineNode, now: Date = new Date()): { snoozedUntil?: string } {
+  for (const child of headline.children) {
+    if (child.type !== "Planning" || child.kind !== "SCHEDULED" || !child.timestamp) continue;
+    const timestamp = child.timestamp.type === "TimestampRange" ? child.timestamp.start : child.timestamp;
+    if (!timestamp.active) continue;
+    const match = /^<(\d{4})-(\d{2})-(\d{2})(?:[^>\d]*?(\d{1,2}):(\d{2}))?[^>]*?(?:\s--?(\d+)([hdwmy]))?\s*>/.exec(timestamp.raw);
+    if (!match) continue;
+    const wake = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), match[4] ? Number(match[4]) : 0, match[5] ? Number(match[5]) : 0);
+    if (match[6]) {
+      const amount = Number(match[6]);
+      const unit = match[7]!;
+      if (unit === "h") wake.setHours(wake.getHours() + amount);
+      else if (unit === "d") wake.setDate(wake.getDate() + amount);
+      else if (unit === "w") wake.setDate(wake.getDate() + amount * 7);
+      else if (unit === "m") wake.setMonth(wake.getMonth() + amount);
+      else wake.setFullYear(wake.getFullYear() + amount);
+    }
+    if (Number.isNaN(wake.getTime()) || wake.getTime() <= now.getTime()) return {};
+    return { snoozedUntil: wake.toISOString() };
+  }
+  return {};
 }
 
 function approvalCandidatesFromRuns(rootDir: string, runs: AgentRun[]): ApprovalQueueCandidate[] {
@@ -1214,6 +1248,7 @@ function approvalCandidatesFromRuns(rootDir: string, runs: AgentRun[]): Approval
           runDecisionEffect,
           decisionKeys: agentRunApprovalDecisionKeys(approval),
           ...(approval.priority === "urgent" ? { priority: "urgent" } : {}),
+          ...(isAgentRunApprovalSnoozed(approval) ? { snoozedUntil: approval.snoozedUntil } : {}),
         },
         decisionKeys: agentRunApprovalDecisionKeys(approval),
         requestedAt: approval.requestedAt,
@@ -7685,6 +7720,7 @@ async function main(): Promise<void> {
   // Approval queue
   let approvalsFormat: "text" | "json" = "text";
   let approvalRunDetailIDs: string[] = [];
+  let approvalsIncludeSnoozed = false;
 
   // Rebuildable local indexes
   let indexFormat: "text" | "json" = "text";
@@ -9003,6 +9039,9 @@ async function main(): Promise<void> {
         }
         i++;
       }
+    } else if (arg === "--include-snoozed" && command === "approvals") {
+      approvalsIncludeSnoozed = true;
+      i++;
     } else if (arg === "--run-detail" && command === "approvals") {
       i++;
       if (i < args.length) {
@@ -9389,7 +9428,7 @@ Core commands:
   celorga embed resolve --target file:NOTE.org|id:ID --file SOURCE [--dir CORPUS] [--json]
   celorga checkbox [cycle|toggle|set|fix-cookies] --file FILE [--line N] [--status STATE] [--fix-cookies] [--apply]
   celorga todo <set|toggle|assign|approve> --file FILE (--line N | --pos LINE[:COL]) [--apply]
-  celorga approvals --dir DIR [--recursive] [--include-archives] [--index auto|never|rebuild] [--run-detail ID] [--format text|json]
+  celorga approvals --dir DIR [--recursive] [--include-archives] [--include-snoozed] [--index auto|never|rebuild] [--run-detail ID] [--format text|json]
   celorga plan <set|today> --file FILE (--line N | --pos LINE[:COL]) [--apply]
   celorga crypt <encrypt|decrypt|reencrypt> --file FILE (--line N | --pos LINE[:COL]) [--passphrase PASS] [--recipient USER]... [--recipient-file FILE]... [--default-recipient-self] [--gpg-program PATH] [--gpg-timeout SECONDS] [--apply]
   celorga secret request|status|list|exec|fulfill|decline [--help]
@@ -9457,7 +9496,7 @@ Maintenance / health:
   celorga doctor --handoff codex|claude|opencode|pi|openclaw [--agent-ref ID] [--apply] [--launch] [--dir CORPUS] [--json]
     Bounded troubleshooting handoff to the selected agent; works without the app. --apply writes views/diagnostics/handoffs/; --launch starts the runtime once in this terminal. Never schedules.
   celorga index [--dir DIR] [--recursive] [--include-archives] [--file FILE|--files FILE ...] [--incremental] [--format text|json]
-  celorga approvals [--dir DIR] [--recursive] [--include-archives] [--file FILE|--files FILE ...] [--index auto|never|rebuild] [--run-detail ID] [--format text|json]
+  celorga approvals [--dir DIR] [--recursive] [--include-archives] [--include-snoozed] [--file FILE|--files FILE ...] [--index auto|never|rebuild] [--run-detail ID] [--format text|json]
   celorga compile corpus [--dir DIR] [--recursive] [--file FILE|--files FILE ...] [--out FILE] [--format json|jsonl] [--incremental] [--cache FILE]
   celorga ai validate-job --job FILE [--format text|json]
   celorga ai run --job FILE [--out FILE] [--apply] [--format text|json]
@@ -9538,15 +9577,22 @@ Flags:
     text = `celorga approvals
 
 Usage:
-  celorga approvals [--dir DIR] [--recursive] [--include-archives] [--file FILE|--files FILE ...] [--index auto|never|rebuild] [--format text|json]
+  celorga approvals [--dir DIR] [--recursive] [--include-archives] [--include-snoozed] [--file FILE|--files FILE ...] [--index auto|never|rebuild] [--format text|json]
 
 Flags:
   --dir DIR           Root directory to scan
   --recursive         Recurse into subdirectories
   --include-archives  Include archive files/directories
+  --include-snoozed   Also list snoozed approvals, each with snoozedUntil
   --index MODE        auto (default), never, or rebuild. Auto uses a fresh search index or rebuilds it.
   --run-detail ID     Include the current full run in JSON output; repeatable
-  --format text|json  Output format`;
+  --format text|json  Output format
+
+A snoozed approval stays pending but is hidden until its time passes, like an
+Org heading SCHEDULED in the future. Run approvals snooze with
+'celorga run approval-snooze'; headline approvals snooze with a future
+SCHEDULED date ('celorga plan set --kind scheduled'). JSON output reports the
+hidden total as snoozedCount.`;
   } else if (command === "plan") {
     text = `celorga plan ${options.planAction}
 
@@ -12560,7 +12606,9 @@ Flags:
       }
     }
 
-    const sortedItems = unifiedPendingApprovalItems(approvalCandidates);
+    const allPendingItems = unifiedPendingApprovalItems(approvalCandidates);
+    const sortedItems = approvalsIncludeSnoozed ? allPendingItems : allPendingItems.filter((item) => !item.snoozedUntil);
+    const snoozedCount = allPendingItems.filter((item) => item.snoozedUntil).length;
     const runByID = new Map(runs.map((run) => [run.id, run]));
     const runDetails = Array.from(new Set(approvalRunDetailIDs))
       .map((runID) => runByID.get(runID) || loadAgentRun(rootDir, runID));
@@ -12569,6 +12617,7 @@ Flags:
       count: sortedItems.length,
       index: indexStatus,
       ...(skippedCandidates > 0 ? { skippedCandidates } : {}),
+      ...(snoozedCount > 0 ? { snoozedCount } : {}),
       items: sortedItems,
       ...(runDetails.length > 0 ? { runDetails } : {}),
     };
@@ -12578,19 +12627,24 @@ Flags:
       return;
     }
 
+    const snoozedNote = snoozedCount > 0 && !approvalsIncludeSnoozed
+      ? `${snoozedCount} snoozed approval${snoozedCount === 1 ? "" : "s"} hidden; pass --include-snoozed to list ${snoozedCount === 1 ? "it" : "them"}.\n`
+      : "";
     if (sortedItems.length === 0) {
-      process.stdout.write("No approvals found.\n");
+      process.stdout.write(`No approvals found.\n${snoozedNote}`);
       return;
     }
 
     for (const item of sortedItems) {
+      const snoozed = item.snoozedUntil ? `; snoozed until ${item.snoozedUntil}` : "";
       if (item.kind === "run") {
-        process.stdout.write(`run:${item.runId}:${item.approvalId} ${item.title} [${item.status}; ${item.runPendingApprovalCount} pending for run]\n`);
+        process.stdout.write(`run:${item.runId}:${item.approvalId} ${item.title} [${item.status}; ${item.runPendingApprovalCount} pending for run${snoozed}]\n`);
         continue;
       }
       const todo = item.todo ? `${item.todo} ` : "";
-      process.stdout.write(`${item.file}:${item.line} ${todo}${item.title} [${item.status}]\n`);
+      process.stdout.write(`${item.file}:${item.line} ${todo}${item.title} [${item.status}${snoozed}]\n`);
     }
+    process.stdout.write(snoozedNote);
     return;
   }
 

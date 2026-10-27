@@ -157,6 +157,11 @@ export interface AgentRunApproval {
   /** Delivery order for interrupting channels such as walkie-talkie prompts. Absent means normal.
    * Not part of the fingerprint: urgency changes when a person is asked, not what is approved. */
   priority?: AgentRunApprovalPriority;
+  /** Hide this pending approval from the default queue until this ISO time, like an Org
+   * SCHEDULED date in the future. Not part of the fingerprint: snoozing changes when a person
+   * is asked, not what is approved. The approval stays pending; nothing wakes it but the clock. */
+  snoozedUntil?: string;
+  snoozedBy?: string;
 }
 
 export const AGENT_RUN_APPROVAL_PRIORITIES = ["normal", "urgent"] as const;
@@ -570,6 +575,9 @@ export function validateAgentRun(value: unknown): AgentRunValidationResult {
     if (approval.priority !== undefined && !AGENT_RUN_APPROVAL_PRIORITIES.includes(approval.priority)) {
       issues.push({ path: `$.approvals[${index}].priority`, message: `must be one of: ${AGENT_RUN_APPROVAL_PRIORITIES.join(", ")}` });
     }
+    if (approval.snoozedUntil !== undefined && Number.isNaN(new Date(approval.snoozedUntil).getTime())) {
+      issues.push({ path: `$.approvals[${index}].snoozedUntil`, message: "must be an ISO timestamp" });
+    }
   }
   if (run.outcome !== undefined) {
     if (!String(run.outcome.summary || "").trim()) issues.push({ path: "$.outcome.summary", message: "must not be empty" });
@@ -959,6 +967,72 @@ export function decideAgentRunApproval(run: AgentRun, approvalId: string, decisi
     });
   }
   return next;
+}
+
+/**
+ * Resolve a snooze target: a relative duration (`30m`, `2h`, `1d`, `1w`), a date
+ * (`2026-11-02`, local start of day, as an Org date-only timestamp), or an ISO timestamp.
+ */
+export function resolveApprovalSnoozeUntil(raw: string, now: Date = new Date()): string {
+  const value = String(raw || "").trim();
+  const relative = /^(\d+)\s*(m|min|h|d|w)$/i.exec(value);
+  if (relative) {
+    const amount = Number(relative[1]);
+    const unit = relative[2]!.toLowerCase();
+    const minutes = unit === "w" ? amount * 7 * 24 * 60 : unit === "d" ? amount * 24 * 60 : unit === "h" ? amount * 60 : amount;
+    if (minutes <= 0) throw new Error(`snooze duration must be positive: ${raw}`);
+    return new Date(now.getTime() + minutes * 60_000).toISOString();
+  }
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (dateOnly) {
+    const local = new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]));
+    if (Number.isNaN(local.getTime())) throw new Error(`invalid snooze date: ${raw}`);
+    return local.toISOString();
+  }
+  const parsed = new Date(value);
+  if (!value || Number.isNaN(parsed.getTime())) throw new Error(`invalid snooze time: ${raw} (use 30m, 2h, 1d, 1w, YYYY-MM-DD, or an ISO timestamp)`);
+  return parsed.toISOString();
+}
+
+/** Whether a pending approval is hidden from the default queue at `now`. */
+export function isAgentRunApprovalSnoozed(approval: Pick<AgentRunApproval, "status" | "snoozedUntil">, now: Date = new Date()): boolean {
+  if (approval.status !== "pending" || !approval.snoozedUntil) return false;
+  const until = new Date(approval.snoozedUntil).getTime();
+  return Number.isFinite(until) && until > now.getTime();
+}
+
+/**
+ * Snooze a pending approval until `until`, or wake it now when `until` is null.
+ * Like moving an Org SCHEDULED date forward: the approval stays pending with the same
+ * fingerprint, the run's status does not change, and it returns on its own when the time passes.
+ */
+export function snoozeAgentRunApproval(
+  run: AgentRun,
+  approvalId: string,
+  until: string | null,
+  input: { actor?: string; fingerprint?: string; now?: string } = {},
+): AgentRun {
+  const now = isoNow(input.now);
+  const index = run.approvals.findIndex((approval) => approval.id === approvalId);
+  if (index < 0) throw new Error(`approval not found: ${approvalId}`);
+  const current = run.approvals[index]!;
+  if (current.status !== "pending") throw new Error(`approval is already ${current.status}`);
+  if (input.fingerprint && input.fingerprint !== current.fingerprint) throw new Error("approval fingerprint does not match the requested action");
+  const approvals = [...run.approvals];
+  const { snoozedUntil: _previousUntil, snoozedBy: _previousBy, ...rest } = current;
+  if (until === null) {
+    if (!current.snoozedUntil) return run;
+    approvals[index] = rest;
+    return { ...run, approvals, updatedAt: now, events: [...run.events, event("approval-woken", now, input.actor, approvalId, { approvalId, fingerprint: current.fingerprint })] };
+  }
+  const untilISO = isoNow(until);
+  if (new Date(untilISO).getTime() <= new Date(now).getTime()) throw new Error(`snooze time must be in the future: ${until}`);
+  approvals[index] = {
+    ...rest,
+    snoozedUntil: untilISO,
+    ...(optional(input.actor) ? { snoozedBy: optional(input.actor) } : {}),
+  };
+  return { ...run, approvals, updatedAt: now, events: [...run.events, event("approval-snoozed", now, input.actor, `${approvalId} until ${untilISO}`, { approvalId, fingerprint: current.fingerprint, until: untilISO })] };
 }
 
 export function supersedeAgentRunApproval(

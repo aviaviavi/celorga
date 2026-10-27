@@ -511,10 +511,15 @@ private struct ApprovalsView: View {
   @State private var shareText: String?
   @State private var approvingID: ApprovalEntry.ID?
   @State private var rejection: ApprovalEntry?
+  @State private var snoozeTarget: ApprovalEntry?
+  @State private var customSnoozeTarget: ApprovalEntry?
 
   private var approvals: [ApprovalEntry] {
     remote.isPaired ? remote.workspaceApprovals : store.approvals
   }
+
+  /// Snoozing writes run state or a SCHEDULED date on the Mac, so it needs a paired Mac.
+  private var canSnooze: Bool { remote.isPaired }
 
   var body: some View {
     NavigationStack {
@@ -560,8 +565,77 @@ private struct ApprovalsView: View {
                 Label("Discuss", systemImage: "paperplane")
               }
               .tint(.blue)
+
+              if canSnooze {
+                Button {
+                  snoozeTarget = item
+                } label: {
+                  Label("Snooze", systemImage: "moon.zzz")
+                }
+                .tint(.indigo)
+              }
             }
           }
+        }
+        if canSnooze && !remote.workspaceSnoozedApprovals.isEmpty {
+          Section {
+            ForEach(remote.workspaceSnoozedApprovals) { item in
+              Button {
+                selected = item
+              } label: {
+                ApprovalRow(item: item, isApproving: approvingID == item.id)
+              }
+              .buttonStyle(.plain)
+              .swipeActions(edge: .leading) {
+                Button {
+                  Task { await remote.snoozeApproval(item, until: nil) }
+                } label: {
+                  Label("Wake", systemImage: "alarm")
+                }
+                .tint(.orange)
+              }
+              .swipeActions(edge: .trailing) {
+                Button {
+                  snoozeTarget = item
+                } label: {
+                  Label("Snooze", systemImage: "moon.zzz")
+                }
+                .tint(.indigo)
+              }
+            }
+          } header: {
+            Text("Snoozed")
+          } footer: {
+            Text("Snoozed approvals stay pending and return on their own.")
+          }
+        }
+      }
+      .confirmationDialog(
+        "Snooze Approval",
+        isPresented: Binding(
+          get: { snoozeTarget != nil },
+          set: { if !$0 { snoozeTarget = nil } }
+        ),
+        titleVisibility: .visible,
+        presenting: snoozeTarget
+      ) { item in
+        ForEach(ApprovalSnoozeOption.allCases.filter { item.isRunApproval || $0.isWholeDay }) { option in
+          Button(option.title) {
+            Task { await remote.snoozeApproval(item, until: option.wakeDate()) }
+          }
+        }
+        Button("Pick a Date…") { customSnoozeTarget = item }
+        if item.isSnoozed() {
+          Button("Wake Now") {
+            Task { await remote.snoozeApproval(item, until: nil) }
+          }
+        }
+      } message: { item in
+        Text(item.title.prettyPrintedOrgLinks())
+      }
+      .sheet(item: $customSnoozeTarget) { item in
+        ApprovalSnoozeDateView(allowsTime: item.isRunApproval) { until in
+          await remote.snoozeApproval(item, until: until)
         }
       }
       .overlay {
@@ -573,7 +647,8 @@ private struct ApprovalsView: View {
             systemImage: "desktopcomputer.trianglebadge.exclamationmark",
             description: Text(connectionError)
           )
-        } else if approvals.isEmpty && !audio.isEnabled && audio.replyHistory.isEmpty && remote.approvalHistory.isEmpty {
+        } else if approvals.isEmpty && !audio.isEnabled && audio.replyHistory.isEmpty && remote.approvalHistory.isEmpty
+                    && (!canSnooze || remote.workspaceSnoozedApprovals.isEmpty) {
           ContentUnavailableView("No Approvals", systemImage: "checkmark.seal")
         }
       }
@@ -604,7 +679,8 @@ private struct ApprovalsView: View {
           isApproving: approvingID == item.id,
           approve: { await approve(item) },
           requestChanges: { feedback in await requestChanges(item, feedback: feedback) },
-          onReject: { rejection = item }
+          onReject: { rejection = item },
+          onSnooze: canSnooze ? { snoozeTarget = item } : nil
         ) { text in
           shareText = text
         }
@@ -935,6 +1011,15 @@ private struct ApprovalRow: View {
         .lineLimit(1)
         .truncationMode(.middle)
 
+      if let until = item.snoozedUntilDate, item.isSnoozed() {
+        Label(
+          "Snoozed until \(until.formatted(date: .abbreviated, time: item.isRunApproval ? .shortened : .omitted))",
+          systemImage: "moon.zzz"
+        )
+        .font(.caption.weight(.medium))
+        .foregroundStyle(.indigo)
+      }
+
       if isApproving {
         HStack(spacing: 6) {
           MobileActivityIndicator(style: .approval, tint: .green, label: "Approving")
@@ -956,6 +1041,7 @@ private struct ApprovalDetailView: View {
   let approve: () async -> Void
   let requestChanges: (String) async -> Void
   let onReject: () -> Void
+  var onSnooze: (() -> Void)? = nil
   let fallbackShare: (String) -> Void
   @State private var message: String = ""
 
@@ -1035,6 +1121,17 @@ private struct ApprovalDetailView: View {
               .frame(maxWidth: .infinity)
           }
 
+          if let onSnooze {
+            Button {
+              dismiss()
+              onSnooze()
+            } label: {
+              Label(item.isSnoozed() ? "Snooze Again or Wake" : "Snooze", systemImage: "moon.zzz")
+                .frame(maxWidth: .infinity)
+            }
+            .disabled(isApproving)
+          }
+
           if item.isRunApproval {
             Button {
               Task {
@@ -1106,6 +1203,54 @@ private struct ApprovalDetailView: View {
   private var sortedProperties: [(key: String, value: String)] {
     item.properties.sorted {
       $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending
+    }
+  }
+}
+
+private struct ApprovalSnoozeDateView: View {
+  @Environment(\.dismiss) private var dismiss
+  let allowsTime: Bool
+  let snooze: (Date) async -> Void
+  @State private var date = ApprovalSnoozeOption.tomorrowMorning.wakeDate()
+
+  private var minimumDate: Date {
+    allowsTime
+      ? Date().addingTimeInterval(60)
+      : Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date())) ?? Date()
+  }
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        DatePicker(
+          "Wake",
+          selection: $date,
+          in: minimumDate...,
+          displayedComponents: allowsTime ? [.date, .hourAndMinute] : [.date]
+        )
+        .datePickerStyle(.graphical)
+        Text(allowsTime
+          ? "The approval stays pending and returns at this time."
+          : "This approval snoozes with a SCHEDULED date and returns at the start of that day.")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+      }
+      .navigationTitle("Snooze Until")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Cancel") { dismiss() }
+        }
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Snooze") {
+            let until = allowsTime ? date : Calendar.current.startOfDay(for: date)
+            Task {
+              await snooze(until)
+              dismiss()
+            }
+          }
+        }
+      }
     }
   }
 }

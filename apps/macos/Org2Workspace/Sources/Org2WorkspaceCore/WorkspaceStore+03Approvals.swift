@@ -180,6 +180,22 @@ extension WorkspaceStore {
     }
   }
 
+  public func snoozeSelectedApprovals(until: Date) async {
+    let items = selectedApprovalItemsForBulkMutation()
+    guard !items.isEmpty else { return }
+    await performBulkApprovalAction(items) { store, item in
+      await store.setApprovalSnooze(item, until: until, updatesApprovalQueue: false)
+    }
+  }
+
+  public func wakeSelectedApprovals() async {
+    let items = selectedApprovalItemsForBulkMutation()
+    guard !items.isEmpty else { return }
+    await performBulkApprovalAction(items) { store, item in
+      await store.setApprovalSnooze(item, until: nil, updatesApprovalQueue: false)
+    }
+  }
+
   private func performBulkApprovalAction(
     _ items: [ApprovalItem],
     action: @escaping @MainActor @Sendable (WorkspaceStore, ApprovalItem) async -> Void
@@ -198,6 +214,7 @@ extension WorkspaceStore {
     let completedIDs = selectedIDs.subtracting(failedIDs)
     if !completedIDs.isEmpty {
       approvalItems.removeAll { completedIDs.contains($0.id) }
+      snoozedApprovalItems.removeAll { completedIDs.contains($0.id) }
       if let selectedApprovalItemID, completedIDs.contains(selectedApprovalItemID) {
         self.selectedApprovalItemID = nil
         approvalSelectionAnchor = nil
@@ -271,6 +288,182 @@ extension WorkspaceStore {
         repairRetry: item.isRunApproval ? .approve : nil
       )
     }
+  }
+
+  // MARK: Snooze
+
+  public func snoozeApproval(_ item: ApprovalItem, option: ApprovalSnoozeOption) async {
+    await snoozeApproval(item, until: option.wakeDate())
+  }
+
+  public func snoozeApproval(_ item: ApprovalItem, until: Date) async {
+    await setApprovalSnooze(item, until: until, updatesApprovalQueue: true)
+  }
+
+  public func wakeApproval(_ item: ApprovalItem) async {
+    await setApprovalSnooze(item, until: nil, updatesApprovalQueue: true)
+  }
+
+  /// Snoozes (`until` set) or wakes (`until == nil`) one approval. Run approvals record
+  /// `snoozedUntil` through `celorga run approval-snooze`; headline approvals move their
+  /// SCHEDULED date, as Org does. Either way the approval stays pending.
+  func setApprovalSnooze(
+    _ item: ApprovalItem,
+    until: Date?,
+    updatesApprovalQueue: Bool
+  ) async {
+    guard !isApprovalActionInProgress(item) else { return }
+    let originalVisibleIndex = visibleApprovalItems.firstIndex(where: { $0.id == item.id })
+    beginApprovalAction(item, kind: .snooze)
+    defer { endApprovalAction(item, kind: .snooze) }
+    let standaloneContext = item.isRunApproval ? nil : captureDocumentCorpusContext(forFile: item.file)
+    do {
+      let snoozedUntil: String?
+      if item.isRunApproval {
+        snoozedUntil = try await setRunApprovalSnooze(item, until: until)
+      } else {
+        snoozedUntil = try await setHeadlineApprovalSnooze(item, until: until)
+      }
+      if let standaloneContext {
+        guard isCurrentDocumentCorpusContext(standaloneContext) else { return }
+      }
+      if updatesApprovalQueue {
+        moveApprovalItemAfterSnooze(item.withSnoozedUntil(snoozedUntil), originalVisibleIndex: originalVisibleIndex)
+        scheduleApprovalsRefresh()
+      }
+      let title = Org2Display.cleanInline(item.title)
+      if let until {
+        statusText = "Snoozed \(title) until \(until.formatted(date: .abbreviated, time: item.supportsTimedSnooze ? .shortened : .omitted))"
+      } else {
+        statusText = "Woke \(title)"
+      }
+    } catch {
+      if let standaloneContext, !isCurrentDocumentCorpusContext(standaloneContext) { return }
+      recordApprovalActionFailure(item, error: error, status: until == nil ? "Wake failed" : "Snooze failed")
+    }
+  }
+
+  private func setRunApprovalSnooze(_ item: ApprovalItem, until: Date?) async throws -> String? {
+    guard let corpusRoot, let runID = item.runId, let approvalID = item.approvalId else {
+      throw CocoaError(.fileReadCorruptFile, userInfo: [NSLocalizedDescriptionKey: "This run approval is missing its run or approval identity."])
+    }
+    try await waitForAgentRunMutationAvailability(runID)
+    defer { mutatingAgentRunIDs.remove(runID) }
+    let untilText = until.map(Self.approvalSnoozeTimestamp)
+    let updated: AgentRunItem
+    if let agentRunApprovalSnoozeForTesting {
+      updated = try await agentRunApprovalSnoozeForTesting(runID, approvalID, until)
+    } else {
+      var arguments = ["run", "approval-snooze", runID, approvalID]
+      if let untilText {
+        arguments.append(contentsOf: ["--until", untilText])
+      } else {
+        arguments.append("--wake")
+      }
+      arguments.append(contentsOf: [
+        "--actor", Self.agentRunApprovalDecisionActor(requestedFrom: item.requestedFrom),
+        "--dir", corpusRoot.path,
+        "--json"
+      ])
+      if let fingerprint = item.fingerprint?.trimmingCharacters(in: .whitespacesAndNewlines), !fingerprint.isEmpty {
+        arguments.append(contentsOf: ["--fingerprint", fingerprint])
+      }
+      updated = try await cli.runJSON(arguments)
+    }
+    if let index = agentRuns.firstIndex(where: { $0.id == updated.id }) {
+      agentRuns[index] = updated
+    }
+    return untilText
+  }
+
+  private func setHeadlineApprovalSnooze(_ item: ApprovalItem, until: Date?) async throws -> String? {
+    let target = HeadlineMutationTarget(
+      file: item.file,
+      line: item.line,
+      title: Org2Display.cleanInline(item.title),
+      agendaItemID: nil,
+      idValue: item.idValue
+    )
+    // Org snooze: SCHEDULED on the wake day. Waking schedules it for today.
+    let day = until.map { Calendar.current.startOfDay(for: $0) } ?? Calendar.current.startOfDay(for: Date())
+    let date = Self.formatDate(day)
+    let context = try documentMutationContext(for: target)
+    let cli = self.cli
+    _ = try await performDocumentMutation(context: context, files: [target.file]) { execution in
+      try await Self.planHeadingInDocument(
+        kind: .scheduled,
+        date: date,
+        target: target,
+        cli: cli,
+        execution: execution
+      )
+    }
+    return day > Date() ? Self.approvalSnoozeTimestamp(day) : nil
+  }
+
+  nonisolated static func approvalSnoozeTimestamp(_ date: Date) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: date)
+  }
+
+  /// Splits a queue scan into awake and snoozed approvals at `now`.
+  nonisolated static func partitionSnoozedApprovalItems(
+    _ items: [ApprovalItem],
+    now: Date = Date()
+  ) -> (awake: [ApprovalItem], snoozed: [ApprovalItem]) {
+    var awake: [ApprovalItem] = []
+    var snoozed: [ApprovalItem] = []
+    for item in items {
+      if item.isSnoozed(at: now) {
+        snoozed.append(item)
+      } else {
+        awake.append(item.snoozedUntil == nil ? item : item.withSnoozedUntil(nil))
+      }
+    }
+    return (awake, snoozed)
+  }
+
+  private func moveApprovalItemAfterSnooze(_ updated: ApprovalItem, originalVisibleIndex: Int?) {
+    noteApprovalDecisionLanded()
+    bulkSelectedApprovalItemIDs.remove(updated.id)
+    approvalItems.removeAll { $0.id == updated.id }
+    snoozedApprovalItems.removeAll { $0.id == updated.id }
+    if updated.isSnoozed() {
+      snoozedApprovalItems = Self.sortedApprovalItems(snoozedApprovalItems + [updated])
+    } else {
+      approvalItems = Self.sortedApprovalItems(approvalItems + [updated])
+    }
+    preserveApprovalSelectionAfterMutation(mutatedID: updated.id, originalVisibleIndex: originalVisibleIndex)
+    scheduleApprovalSnoozeWake()
+  }
+
+  /// Returns snoozed approvals to the queue when their time passes, with no rescan needed:
+  /// waking is a clock comparison, as with an Org SCHEDULED date.
+  func scheduleApprovalSnoozeWake(now: Date = Date()) {
+    approvalSnoozeWakeTask?.cancel()
+    guard let next = snoozedApprovalItems.compactMap(\.snoozedUntilDate).min() else {
+      approvalSnoozeWakeTask = nil
+      return
+    }
+    let delay = min(max(next.timeIntervalSince(now), 0) + 1, 6 * 60 * 60)
+    approvalSnoozeWakeTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+      guard !Task.isCancelled, let self else { return }
+      self.wakeExpiredSnoozedApprovals()
+    }
+  }
+
+  func wakeExpiredSnoozedApprovals(now: Date = Date()) {
+    let partitioned = Self.partitionSnoozedApprovalItems(snoozedApprovalItems, now: now)
+    if !partitioned.awake.isEmpty {
+      snoozedApprovalItems = partitioned.snoozed
+      approvalItems = Self.sortedApprovalItems(approvalItems + partitioned.awake)
+      statusText = partitioned.awake.count == 1
+        ? "1 snoozed approval is back"
+        : "\(partitioned.awake.count) snoozed approvals are back"
+    }
+    scheduleApprovalSnoozeWake(now: now)
   }
 
   public func promptAndRejectApproval(_ item: ApprovalItem) {
@@ -420,6 +613,10 @@ extension WorkspaceStore {
     }
   }
 
+  public func isSnoozingApproval(_ item: ApprovalItem) -> Bool {
+    snoozingApprovalItemIDs.contains(item.id)
+  }
+
   public func isApprovingApproval(_ item: ApprovalItem) -> Bool {
     approvingApprovalItemIDs.contains(item.id)
   }
@@ -455,6 +652,7 @@ extension WorkspaceStore {
     approvingApprovalItemIDs.contains(itemID)
       || rejectingApprovalItemIDs.contains(itemID)
       || externallyCompletingApprovalItemIDs.contains(itemID)
+      || snoozingApprovalItemIDs.contains(itemID)
       || repairingApprovalSourceItemIDs.contains(itemID)
   }
 
@@ -708,7 +906,8 @@ extension WorkspaceStore {
 
   func rebuildApprovalDisplayCache() {
     let terms = Self.filterTerms(from: approvalFilter)
-    visibleApprovalItems = approvalItems.filter { item in
+    let source = showsSnoozedApprovals ? snoozedApprovalItems : approvalItems
+    visibleApprovalItems = source.filter { item in
       guard !terms.isEmpty else { return true }
       let searchText = approvalFilterTextByItemID[item.id] ?? item.approvalFilterText
       return terms.allSatisfy { searchText.contains($0) }
@@ -753,6 +952,10 @@ extension WorkspaceStore {
       var ids = externallyCompletingApprovalItemIDs
       ids.insert(itemID)
       externallyCompletingApprovalItemIDs = ids
+    case .snooze:
+      var ids = snoozingApprovalItemIDs
+      ids.insert(itemID)
+      snoozingApprovalItemIDs = ids
     }
   }
 
@@ -821,11 +1024,15 @@ extension WorkspaceStore {
       var ids = externallyCompletingApprovalItemIDs
       ids.remove(itemID)
       externallyCompletingApprovalItemIDs = ids
+    case .snooze:
+      var ids = snoozingApprovalItemIDs
+      ids.remove(itemID)
+      snoozingApprovalItemIDs = ids
     }
   }
 
   private func pruneApprovalActionState() {
-    let itemIDs = Set(approvalItems.map(\.id))
+    let itemIDs = Set(approvalItems.map(\.id)).union(snoozedApprovalItems.map(\.id))
     let nextBulkSelectedIDs = bulkSelectedApprovalItemIDs.intersection(itemIDs)
     if nextBulkSelectedIDs != bulkSelectedApprovalItemIDs {
       bulkSelectedApprovalItemIDs = nextBulkSelectedIDs
@@ -896,6 +1103,7 @@ extension WorkspaceStore {
     noteApprovalDecisionLanded()
     bulkSelectedApprovalItemIDs.remove(id)
     approvalItems.removeAll { $0.id == id }
+    snoozedApprovalItems.removeAll { $0.id == id }
     preserveApprovalSelectionAfterMutation(mutatedID: id, originalVisibleIndex: originalVisibleIndex)
   }
 

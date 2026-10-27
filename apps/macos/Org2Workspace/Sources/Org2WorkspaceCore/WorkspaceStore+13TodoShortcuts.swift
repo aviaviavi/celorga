@@ -442,7 +442,7 @@ extension WorkspaceStore {
     return resolved
   }
 
-  nonisolated private static func planHeadingInDocument(
+  nonisolated static func planHeadingInDocument(
     kind: PlanningEditKind,
     date: String,
     target: HeadlineMutationTarget,

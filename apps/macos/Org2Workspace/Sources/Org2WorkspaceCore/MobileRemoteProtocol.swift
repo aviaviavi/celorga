@@ -740,6 +740,8 @@ public struct MobileRemoteWorkspaceSnapshot: Codable, Hashable, Sendable {
   public let workflows: [MobileRemoteWorkflowItem]
   public let approvalDecisionReceipt: MobileRemoteApprovalDecisionReceipt?
   public let approvalHistory: [MobileRemoteApprovalHistoryItem]?
+  /// Pending approvals hidden until their snooze ends. Older hosts omit it.
+  public let snoozedApprovals: [MobileRemoteApprovalItem]?
 
   public init(
     updatedAt: Date = Date(),
@@ -747,7 +749,8 @@ public struct MobileRemoteWorkspaceSnapshot: Codable, Hashable, Sendable {
     approvals: [MobileRemoteApprovalItem],
     workflows: [MobileRemoteWorkflowItem],
     approvalDecisionReceipt: MobileRemoteApprovalDecisionReceipt? = nil,
-    approvalHistory: [MobileRemoteApprovalHistoryItem]? = nil
+    approvalHistory: [MobileRemoteApprovalHistoryItem]? = nil,
+    snoozedApprovals: [MobileRemoteApprovalItem]? = nil
   ) {
     self.updatedAt = updatedAt
     self.agenda = agenda
@@ -755,6 +758,7 @@ public struct MobileRemoteWorkspaceSnapshot: Codable, Hashable, Sendable {
     self.workflows = workflows
     self.approvalDecisionReceipt = approvalDecisionReceipt
     self.approvalHistory = approvalHistory
+    self.snoozedApprovals = snoozedApprovals
   }
 }
 
@@ -892,6 +896,8 @@ public struct MobileRemoteApprovalItem: Codable, Hashable, Identifiable, Sendabl
   public let runStatus: String?
   public let runDecisionEffect: String?
   public let priority: String?
+  /// ISO time a snoozed approval returns. Present only on `snoozedApprovals` entries.
+  public let snoozedUntil: String?
 
   public init(
     id: String,
@@ -917,7 +923,8 @@ public struct MobileRemoteApprovalItem: Codable, Hashable, Identifiable, Sendabl
     runGoal: String?,
     runStatus: String?,
     runDecisionEffect: String?,
-    priority: String? = nil
+    priority: String? = nil,
+    snoozedUntil: String? = nil
   ) {
     self.id = id
     self.title = title
@@ -943,6 +950,24 @@ public struct MobileRemoteApprovalItem: Codable, Hashable, Identifiable, Sendabl
     self.runStatus = runStatus
     self.runDecisionEffect = runDecisionEffect
     self.priority = priority
+    self.snoozedUntil = snoozedUntil
+  }
+}
+
+/// Snooze (`until` set) or wake (`until == nil`) one queue approval. The approval stays
+/// pending; the host hides it from `approvals` and lists it in `snoozedApprovals` until then.
+/// The optional exact identity refuses the change if the approval differs from what was shown.
+public struct MobileRemoteApprovalSnoozeRequest: Codable, Hashable, Sendable {
+  public let until: Date?
+  public let runID: String?
+  public let approvalID: String?
+  public let fingerprint: String?
+
+  public init(until: Date?, runID: String? = nil, approvalID: String? = nil, fingerprint: String? = nil) {
+    self.until = until
+    self.runID = runID
+    self.approvalID = approvalID
+    self.fingerprint = fingerprint
   }
 }
 

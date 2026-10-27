@@ -569,8 +569,9 @@ final class CorpusStore: ObservableObject {
         return []
       }
       let file = "\(stateDirectoryName)/runs/\(url.lastPathComponent)"
-      return run.approvals.filter { $0.status == "pending" }.map { approval in
-        ApprovalEntry(
+      let now = Date()
+      return run.approvals.filter { $0.status == "pending" }.compactMap { approval -> ApprovalEntry? in
+        let entry = ApprovalEntry(
           id: "run:\(run.id):\(approval.id)",
           title: approval.title,
           status: approval.status,
@@ -587,8 +588,10 @@ final class CorpusStore: ObservableObject {
           approvalID: approval.id,
           fingerprint: approval.fingerprint,
           action: approval.action,
-          riskClass: approval.riskClass
+          riskClass: approval.riskClass,
+          snoozedUntil: approval.snoozedUntil
         )
+        return entry.isSnoozed(at: now) ? nil : entry
       }
     }
   }
@@ -1793,6 +1796,8 @@ private struct MobileAgentRunApproval: Decodable {
   let riskClass: String
   let status: String
   let note: String?
+  /// Set by `celorga run approval-snooze`; hidden here until it passes.
+  let snoozedUntil: String?
 }
 
 private struct CorpusRefreshSnapshot {

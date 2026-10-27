@@ -37,6 +37,7 @@ final class MobileRemoteStore: ObservableObject {
   @Published private(set) var isLoadingExternalThread = false
   @Published private(set) var workspaceAgenda: [AgendaEntry] = []
   @Published private(set) var workspaceApprovals: [ApprovalEntry] = []
+  @Published private(set) var workspaceSnoozedApprovals: [ApprovalEntry] = []
   @Published private(set) var approvalHistory: [MobileRemoteApprovalHistoryItem] = []
   @Published private(set) var workspaceWorkflows: [MobileRemoteWorkflowItem] = []
   @Published private(set) var workspaceUpdatedAt: Date?
@@ -319,6 +320,7 @@ final class MobileRemoteStore: ObservableObject {
     externalThreadDetailCacheOrder.removeAll()
     workspaceAgenda = []
     workspaceApprovals = []
+    workspaceSnoozedApprovals = []
     approvalHistory = []
     workspaceWorkflows = []
     workspaceUpdatedAt = nil
@@ -484,6 +486,24 @@ final class MobileRemoteStore: ObservableObject {
     }
   }
 
+  /// Snoozes (`until` set) or wakes (`until == nil`) an approval on the paired Mac. It stays
+  /// pending and returns to the queue on its own when the snooze ends.
+  func snoozeApproval(_ approval: ApprovalEntry, until: Date?) async {
+    await mutateWorkspaceItem(approval.id) {
+      try await self.pairedClient().post(
+        self.workspacePath(collection: "approvals", id: approval.id, action: "snooze"),
+        payload: MobileRemoteApprovalSnoozeRequest(
+          until: until,
+          runID: approval.runID,
+          approvalID: approval.approvalID,
+          fingerprint: approval.fingerprint
+        ),
+        timeout: 60,
+        as: MobileRemoteWorkspaceSnapshot.self
+      )
+    }
+  }
+
   /// Exact-identity decision used by audio approvals. Unlike `decideApproval`, it does not swallow
   /// errors: the caller needs to know whether the host applied the decision.
   func decideApprovalExactly(
@@ -634,6 +654,7 @@ final class MobileRemoteStore: ObservableObject {
   private func apply(_ snapshot: MobileRemoteWorkspaceSnapshot) {
     workspaceAgenda = snapshot.agenda.map(\.localEntry)
     workspaceApprovals = snapshot.approvals.map(\.localEntry)
+    workspaceSnoozedApprovals = (snapshot.snoozedApprovals ?? []).map(\.localEntry)
     approvalHistory = snapshot.approvalHistory ?? []
     workspaceWorkflows = snapshot.workflows
     workspaceUpdatedAt = snapshot.updatedAt

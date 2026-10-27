@@ -625,6 +625,20 @@ public final class MobileRemoteCoordinator: ObservableObject {
           ))
         }
         if request.method == "POST",
+           workspaceComponents[2] == "approvals",
+           workspaceComponents[4] == "snooze",
+           let payload = try? request.decode(MobileRemoteApprovalSnoozeRequest.self) {
+          // A snoozed approval is not prompted by audio either; choose the next one afresh.
+          defer { requestPushToTalkEvaluation() }
+          return .json(try await store.snoozeMobileRemoteApproval(
+            itemID: itemID,
+            until: payload.until,
+            expectedRunID: payload.runID,
+            expectedApprovalID: payload.approvalID,
+            expectedFingerprint: payload.fingerprint
+          ))
+        }
+        if request.method == "POST",
            workspaceComponents[2] == "workflows",
            workspaceComponents[4] == "state",
            let payload = try? request.decode(MobileRemoteWorkflowStateRequest.self) {
