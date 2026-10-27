@@ -26,6 +26,8 @@ public struct AIChatLocalEditWorkspaceContext: Equatable, Sendable {
        invokeCommand: \(AIChatLocalEditBroker.previewCommand)
        invokeParamsJson: {"turnId":"\(turnID)","edits":[{"path":"relative/path.org","expectedSha256":"<read sha256>","replacementText":"<complete replacement text>"}]}
        To create a file, omit expectedSha256 and set "createsFile":true.
+       To rename or move an existing file, add "moveTo":"new/relative/path.org" with its expectedSha256; replacementText is optional and defaults to the current text.
+       To move an existing file to the Trash, send {"path":"relative/path.org","expectedSha256":"<read sha256>","trashesFile":true} without replacementText.
     3. Apply the exact preview only after preview succeeds:
        invokeCommand: \(AIChatLocalEditBroker.applyCommand)
        invokeParamsJson: {"turnId":"\(turnID)","previewId":"<previewId>"}
@@ -66,17 +68,31 @@ public struct AIChatLocalEditReplacement: Equatable, Sendable {
   public let expectedSHA256: String?
   public let replacementText: String
   public let createsFile: Bool
+  /// Moves the existing file to the Trash instead of replacing its text.
+  public let trashesFile: Bool
+  /// For a file created by a rename, the path it was moved from. The source
+  /// is trashed by a separate replacement in the same preview.
+  public let movedFromRelativePath: String?
 
   public init(
     relativePath: String,
     expectedSHA256: String?,
     replacementText: String,
-    createsFile: Bool
+    createsFile: Bool,
+    trashesFile: Bool = false,
+    movedFromRelativePath: String? = nil
   ) {
     self.relativePath = relativePath
     self.expectedSHA256 = expectedSHA256
     self.replacementText = replacementText
     self.createsFile = createsFile
+    self.trashesFile = trashesFile
+    self.movedFromRelativePath = movedFromRelativePath
+  }
+
+  /// The file's text after the edit, or nil when the edit removes it.
+  public var finalText: String? {
+    trashesFile ? nil : replacementText
   }
 }
 
@@ -178,22 +194,30 @@ public actor AIChatLocalEditBroker {
     struct Edit: Decodable {
       let path: String
       let expectedSHA256: String?
-      let replacementText: String
+      let replacementText: String?
       let createsFile: Bool
+      let moveTo: String?
+      let trashesFile: Bool
 
       enum CodingKeys: String, CodingKey {
         case path
         case expectedSHA256 = "expectedSha256"
         case replacementText
         case createsFile
+        case moveTo
+        case trashesFile
       }
 
       init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         path = try container.decode(String.self, forKey: .path)
         expectedSHA256 = try container.decodeIfPresent(String.self, forKey: .expectedSHA256)
-        replacementText = try container.decode(String.self, forKey: .replacementText)
+        replacementText = try container.decodeIfPresent(String.self, forKey: .replacementText)
         createsFile = try container.decodeIfPresent(Bool.self, forKey: .createsFile) ?? false
+        moveTo = try container.decodeIfPresent(String.self, forKey: .moveTo)?
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+          .nilIfBlank
+        trashesFile = try container.decodeIfPresent(Bool.self, forKey: .trashesFile) ?? false
       }
     }
 
@@ -284,12 +308,12 @@ public actor AIChatLocalEditBroker {
     var appliedDocuments = appliedDocumentsByTurnID[preview.turnID] ?? [:]
     for replacement in preview.replacements {
       if var existing = appliedDocuments[replacement.relativePath] {
-        existing.finalText = replacement.replacementText
+        existing.finalText = replacement.finalText
         appliedDocuments[replacement.relativePath] = existing
       } else if let document = preview.documentsByPath[replacement.relativePath] {
         appliedDocuments[replacement.relativePath] = AppliedDocumentState(
           originalText: document.origin == .missing ? nil : document.text,
-          finalText: replacement.replacementText
+          finalText: replacement.finalText
         )
       }
     }
@@ -344,7 +368,7 @@ public actor AIChatLocalEditBroker {
     try requireActiveTurn(request.turnID)
     guard !request.edits.isEmpty,
           request.edits.count <= Self.maximumEditCount,
-          request.edits.reduce(0, { $0 + $1.replacementText.utf8.count }) <= Self.maximumTotalReplacementBytes
+          request.edits.reduce(0, { $0 + ($1.replacementText?.utf8.count ?? 0) }) <= Self.maximumTotalReplacementBytes
     else {
       throw AIChatLocalEditError.oversizedRequest
     }
@@ -359,10 +383,75 @@ public actor AIChatLocalEditBroker {
       guard seenPaths.insert(document.relativePath).inserted else {
         throw AIChatLocalEditError.invalidRequest("duplicate path \(document.relativePath)")
       }
-      guard edit.replacementText.utf8.count <= Self.maximumDocumentBytes else {
+      guard (edit.replacementText?.utf8.count ?? 0) <= Self.maximumDocumentBytes else {
         throw AIChatLocalEditError.oversizedRequest
       }
 
+      if edit.trashesFile || edit.moveTo != nil {
+        guard !edit.createsFile, !(edit.trashesFile && edit.moveTo != nil) else {
+          throw AIChatLocalEditError.invalidRequest(
+            "\(document.relativePath): choose only one of createsFile, moveTo, or trashesFile"
+          )
+        }
+        let expectedSHA256 = try Self.verifiedExistingSHA256(edit, document: document)
+        documentsByPath[document.relativePath] = document
+        let trash = AIChatLocalEditReplacement(
+          relativePath: document.relativePath,
+          expectedSHA256: expectedSHA256,
+          replacementText: "",
+          createsFile: false,
+          trashesFile: true
+        )
+        guard let moveTo = edit.moveTo else {
+          guard edit.replacementText == nil else {
+            throw AIChatLocalEditError.invalidRequest(
+              "\(document.relativePath): omit replacementText when trashesFile is true"
+            )
+          }
+          replacements.append(trash)
+          if let change = Self.fileChange(path: document.relativePath, before: document.text, after: nil) {
+            changes.append(change)
+          }
+          continue
+        }
+        let destination = try await documentReader(request.turnID, moveTo, nil)
+        guard destination.relativePath != document.relativePath else {
+          throw AIChatLocalEditError.invalidRequest(
+            "\(document.relativePath): moveTo must name a different path"
+          )
+        }
+        guard seenPaths.insert(destination.relativePath).inserted else {
+          throw AIChatLocalEditError.invalidRequest("duplicate path \(destination.relativePath)")
+        }
+        guard destination.origin == .missing else {
+          throw AIChatLocalEditError.existingDocument(destination.relativePath)
+        }
+        let movedText = edit.replacementText ?? document.text
+        documentsByPath[destination.relativePath] = destination
+        // Write the destination before trashing the source, so a failed move
+        // never leaves the text only in the Trash.
+        replacements.append(AIChatLocalEditReplacement(
+          relativePath: destination.relativePath,
+          expectedSHA256: nil,
+          replacementText: movedText,
+          createsFile: true,
+          movedFromRelativePath: document.relativePath
+        ))
+        replacements.append(trash)
+        if let change = Self.fileChange(path: destination.relativePath, before: nil, after: movedText) {
+          changes.append(change)
+        }
+        if let change = Self.fileChange(path: document.relativePath, before: document.text, after: nil) {
+          changes.append(change)
+        }
+        continue
+      }
+
+      guard let replacementText = edit.replacementText else {
+        throw AIChatLocalEditError.invalidRequest(
+          "replacementText is required for \(document.relativePath)"
+        )
+      }
       if edit.createsFile {
         guard document.origin == .missing else {
           throw AIChatLocalEditError.existingDocument(document.relativePath)
@@ -388,14 +477,14 @@ public actor AIChatLocalEditBroker {
       let replacement = AIChatLocalEditReplacement(
         relativePath: document.relativePath,
         expectedSHA256: edit.createsFile ? nil : document.sha256,
-        replacementText: edit.replacementText,
+        replacementText: replacementText,
         createsFile: edit.createsFile
       )
       replacements.append(replacement)
       if let change = Self.fileChange(
         path: document.relativePath,
         before: edit.createsFile ? nil : document.text,
-        after: edit.replacementText
+        after: replacementText
       ) {
         changes.append(change)
       }
@@ -419,6 +508,27 @@ public actor AIChatLocalEditBroker {
       "title": preview.summary.title,
       "changes": preview.summary.files.map(Self.changeDictionary)
     ])
+  }
+
+  private static func verifiedExistingSHA256(
+    _ edit: PreviewRequest.Edit,
+    document: AIChatLocalEditDocument
+  ) throws -> String {
+    guard document.origin != .missing else {
+      throw AIChatLocalEditError.missingDocument(document.relativePath)
+    }
+    guard let expectedSHA256 = edit.expectedSHA256?
+      .trimmingCharacters(in: .whitespacesAndNewlines),
+      !expectedSHA256.isEmpty
+    else {
+      throw AIChatLocalEditError.invalidRequest(
+        "expectedSha256 is required for \(document.relativePath)"
+      )
+    }
+    guard expectedSHA256 == document.sha256 else {
+      throw AIChatLocalEditError.staleDocument(document.relativePath)
+    }
+    return expectedSHA256
   }
 
   private func handleApply(_ paramsJSON: String?) async throws -> AIChatLocalEditCommandResult {

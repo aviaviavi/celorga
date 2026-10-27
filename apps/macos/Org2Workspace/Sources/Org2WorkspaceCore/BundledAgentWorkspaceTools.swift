@@ -93,16 +93,29 @@ final class BundledAgentWorkspaceTools {
             || edit["expectedSha256"]?.stringValue.flatMap { reads[$0] } != nil
         }) else { return failure("Read each existing file from the active corpus before previewing, so its original text can be reviewed.") }
         // Review text comes from this exact successful preview, retained locally.
-        previews[id] = "Corpus: \(corpusRoot.path)\n\n" + edits.map { edit in
-          let path = edit["path"]?.stringValue ?? ""
-          let before = edit["expectedSha256"]?.stringValue.flatMap { reads[$0] } ?? "(new file)"
-          let after = edit["replacementText"]?.stringValue ?? ""
-          return "FILE: \(path)\n\nBEFORE\n\(before)\n\nAFTER\n\(after)"
-        }.joined(separator: "\n\n────────────────────\n\n")
+        previews[id] = Self.reviewText(corpusRoot: corpusRoot, edits: edits, reads: reads)
       }
       return CodexDynamicToolResult(success: true, text: payload)
     }
     return failure(result.errorMessage ?? "The workspace tool failed.")
+  }
+
+  /// Review text for an exact successful preview: original and proposed text
+  /// for each file, plus explicit rename and Trash lines.
+  static func reviewText(corpusRoot: URL, edits: [JSONValue], reads: [String: String]) -> String {
+    "Corpus: \(corpusRoot.path)\n\n" + edits.map { edit in
+      let path = edit["path"]?.stringValue ?? ""
+      let before = edit["expectedSha256"]?.stringValue.flatMap { reads[$0] } ?? "(new file)"
+      if edit["trashesFile"]?.boolValue == true {
+        return "MOVE TO TRASH: \(path)\n\nBEFORE\n\(before)"
+      }
+      if let destination = edit["moveTo"]?.stringValue {
+        let after = edit["replacementText"]?.stringValue ?? before
+        return "RENAME: \(path) → \(destination)\n\nBEFORE\n\(before)\n\nAFTER\n\(after)"
+      }
+      let after = edit["replacementText"]?.stringValue ?? ""
+      return "FILE: \(path)\n\nBEFORE\n\(before)\n\nAFTER\n\(after)"
+    }.joined(separator: "\n\n────────────────────\n\n")
   }
 
   private func failure(_ message: String) -> CodexDynamicToolResult {

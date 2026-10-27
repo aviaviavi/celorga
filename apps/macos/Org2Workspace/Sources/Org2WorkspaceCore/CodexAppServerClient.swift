@@ -2938,7 +2938,7 @@ while True:
 
   Use celorga_workspace_search to discover relevant ordinary files or prior AI chats instead of guessing paths. Use celorga_workspace_chat_read with a returned thread ID when more of a matching conversation is needed. For files outside the authorized Celorga corpora, use the normal runtime filesystem tools when the configured sandbox permits it; an iOS-originated turn has the same machine access policy as a Mac-originated turn.
 
-  Existing files must be read first. Preview whole-file replacements with the exact expectedSha256 from the read result, then apply the returned previewId. For new files, set createsFile to true and omit expectedSha256. If a stale-document error occurs, read again and rebuild the replacement. Use the turnId provided in the application context on every tool call.
+  Existing files must be read first. Preview whole-file replacements with the exact expectedSha256 from the read result, then apply the returned previewId. For new files, set createsFile to true and omit expectedSha256. To rename a file, preview it with expectedSha256 and moveTo; to delete one, use trashesFile (it goes to the Trash). If a stale-document error occurs, read again and rebuild the replacement. Use the turnId provided in the application context on every tool call.
 
   Ordinary conversation does not require a tool call. Ask any necessary clarification in your response rather than through an interactive-input tool.
 
@@ -3054,7 +3054,7 @@ while True:
     .object([
       "type": .string("function"),
       "name": .string("celorga_workspace_patch_preview"),
-      "description": .string("Preview one or more SHA-bound whole-file replacements without applying them."),
+      "description": .string("Preview SHA-bound file edits without applying them: whole-file replacements, new files (createsFile), renames or moves (moveTo, optionally with replacementText), and moves to the Trash (trashesFile)."),
       "inputSchema": .object([
         "type": .string("object"),
         "properties": .object([
@@ -3067,11 +3067,18 @@ while True:
                 "path": .object(["type": .string("string")]),
                 "expectedSha256": .object(["type": .string("string")]),
                 "replacementText": .object(["type": .string("string")]),
-                "createsFile": .object(["type": .string("boolean")])
+                "createsFile": .object(["type": .string("boolean")]),
+                "moveTo": .object([
+                  "type": .string("string"),
+                  "description": .string("Rename or move this existing file to a new corpus-relative path. The destination must not exist; replacementText defaults to the current text.")
+                ]),
+                "trashesFile": .object([
+                  "type": .string("boolean"),
+                  "description": .string("Move this existing file to the Trash. Omit replacementText.")
+                ])
               ]),
               "required": .array([
-                .string("path"),
-                .string("replacementText")
+                .string("path")
               ]),
               "additionalProperties": .bool(false)
             ])

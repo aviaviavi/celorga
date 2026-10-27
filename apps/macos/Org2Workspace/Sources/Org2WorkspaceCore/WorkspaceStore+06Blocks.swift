@@ -1650,6 +1650,29 @@ extension WorkspaceStore {
     defaults.set(storage, forKey: fileFrecencyByCorpusKey)
   }
 
+  /// Carries pins and open history from a renamed file to its new path.
+  func renameFileReferences(fromRelativePath oldPath: String, toRelativePath newPath: String) {
+    guard let corpusRoot, oldPath != newPath else { return }
+    if let index = pinnedFileRelativePaths.firstIndex(of: oldPath) {
+      if pinnedFileRelativePaths.contains(newPath) {
+        pinnedFileRelativePaths.remove(at: index)
+      } else {
+        pinnedFileRelativePaths[index] = newPath
+      }
+      persistPinnedFiles()
+      schedulePinnedCorpusFileProjection()
+    }
+    let root = corpusRoot.standardizedFileURL.path
+    var value = currentFileFrecency()
+    guard value.visitsByPath[oldPath] != nil else { return }
+    value.rename(from: oldPath, to: newPath)
+    fileFrecencyCache = (root, value)
+    fileFrecencyRevision &+= 1
+    var storage = defaults.dictionary(forKey: fileFrecencyByCorpusKey) ?? [:]
+    storage[root] = try? JSONEncoder().encode(value)
+    defaults.set(storage, forKey: fileFrecencyByCorpusKey)
+  }
+
   public func fileFrecencyScore(relativePath: String, now: Date = Date()) -> Double {
     currentFileFrecency().score(relativePath, now: now)
   }

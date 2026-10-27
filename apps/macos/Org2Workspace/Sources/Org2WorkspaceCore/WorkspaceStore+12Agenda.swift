@@ -364,7 +364,7 @@ extension WorkspaceStore {
       if let change = AIChatLocalEditBroker.fileChange(
         path: document.relativePath,
         before: replacement.createsFile ? nil : document.text,
-        after: replacement.replacementText
+        after: replacement.finalText
       ) {
         changes.append(change)
       }
@@ -420,6 +420,7 @@ extension WorkspaceStore {
     let preparedDocuments = documents
     let preparedDiskBaselines = diskBaselines
     let resourcePaths = preparedURLs.values.map(\.path)
+    let trashFile = aiChatLocalEditFileTrasher
     try await performDocumentMutation(
       context: mutationContext,
       files: resourcePaths
@@ -442,10 +443,20 @@ extension WorkspaceStore {
       }
 
       var committed: [(AIChatLocalEditReplacement, WorkspaceDocumentSnapshot)] = []
+      var trashedURLs: [String: URL] = [:]
       do {
         for replacement in replacements {
           guard let snapshot = snapshots[replacement.relativePath] else {
             throw AIChatLocalEditError.invalidRequest("missing prepared replacement")
+          }
+          if replacement.trashesFile {
+            let trashedURL = AIChatLocalEditTrashedURL()
+            try await execution.commit("", over: snapshot) { _, url, _ in
+              trashedURL.value = try trashFile(url)
+            }
+            trashedURLs[replacement.relativePath] = trashedURL.value
+            committed.append((replacement, snapshot))
+            continue
           }
           try await execution.commit(replacement.replacementText, over: snapshot) {
             text, url, previous in
@@ -470,6 +481,14 @@ extension WorkspaceStore {
         }
       } catch {
         for (replacement, original) in committed.reversed() {
+          if replacement.trashesFile {
+            // Put the file back from the Trash; never overwrite a new file.
+            if let trashedURL = trashedURLs[replacement.relativePath],
+               !FileManager.default.fileExists(atPath: original.url.path) {
+              try? FileManager.default.moveItem(at: trashedURL, to: original.url)
+            }
+            continue
+          }
           guard let current = try? await execution.readSnapshot(at: original.url) else { continue }
           guard current.text == replacement.replacementText else { continue }
           if original.existed {
@@ -494,7 +513,8 @@ extension WorkspaceStore {
 
     let refreshedCorpusFiles: [String: CorpusFile]
     if isActiveCorpus {
-      let preparedURLs = urls
+      let trashedPaths = Set(replacements.filter(\.trashesFile).map(\.relativePath))
+      let preparedURLs = urls.filter { !trashedPaths.contains($0.key) }
       refreshedCorpusFiles = await Task.detached(priority: .utility) {
         Dictionary(uniqueKeysWithValues: preparedURLs.values.map { url in
           (
@@ -516,13 +536,24 @@ extension WorkspaceStore {
           .fileSnapshot(
             file: url.standardizedFileURL.path,
             previous: replacement.createsFile ? nil : document.text,
-            next: replacement.replacementText
+            next: replacement.finalText
           )
         )
         invalidateCanonicalDocumentCache(for: url.path)
-        if let file = refreshedCorpusFiles[url.standardizedFileURL.path] {
+        if replacement.trashesFile {
+          removeCorpusFile(atPath: url.path)
+        } else if let file = refreshedCorpusFiles[url.standardizedFileURL.path] {
           upsertCorpusFile(file)
         }
+      }
+    }
+    if isActiveCorpus {
+      for replacement in replacements {
+        guard let source = replacement.movedFromRelativePath,
+              let sourceURL = urls[source],
+              let destinationURL = urls[replacement.relativePath]
+        else { continue }
+        renameAIChatLocalEditFileReferences(from: sourceURL, to: destinationURL)
       }
     }
 
@@ -531,7 +562,8 @@ extension WorkspaceStore {
        let selectedReplacement = replacements.first(where: {
          urls[$0.relativePath]?.standardizedFileURL.path
            == URL(fileURLWithPath: selectedLocation.file).standardizedFileURL.path
-       }) {
+       }),
+       !selectedReplacement.trashesFile {
       isEditingEntry = false
       resetBlockState()
       await loadEntrySource(for: selectedLocation)
@@ -558,6 +590,35 @@ extension WorkspaceStore {
     return AIChatLocalEditApplyResult(
       summary: AIChatCorpusChangeSummary(files: changes)
     )
+  }
+
+  /// Moves a file to the Trash and returns where it went, so a failed
+  /// multi-file apply can put it back.
+  nonisolated static func moveAIChatLocalEditFileToTrash(_ url: URL) throws -> URL? {
+    var resultingURL: NSURL?
+    try FileManager.default.trashItem(at: url, resultingItemURL: &resultingURL)
+    return resultingURL as URL?
+  }
+
+  private func renameAIChatLocalEditFileReferences(from sourceURL: URL, to destinationURL: URL) {
+    guard let corpusRoot else { return }
+    let sourcePath = Self.relativePath(for: sourceURL.standardizedFileURL.path, root: corpusRoot)
+    let destinationPath = Self.relativePath(for: destinationURL.standardizedFileURL.path, root: corpusRoot)
+    renameFileReferences(fromRelativePath: sourcePath, toRelativePath: destinationPath)
+    let selectedFile = selectedEntrySource?.file ?? selectedLocation?.file
+    guard let selectedFile,
+          URL(fileURLWithPath: selectedFile).standardizedFileURL.path
+            == sourceURL.standardizedFileURL.path
+    else { return }
+    // Follow the open document to its new path instead of leaving an editor
+    // on a file that is now in the Trash.
+    let values = try? destinationURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+    selectCorpusFile(CorpusFile(
+      path: destinationURL.standardizedFileURL.path,
+      relativePath: destinationPath,
+      modifiedAt: values?.contentModificationDate,
+      byteCount: values?.fileSize.map(Int64.init)
+    ), surface: selectedSurface)
   }
 
   private func aiChatLocalEditURL(

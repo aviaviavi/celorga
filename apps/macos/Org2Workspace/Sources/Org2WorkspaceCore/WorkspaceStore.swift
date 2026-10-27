@@ -1220,6 +1220,11 @@ struct AIChatLocalEditPreparationIdentity: Equatable, Sendable {
   let liveDraftGeneration: UInt64
 }
 
+/// Receives the Trash location from a synchronous document writer.
+final class AIChatLocalEditTrashedURL: @unchecked Sendable {
+  var value: URL?
+}
+
 struct PreparedAIChatLocalEdits: Sendable {
   let documents: [String: AIChatLocalEditDocument]
   let urls: [String: URL]
@@ -3601,6 +3606,10 @@ public final class WorkspaceStore {
   var aiChatVisibleMessageCountCache: [UUID: (rawCount: Int, visibleCount: Int)] = [:]
   var quickOpenChatIndexSignature: [AIChatQuickOpenChatIndexSignature] = []
   var aiChatLocalEditBroker: AIChatLocalEditBroker?
+  /// Moves an AI-trashed corpus file to the Trash; tests substitute a folder.
+  var aiChatLocalEditFileTrasher: @Sendable (URL) throws -> URL? = { url in
+    try WorkspaceStore.moveAIChatLocalEditFileToTrash(url)
+  }
   var aiChatLocalEditCorpusRootsByTurnID: [String: URL] = [:]
   var aiChatReadCorpusRootsByTurnID: [String: Set<String>] = [:]
   var openClawLocalEditNode: OpenClawLocalEditNode?
