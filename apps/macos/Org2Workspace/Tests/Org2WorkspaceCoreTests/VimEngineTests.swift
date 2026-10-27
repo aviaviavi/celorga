@@ -15,6 +15,7 @@ private final class FakeVimHost: VimEditorHost {
   var sessionSnapshot: (String, Int)?
   var keySnapshot: (String, Int)?
   var commands: [VimEditorCommand] = []
+  var continuesOrgStructure = false
 
   init(_ text: String, cursor: Int = 0) {
     storage = NSMutableString(string: text)
@@ -80,6 +81,9 @@ private final class FakeVimHost: VimEditorHost {
     sessionSnapshot = nil
   }
   func vimStateDidChange() {}
+  func vimOpenLineBelowPrefix(forLineAt location: Int) -> String? {
+    continuesOrgStructure ? OrgSourceTextEditing.openLineBelowPrefix(in: storage, location: location) : nil
+  }
 }
 
 @MainActor
@@ -312,6 +316,34 @@ final class VimEngineTests: XCTestCase {
     XCTAssertEqual(text, "  item\n  next")
     type("2Oz<Esc>")
     XCTAssertEqual(text, "  item\n  z\n  z\n  next")
+  }
+
+  func testOpenLineBelowContinuesOrgListsAndHeadings() {
+    setUp("- [ ] first\n- second")
+    host.continuesOrgStructure = true
+    type("onew<Esc>")
+    XCTAssertEqual(text, "- [ ] first\n- [ ] new\n- second")
+
+    setUp("  3. third", cursor: 4)
+    host.continuesOrgStructure = true
+    type("onext<Esc>")
+    XCTAssertEqual(text, "  3. third\n  4. next")
+
+    setUp("* Parent\n** Child\n* Other", cursor: 10)
+    host.continuesOrgStructure = true
+    type("oSibling<Esc>")
+    XCTAssertEqual(text, "* Parent\n** Child\n** Sibling\n* Other")
+
+    // A heading's body (or drawer) must stay with it, so `o` opens a plain line.
+    setUp("* Heading\n:PROPERTIES:\n:ID: a\n:END:")
+    host.continuesOrgStructure = true
+    type("obody<Esc>")
+    XCTAssertEqual(text, "* Heading\nbody\n:PROPERTIES:\n:ID: a\n:END:")
+
+    // Outside Org text, `o` keeps plain Vim behavior.
+    setUp("- item")
+    type("onext<Esc>")
+    XCTAssertEqual(text, "- item\nnext")
   }
 
   func testTextObjects() {

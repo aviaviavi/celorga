@@ -381,6 +381,11 @@ extension OrgSyntaxTextView: VimEditorHost {
     insertText(text, replacementRange: selectedRange())
   }
 
+  func vimOpenLineBelowPrefix(forLineAt location: Int) -> String? {
+    guard continuesOrgStructure else { return nil }
+    return OrgSourceTextEditing.openLineBelowPrefix(in: vimText, location: location)
+  }
+
   func vimTypeNewline() {
     doCommand(by: #selector(NSResponder.insertNewline(_:)))
   }

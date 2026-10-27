@@ -886,6 +886,40 @@ enum OrgSourceTextEditing {
     return (level, level)
   }
 
+  /// The start of the line Vim's `o` opens below `line`: the next list item
+  /// (as Return makes it), or a sibling heading when the heading has no body
+  /// to take over (`nextLine` is nil or another heading). Otherwise nil.
+  static func openLineBelowPrefix(line: String, nextLine: String?) -> String? {
+    if let continuation = listContinuation(for: line) {
+      return continuation
+    }
+    guard let marker = headingMarker(in: line) else { return nil }
+    if let nextLine, headingMarker(in: nextLine) == nil {
+      return nil
+    }
+    return String(repeating: "*", count: marker.level) + " "
+  }
+
+  static func openLineBelowPrefix(in text: NSString, location: Int) -> String? {
+    let location = max(0, min(location, text.length))
+    let lineRange = text.lineRange(for: NSRange(location: location, length: 0))
+    let line = text.substring(with: NSRange(
+      location: lineRange.location,
+      length: max(0, lineContentEnd(in: text, lineRange: lineRange) - lineRange.location)
+    ))
+    let lineEnd = lineRange.location + lineRange.length
+    var nextLine: String?
+    if lineEnd < text.length, lineEnd > lineRange.location,
+       text.character(at: lineEnd - 1) == 0x0A {
+      let nextRange = text.lineRange(for: NSRange(location: lineEnd, length: 0))
+      nextLine = text.substring(with: NSRange(
+        location: nextRange.location,
+        length: max(0, lineContentEnd(in: text, lineRange: nextRange) - nextRange.location)
+      ))
+    }
+    return openLineBelowPrefix(line: line, nextLine: nextLine)
+  }
+
   private static func isListLine(_ text: String) -> Bool {
     let indent = leadingWhitespace(in: text)
     let rest = String(text.dropFirst(indent.count))
@@ -1187,6 +1221,8 @@ fileprivate enum OrgSyntaxTextBoundaryCaretPlacement {
 }
 
 final class OrgSyntaxTextView: NSTextView {
+  /// Org writing commands (list continuation on Return, Vim `o`) apply.
+  var continuesOrgStructure = false
   var pasteAsOrgEnabled: (() -> Bool)?
   var pasteDocumentIdentity: String?
   var pasteDocumentGeneration: (() -> UInt64)?
@@ -2382,6 +2418,7 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
     textView.autoresizingMask = [.width]
 
     scrollView.documentView = textView
+    textView.continuesOrgStructure = orgWritingCommands
     textView.setVimModeEnabled(vimMode)
     if orgWritingCommands {
       let gutter = OrgSourceEditorGutterView(scrollView: scrollView, textView: textView)
@@ -2432,6 +2469,7 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
     // enough to route that checkpoint through its binding, callbacks, and
     // document identity rather than whichever document is arriving now.
     let pendingTextOwner = context.coordinator.updateParent(self)
+    textView.continuesOrgStructure = orgWritingCommands
     textView.setVimModeEnabled(vimMode)
     textView.pasteAsOrgEnabled = pasteAsOrgEnabled
     textView.pasteDocumentIdentity = documentIdentity

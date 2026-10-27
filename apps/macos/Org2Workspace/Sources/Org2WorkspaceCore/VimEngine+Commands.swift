@@ -104,8 +104,10 @@ extension VimEngine {
       let change = makeChange(command)
       if name == "o" {
         let lineEnd = VimText.lineEnd(text, location)
-        replace(NSRange(location: lineEnd, length: 0), with: "\n" + indent)
-        beginInsert(at: lineEnd + 1 + (indent as NSString).length, count: count, kind: .openBelow, change: change)
+        // In Org text, `o` continues a list item or heading the way Return does.
+        let prefix = host?.vimOpenLineBelowPrefix(forLineAt: location) ?? indent
+        replace(NSRange(location: lineEnd, length: 0), with: "\n" + prefix)
+        beginInsert(at: lineEnd + 1 + (prefix as NSString).length, count: count, kind: .openBelow, change: change)
       } else {
         replace(NSRange(location: lineStart, length: 0), with: indent + "\n")
         beginInsert(at: lineStart + (indent as NSString).length, count: count, kind: .openAbove, change: change)

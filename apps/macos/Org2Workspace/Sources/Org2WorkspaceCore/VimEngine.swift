@@ -72,6 +72,13 @@ protocol VimEditorHost: AnyObject {
   func vimInsertSessionDidBegin()
   func vimInsertSessionDidEnd()
   func vimStateDidChange()
+  /// Text that `o` puts at the start of the new line below the line holding
+  /// `location`, or nil for the line's plain indentation.
+  func vimOpenLineBelowPrefix(forLineAt location: Int) -> String?
+}
+
+extension VimEditorHost {
+  func vimOpenLineBelowPrefix(forLineAt location: Int) -> String? { nil }
 }
 
 @MainActor
