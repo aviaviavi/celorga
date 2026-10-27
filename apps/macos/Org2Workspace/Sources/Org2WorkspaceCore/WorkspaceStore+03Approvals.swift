@@ -269,7 +269,7 @@ extension WorkspaceStore {
           removeApprovalItemOptimistically(item.id, originalVisibleIndex: originalVisibleIndex)
           scheduleApprovalsRefresh()
         }
-        await continueAfterApprovalBoundary(updated, waits: waitsForContinuation)
+        await continueAfterApprovalBoundary(updated, decision: "approved", waits: waitsForContinuation)
         return
       }
       try await approveAndAgentHandoff(HeadlineMutationTarget(
@@ -519,7 +519,7 @@ extension WorkspaceStore {
           removeApprovalItemOptimistically(item.id, originalVisibleIndex: originalVisibleIndex)
           scheduleApprovalsRefresh()
         }
-        await continueAfterApprovalBoundary(updated, waits: waitsForContinuation)
+        await continueAfterApprovalBoundary(updated, decision: "rejected", waits: waitsForContinuation)
         return
       }
       try await rejectApproval(
@@ -587,7 +587,7 @@ extension WorkspaceStore {
           scheduleApprovalsRefresh()
         }
         statusText = "Recorded external completion for \(item.title) · \(updated.pendingApprovalCount) pending"
-        await continueAfterApprovalBoundary(updated, waits: waitsForContinuation)
+        await continueAfterApprovalBoundary(updated, decision: "canceled", waits: waitsForContinuation)
         return
       }
 

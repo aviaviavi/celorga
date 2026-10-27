@@ -1462,9 +1462,16 @@ extension WorkspaceStore {
       // This applies to an in-app tap as well as a spoken reply.
       approvalItems.removeAll { $0.id == item.id }
       invalidateMobileRemoteWorkspaceSnapshot()
+      // A rejection only records the decision; it does not start an agent turn.
+      let startsAgentTurn = Self.approvalDecisionStartsAgentTurn(
+        decision: normalizedDecision,
+        run: continuationRun
+      )
       Task { @MainActor [weak self] in
         guard let self else { return }
-        await self.continueOpenClawAfterApprovalBoundary(continuationRun)
+        if startsAgentTurn {
+          await self.continueOpenClawAfterApprovalBoundary(continuationRun)
+        }
         await self.refreshApprovals(updatesStatus: false)
       }
       guard hasExactIdentity, let approvalID = item.approvalId else {

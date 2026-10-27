@@ -651,6 +651,88 @@ final class AgentRunModelsTests: XCTestCase {
   }
 
   @MainActor
+  func testRejectingOrMarkingDoneElsewhereDoesNotStartAnAgentTurn() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-declined-no-turn-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let correlation = "OPENCLAW_KIND: agent-turn\nOPENCLAW_SESSION: agent:main:org2:thread-1"
+    for decision in ["rejected", "canceled"] {
+      let waitingRun = try makeRun(
+        id: "declined-\(decision)",
+        status: "waiting-approval",
+        comments: [correlation],
+        approvalStatus: "pending"
+      )
+      let settledRun = try makeRun(
+        id: waitingRun.id,
+        status: "running",
+        comments: [correlation],
+        approvalStatus: decision
+      )
+      let approval = try XCTUnwrap(waitingRun.approvals.first)
+      let item = ApprovalItem(
+        title: approval.title,
+        status: approval.status,
+        todo: nil,
+        level: nil,
+        file: root.appendingPathComponent(".org2/runs/\(waitingRun.id).org2").path,
+        line: 1,
+        idValue: approval.id,
+        properties: [:],
+        body: approval.action,
+        tags: [],
+        kind: "run",
+        approvalId: approval.id,
+        fingerprint: approval.fingerprint,
+        action: approval.action,
+        riskClass: approval.riskClass,
+        requestedRole: approval.requestedRole,
+        requestedFrom: approval.requestedFrom,
+        requestedAt: approval.requestedAt,
+        runId: waitingRun.id,
+        runGoal: waitingRun.goal,
+        runStatus: waitingRun.status,
+        runPendingApprovalCount: 1,
+        runApprovalCount: 1
+      )
+      let store = try WorkspaceStore(cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()))
+      store.corpusRoot = root
+      store.replaceAgentRunsForTesting([waitingRun])
+      store.replaceApprovalItemsForTesting([item])
+      store.agentRunApprovalDecisionForTesting = { _, _, recorded, _ in
+        XCTAssertEqual(recorded, decision)
+        return settledRun
+      }
+      store.agentRunApprovalContinuationForTesting = { run in
+        XCTFail("\(decision) must only update the run source, not start an agent turn")
+        return OpenClawApprovedRunContinuation(
+          runID: run.id, sessionKey: nil, prompt: "unexpected", kind: "run"
+        )
+      }
+
+      if decision == "rejected" {
+        await store.rejectApproval(item, endStatus: .canceled, reason: "Not needed")
+        await store.decideAgentRunApproval(waitingRun, approval: approval, decision: "rejected")
+      } else {
+        await store.completeApprovalExternally(item, summary: "Sent from Gmail.")
+      }
+
+      XCTAssertEqual(store.agentRuns.first?.approvals.first?.status, decision)
+      XCTAssertFalse(store.approvalItems.contains(where: { $0.id == item.id }))
+    }
+
+    let approvedSibling = try makeRun(
+      status: "running",
+      comments: [correlation],
+      approvalStatuses: ["approved", "rejected"]
+    )
+    XCTAssertTrue(WorkspaceStore.approvalDecisionStartsAgentTurn(decision: "rejected", run: approvedSibling))
+    XCTAssertTrue(WorkspaceStore.approvalDecisionStartsAgentTurn(decision: "revised", run: approvedSibling))
+  }
+
+  @MainActor
   func testRunApprovalSourceDriftOffersRepairAndRetriesTheOriginalAction() async throws {
     struct RunSourceDrift: LocalizedError {
       var errorDescription: String? {

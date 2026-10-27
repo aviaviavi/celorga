@@ -1872,7 +1872,9 @@ extension WorkspaceStore {
       }
       scheduleApprovalsRefresh()
       statusText = "\(approval.title): \(decision) · \(updated.pendingApprovalCount) pending"
-      await continueOpenClawAfterApprovalBoundary(updated)
+      if Self.approvalDecisionStartsAgentTurn(decision: decision, run: updated) {
+        await continueOpenClawAfterApprovalBoundary(updated)
+      }
     } catch {
       var errors = approvalActionErrorsByItemID
       errors[queueItemID] = error.localizedDescription
@@ -2134,10 +2136,28 @@ extension WorkspaceStore {
     }
   }
 
+  /// Only Approve and Request Changes hand work back to an agent. Rejecting an
+  /// approval or marking it done elsewhere just records the decision in the run's
+  /// source; it starts an agent turn only when it settles a batch whose earlier
+  /// Approve is still waiting on it, so that approved action is not orphaned.
+  nonisolated static func approvalDecisionStartsAgentTurn(
+    decision: String,
+    run: AgentRunItem
+  ) -> Bool {
+    switch decision.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "approved", "revised":
+      return true
+    default:
+      return !run.approvedCurrentApprovalBoundary.isEmpty
+    }
+  }
+
   func continueAfterApprovalBoundary(
     _ run: AgentRunItem,
+    decision: String,
     waits: Bool
   ) async {
+    guard Self.approvalDecisionStartsAgentTurn(decision: decision, run: run) else { return }
     if waits {
       await continueOpenClawAfterApprovalBoundary(run)
       return
