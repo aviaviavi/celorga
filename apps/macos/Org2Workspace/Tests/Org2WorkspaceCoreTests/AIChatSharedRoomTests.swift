@@ -1006,4 +1006,45 @@ final class AIChatSharedRoomTests: XCTestCase {
     ).first { $0.messageID == untaggedReply.id }?.scrollTargetID, untaggedReply.id)
   }
 
+
+  @MainActor
+  func testMentionForkClearsTheSourceThreadComposerLikeASentMessage() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-mention-fork-draft-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let suiteName = "AIChatSharedRoom.MentionForkDraft.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = WorkspaceStore(
+      defaults: defaults,
+      aiChatTranscriptURL: root.appendingPathComponent("chat.json"),
+      aiChatSendHandler: { _, _, _, _ in "OpenClaw answer" },
+      codexSendHandlerForTesting: { _, _, _ in "Codex joined" },
+      legacyDefaultsDomains: []
+    )
+    store.setCorpusRoot(root, persistsDefault: false)
+    let sourceID = store.createAIChatThread(runtime: .openClaw)
+    await store.sendAIChatMessage(text: "Start with OpenClaw")
+
+    // Mirror the SwiftUI composer: typing only caches the local draft, then
+    // Send clears the local cache before submitting the captured text.
+    let text = "@Codex review this conversation"
+    store.cacheAIChatComposerDraft(text)
+    store.cacheAIChatComposerDraft("")
+    store.submitAIChatComposerInput(text: text)
+
+    let forkID = try XCTUnwrap(store.selectedAIChatThreadID)
+    XCTAssertNotEqual(forkID, sourceID)
+    XCTAssertEqual(store.aiChatDraft, "")
+    try await waitForCondition {
+      store.aiChatThreads.first(where: { $0.id == forkID })?.messages.last?.content == "Codex joined"
+    }
+
+    store.selectAIChatThread(sourceID)
+    XCTAssertEqual(store.aiChatDraft, "")
+    XCTAssertEqual(store.currentAIChatDraftForSelectedThread(), "")
+    store.selectAIChatThread(forkID)
+    XCTAssertEqual(store.aiChatDraft, "")
+  }
 }

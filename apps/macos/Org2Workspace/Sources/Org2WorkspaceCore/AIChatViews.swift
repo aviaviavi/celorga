@@ -3410,6 +3410,17 @@ struct AIChatComposerView: View {
       guard mergedDraft != localDraft else { return }
       localDraft = mergedDraft
     }
+    .onChange(of: store.selectedAIChatThreadID) {
+      // Typing only caches the local draft, so the store's published draft can
+      // equal the next thread's draft even though the text view still shows
+      // the previous thread's unsent words. Adopt the newly selected thread's
+      // draft explicitly; otherwise that text follows the selection (for
+      // example into a new approval or forked chat) and is sent from there.
+      lastStoreDraft = store.aiChatDraft
+      if localDraft != store.aiChatDraft {
+        localDraft = store.aiChatDraft
+      }
+    }
     .task(id: store.aiChatSelectionGeneration) {
       await store.refreshAIChatConfiguration()
     }
