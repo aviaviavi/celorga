@@ -3165,12 +3165,19 @@ private struct KeyboardEventMonitor: ViewModifier {
           }
           let scope = WorkspaceKeyboardEventRouting.scope(
             for: event,
-            textInputActive: Self.isTextInputActive
+            textInputActive: Self.isTextInputActive,
+            searchFieldActive: Self.isSingleLineFieldActive
           )
           guard let scope else {
             return event
           }
-          return handler(event, scope) ? nil : event
+          guard handler(event, scope) else { return event }
+          if scope == .listNavigationFromSearchField {
+            // Moving into the list leaves the search field, so Command-A and
+            // further arrows act on the rows rather than the query text.
+            WorkspaceTextInputFocus.resignActiveTextInput()
+          }
+          return nil
         }
       }
       .onDisappear {
@@ -3188,8 +3195,30 @@ private struct KeyboardEventMonitor: ViewModifier {
     return responder is NSTextView || responder is NSTextField
   }
 
+  private static var isSingleLineFieldActive: Bool {
+    guard let responder = NSApplication.shared.keyWindow?.firstResponder else {
+      return false
+    }
+    if responder is NSTextField { return true }
+    return (responder as? NSTextView)?.isFieldEditor == true
+  }
+
   private static var isSourceEditorActive: Bool {
     NSApplication.shared.keyWindow?.firstResponder is OrgSyntaxTextView
+  }
+}
+
+enum WorkspaceTextInputFocus {
+  /// Clicking a list row does not take focus from a text field or editor, so
+  /// list shortcuts such as Command-A and Shift-Down would otherwise keep
+  /// going to the text.
+  @MainActor
+  static func resignActiveTextInput() {
+    guard let window = NSApplication.shared.keyWindow,
+          let responder = window.firstResponder,
+          responder is NSTextView || responder is NSTextField
+    else { return }
+    window.makeFirstResponder(nil)
   }
 }
 
@@ -3202,9 +3231,19 @@ enum WorkspaceKeyboardEventRouting {
     return modifiers == [.command] && (key == "f" || key == "k")
   }
 
-  static func scope(for event: NSEvent, textInputActive: Bool) -> WorkspaceKeyboardShortcutScope? {
+  static func scope(
+    for event: NSEvent,
+    textInputActive: Bool,
+    searchFieldActive: Bool = false
+  ) -> WorkspaceKeyboardShortcutScope? {
     guard textInputActive else { return .all }
-    return isCommandShortcut(event) ? .globalOnly : nil
+    if isCommandShortcut(event) { return .globalOnly }
+    return searchFieldActive && isListNavigationKey(event) ? .listNavigationFromSearchField : nil
+  }
+
+  static func isListNavigationKey(_ event: NSEvent) -> Bool {
+    let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+    return (event.keyCode == 125 || event.keyCode == 126) && (modifiers.isEmpty || modifiers == [.shift])
   }
 
   static func isCommandShortcut(_ event: NSEvent) -> Bool {

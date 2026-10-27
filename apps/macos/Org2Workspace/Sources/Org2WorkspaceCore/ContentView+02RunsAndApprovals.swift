@@ -1618,6 +1618,12 @@ struct ApprovalsView: View {
     .onChange(of: store.approvalFilterFocusToken) {
       filterFocused = true
     }
+    .onChange(of: filterFocused, initial: true) { _, focused in
+      store.isApprovalFilterFieldFocused = focused
+    }
+    .onDisappear {
+      store.isApprovalFilterFieldFocused = false
+    }
   }
 
   private var headerSubtitle: String {
@@ -1696,6 +1702,8 @@ struct ApprovalsView: View {
           .contentShape(Rectangle())
           .onTapGesture {
             let modifiers = NSApp.currentEvent?.modifierFlags ?? []
+            filterFocused = false
+            WorkspaceTextInputFocus.resignActiveTextInput()
             selectApprovalItem(item, modifiers: modifiers)
           }
           .workspaceAccessibleCollectionRow(

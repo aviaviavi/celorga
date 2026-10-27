@@ -211,6 +211,67 @@ final class AgentRunModelsTests: XCTestCase {
   }
 
   @MainActor
+  func testReviewSearchFieldArrowsMoveAndExtendTheFilteredRows() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-review-search-arrows-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let runs = try (0..<3).map { index in
+      try makeRun(
+        id: "search-arrow-run-\(index)",
+        goal: "Search arrows \(index)",
+        status: "waiting-approval",
+        pendingApproval: true,
+        updatedAt: "2026-08-28T16:0\(index):00.000Z"
+      )
+    }
+    let approvals = try runs.map { run in
+      approvalQueueItem(run: run, approval: try XCTUnwrap(run.approvals.first), root: root)
+    }
+    let store = try WorkspaceStore(cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()))
+    store.corpusRoot = root
+    store.replaceAgentRunsForTesting(runs)
+    store.replaceApprovalItemsForTesting(approvals)
+    store.selectedSurface = .approvals
+    store.runsAndReviewPage = .review
+    store.activateWorkspacePane(.surface)
+
+    // Typing in a search field: arrows are list navigation only there,
+    // other keys stay with the text, and Command shortcuts stay global.
+    let down = selectionKeyDown(keyCode: 125)
+    let shiftDown = selectionKeyDown(keyCode: 125, modifiers: [.shift])
+    let optionDown = selectionKeyDown(keyCode: 125, modifiers: [.option])
+    let letter = selectionKeyDown("j", keyCode: 38)
+    XCTAssertEqual(
+      WorkspaceKeyboardEventRouting.scope(for: shiftDown, textInputActive: true, searchFieldActive: true),
+      .listNavigationFromSearchField
+    )
+    XCTAssertNil(WorkspaceKeyboardEventRouting.scope(for: shiftDown, textInputActive: true, searchFieldActive: false))
+    XCTAssertNil(WorkspaceKeyboardEventRouting.scope(for: optionDown, textInputActive: true, searchFieldActive: true))
+    XCTAssertNil(WorkspaceKeyboardEventRouting.scope(for: letter, textInputActive: true, searchFieldActive: true))
+    XCTAssertEqual(
+      WorkspaceKeyboardEventRouting.scope(
+        for: selectionKeyDown("a", keyCode: 0, modifiers: [.command]),
+        textInputActive: true,
+        searchFieldActive: true
+      ),
+      .globalOnly
+    )
+
+    // Another surface's search field never drives the Review list.
+    XCTAssertFalse(store.handleWorkspaceKeyDown(shiftDown, scope: .listNavigationFromSearchField))
+
+    store.isApprovalFilterFieldFocused = true
+    let visible = store.visibleApprovalItems
+    XCTAssertTrue(store.handleWorkspaceKeyDown(down, scope: .listNavigationFromSearchField))
+    XCTAssertEqual(store.selectedApprovalItemID, visible[0].id)
+    XCTAssertTrue(store.handleWorkspaceKeyDown(shiftDown, scope: .listNavigationFromSearchField))
+    XCTAssertEqual(store.bulkSelectedApprovalItemIDs, [visible[0].id, visible[1].id])
+    XCTAssertEqual(store.selectedApprovalItemID, visible[1].id)
+    XCTAssertFalse(store.handleWorkspaceKeyDown(optionDown, scope: .listNavigationFromSearchField))
+  }
+
+  @MainActor
   func testApprovalRefreshReloadsSelectedRunDetailWithoutScanningRunArchive() async throws {
     let workspace = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-approval-detail-refresh-\(UUID().uuidString)", isDirectory: true)

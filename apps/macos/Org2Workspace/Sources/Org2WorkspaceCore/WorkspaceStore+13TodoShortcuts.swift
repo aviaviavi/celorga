@@ -1702,6 +1702,13 @@ extension WorkspaceStore {
     _ event: NSEvent,
     scope: WorkspaceKeyboardShortcutScope = .all
   ) -> Bool {
+    if scope == .listNavigationFromSearchField {
+      guard selectedSurface == .approvals,
+            runsAndReviewPage == .review,
+            isApprovalFilterFieldFocused
+      else { return false }
+      return handleAgentWorkListSelectionKeyDown(event)
+    }
     if handleGlobalKeyDown(event, scope: scope) {
       return true
     }

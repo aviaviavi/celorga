@@ -182,6 +182,9 @@ public enum WorkspaceAppearanceMode: String, CaseIterable, Identifiable, Sendabl
 public enum WorkspaceKeyboardShortcutScope: Equatable, Sendable {
   case all
   case globalOnly
+  /// Up/Down (optionally with Shift) typed in a single-line search field.
+  /// Only a list that owns the focused search field may act on it.
+  case listNavigationFromSearchField
 }
 
 public struct WorkspaceTab: Identifiable, Hashable, Sendable {
@@ -2485,6 +2488,9 @@ public final class WorkspaceStore {
     }
   }
   public var approvalFilterFocusToken = 0
+  /// True while the Review search field has keyboard focus, so Up/Down and
+  /// Shift-Up/Down move through the filtered rows instead of the field.
+  @ObservationIgnored public var isApprovalFilterFieldFocused = false
   public internal(set) var visibleApprovalItems: [ApprovalItem] = []
   var approvalFilterTextByItemID: [ApprovalItem.ID: String] = [:]
   public var selectedApprovalItemID: ApprovalItem.ID?
