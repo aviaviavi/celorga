@@ -5684,21 +5684,6 @@ struct AIChatTypingIndicatorView: View {
             )
           }
 
-          if text.hasEarlierText {
-            Button {
-              withAnimation(WorkspaceMotion.disclosure) {
-                showsAllStreamingProgress.toggle()
-              }
-            } label: {
-              Label(
-                showsAllStreamingProgress ? "Show latest update" : "Show all progress",
-                systemImage: showsAllStreamingProgress ? "chevron.up" : "chevron.down"
-              )
-            }
-            .buttonStyle(.plain)
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(.secondary)
-          }
         }
 
         if !presentedActivityItems.isEmpty || presentedReasoning != nil {
@@ -5708,8 +5693,31 @@ struct AIChatTypingIndicatorView: View {
             compact: compact,
             isLive: true,
             presentedItems: presentedActivityItems,
-            presentedReasoning: presentedReasoning
+            presentedReasoning: presentedReasoning,
+            liveExpansion: showsAllStreamingProgress
           )
+        }
+
+        // One disclosure covers the earlier reply text, the approach, and
+        // every activity, so the live card never shows two toggles.
+        if AIChatLiveProgressDisclosure.isAvailable(
+          hasEarlierText: livePresentation?.text?.hasEarlierText ?? false,
+          activityCount: presentedActivityItems.count,
+          hasReasoning: presentedReasoning != nil
+        ) {
+          Button {
+            withAnimation(WorkspaceMotion.disclosure) {
+              showsAllStreamingProgress.toggle()
+            }
+          } label: {
+            Label(
+              AIChatLiveProgressDisclosure.title(isExpanded: showsAllStreamingProgress),
+              systemImage: showsAllStreamingProgress ? "chevron.down" : "chevron.right"
+            )
+          }
+          .buttonStyle(.plain)
+          .font(.caption2.weight(.medium))
+          .foregroundStyle(.secondary)
         }
       }
       .padding(10)
@@ -5980,8 +5988,13 @@ private struct AIChatProgressFeedView: View {
   let presentedItems: [AIChatActivityFeedItem]?
   let reasoningHasOmittedPrefix: Bool
   let preparedReasoning: String?
+  /// Set by a live card that owns a single combined disclosure; the feed then
+  /// follows it and draws no toggle of its own.
+  let liveExpansion: Bool?
 
-  @State private var showsFullFeed = false
+  @State private var ownExpansion = false
+
+  private var showsFullFeed: Bool { liveExpansion ?? ownExpansion }
 
   init(
     reasoning: String,
@@ -5990,8 +6003,10 @@ private struct AIChatProgressFeedView: View {
     isLive: Bool,
     presentedItems: [AIChatActivityFeedItem]? = nil,
     reasoningHasOmittedPrefix: Bool = false,
-    presentedReasoning: String? = nil
+    presentedReasoning: String? = nil,
+    liveExpansion: Bool? = nil
   ) {
+    self.liveExpansion = liveExpansion
     self.reasoning = reasoning
     self.activities = activities
     self.compact = compact
@@ -6031,7 +6046,8 @@ private struct AIChatProgressFeedView: View {
   }
 
   private var canExpand: Bool {
-    AIChatProgressFeedPresentation.canExpand(
+    guard liveExpansion == nil else { return false }
+    return AIChatProgressFeedPresentation.canExpand(
       itemCount: items.count,
       reasoningLength: presentedReasoning?.count ?? 0,
       isLive: isLive,
@@ -6107,7 +6123,7 @@ private struct AIChatProgressFeedView: View {
       if !isLive, !showsFullFeed, items.count > collapsedItemLimit {
         Button {
           withAnimation(WorkspaceMotion.disclosure) {
-            showsFullFeed = true
+            ownExpansion = true
           }
         } label: {
           Text("Show \(items.count - collapsedItemLimit) earlier update\(items.count - collapsedItemLimit == 1 ? "" : "s")")
@@ -6125,7 +6141,7 @@ private struct AIChatProgressFeedView: View {
   private var expansionButton: some View {
     Button {
       withAnimation(WorkspaceMotion.disclosure) {
-        showsFullFeed.toggle()
+        ownExpansion.toggle()
       }
     } label: {
       Label(
@@ -6186,9 +6202,21 @@ enum AIChatProgressFeedPresentation {
 
   static func disclosureTitle(isLive: Bool, isExpanded: Bool) -> String {
     if isLive {
-      return isExpanded ? "Hide activity" : "Show activity"
+      return AIChatLiveProgressDisclosure.title(isExpanded: isExpanded)
     }
     return isExpanded ? "Show less" : "Show full feed"
+  }
+}
+
+/// The live run card has one disclosure. Expanded, it shows the whole reply
+/// so far, the approach, and every activity; collapsed, the latest of each.
+enum AIChatLiveProgressDisclosure {
+  static func isAvailable(hasEarlierText: Bool, activityCount: Int, hasReasoning: Bool) -> Bool {
+    hasEarlierText || activityCount > 0 || hasReasoning
+  }
+
+  static func title(isExpanded: Bool) -> String {
+    isExpanded ? "Hide activity" : "Show all activity"
   }
 }
 

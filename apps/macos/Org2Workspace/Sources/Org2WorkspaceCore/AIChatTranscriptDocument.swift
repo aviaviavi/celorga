@@ -110,7 +110,7 @@ struct AIChatTranscriptDocument: View {
   @State private var rendered: [UUID: AIChatTranscriptRenderedBody] = [:]
   @State private var renderedReasoning: [UUID: AIChatTranscriptRenderedReasoning] = [:]
   @State private var preparedLive: PreparedLive?
-  @State private var showsAllLiveText = false
+  /// One disclosure expands both the earlier reply text and the activity feed.
   @State private var showsLiveActivity = false
   @State private var previewedAttachment: AIChatAttachment?
   @State private var expandedMessageIDs: Set<UUID> = []
@@ -222,7 +222,7 @@ struct AIChatTranscriptDocument: View {
         runID: nil,
         preparation: AIChatLiveTextPreparationInput(
           rawText: remote.turn.streamingReply,
-          showsAll: showsAllLiveText,
+          showsAll: showsLiveActivity,
           hasOmittedPrefix: remote.turn.streamingReply.hasPrefix("…"),
           reasoning: remote.turn.reasoning,
           reasoningHasOmittedPrefix: remote.turn.reasoning.hasPrefix("…"),
@@ -242,7 +242,7 @@ struct AIChatTranscriptDocument: View {
       runID: liveState.activeRunID(for: threadID),
       preparation: AIChatLiveTextPreparationInput(
         rawText: snapshot.streamingReply,
-        showsAll: showsAllLiveText,
+        showsAll: showsLiveActivity,
         hasOmittedPrefix: snapshot.isStreamingReplyTruncated,
         reasoning: snapshot.reasoning,
         reasoningHasOmittedPrefix: snapshot.isReasoningTruncated,
@@ -423,7 +423,6 @@ struct AIChatTranscriptDocument: View {
     .task(id: liveInput) {
       guard let liveInput else {
         preparedLive = nil
-        showsAllLiveText = false
         showsLiveActivity = false
         return
       }
@@ -574,7 +573,7 @@ struct AIChatTranscriptDocument: View {
       text: prepared?.text,
       textHTML: prepared?.textHTML,
       hasEarlierText: prepared?.hasEarlierText ?? false,
-      textExpanded: showsAllLiveText,
+      textExpanded: showsLiveActivity,
       reasoning: prepared?.reasoning,
       reasoningHTML: prepared?.reasoningHTML,
       activities: (prepared?.activities ?? []).map(AIChatTranscriptHTML.Activity.init),
@@ -591,8 +590,7 @@ struct AIChatTranscriptDocument: View {
       if let id, let uuid = UUID(uuidString: id) { Task { await store.retryAIChatMessage(uuid) } }
       return
     }
-    if action == "liveTextToggle" { showsAllLiveText.toggle(); return }
-    if action == "liveActivityToggle" { showsLiveActivity.toggle(); return }
+    if action == "liveActivityToggle" || action == "liveTextToggle" { showsLiveActivity.toggle(); return }
     guard let id, let uuid = UUID(uuidString: id), let message = messages.first(where: { $0.id == uuid }) else { return }
     switch action {
     case "copy":
@@ -992,7 +990,6 @@ enum AIChatTranscriptHTML {
   /* Disclosures hang their chevron in the same gutter; the negative margin
      keeps the hover pill's padding from shifting the chevron right. */
   .live-text-toggle,.live-activity-toggle { gap:var(--live-gap); margin-left:-6px; padding:2px 6px; font-size:11px; font-weight:500; line-height:16px; color:light-dark(#777,#aaa); }
-  .live-text-toggle { margin-top:4px; }
   .live-activity-toggle { margin-top:4px; }
   .live-text-toggle .glyph,.live-activity-toggle .glyph { flex-basis:var(--live-gutter); width:var(--live-gutter); height:16px; }
   #status { display:flex; align-items:center; gap:8px; min-height:22px; padding:16px 0; color:light-dark(#777,#aaa); font-size:11px; }
@@ -1292,9 +1289,8 @@ enum AIChatTranscriptHTML {
       status.append(pulse,title,elapsed,stop);
       const detail=document.createElement('div'); detail.className='live-detail';
       const text=document.createElement('div'); text.className='live-text';
-      const textToggle=button('','liveTextToggle'); textToggle.className='disclosure-button live-text-toggle';
       const feed=document.createElement('div'); feed.className='live-feed';
-      root.append(status,detail,text,textToggle,feed); return root;
+      root.append(status,detail,text,feed); return root;
     };
     const duration = milliseconds => {
       const seconds=Math.max(0,Math.floor(milliseconds/1000));
@@ -1317,8 +1313,6 @@ enum AIChatTranscriptHTML {
       const root=ensureLive(); root.liveData=live; root.hidden=!live;
       if(!live) return;
       const text=root.querySelector('.live-text'); setRenderedOrgText(text,live.text,live.textHTML); text.hidden=!live.text;
-      const textToggle=root.querySelector('.live-text-toggle'); textToggle.hidden=!live.hasEarlierText;
-      if(live.hasEarlierText) updateDisclosure(textToggle,live.textExpanded?'Show latest update':'Show all progress',live.textExpanded?'chevronUp':'chevronDown');
       const feed=root.querySelector('.live-feed');
       const retainedReasoning=feed.querySelector(':scope > .reasoning-row');
       for(const child of [...feed.children]) if(child!==retainedReasoning) child.remove();
@@ -1348,9 +1342,9 @@ enum AIChatTranscriptHTML {
         if(detail) { const value=document.createElement('span'); value.className='activity-detail'; value.textContent=detail; copy.append(value); }
         row.append(image,copy); feed.append(row);
       });
-      if(live.activities.length || live.reasoning) {
+      if(live.hasEarlierText || live.activities.length || live.reasoning) {
         const toggle=button('','liveActivityToggle'); toggle.className='disclosure-button live-activity-toggle';
-        updateDisclosure(toggle,live.activityExpanded?'Hide activity':'Show activity',live.activityExpanded?'chevronDown':'chevronRight'); feed.append(toggle);
+        updateDisclosure(toggle,live.activityExpanded?'Hide activity':'Show all activity',live.activityExpanded?'chevronDown':'chevronRight'); feed.append(toggle);
       }
       feed.hidden=!feed.childElementCount; updateLiveClock();
     };

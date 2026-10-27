@@ -329,8 +329,14 @@ final class AIChatLayoutTests: XCTestCase {
     ))
     XCTAssertEqual(
       AIChatProgressFeedPresentation.disclosureTitle(isLive: true, isExpanded: false),
-      "Show activity"
+      "Show all activity"
     )
+    // The live card has one disclosure for the earlier reply text and the
+    // activity feed; earlier text alone is enough to offer it.
+    XCTAssertTrue(AIChatLiveProgressDisclosure.isAvailable(hasEarlierText: true, activityCount: 0, hasReasoning: false))
+    XCTAssertTrue(AIChatLiveProgressDisclosure.isAvailable(hasEarlierText: false, activityCount: 0, hasReasoning: true))
+    XCTAssertFalse(AIChatLiveProgressDisclosure.isAvailable(hasEarlierText: false, activityCount: 0, hasReasoning: false))
+    XCTAssertEqual(AIChatLiveProgressDisclosure.title(isExpanded: true), "Hide activity")
     XCTAssertEqual(
       AIChatProgressFeedPresentation.visibleItems(
         items,
