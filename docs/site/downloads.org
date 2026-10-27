@@ -7,23 +7,23 @@
 </section>
 #+END_EXPORT
 
-* Celorga 0.9.1
+* Celorga 0.10.0
 
 #+BEGIN_EXPORT html
-<section class="celorga-download-grid" aria-label="Celorga 0.9.1 downloads">
+<section class="celorga-download-grid" aria-label="Celorga 0.10.0 downloads">
     <article class="celorga-download-card celorga-download-card-macos-apple-silicon">
       <p class="celorga-download-kicker">macOS</p>
       <h3>Celorga for macOS (Apple Silicon DMG)</h3>
       <p>Native Apple Silicon workspace app. Developer ID signed, notarized, and stapled.</p>
-      <p class="celorga-download-meta">0.9.1 · 230.9 MB</p>
-      <a class="celorga-download-button" href="https://org2.gateway.scarf.sh/downloads/0.9.1/Celorga.dmg">Download <span aria-hidden="true">↓</span></a>
+      <p class="celorga-download-meta">0.10.0 · 220.2 MB</p>
+      <a class="celorga-download-button" href="https://org2.gateway.scarf.sh/downloads/0.10.0/Celorga.dmg">Download <span aria-hidden="true">↓</span></a>
     </article>
     <article class="celorga-download-card celorga-download-card-macos-intel">
       <p class="celorga-download-kicker">macOS</p>
       <h3>Celorga for macOS (Intel DMG)</h3>
       <p>Native Intel workspace app. Developer ID signed, notarized, and stapled.</p>
-      <p class="celorga-download-meta">0.9.1 · 233.0 MB</p>
-      <a class="celorga-download-button" href="https://org2.gateway.scarf.sh/downloads/0.9.1/Celorga-Intel.dmg">Download <span aria-hidden="true">↓</span></a>
+      <p class="celorga-download-meta">0.10.0 · 235.4 MB</p>
+      <a class="celorga-download-button" href="https://org2.gateway.scarf.sh/downloads/0.10.0/Celorga-Intel.dmg">Download <span aria-hidden="true">↓</span></a>
     </article>
     <article class="celorga-download-card celorga-download-card-vscode">
       <p class="celorga-download-kicker">VS Code</p>
@@ -86,8 +86,8 @@ https://org2.gateway.scarf.sh/downloads/{version}/{artifact}
 For example, the current Celorga builds are:
 
 #+begin_src text
-https://org2.gateway.scarf.sh/downloads/0.9.1/Celorga.dmg
-https://org2.gateway.scarf.sh/downloads/0.9.1/Celorga-Intel.dmg
+https://org2.gateway.scarf.sh/downloads/0.10.0/Celorga.dmg
+https://org2.gateway.scarf.sh/downloads/0.10.0/Celorga-Intel.dmg
 #+end_src
 
 Scarf redirects those requests to the matching =github.com/aviaviavi/celorga/releases/download/{version}/{artifact}= files. No release files are hosted separately by Scarf.

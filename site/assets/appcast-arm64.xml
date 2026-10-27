@@ -4,23 +4,31 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>OpenOrg</title>
         <item>
-            <title>0.9.1</title>
-            <pubDate>Wed, 14 Oct 2026 19:30:34 -0700</pubDate>
+            <title>0.10.0</title>
+            <pubDate>Tue, 27 Oct 2026 15:43:46 -0700</pubDate>
             <link>https://celorga.io/downloads.html</link>
-            <sparkle:version>0.9.1</sparkle:version>
-            <sparkle:shortVersionString>0.9.1</sparkle:shortVersionString>
+            <sparkle:version>0.10.0</sparkle:version>
+            <sparkle:shortVersionString>0.10.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## Fixes
+            <description sparkle:format="markdown"><![CDATA[## Highlights
 
-Fixes a launch crash on Macs other than the machine used to build Celorga (#589). The Mac app now bundles all workspace resources and resolves them from its own application bundle.
+- **Secrets for agents**: secure credential requests on macOS, secret redaction in shared threads, and guest-message approvals.
+- **Review and approvals**: a scannable Review queue, keyboard navigation, Org-style snoozing, optional rejection reasons, and Request Changes handoffs.
+- **Editor and search**: optional Vim mode, AI revision alternatives, web link previews, reliable Save & Done, and faster ranked search.
+- **Agents and chat**: shared AI rooms, per-agent reasoning settings, configurable turn limits, warm OpenCode servers, DeepSeek and OpenAI destinations, reviewed file renames and trash, and persistent thread drafts.
+- **Automation**: TODO-state and pull-request triggers, overlapping scheduled runs, clearer stop reasons, workspace coordination, and opt-in attention notifications.
+- **Org tooling**: flexible capture datetrees, repeater cancellation, archive parent IDs, and priority linting.
+- **Calendar and meetings**: connected Google Calendar sync and stable navigation when transcription completes.
+- **iPhone**: Push to Talk and walkie-talkie approval fixes, voice selection, optional speaker routing, and notification fixes.
+- **macOS**: Dock and Cmd-Tab presence, plus fixes for navigation, bulk snooze, and launch stalls.
 
-Includes regression coverage for resource lookup and release packaging.
+Includes reliability improvements for remote agents, chat synchronization, and test infrastructure.
 ]]></description>
-            <enclosure url="https://org2.gateway.scarf.sh/downloads/0.9.1/Celorga.dmg" length="242111906" type="application/octet-stream" sparkle:edSignature="DZ5t6NvJgM6EgAJiHd+jDnRX3ZEkoTH0NPyivr+u+WQu4t3zF7gm9M/tEhWETlpzqOvwK/SZ8sdK7hzpshI/Bw=="></enclosure>
+            <enclosure url="https://org2.gateway.scarf.sh/downloads/0.10.0/Celorga.dmg" length="230919272" type="application/octet-stream" sparkle:edSignature="zXp5SyS1m6ybUSrTySkYBX+Sk+ATtiCovzU8go2bmiBXkZoay0M43G72DWEI0uiwNUsli/i0/gCpjlG1sF1nAg=="></enclosure>
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: 43Bxp3+y0ql/SO6IOI/BML5r3QyvG+cI2ybEb13WnFDKTOG9tTc5XMGyZfsWLRRFJwpLc1lqYtwuynQFKvFUAQ==
-length: 1503
+edSignature: m872nDKtB3xI6Me3rDXlGSdcMsMtMGpmcVmJn7dedsLz5nSFSJLLCvi4OymEbQu7pHxcIAj0aFdG+vX59iSCDg==
+length: 2610
 -->
