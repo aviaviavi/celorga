@@ -2520,7 +2520,7 @@ struct AgendaItemListView: View {
                   )
                 }
               }
-              .workspaceLazyRow(id: item.id)
+              .workspaceLazyRow(id: AgendaRowIdentity.id(for: item, inSection: section.id))
           }
         } header: {
           WorkspaceLazySectionHeader {
@@ -2706,6 +2706,17 @@ struct AgendaBulkActionBar: View {
     .overlay(alignment: .bottom) {
       Divider()
     }
+  }
+}
+
+/// The lazy-stack identity of an agenda row. Marking a task done removes its
+/// row from Today and inserts it under Done or canceled with the same item ID;
+/// with only that ID the stack could keep showing the removed row, so a DONE
+/// task appeared with its old TODO state until the view was rebuilt. The
+/// section and TODO state make the moved row a new view.
+enum AgendaRowIdentity {
+  static func id(for item: AgendaItem, inSection sectionID: String) -> String {
+    "\(sectionID)\u{0}\(item.todo ?? "")\u{0}\(item.id)"
   }
 }
 
