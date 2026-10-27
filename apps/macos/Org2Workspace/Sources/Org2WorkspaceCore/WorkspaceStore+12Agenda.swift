@@ -1944,9 +1944,13 @@ extension WorkspaceStore {
     visibleAgendaItems.count
   }
 
+  /// Read by every detail header render. With nothing selected it must not
+  /// touch the agenda: hashing every item's ID there stalled navigation and
+  /// subscribed the header to every agenda change.
   public var bulkAgendaSelectionCount: Int {
-    let visibleIDs = Set(visibleAgendaItems.map(\.id))
-    return bulkSelectedAgendaItemIDs.intersection(visibleIDs).count
+    let selection = bulkSelectedAgendaItemIDs
+    guard !selection.isEmpty else { return 0 }
+    return selection.intersection(visibleAgendaItemIDs).count
   }
 
   public var hasBulkAgendaSelection: Bool {

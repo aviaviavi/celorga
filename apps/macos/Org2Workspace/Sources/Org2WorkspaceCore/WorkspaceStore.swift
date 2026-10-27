@@ -2447,7 +2447,14 @@ public final class WorkspaceStore {
     }
   }
   public internal(set) var agendaDisplaySections: [AgendaDisplaySection] = []
-  public internal(set) var visibleAgendaItems: [AgendaItem] = []
+  /// Set when the published corpus file list has not yet been projected into
+  /// the link resolver and search index.
+  @ObservationIgnored var corpusFilesAwaitingProjection = false
+  public internal(set) var visibleAgendaItems: [AgendaItem] = [] {
+    didSet { visibleAgendaItemIDs = Set(visibleAgendaItems.map(\.id)) }
+  }
+  /// Membership for bulk-selection counts, rebuilt once per agenda change.
+  private(set) var visibleAgendaItemIDs: Set<AgendaItem.ID> = []
   var agendaDisplayBuckets = AgendaDisplayBuckets()
   var agendaFilterTextByItemID: [AgendaItem.ID: String] = [:]
   public internal(set) var approvalItems: [ApprovalItem] = [] {

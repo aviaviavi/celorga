@@ -1459,9 +1459,33 @@ public struct ApprovalItem: Identifiable, Hashable, Sendable, Decodable {
 
   public var snoozedUntilDate: Date? {
     guard let snoozedUntil, !snoozedUntil.isEmpty else { return nil }
-    let fractional = ISO8601DateFormatter()
-    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return fractional.date(from: snoozedUntil) ?? ISO8601DateFormatter().date(from: snoozedUntil)
+    return Self.parseTimestamp(snoozedUntil)
+  }
+
+  /// Rows render these on every pass; building ISO formatters per call was
+  /// a measurable share of a Review frame.
+  // ISO8601DateFormatter is documented thread-safe once configured.
+  nonisolated(unsafe) private static let fractionalTimestampFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+  }()
+  nonisolated(unsafe) private static let timestampFormatter = ISO8601DateFormatter()
+
+  static func parseTimestamp(_ value: String) -> Date? {
+    fractionalTimestampFormatter.date(from: value) ?? timestampFormatter.date(from: value)
+  }
+
+  /// Short age for the queue, such as `8d ago`.
+  public func compactAgeText(now: Date = Date()) -> String? {
+    guard let requestedAt, let date = Self.parseTimestamp(requestedAt) else { return nil }
+    let seconds = max(0, now.timeIntervalSince(date))
+    switch seconds {
+    case ..<60: return "now"
+    case ..<3_600: return "\(Int(seconds / 60))m ago"
+    case ..<86_400: return "\(Int(seconds / 3_600))h ago"
+    default: return "\(Int(seconds / 86_400))d ago"
+    }
   }
 
   /// Hidden from the default queue until `snoozedUntil`; it wakes by the clock alone.
@@ -1516,7 +1540,9 @@ public struct ApprovalItem: Identifiable, Hashable, Sendable, Decodable {
   public var listSummary: String {
     let normalizedTitle = Self.normalizedWords(title).joined(separator: " ")
     var parts: [String] = []
-    for rawLine in Org2Display.cleanBlock(body).split(whereSeparator: \.isNewline) {
+    // Bounded: rows render this on every pass, and run bodies can be megabytes.
+    let boundedBody = String(body.prefix(Self.listSummarySourceLimit))
+    for rawLine in Org2Display.cleanBlock(boundedBody).split(whereSeparator: \.isNewline) {
       let line = rawLine.trimmingCharacters(in: .whitespaces)
       guard !line.isEmpty, !Self.looksLikeMachineToken(line) else { continue }
       if let colon = line.firstIndex(of: ":") {
@@ -1568,6 +1594,8 @@ public struct ApprovalItem: Identifiable, Hashable, Sendable, Decodable {
     if let runId { return "Run \(runId.prefix(8))" }
     return "\(URL(fileURLWithPath: file).lastPathComponent):\(line)"
   }
+
+  static let listSummarySourceLimit = 4_000
 
   static let ordinaryRunDecisionEffect = "This is the last pending approval; approving it resumes the run."
 

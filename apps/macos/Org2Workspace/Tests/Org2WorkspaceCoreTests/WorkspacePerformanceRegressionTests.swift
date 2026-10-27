@@ -85,7 +85,7 @@ final class WorkspacePerformanceRegressionTests: XCTestCase {
     XCTAssertTrue(detail.contains("run.plan.prefix(visibleCount"))
     XCTAssertTrue(detail.contains("run.context\n              .prefix(visibleCount"))
     XCTAssertTrue(detail.contains("run.comments.prefix(visibleCount"))
-    XCTAssertTrue(source.contains("let bodyPreview = item.displayBodyPreview"))
+    XCTAssertTrue(source.contains("let summary = item.listSummary"))
     XCTAssertFalse(source.contains("Org2Display.cleanBlock(item.body)"))
   }
 
@@ -128,6 +128,8 @@ final class WorkspacePerformanceRegressionTests: XCTestCase {
 
     XCTAssertTrue(item.displayBodyPreview.hasPrefix(visiblePrefix))
     XCTAssertLessThanOrEqual(item.displayBodyPreview.count, 223)
+    XCTAssertTrue(item.listSummary.hasPrefix(visiblePrefix))
+    XCTAssertLessThanOrEqual(item.listSummary.count, 203)
   }
 
   func testLiveChatAppendsLargeCodexTokenBurstWithoutCumulativeReplacement() {

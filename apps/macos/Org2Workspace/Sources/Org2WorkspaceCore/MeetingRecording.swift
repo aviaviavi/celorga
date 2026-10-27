@@ -1233,13 +1233,20 @@ public struct LocalWhisperTranscriber: Sendable {
     }.value
   }
 
+  /// `verifyExecutableLaunch: false` only checks that files exist. Status
+  /// text uses it: launching whisper.cpp to prove it runs blocked app launch
+  /// and meeting refreshes on the main thread for seconds.
   public static func resolvedBackendDescription(
-    configuration: LocalWhisperConfiguration = LocalWhisperConfiguration()
+    configuration: LocalWhisperConfiguration = LocalWhisperConfiguration(),
+    verifyExecutableLaunch: Bool = true
   ) -> String {
     if let command = configuration.overrideCommand {
       return "custom local command: \(command)"
     }
-    if resolveLaunchableWhisperCppExecutable(configuration: configuration).executable != nil,
+    let whisperCpp = verifyExecutableLaunch
+      ? resolveLaunchableWhisperCppExecutable(configuration: configuration).executable
+      : resolveWhisperCppExecutables(configuration: configuration).first
+    if whisperCpp != nil,
        resolveWhisperCppModel(configuration: configuration) != nil {
       return "whisper.cpp"
     }

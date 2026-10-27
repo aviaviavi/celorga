@@ -60,8 +60,9 @@ extension WorkspaceStore {
   }
 
   public var bulkApprovalSelectionCount: Int {
-    let visibleIDs = Set(visibleApprovalItems.map(\.id))
-    return bulkSelectedApprovalItemIDs.intersection(visibleIDs).count
+    let selection = bulkSelectedApprovalItemIDs
+    guard !selection.isEmpty else { return 0 }
+    return visibleApprovalItems.reduce(0) { $0 + (selection.contains($1.id) ? 1 : 0) }
   }
 
   public var hasBulkApprovalSelection: Bool {
@@ -213,12 +214,18 @@ extension WorkspaceStore {
     let failedIDs = selectedIDs.filter { approvalActionErrorsByItemID[$0] != nil }
     let completedIDs = selectedIDs.subtracting(failedIDs)
     if !completedIDs.isEmpty {
-      approvalItems.removeAll { completedIDs.contains($0.id) }
-      snoozedApprovalItems.removeAll { completedIDs.contains($0.id) }
-      if let selectedApprovalItemID, completedIDs.contains(selectedApprovalItemID) {
-        self.selectedApprovalItemID = nil
-        approvalSelectionAnchor = nil
-        syncApprovalSelectionAfterRefresh()
+      // Animating many self-sizing table rows out at once stalls the main
+      // thread for hundreds of milliseconds; a batch lands in one frame.
+      var transaction = Transaction()
+      transaction.disablesAnimations = true
+      withTransaction(transaction) {
+        approvalItems.removeAll { completedIDs.contains($0.id) }
+        snoozedApprovalItems.removeAll { completedIDs.contains($0.id) }
+        if let selectedApprovalItemID, completedIDs.contains(selectedApprovalItemID) {
+          self.selectedApprovalItemID = nil
+          approvalSelectionAnchor = nil
+          syncApprovalSelectionAfterRefresh()
+        }
       }
     }
     scheduleApprovalsRefresh()

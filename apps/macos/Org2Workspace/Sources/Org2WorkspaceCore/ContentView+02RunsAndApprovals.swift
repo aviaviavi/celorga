@@ -2142,10 +2142,7 @@ private struct ApprovalRow: View {
   }
 
   private var metaText: some View {
-    let age = item.requestedAt
-      .flatMap(AgentRunTimestampPresentation.date(from:))
-      .map { $0.formatted(.relative(presentation: .named, unitsStyle: .abbreviated)) }
-    return Text([item.compactSourceLabel, age].compactMap { $0 }.joined(separator: " · "))
+    return Text([item.compactSourceLabel, item.compactAgeText()].compactMap { $0 }.joined(separator: " · "))
       .font(.caption)
       .foregroundStyle(.tertiary)
       .lineLimit(1)

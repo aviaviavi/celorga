@@ -1551,7 +1551,7 @@ extension WorkspaceStore {
   }
 
   static func defaultMeetingStatusText() -> String {
-    "Local transcription: \(LocalWhisperTranscriber.resolvedBackendDescription())"
+    "Local transcription: \(LocalWhisperTranscriber.resolvedBackendDescription(verifyExecutableLaunch: false))"
   }
 
   nonisolated static func agentScopedOpenClawSessionKey(_ rawSessionKey: String, agentID: String) -> String {

@@ -98,11 +98,18 @@ extension WorkspaceStore {
       else { return }
       if filesChanged {
         corpusFiles = files
+        corpusFilesAwaitingProjection = true
+      }
+      // Projection is tracked apart from the file list: a scan cancelled after
+      // publishing files but before projecting them must not leave links and
+      // search empty until some file changes again.
+      if corpusFilesAwaitingProjection {
         await awaitCorpusFilePublication()
         guard !Task.isCancelled,
               isCurrentCorpusSession(root: root, generation: sessionGeneration)
         else { return }
-        refreshOrgRoamLinkResolver(files: files)
+        corpusFilesAwaitingProjection = false
+        refreshOrgRoamLinkResolver(files: corpusFiles)
         scheduleSearchIndexBuild(corpusRoot: root, sessionGeneration: sessionGeneration)
       }
       await reconcilePinnedFiles(for: root)
