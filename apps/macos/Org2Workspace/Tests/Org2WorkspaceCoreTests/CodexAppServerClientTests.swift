@@ -1490,7 +1490,7 @@ final class CodexAppServerClientTests: XCTestCase {
           fi
           initialized=1
           if [ "$count" -eq 1 ]; then
-            sleep 2
+            sleep 10
           fi
           printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id"
           ;;
@@ -1506,7 +1506,9 @@ final class CodexAppServerClientTests: XCTestCase {
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
     let client = CodexAppServerClient(
       executableURL: executable,
-      requestTimeoutNanoseconds: 500_000_000,
+      // Long enough for the relaunched fake server to answer on a busy
+      // machine; the first launch still sleeps well past it.
+      requestTimeoutNanoseconds: 2_000_000_000,
       eventHandler: { _ in },
       dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
     )
