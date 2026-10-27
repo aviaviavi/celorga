@@ -2571,15 +2571,30 @@ final class CodexAppServerClientTests: XCTestCase {
       dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
     )
 
-    let result = try await client.runTurn(
-      threadID: "thr-lost-start",
-      turnID: "local-turn",
-      message: "accepted before disconnect",
-      attachments: [],
-      workspacePath: "~/corpus",
-      corpusAccess: .runtimeFilesystem,
-      attemptIdentity: CodexTurnAttemptIdentity(messageID: messageID, attemptID: messageID)
-    )
+    let result: CodexTurnResult
+    do {
+      result = try await client.runTurn(
+        threadID: "thr-lost-start",
+        turnID: "local-turn",
+        message: "accepted before disconnect",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(messageID: messageID, attemptID: messageID)
+      )
+    } catch let error as CodexAppServerError {
+      guard case .turnStartUnknown = error else { throw error }
+      result = try await client.runTurn(
+        threadID: "thr-lost-start",
+        turnID: "local-reconcile",
+        message: "accepted before disconnect",
+        attachments: [],
+        workspacePath: "~/corpus",
+        corpusAccess: .runtimeFilesystem,
+        attemptIdentity: CodexTurnAttemptIdentity(messageID: messageID, attemptID: messageID),
+        turnStartPolicy: .reconcileOnly
+      )
+    }
 
     XCTAssertEqual(result.turnID, "turn-accepted")
     XCTAssertEqual(result.status, .completed)
@@ -2722,6 +2737,7 @@ final class CodexAppServerClientTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
     let readCount = temporaryDirectory.appendingPathComponent("read-count")
     let startCount = temporaryDirectory.appendingPathComponent("start-count")
+    let visibilityMarker = temporaryDirectory.appendingPathComponent("visible")
     let attemptID = UUID()
     let identity = CodexTurnAttemptIdentity(messageID: UUID(), attemptID: attemptID)
     let fakeSSH = temporaryDirectory.appendingPathComponent("fake-ssh")
@@ -2736,7 +2752,7 @@ final class CodexAppServerClientTests: XCTestCase {
           count=0
           if [ -f '\#(readCount.path)' ]; then count=$(/usr/bin/sed -n '1p' '\#(readCount.path)'); fi
           count=$((count + 1)); printf '%s\n' "$count" > '\#(readCount.path)'
-          if [ "$count" -ge 8 ]; then
+          if [ -f '\#(visibilityMarker.path)' ]; then
             printf '{"id":%s,"result":{"thread":{"id":"thr-delayed","turns":[{"id":"turn-delayed","status":"completed","items":[{"type":"userMessage","clientId":"\#(attemptID.uuidString.lowercased())"},{"type":"agentMessage","phase":"final_answer","text":"Visible later"}]}]}}}\n' "$request_id"
           else
             printf '{"id":%s,"result":{"thread":{"id":"thr-delayed","turns":[]}}}\n' "$request_id"
@@ -2780,6 +2796,7 @@ final class CodexAppServerClientTests: XCTestCase {
       }
     }
 
+    try Data().write(to: visibilityMarker)
     let result = try await client.runTurn(
       threadID: "thr-delayed",
       turnID: "local-reconcile",
