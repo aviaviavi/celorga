@@ -398,6 +398,7 @@ public actor CodexAppServerClient {
   private let dynamicToolHandler: DynamicToolHandler
   private let requestTimeoutNanoseconds: UInt64
   private let threadResumeRequestTimeoutNanoseconds: UInt64
+  private let initializeRequestTimeoutNanoseconds: UInt64
   private var process: Process?
   private var webSocketTask: URLSessionWebSocketTask?
   private var webSocketReceiveTask: Task<Void, Never>?
@@ -438,6 +439,9 @@ public actor CodexAppServerClient {
     // short so OpenOrg can rebind the chat to a fresh task and carry its own
     // transcript context forward instead of looking disconnected for minutes.
     threadResumeRequestTimeoutNanoseconds: UInt64 = 8_000_000_000,
+    // The initialize handshake waits for the app server to start. Nil uses
+    // `requestTimeoutNanoseconds`, as before.
+    initializeRequestTimeoutNanoseconds: UInt64? = nil,
     eventHandler: @escaping EventHandler,
     dynamicToolHandler: @escaping DynamicToolHandler
   ) {
@@ -455,6 +459,7 @@ public actor CodexAppServerClient {
     self.transport = transport
     self.requestTimeoutNanoseconds = requestTimeoutNanoseconds
     self.threadResumeRequestTimeoutNanoseconds = threadResumeRequestTimeoutNanoseconds
+    self.initializeRequestTimeoutNanoseconds = initializeRequestTimeoutNanoseconds ?? requestTimeoutNanoseconds
     self.eventHandler = eventHandler
     self.dynamicToolHandler = dynamicToolHandler
   }
@@ -2058,7 +2063,8 @@ while True:
         "capabilities": .object([
           "experimentalApi": .bool(true)
         ])
-      ])
+      ]),
+      timeoutNanoseconds: initializeRequestTimeoutNanoseconds
     )
     try await sendMessage(.object([
       "method": .string("initialized"),

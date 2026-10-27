@@ -623,7 +623,7 @@ final class AIChatLayoutTests: XCTestCase {
     }
 
     var showFullNode: ChatAccessibilityNode?
-    for _ in 0..<100 {
+    for _ in 0..<1_000 {
       hostingView.layoutSubtreeIfNeeded()
       window.displayIfNeeded()
       showFullNode = chatAccessibilityNodes(in: hostingView).first {
@@ -649,7 +649,7 @@ final class AIChatLayoutTests: XCTestCase {
     XCTAssertTrue(showFull.performPress())
 
     var didExposeShowLess = false
-    for _ in 0..<100 {
+    for _ in 0..<1_000 {
       hostingView.layoutSubtreeIfNeeded()
       window.displayIfNeeded()
       if chatAccessibilityNodes(in: hostingView).contains(where: {
@@ -668,7 +668,7 @@ final class AIChatLayoutTests: XCTestCase {
     )
     let revealedID = "openclaw-message-full-revealed-\(messageIdentifier)"
     var didRevealSelectedMatch = false
-    for _ in 0..<100 {
+    for _ in 0..<1_000 {
       hostingView.layoutSubtreeIfNeeded()
       window.displayIfNeeded()
       if chatAccessibilityNodes(in: hostingView).contains(where: {
