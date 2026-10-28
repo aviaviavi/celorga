@@ -32,6 +32,9 @@ struct SearchView: View {
     .onAppear {
       searchDraft = store.searchQuery
       store.warmAIChatSearchIndex()
+      if store.searchMode == .files, store.macFileSearchResultsQuery == nil {
+        store.runMacFileSearch(store.searchQuery)
+      }
     }
     .task(id: store.searchFocusToken) {
       guard store.selectedSurface == .search else { return }
@@ -58,6 +61,9 @@ struct SearchView: View {
         applySearchImmediately()
       }
       runTextSearchIfNeeded()
+      if store.searchMode == .files {
+        store.runMacFileSearch(store.searchQuery)
+      }
     }
     .onChange(of: store.searchReadScope) {
       runTextSearchIfNeeded()
@@ -86,7 +92,7 @@ struct SearchView: View {
         .pickerStyle(.segmented)
         .labelsHidden()
         .fixedSize()
-        .help("Text searches everything in the workspace; Nodes matches node titles, aliases, IDs, and paths")
+        .help("Text searches everything in the workspace; Nodes matches node titles, aliases, IDs, and paths; This Mac finds files and folders anywhere on this Mac")
 
         // Scope only matters when another corpus is mounted.
         if store.searchMode == .text, !store.mountedCorpora.isEmpty {
@@ -99,6 +105,10 @@ struct SearchView: View {
           .labelsHidden()
           .fixedSize()
           .help("Search the active corpus or every mounted corpus")
+        }
+
+        if store.searchMode == .files {
+          MacFileSearchFoldersMenu()
         }
 
         Spacer(minLength: 8)
@@ -133,7 +143,7 @@ struct SearchView: View {
           submitSearch()
         }
 
-      if store.isSearching {
+      if store.searchMode == .files ? store.isSearchingMacFiles : store.isSearching {
         WorkspaceActivityIndicator(size: .mini)
           .accessibilityLabel("Searching")
       }
@@ -213,6 +223,8 @@ struct SearchView: View {
           }
         }
       }
+    case .files:
+      macFileResultsBody
     case .nodes:
       let nodes = store.searchNodes
       if nodes.isEmpty {
@@ -256,6 +268,72 @@ struct SearchView: View {
     }
   }
 
+  @ViewBuilder
+  private var macFileResultsBody: some View {
+    let results = store.macFileSearchResults
+    if results.isEmpty {
+      if store.macFileSearchIndex?.building == true {
+        SearchPlaceholderView(
+          systemImage: nil,
+          title: "Indexing Files on This Mac…",
+          detail: MacFileSearchDisplay.indexSummary(store.macFileSearchIndex).map { "\($0). Results appear as they are found." }
+        )
+      } else if store.isSearchingMacFiles || pendingSearchUpdate != nil {
+        SearchPlaceholderView(systemImage: nil, title: "Searching…", detail: nil)
+      } else if trimmedDraft.isEmpty {
+        SearchPlaceholderView(
+          systemImage: "laptopcomputer",
+          title: "Search Files on This Mac",
+          detail: "Find any file or folder by name. Repeat downloads and copies show as one result, newest first. Filter with kind:pdf, kind:sheet, or .xlsx.",
+          hint: "↑ ↓ to move  ·  Return to open  ·  ⌘Return to show in Finder"
+        )
+      } else {
+        SearchPlaceholderView(
+          systemImage: "text.magnifyingglass",
+          title: "No Files Match “\(trimmedDraft)”",
+          detail: store.macFileSearchError ?? "Try fewer words, or add the folder it is in with Folders."
+        )
+      }
+    } else {
+      ScrollViewReader { proxy in
+        WorkspaceLazyCollection {
+          ForEach(results) { result in
+            MacFileSearchRow(result: result, query: store.searchQuery, isSelected: selectedResultID == result.id)
+              .contentShape(Rectangle())
+              .onTapGesture(count: 2) {
+                selectedResultID = result.id
+                store.openMacFileSearchResult(result)
+              }
+              .onTapGesture {
+                selectedResultID = result.id
+              }
+              .onDrag { NSItemProvider(contentsOf: result.url) ?? NSItemProvider() }
+              .contextMenu {
+                MacFileSearchContextMenu(result: result)
+              }
+              .workspaceAccessibleCollectionRow(
+                kind: "search-mac-file",
+                id: result.id,
+                label: result.name,
+                isSelected: selectedResultID == result.id,
+                open: { store.openMacFileSearchResult(result) }
+              )
+              .workspaceLazyRow(id: result.id)
+          }
+        }
+        .opacity(macFileResultsAreStale ? 0.6 : 1)
+        .onChange(of: selectedResultID) { _, selected in
+          if let selected { proxy.scrollTo(selected) }
+        }
+      }
+    }
+  }
+
+  private var macFileResultsAreStale: Bool {
+    guard let answered = store.macFileSearchResultsQuery else { return false }
+    return answered != trimmedDraft
+  }
+
   private var trimmedDraft: String {
     searchDraft.trimmingCharacters(in: .whitespacesAndNewlines)
   }
@@ -269,6 +347,7 @@ struct SearchView: View {
     switch store.searchMode {
     case .text: store.workspaceTextSearchItems.map(\.id)
     case .nodes: store.searchNodes.map(\.id)
+    case .files: store.macFileSearchResults.map(\.id)
     }
   }
 
@@ -283,6 +362,14 @@ struct SearchView: View {
       let count = store.searchNodes.count
       guard count > 0 else { return nil }
       return "\(count) node\(count == 1 ? "" : "s")"
+    case .files:
+      let index = MacFileSearchDisplay.indexSummary(store.macFileSearchIndex)
+      if trimmedDraft.isEmpty, !store.macFileSearchResults.isEmpty {
+        return ["Recent documents", index].compactMap { $0 }.joined(separator: " · ")
+      }
+      let count = store.macFileSearchResults.count
+      guard count > 0 else { return index }
+      return ["\(count) result\(count == 1 ? "" : "s")", index].compactMap { $0 }.joined(separator: " · ")
     }
   }
 
@@ -305,6 +392,10 @@ struct SearchView: View {
   private func submitSearch() {
     if let selectedResultID, openResult(id: selectedResultID) { return }
     applySearchImmediately()
+    if store.searchMode == .files {
+      store.runMacFileSearch(store.searchQuery)
+      return
+    }
     guard store.searchMode == .text else { return }
     Task { await store.runSearch() }
   }
@@ -313,6 +404,9 @@ struct SearchView: View {
     searchDraft = ""
     applySearchImmediately()
     runTextSearchIfNeeded(includingEmpty: true)
+    if store.searchMode == .files {
+      store.runMacFileSearch("")
+    }
     isSearchFocused = true
   }
 
@@ -324,18 +418,23 @@ struct SearchView: View {
     let nextQuery = searchDraft
     guard nextQuery != store.searchQuery else { return }
     let isText = store.searchMode == .text
+    let isFiles = store.searchMode == .files
     let trimmed = nextQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-    if isText, !trimmed.isEmpty, trimmed.count < WorkspaceSearchInput.liveSearchMinimumLength {
+    if isText || isFiles, !trimmed.isEmpty, trimmed.count < WorkspaceSearchInput.liveSearchMinimumLength {
       return
     }
     pendingSearchUpdate = Task { @MainActor in
-      let delay = isText ? WorkspaceSearchInput.liveTextSearchDelay : WorkspaceSearchInput.liveNodeSearchDelay
+      let delay = isText
+        ? WorkspaceSearchInput.liveTextSearchDelay
+        : isFiles ? WorkspaceSearchInput.liveFileSearchDelay : WorkspaceSearchInput.liveNodeSearchDelay
       do { try await Task.sleep(nanoseconds: delay) } catch { return }
       guard !Task.isCancelled else { return }
       pendingSearchUpdate = nil
       store.searchQuery = nextQuery
       if isText, store.searchMode == .text {
         await store.runSearch()
+      } else if isFiles, store.searchMode == .files {
+        store.runMacFileSearch(nextQuery)
       }
     }
   }
@@ -365,6 +464,13 @@ struct SearchView: View {
           event.window?.sheetParent == nil
     else { return false }
     let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+    // ⌘Return shows the selected file in Finder.
+    if modifiers == [.command], event.keyCode == 36, store.searchMode == .files,
+       let selectedResultID,
+       let result = store.macFileSearchResults.first(where: { $0.id == selectedResultID }) {
+      store.revealMacFileInFinder(result.path)
+      return true
+    }
     guard modifiers.isEmpty else { return false }
     switch event.keyCode {
     case 125:
@@ -403,6 +509,9 @@ struct SearchView: View {
     case .nodes:
       guard let node = store.searchNodes.first(where: { $0.id == id }) else { return false }
       store.selectSearchNode(node)
+    case .files:
+      guard let result = store.macFileSearchResults.first(where: { $0.id == id }) else { return false }
+      store.openMacFileSearchResult(result)
     }
     return true
   }

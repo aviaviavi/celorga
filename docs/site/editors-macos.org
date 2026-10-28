@@ -35,7 +35,7 @@ If you already keep dailies under your own names, open *Settings → General →
 - *Sources* :: connect supported external sources such as Slack, Notion, and email (IMAP) from one *Add Source* form, run a sync, or control its schedule.
 - *Skills* :: inspect workspace-authored agent procedures, open their =SKILL.md= source, create a new skill, or move one to the Trash.
 - *AI Chat* :: talk with any configured local, remote, hosted, or self-hosted destination using selected workspace context.
-- *Search and Quick Open* :: find text, tasks, files, people, projects, meetings, agent work, and chat threads without remembering where they live.
+- *Search and Quick Open* :: find text, tasks, files, people, projects, meetings, agent work, and chat threads without remembering where they live. *Search → This Mac* finds any file or folder on the Mac, not just in the corpus (see [[*Finding files on this Mac][Finding files on this Mac]]).
 
 Open *Settings → Appearance* to choose a theme for each system appearance. *System* follows macOS and switches between your light and dark themes automatically; *Light* and *Dark* hold Celorga on one of them. Each theme appears as a small preview showing headings, TODO states, planning lines, links, inline code, and comments. Alongside the Celorga Paper and Night defaults are palettes adapted from popular Emacs themes, including Modus, Leuven, Solarized, Gruvbox, Spacemacs, Doom One, Catppuccin, Dracula, Nord, Zenburn, Monokai, and Tokyo Night. Themes change the workspace chrome, rendered documents, the Org source editor, and AI chat. They are preferences for this Mac and are not written to the corpus.
 
@@ -138,6 +138,21 @@ choose *Apply Changes*. Lifecycle hooks (for example on =run.blocked= or
 proposals appear under *Needs you* in Activity for the same review.
 
 Celorga can export an ordinary document or selected subtree as a clean PDF. Document PDFs preserve styled headings and content while omitting heading stars, outline guides and their indentation, disclosure arrows, property drawers, and interactive controls such as Ask AI. It can also preview slide decks and export presentation PDFs. Publication uses a disclosure-safe copy that removes private workspace metadata and unresolved local references from the shared output.
+
+* Finding files on this Mac
+
+Choose *This Mac* in Search (=Cmd-Shift-F=) to find any file or folder on the Mac by name, not just the files in your corpus. It works even when Spotlight is turned off.
+
+- Results update as you type. Every word has to match the file's name or a folder it is in, so =finance cap table= finds =Cap Table.xlsx= inside =Finance=. A word can match the start of a word in the name, and words can run together, so =soc2= finds =SOC 2 Report.pdf=.
+- Recently changed files rank first, and documents rank above files inside source code repositories.
+- Repeat downloads and copies show up as one result: the newest file, with a badge such as /+12 older copies/. This covers =Report (3).pdf=, =Report copy.pdf=, =Report-2.pdf= next to =Report.pdf=, and the same document filed in several folders. The row's context menu lists the older copies and marks the ones that are byte-for-byte identical (local files up to 64 MB).
+- Narrow the results by typing =kind:pdf=, =kind:sheet=, =kind:slides=, =kind:image=, =kind:folder=, or an extension such as =.xlsx=.
+- With an empty search box, Search shows your recently changed documents.
+- Double-click or press =Return= to open a result (corpus files open in Celorga), and press =Cmd-Return= to show it in Finder. Drag a row into another app or a chat to attach the file. The context menu can also copy the path or an Org link.
+
+By default Celorga indexes your home folder, iCloud Drive, and the cloud drives under =~/Library/CloudStorage= (Dropbox, Google Drive, OneDrive). It skips the rest of =~/Library=, hidden folders, and build and dependency folders such as =node_modules= and =.git=. App bundles and package documents such as Keynote decks count as single files. Use the *Folders* menu to add or remove folders, return to the defaults, or rebuild the index.
+
+Celorga reads only file names, sizes, and dates. It never reads a file's contents, except to compare small local copies, and it never downloads cloud files. The index is stored in =~/.org2/files/= on this Mac, never in a corpus. The first index takes a little while to build, and results appear while it runs. After that, Celorga updates it as files change while the app is running, and rebuilds it if it is more than six hours old. Agents can use the same index with =celorga files search= (see [[file:tooling-reference.org::*File search on this Mac][File search on this Mac]]).
 
 * Discover connections
 
@@ -301,6 +316,7 @@ Back up or sync the corpus with a file-oriented tool you understand, such as Git
 - =Cmd-A= selects visible items in Agenda, Files, Runs, or Review; =Shift-Up/Down= extends the selection. In Review, =Up/Down= and =Shift-Up/Down= also work from the search field: they move into the filtered rows and leave the field, so =Cmd-A= then selects every filtered item. Clicking a row also takes focus from the search field or an open editor.
 - =Cmd-F= searches the active pane.
 - In Search, text results update as you type (two or more characters). Celorga keeps the corpus search index loaded in a background worker from launch, so results arrive in a fraction of a second instead of after loading the index for every query; =Return= searches a shorter query immediately. =Up= and =Down= move through results from the search field, =Return= opens the highlighted result, and =Escape= clears the selection, then the query.
+- In *Search → This Mac*, =Return= opens the highlighted file in its app (corpus files open in Celorga) and =Cmd-Return= shows it in Finder.
 - =Cmd-R= refreshes the workspace when you need a manual reconciliation. Full refreshes of large corpora may take longer than 15 seconds; Celorga lets them continue without reporting a timeout error. Press =Cmd-R= again or click the stop control to cancel. Actual refresh errors are still reported.
 - =Cmd-T= opens a tab; =Cmd-Shift-[= and =Cmd-Shift-]= move between tabs.
 

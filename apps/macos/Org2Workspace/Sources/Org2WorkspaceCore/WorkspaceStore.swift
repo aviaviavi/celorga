@@ -2679,6 +2679,16 @@ public final class WorkspaceStore {
   var workspaceSearchRankingQuery: String?
   public internal(set) var corpusSearchResultGroups: [SearchResultGroup] = []
   public internal(set) var searchNodes: [OrgRoamNodeReference] = []
+  /// Search › This Mac: files and folders outside the corpus.
+  public internal(set) var macFileSearchResults: [MacFileSearchResult] = []
+  /// The query `macFileSearchResults` answers; nil before the first search.
+  public internal(set) var macFileSearchResultsQuery: String?
+  public internal(set) var macFileSearchIndex: MacFileSearchIndexStatus?
+  public internal(set) var isSearchingMacFiles = false
+  public internal(set) var macFileSearchError: String?
+  public internal(set) var macFileSearchConfig: MacFileSearchConfig?
+  var macFileSearchGeneration = 0
+  var macFileSearchTask: Task<Void, Never>?
   public var renderedSearchHighlightQuery: String?
   public var isPageSearchPresented = false
   public var pageSearchQuery = "" {
@@ -4628,6 +4638,7 @@ public enum WorkspaceSurface: String, CaseIterable, Identifiable, Sendable {
 public enum WorkspaceSearchMode: String, CaseIterable, Identifiable, Sendable {
   case text
   case nodes
+  case files
 
   public var id: String { rawValue }
 
@@ -4635,6 +4646,7 @@ public enum WorkspaceSearchMode: String, CaseIterable, Identifiable, Sendable {
     switch self {
     case .text: "Text"
     case .nodes: "Nodes"
+    case .files: "This Mac"
     }
   }
 
@@ -4642,6 +4654,7 @@ public enum WorkspaceSearchMode: String, CaseIterable, Identifiable, Sendable {
     switch self {
     case .text: "Workspace search"
     case .nodes: "Node title, alias, ID, and path search"
+    case .files: "Files and folders on this Mac"
     }
   }
 
@@ -4649,6 +4662,7 @@ public enum WorkspaceSearchMode: String, CaseIterable, Identifiable, Sendable {
     switch self {
     case .text: "Search workspace"
     case .nodes: "Search nodes by title, alias, ID, or path"
+    case .files: "Search files on this Mac"
     }
   }
 
@@ -4658,6 +4672,8 @@ public enum WorkspaceSearchMode: String, CaseIterable, Identifiable, Sendable {
       "Search TODOs, files, chats, approvals, runs, workflows, goals, agents, pages, entries, and corpus text."
     case .nodes:
       "Live search over the local node index, including titles, aliases, IDs, and file paths."
+    case .files:
+      "Find files and folders on this Mac by name and folder. Repeat downloads and copies show as one result, newest first."
     }
   }
 }

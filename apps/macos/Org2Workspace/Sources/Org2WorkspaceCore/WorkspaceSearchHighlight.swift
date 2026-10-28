@@ -86,6 +86,8 @@ enum WorkspaceSearchInput {
   static let liveTextSearchDelay: UInt64 = 250_000_000
   /// Node search filters an in-memory index, so it can follow typing closely.
   static let liveNodeSearchDelay: UInt64 = 120_000_000
+  /// File search answers from the worker's in-memory index in milliseconds.
+  static let liveFileSearchDelay: UInt64 = 100_000_000
 
   /// The result selected after an arrow key. Moving down from no selection
   /// selects the first result, moving up from the first clears the selection

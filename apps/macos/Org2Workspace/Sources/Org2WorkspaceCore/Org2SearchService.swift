@@ -2,7 +2,8 @@ import Darwin
 import Foundation
 
 /// One request to `dist/search-service.js`. Omitting `query` only loads the
-/// corpus search index into the worker's memory.
+/// corpus search index into the worker's memory. A request with `files`
+/// searches files on this Mac instead of the corpus.
 struct Org2SearchServiceRequest: Encodable, Sendable {
   let id: String
   let rootDir: String
@@ -11,12 +12,22 @@ struct Org2SearchServiceRequest: Encodable, Sendable {
   let context: Int?
   let sort: String?
   let recursive: Bool
+  var files: MacFileSearchServiceRequest? = nil
+}
+
+/// The `files` part of a worker request. Omitting `query` only loads (or
+/// starts building) the file index.
+struct MacFileSearchServiceRequest: Encodable, Sendable {
+  var query: String?
+  var limit: Int?
+  var rebuild: Bool?
 }
 
 private struct Org2SearchServiceResponse: Decodable, Sendable {
   let id: String
   let payload: SearchPayload?
   let warmed: Bool?
+  let files: MacFileSearchPayload?
   let error: String?
 }
 
@@ -66,6 +77,31 @@ actor Org2SearchServicePool {
     )
     guard let payload = response.payload else {
       throw Org2CLIError.commandFailed(status: 1, message: "The search service returned no results payload.")
+    }
+    return payload
+  }
+
+  func searchFiles(
+    _ files: MacFileSearchServiceRequest,
+    repoRoot: URL,
+    nodePath: String?,
+    timeout: TimeInterval
+  ) async throws -> MacFileSearchPayload {
+    let response = try await worker(repoRoot: repoRoot, nodePath: nodePath).send(
+      Org2SearchServiceRequest(
+        id: UUID().uuidString.lowercased(),
+        rootDir: "",
+        query: nil,
+        limit: nil,
+        context: nil,
+        sort: nil,
+        recursive: false,
+        files: files
+      ),
+      timeout: timeout
+    )
+    guard let payload = response.files else {
+      throw Org2CLIError.commandFailed(status: 1, message: "The search service returned no file results.")
     }
     return payload
   }
@@ -304,6 +340,33 @@ extension Org2CLI {
   public func prewarmSearchService(corpusRoot: URL) async {
     try? await Org2SearchServicePool.shared.warm(
       corpusRoot: corpusRoot,
+      repoRoot: repoRoot,
+      nodePath: runtimeNodePath,
+      timeout: 60
+    )
+  }
+
+  /// Searches files on this Mac through the warm search worker, which keeps
+  /// the file index in memory and current while the app runs. An empty query
+  /// returns recently changed documents.
+  public func searchMacFiles(
+    _ query: String,
+    limit: Int = 60,
+    rebuild: Bool = false,
+    timeout: TimeInterval = 20
+  ) async throws -> MacFileSearchPayload {
+    try await Org2SearchServicePool.shared.searchFiles(
+      MacFileSearchServiceRequest(query: query, limit: limit, rebuild: rebuild ? true : nil),
+      repoRoot: repoRoot,
+      nodePath: runtimeNodePath,
+      timeout: timeout
+    )
+  }
+
+  /// Loads the file index into the warm worker, or starts building it.
+  public func prewarmMacFileSearch() async {
+    _ = try? await Org2SearchServicePool.shared.searchFiles(
+      MacFileSearchServiceRequest(),
       repoRoot: repoRoot,
       nodePath: runtimeNodePath,
       timeout: 60

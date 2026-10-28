@@ -144,6 +144,7 @@
         <li><strong>Canvas boards</strong>Arrange notes and images in JSON Canvas</li>
         <li><strong>AI briefs</strong>A sourced summary beside the note</li>
         <li><strong>Search</strong>Fuzzy search on Mac and iPhone</li>
+        <li><strong>Find any file on your Mac</strong>Search every file and folder by name, newest first, with repeat downloads shown as one result</li>
       </ul>
       <p class="celorga-feature-links"><a href="workflows.html">Everyday workflows</a></p>
     </div>

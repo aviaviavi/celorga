@@ -46,6 +46,7 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
       "Use `celorga activity explain --json` (optionally `--thread|--run|--workflow ID`) to learn why work is running or blocked before acting, `celorga activity trace --run ID --json` to explain why one run stopped (dispatch, executor, tools, result, and delivery evidence; verdict queued|running|waiting|failed|completed|completed-undelivered|canceled|unknown; whether a retry is safe) before retrying it, `celorga activity events --follow --json` for an NDJSON stream of run, approval, thread, workflow, and host transitions, and `celorga thread wait ID --until reply|needs-you|idle` or `celorga run wait ID --until approval|blocked|completed` for race-free coordination; waits check durable state first and exit 0 matched, 2 unreachable, 124 timed out.",
       "Use `celorga thread repair --dir CORPUS --json` on macOS to preview deterministic transcript reconciliation through the native OpenOrgServer worker; `--apply` commits a new repair head without changing original writer heads. `--watch --interval SECONDS --apply` runs without an LLM and skips unchanged chat storage. Build the worker with npm run build:server or supply --executable PATH. Desktop Settings and server chat-repair configure the background check interval; 0/off disables it.",
       "Never ask the user to paste credentials into chat. Use preview-first `celorga secret request NAME --reason TEXT --author NAME --apply` (MCP `celorga_secret_request`): the Celorga app asks in a secure sheet and stores the value GPG-encrypted in the corpus. Check `celorga secret status ID`, then run `celorga secret exec NAME [--env VAR] -- COMMAND`; no secret command prints a value.",
+      "To find a file on this Mac outside the corpus (a downloaded PDF, a spreadsheet, a folder), use `celorga files search WORDS [--kind pdf|sheet|...] [--json]`. It searches names and folders under the machine-local indexed folders (home and cloud drives by default; `celorga files config` changes them), ranks recent documents first, and returns repeat downloads and copies as one result with `copies`. The index lives outside the corpus and never reads file contents.",
       "Use `celorga ledger` for stable per-account bookkeeping in recurring workflows; canonical accounts live under `notes/LEDGER/accounts/`.",
       "Use `celorga corpus show|validate|init` to inspect or establish portable corpus identity before team mounting.",
       "Use `celorga source list|doctor|status|bind|import|sync` to manage corpus-declared Slack and Notion crawler profiles and IMAP email profiles, add or update any profile type with `celorga source add PROFILE --source-json JSON` (or `celorga source add-email`), and stage review packets without storing credentials in the corpus; email sync is read-only and incremental.",
@@ -207,6 +208,12 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
         purpose: "Create and resolve IDs, backlinks, nodes, links, entities, indexes, searches, graph reports, bounded local neighborhoods, and source-revision-guarded individual unlinked mentions.",
         commands: ["celorga id", "celorga backlinks", "celorga index", "celorga search", "celorga query", "celorga entity", "celorga roam", "celorga roam connections", "celorga roam mention-link"],
         writes: "mixed",
+      },
+      {
+        id: "file-search",
+        purpose: "Find files and folders anywhere under this Mac's indexed folders by name and folder, newest first, with repeat downloads and copies grouped; the index and folder config are machine-local, never in a corpus.",
+        commands: ["celorga files search", "celorga files index", "celorga files status", "celorga files config"],
+        writes: "preview-by-default",
       },
       {
         id: "agent-context",

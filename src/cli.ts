@@ -45,6 +45,11 @@ async function main(): Promise<void> {
     await runSecretCommand(args.slice(1));
     return;
   }
+  if (args[0] === "files") {
+    const { runFilesCommand } = await import("./fileSearchCli.js");
+    await runFilesCommand(args.slice(1));
+    return;
+  }
   if (args[0] === "server") {
     const { runServerCommand } = await import("./serverCli.js");
     await runServerCommand(args.slice(1));

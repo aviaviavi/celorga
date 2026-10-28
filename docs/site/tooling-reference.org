@@ -1167,6 +1167,28 @@ Useful flags:
 
 =celorga index= builds disposable machine-local search data. Its JSON artifact remains inspectable, and Celorga also maintains a versioned binary sidecar for faster repeat loads; an absent, stale, or unreadable sidecar safely falls back to JSON. After an initial build, =celorga index --incremental --file FILE= replaces or removes only that file's index entry; if no compatible base index exists, it safely falls back to a complete build. Watcher-backed clients may search that maintained index with =--index current=, avoiding a directory walk and per-file freshness check on every query. The macOS app uses both paths for filesystem events so frequent agent edits and live searches do not repeatedly scan the corpus. =auto= remains the conservative CLI default for callers without a watcher.
 
+* File search on this Mac
+
+=celorga files= finds files and folders anywhere under the indexed folders on this Mac, not just in a corpus. It uses the same machine-local index as *Search → This Mac* in the Mac app, so it works when Spotlight is off.
+
+#+begin_src sh
+celorga files search soc 2 report
+celorga files search cap table --kind sheet --json
+celorga files search "kind:pdf invoice" --limit 5
+celorga files index
+celorga files status
+celorga files config --add-root ~/Projects --exclude Archive --apply
+#+end_src
+
+- =search WORDS= matches every word against the file name or a folder in its path. A word matches the start of a word in the name, and words may run together across spaces, so =soc2= finds =SOC 2 Report.pdf=. Words of four or more letters also match inside a word. Ranking favors full name matches, recent modification times, and documents, and ranks files inside source repositories lower.
+- Repeat downloads and copies come back as one result. The newest file is the result, and =copies= lists the others, newest first, with =identical= when a local copy up to 64 MB was compared byte for byte. =Report (3).pdf=, =Report copy.pdf=, and =Report - Copy.pdf= always group; =Report-2.pdf= groups only when =Report.pdf= is present too. Documents with the same name group across folders; code and text files group only within one folder. =--no-group= lists every file separately.
+- =--kind KIND= (=folder=, =pdf=, =document=, =spreadsheet=, =presentation=, =image=, =video=, =audio=, =archive=, =installer=, =text=, =code=, =app=, =other=; aliases such as =sheet= and =slides= work) and =--ext EXT= filter results. You can also type =kind:pdf=, =ext:xlsx=, or =.xlsx= in the query. With no words, =search= lists recently changed documents.
+- =--json= returns =org2:file-search-result:v1= with =index= (=builtAt=, =building=, =entries=, =roots=, =stale=) and =results= (=path=, =name=, =directory=, =kind=, =extension=, =isDirectory=, =size=, =modifiedAt=, =score=, =copyCount=, =copies=).
+- The first search builds the index if there is none. =--refresh= rebuilds it first. =index= rebuilds it now. The Mac app's search worker keeps it current from file system events while the app runs and rebuilds it when it is more than six hours old.
+- =config= shows the indexed folders. =--add-root PATH=, =--remove-root PATH=, =--exclude NAME|PATH= (a bare name is skipped anywhere), =--include NAME|PATH= (undo an exclusion), =--hidden on|off=, and =--reset= preview until =--apply=. The defaults are =~=, =~/Library/Mobile Documents/com~apple~CloudDocs= (iCloud Drive), and =~/Library/CloudStorage=. The rest of =~/Library=, hidden folders, =node_modules=, =.git=, and other build and dependency folders are skipped. App bundles and package documents are indexed as single items.
+
+The config (=org2:file-search-config:v1=) and index live in =~/.org2/files/=; set =CELORGA_FILES_HOME= to move them. They are machine-local and never written to a corpus. Indexing reads only names, sizes, and modification times. It never reads file contents, except to compare small local copies, and it never opens cloud files.
+
 * JSON Canvas
 
 The =canvas= family operates on [[https://jsoncanvas.org/spec/1.0/][JSON Canvas 1.0]] documents. The =.canvas= file is canonical; native board layout and local resource previews consume shared TypeScript output.
