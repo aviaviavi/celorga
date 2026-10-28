@@ -132,6 +132,70 @@ final class AIChatInboxTests: XCTestCase {
   }
 
   @MainActor
+  func testEnvelopeForDeletedThreadIsSetAsideOnceInsteadOfFailingEveryDrain() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-ai-chat-inbox-deleted-\(UUID().uuidString)", isDirectory: true)
+    let transcript = root
+      .appendingPathComponent(".org2", isDirectory: true)
+      .appendingPathComponent("openclaw-chat.json")
+    try FileManager.default.createDirectory(
+      at: transcript.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+    let suiteName = "AIChatInboxDeletedThreadTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = WorkspaceStore(
+      defaults: defaults,
+      aiChatTranscriptURL: transcript,
+      legacyDefaultsDomains: []
+    )
+    store.setCorpusRoot(root, persistsDefault: false)
+    _ = store.createAIChatThread(runtime: .codex)
+
+    let inbox = root.appendingPathComponent(".org2/ai-chat-inbox", isDirectory: true)
+    try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+    func writeEnvelope(createdAt: Date) throws -> URL {
+      let messageID = UUID().uuidString.lowercased()
+      let file = inbox.appendingPathComponent("\(messageID).json")
+      try JSONSerialization.data(withJSONObject: [
+        "schema": "org2:ai-chat-inbox-message:v1",
+        "id": messageID,
+        "threadID": UUID().uuidString.lowercased(),
+        "content": "Report for a chat that was deleted.",
+        "createdAt": ISO8601DateFormatter().string(from: createdAt),
+        "authorLabel": "Example Worker",
+      ], options: [.prettyPrinted]).write(to: file, options: .atomic)
+      return file
+    }
+    let stale = try writeEnvelope(createdAt: Date().addingTimeInterval(-3 * 24 * 60 * 60))
+    let recent = try writeEnvelope(createdAt: Date())
+
+    await store.drainAIChatInbox()
+
+    XCTAssertNil(store.errorText)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path))
+    let setAside = root
+      .appendingPathComponent(".org2/ai-chat-inbox-undeliverable", isDirectory: true)
+      .appendingPathComponent(stale.lastPathComponent)
+    XCTAssertTrue(
+      FileManager.default.fileExists(atPath: setAside.path),
+      "An undeliverable envelope is kept for inspection, not deleted"
+    )
+    XCTAssertTrue(store.aiChatStatusText.contains("ai-chat-inbox-undeliverable"))
+    XCTAssertTrue(
+      FileManager.default.fileExists(atPath: recent.path),
+      "A recent envelope may still be waiting for its thread to sync"
+    )
+
+    store.errorText = nil
+    await store.drainAIChatInbox()
+    XCTAssertNil(store.errorText, "Reopening must not repeat the failure")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: recent.path))
+  }
+
+  @MainActor
   func testBackgroundEnvelopeRemainsWhenTranscriptCannotBeDurablySaved() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-ai-chat-inbox-save-failure-\(UUID().uuidString)", isDirectory: true)

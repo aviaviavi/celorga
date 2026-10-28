@@ -906,7 +906,25 @@ extension WorkspaceStore {
       let authorLabel = envelope.authorLabel.trimmingCharacters(in: .whitespacesAndNewlines)
       guard let thread = await hydrateAIChatThreadIfNeeded(envelope.threadID) else {
         guard isCurrentAIChatCorpusContext(context) else { return }
-        errorText = "AI chat background delivery failed: thread \(envelope.threadID) no longer exists."
+        guard !aiChatThreads.contains(where: { $0.id == envelope.threadID }) else {
+          errorText = "AI chat background delivery failed: thread \(envelope.threadID) could not be loaded."
+          continue
+        }
+        // The thread is absent. A recent envelope may be waiting for its
+        // thread to sync from another Mac, so keep it quietly. Once the grace
+        // period passes, set it aside so it stops failing on every drain.
+        guard Self.aiChatInboxEnvelopeIsPastThreadSyncGrace(envelope, file: load.file) else {
+          continue
+        }
+        let setAside = await Task.detached(priority: .utility) {
+          Self.setAsideUndeliverableAIChatInboxEnvelope(load.file, corpusRoot: corpusRoot)
+        }.value
+        guard isCurrentAIChatCorpusContext(context) else { return }
+        if let setAside {
+          aiChatStatusText = "Set aside a background message for deleted chat \(envelope.threadID) in \(setAside)."
+        } else {
+          errorText = "AI chat background delivery failed: thread \(envelope.threadID) no longer exists, and its message could not be set aside."
+        }
         continue
       }
       guard isCurrentAIChatCorpusContext(context) else { return }
@@ -1171,6 +1189,49 @@ extension WorkspaceStore {
       )
     }
     return threadID
+  }
+
+  /// How long an envelope for an unknown thread waits for that thread to
+  /// arrive (for example through corpus sync) before it is set aside.
+  nonisolated static let aiChatInboxThreadSyncGracePeriod: TimeInterval = 24 * 60 * 60
+
+  nonisolated static func aiChatInboxEnvelopeIsPastThreadSyncGrace(
+    _ envelope: AIChatInboxMessage,
+    file: URL,
+    now: Date = Date()
+  ) -> Bool {
+    let queuedAt = aiChatInboxDate(envelope.createdAt)
+      ?? (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+    guard let queuedAt else { return true }
+    return now.timeIntervalSince(queuedAt) >= aiChatInboxThreadSyncGracePeriod
+  }
+
+  nonisolated static func aiChatUndeliverableInboxDirectory(corpusRoot: URL) -> URL {
+    CelorgaNames.stateDirectory(corpusRoot: corpusRoot.standardizedFileURL)
+      .appendingPathComponent("ai-chat-inbox-undeliverable", isDirectory: true)
+  }
+
+  /// Moves an envelope whose thread no longer exists out of the inbox without
+  /// deleting it. Returns the corpus-relative directory, or nil on failure.
+  nonisolated static func setAsideUndeliverableAIChatInboxEnvelope(
+    _ file: URL,
+    corpusRoot: URL
+  ) -> String? {
+    let fileManager = FileManager.default
+    let directory = aiChatUndeliverableInboxDirectory(corpusRoot: corpusRoot)
+    let destination = directory.appendingPathComponent(file.lastPathComponent)
+    do {
+      try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+      if fileManager.fileExists(atPath: destination.path) {
+        // Envelope file names are stable message IDs; a copy is already kept.
+        try fileManager.removeItem(at: file)
+      } else {
+        try fileManager.moveItem(at: file, to: destination)
+      }
+    } catch {
+      return nil
+    }
+    return "\(CelorgaNames.stateDirectoryName(corpusRoot: corpusRoot.standardizedFileURL))/\(directory.lastPathComponent)/"
   }
 
   nonisolated private static func loadAIChatInboxFiles(in directory: URL) -> [AIChatInboxFileLoad] {
