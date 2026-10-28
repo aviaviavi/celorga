@@ -195,6 +195,35 @@ assert.match(
   "The explicit jump-to-latest control should retain animated scrolling",
 );
 
+const composer = mobileThreadView.slice(
+  mobileThreadView.indexOf("private var composer"),
+  mobileThreadView.indexOf("private var composerActionsMenu"),
+);
+assert.match(composer, /MobileRemoteComposerTextView\(/);
+assert.doesNotMatch(
+  composer,
+  /TextField\([^)]*axis: \.vertical/,
+  "A vertical TextField scrolls a long draft back to the caret whenever polling redraws the thread",
+);
+const composerTextView = remoteViews.slice(
+  remoteViews.indexOf("private struct MobileRemoteComposerUITextView"),
+  remoteViews.indexOf("private struct MobileRemotePhotoThumbnail"),
+);
+assert.match(
+  composerTextView,
+  /guard view\.text != text, view\.markedTextRange == nil else \{ return \}/,
+  "The composer must leave text and scroll position alone when the draft did not change",
+);
+assert.match(mobileThreadView, /newChatSetup/, "An empty chat offers agent and model pickers");
+assert.match(mobileThreadView, /remote\.setDestination\(destination, threadID: threadID\)/);
+assert.match(remoteStore, /status\?\.supportsThreadDestinationChange == true/, "Older hosts must not be asked to switch agents");
+assert.match(remoteCoordinator, /case "destination":[\s\S]*setAIChatRemoteDestination/);
+assert.match(
+  remoteStore,
+  /threadConfiguration = cachedConfiguration\(for: threadID\)/,
+  "Opening a chat shows the destination's last known models immediately",
+);
+
 const createThread = remoteStore.slice(
   remoteStore.indexOf("func createThread("),
   remoteStore.indexOf("func refreshExternalThreads()"),

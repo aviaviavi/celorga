@@ -40,6 +40,9 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
   /// (`PUT|DELETE /v1/sources/ID/credential`) and runs source syncs on
   /// request (`POST /v1/sources/ID/sync`).
   public let supportsSourceCredentials: Bool?
+  /// `POST /v1/threads/ID/configuration` accepts `setting: "destination"`,
+  /// which moves a new, empty chat to another agent.
+  public let supportsThreadDestinationChange: Bool?
 
   public init(
     protocolVersion: Int = MobileRemoteProtocol.version,
@@ -55,8 +58,10 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
     supportsClientThreadIDs: Bool? = true,
     supportsThreadSharing: Bool? = true,
     supportsThreadOutputs: Bool? = true,
-    supportsSourceCredentials: Bool? = true
+    supportsSourceCredentials: Bool? = true,
+    supportsThreadDestinationChange: Bool? = true
   ) {
+    self.supportsThreadDestinationChange = supportsThreadDestinationChange
     self.supportsSourceCredentials = supportsSourceCredentials
     self.supportsThreadOutputs = supportsThreadOutputs
     self.supportsClientThreadIDs = supportsClientThreadIDs
@@ -350,6 +355,11 @@ public struct MobileRemoteUpdateThreadConfigurationRequest: Codable, Hashable, S
   public init(reasoningEffort: String?) {
     setting = "reasoning"
     value = reasoningEffort
+  }
+
+  public init(destinationID: String) {
+    setting = "destination"
+    value = destinationID
   }
 }
 

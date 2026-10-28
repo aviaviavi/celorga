@@ -77,6 +77,9 @@ final class MobileRemoteStore: ObservableObject {
   /// Chats opened optimistically while the host is still creating them.
   /// Thread requests for these IDs wait for creation before hitting the host.
   private var pendingThreadCreations: [UUID: Task<Bool, Never>] = [:]
+  /// The last model catalog seen for each destination. A newly opened chat
+  /// shows it at once while the host confirms the chat's own configuration.
+  private var configurationByDestinationID: [String: MobileRemoteThreadConfiguration] = [:]
   private var threadDetailCacheOrder: [UUID] = []
   private static let threadDetailCacheLimit = 6
   private var externalThreadLoadRequestID: UUID?
@@ -1226,7 +1229,7 @@ final class MobileRemoteStore: ObservableObject {
     let leaseID = UUID()
     if pollingThreadID != threadID {
       threadDetail = threadDetailCache[threadID]
-      threadConfiguration = nil
+      threadConfiguration = cachedConfiguration(for: threadID)
       threadConnectionError = nil
       configurationError = nil
     }
@@ -1349,14 +1352,68 @@ final class MobileRemoteStore: ObservableObject {
     )
   }
 
+  var supportsDestinationChange: Bool {
+    status?.supportsThreadDestinationChange == true
+  }
+
+  /// Moves a new, empty chat to another agent without creating a shared room.
+  func setDestination(_ destination: MobileRemoteAIDestination, threadID: UUID) async {
+    guard supportsDestinationChange,
+          let summary = threads.first(where: { $0.id == threadID })
+            ?? (threadDetail?.thread.id == threadID ? threadDetail?.thread : nil),
+          summary.destinationID != destination.id
+    else { return }
+    // Switch the visible agent and its model list right away; the host's
+    // answer and the next thread refresh confirm or restore it.
+    apply(summary.movingTo(destination))
+    if pollingThreadID == threadID {
+      threadConfiguration = cachedConfiguration(for: threadID)
+    }
+    let accepted = await updateThreadConfiguration(
+      MobileRemoteUpdateThreadConfigurationRequest(destinationID: destination.id),
+      threadID: threadID
+    )
+    if !accepted {
+      await refreshThread(threadID)
+      await refreshThreadConfiguration(threadID)
+    }
+  }
+
+  private func cachedConfiguration(for threadID: UUID) -> MobileRemoteThreadConfiguration? {
+    guard let summary = threads.first(where: { $0.id == threadID })
+            ?? threadDetailCache[threadID]?.thread,
+          summary.isSharedRoom != true,
+          let destinationID = summary.destinationID,
+          let cached = configurationByDestinationID[destinationID]
+    else { return nil }
+    return MobileRemoteThreadConfiguration(
+      threadID: threadID,
+      model: summary.model,
+      models: cached.models,
+      reasoningEffort: nil,
+      reasoningOptions: cached.reasoningOptions,
+      defaultReasoningEffort: cached.defaultReasoningEffort
+    )
+  }
+
+  private func rememberConfiguration(_ configuration: MobileRemoteThreadConfiguration) {
+    guard !configuration.models.isEmpty,
+          let destinationID = (threads.first(where: { $0.id == configuration.threadID })
+            ?? threadDetail.flatMap { $0.thread.id == configuration.threadID ? $0.thread : nil })?
+            .destinationID
+    else { return }
+    configurationByDestinationID[destinationID] = configuration
+  }
+
+  @discardableResult
   private func updateThreadConfiguration(
     _ request: MobileRemoteUpdateThreadConfigurationRequest,
     threadID: UUID
-  ) async {
-    guard await awaitPendingCreation(of: threadID) else { return }
+  ) async -> Bool {
+    guard await awaitPendingCreation(of: threadID) else { return false }
     activeRequestCount += 1
     defer { activeRequestCount -= 1 }
-    guard !isUpdatingConfiguration else { return }
+    guard !isUpdatingConfiguration else { return false }
     isUpdatingConfiguration = true
     defer { isUpdatingConfiguration = false }
     do {
@@ -1365,13 +1422,16 @@ final class MobileRemoteStore: ObservableObject {
         payload: request,
         as: MobileRemoteThreadConfiguration.self
       )
-      guard pollingThreadID == threadID else { return }
+      guard pollingThreadID == threadID else { return true }
+      await refreshThread(threadID)
       threadConfiguration = configuration
       configurationError = nil
-      await refreshThread(threadID)
+      rememberConfiguration(configuration)
+      return true
     } catch {
       configurationError = error.localizedDescription
       errorMessage = error.localizedDescription
+      return false
     }
   }
 
@@ -1463,6 +1523,7 @@ final class MobileRemoteStore: ObservableObject {
       else { return }
       threadConfiguration = configuration
       configurationError = nil
+      rememberConfiguration(configuration)
     } catch {
       guard !Task.isCancelled,
             pollingThreadID == threadID,

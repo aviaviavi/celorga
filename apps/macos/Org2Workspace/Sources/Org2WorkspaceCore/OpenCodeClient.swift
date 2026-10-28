@@ -210,6 +210,11 @@ public actor OpenCodeClient {
   private let warmServerIdleTimeout: TimeInterval
   /// Distinct configurations kept warm at once (for example one per sandbox mode).
   nonisolated static let warmServerLimit = 3
+  /// `opencode models` starts the CLI and can reload its provider service, so
+  /// the catalog is reused for a while and concurrent requests share one load.
+  nonisolated public static let modelCatalogMaximumAge: TimeInterval = 10 * 60
+  private var modelCatalog: (cwd: String, ids: [String], loadedAt: Date)?
+  private var modelCatalogLoad: (cwd: String, task: Task<[String], Error>)?
 
   public init(
     transport: OpenCodeTransport = .local,
@@ -1062,8 +1067,46 @@ sys.exit(result.returncode)
 
   public func listModels(
     cwd: URL,
-    configuredModel: String? = nil
+    configuredModel: String? = nil,
+    maximumAge: TimeInterval = OpenCodeClient.modelCatalogMaximumAge
   ) async throws -> [AIChatModelOption] {
+    var ids = try await catalogModelIDs(cwd: cwd, maximumAge: maximumAge)
+    if let configuredModel = Self.normalized(configuredModel), !ids.contains(configuredModel) {
+      ids.append(configuredModel)
+      ids.sort()
+    }
+    return ids.map { id in
+      AIChatModelOption(
+        id: id,
+        label: id,
+        supportsReasoning: true,
+        isDefault: id == Self.normalized(configuredModel)
+      )
+    }
+  }
+
+  private func catalogModelIDs(cwd: URL, maximumAge: TimeInterval) async throws -> [String] {
+    let key = cwd.standardizedFileURL.path
+    if let catalog = modelCatalog, catalog.cwd == key,
+       Date().timeIntervalSince(catalog.loadedAt) < maximumAge {
+      return catalog.ids
+    }
+    if let load = modelCatalogLoad, load.cwd == key {
+      return try await load.task.value
+    }
+    let task = Task { try await self.loadModelIDs(cwd: cwd) }
+    modelCatalogLoad = (key, task)
+    defer {
+      if modelCatalogLoad?.cwd == key { modelCatalogLoad = nil }
+    }
+    let ids = try await task.value
+    // An empty listing is usually a provider service that has not started;
+    // keep asking next time rather than caching it.
+    if !ids.isEmpty { modelCatalog = (key, ids, Date()) }
+    return ids
+  }
+
+  private func loadModelIDs(cwd: URL) async throws -> [String] {
     let output: String
     switch transport {
     case .local:
@@ -1102,20 +1145,7 @@ sys.exit(result.returncode)
       )
       output = result.output
     }
-
-    var ids = Self.modelIDs(from: output)
-    if let configuredModel = Self.normalized(configuredModel), !ids.contains(configuredModel) {
-      ids.append(configuredModel)
-      ids.sort()
-    }
-    return ids.map { id in
-      AIChatModelOption(
-        id: id,
-        label: id,
-        supportsReasoning: true,
-        isDefault: id == Self.normalized(configuredModel)
-      )
-    }
+    return Self.modelIDs(from: output)
   }
 
   /// The prompt OpenCode receives for one turn: this turn's Celorga snapshot,

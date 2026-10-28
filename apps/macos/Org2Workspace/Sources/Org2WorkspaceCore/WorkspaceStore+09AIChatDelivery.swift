@@ -2805,7 +2805,8 @@ extension WorkspaceStore {
       }
       return try await openCodeClient(forDestinationID: destinationID).listModels(
         cwd: corpusRoot,
-        configuredModel: destination.model
+        configuredModel: destination.model,
+        maximumAge: forceCodexModelCatalogReload ? 0 : OpenCodeClient.modelCatalogMaximumAge
       )
     case .openClaw:
       return try await OpenClawGatewayClient(

@@ -3632,6 +3632,8 @@ public final class WorkspaceStore {
   var aiChatCommandDiscoveryGeneration = 0
   var aiChatConfigurationGeneration = 0
   @ObservationIgnored var aiChatConfigurationCatalogCache: [String: AIChatConfigurationCatalogCacheEntry] = [:]
+  /// Destinations whose cached model catalog is being refreshed for a phone.
+  @ObservationIgnored var aiChatRemoteModelCatalogRefreshes: Set<String> = []
   var aiChatConfigurationFallbackNoticesByThreadID: [UUID: String] = [:]
   var activeMeetingRecording: PendingMeetingRecording?
   var meetingRecordingRecoveryExclusionPaths: MeetingArtifactPaths?
@@ -4340,6 +4342,8 @@ enum AIChatRemoteConfigurationError: LocalizedError {
   case turnInProgress
   case unknownModel(String)
   case unknownReasoningEffort(String)
+  case unknownDestination(String)
+  case destinationLocked
 
   var errorDescription: String? {
     switch self {
@@ -4347,6 +4351,10 @@ enum AIChatRemoteConfigurationError: LocalizedError {
       "The remote chat no longer exists."
     case .turnInProgress:
       "Stop the current response before changing models."
+    case .unknownDestination:
+      "That AI destination is unavailable on this host."
+    case .destinationLocked:
+      "Only a new, empty chat can switch to another agent."
     case .unknownModel(let model):
       "The selected runtime did not report the model ‘\(model)’."
     case .unknownReasoningEffort(let effort):

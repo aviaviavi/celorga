@@ -786,8 +786,13 @@ public final class MobileRemoteCoordinator: ObservableObject {
           _ = try await store.setAIChatRemoteModel(payload.value, threadID: threadID)
         case "reasoning":
           try await store.setAIChatRemoteReasoningEffort(payload.value, threadID: threadID)
+        case "destination":
+          guard let destinationID = payload.value else {
+            return .error("Choose an AI destination.", statusCode: 400)
+          }
+          try store.setAIChatRemoteDestination(destinationID, threadID: threadID)
         default:
-          return .error("Choose either model or reasoning to update.", statusCode: 400)
+          return .error("Choose a model, reasoning level, or destination to update.", statusCode: 400)
         }
         let configuration = try await store.aiChatRemoteConfiguration(for: threadID)
         let current = store.aiChatThreads.first(where: { $0.id == threadID }) ?? thread

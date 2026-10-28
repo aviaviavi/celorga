@@ -1983,7 +1983,71 @@ extension WorkspaceStore {
     guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else {
       throw AIChatRemoteConfigurationError.threadNotFound
     }
-    return try await modelsForAIChatDestination(thread.destinationID)
+    return try await remoteModelsForAIChatDestination(thread.destinationID)
+  }
+
+  /// The phone asks for models every time it opens a chat. Answer from the
+  /// catalog this Mac already cached for the destination and refresh it in the
+  /// background, so a slow harness listing (for example `opencode models`)
+  /// never holds up the model menu. Only a destination without a cached
+  /// catalog waits for the live listing.
+  func remoteModelsForAIChatDestination(_ destinationID: String) async throws -> [AIChatModelOption] {
+    if let cached = aiChatConfigurationCatalogCache[destinationID]?.models, !cached.isEmpty {
+      refreshRemoteAIChatModelCatalogInBackground(destinationID)
+      return cached
+    }
+    let models = try await modelsForAIChatDestination(destinationID)
+    cacheAIChatModelCatalog(destinationID: destinationID, models: models)
+    return models
+  }
+
+  private func refreshRemoteAIChatModelCatalogInBackground(_ destinationID: String) {
+    guard aiChatRemoteModelCatalogRefreshes.insert(destinationID).inserted else { return }
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      defer { self.aiChatRemoteModelCatalogRefreshes.remove(destinationID) }
+      guard let models = try? await self.modelsForAIChatDestination(destinationID) else { return }
+      self.cacheAIChatModelCatalog(destinationID: destinationID, models: models)
+    }
+  }
+
+  /// Moves a new, empty single-agent chat to another destination, as the
+  /// Mac's agent picker does for the selected chat. A chat that already has
+  /// messages keeps its agent; mentioning another agent forks a room instead.
+  public func setAIChatRemoteDestination(_ destinationID: String, threadID: UUID) throws {
+    guard let index = aiChatThreads.firstIndex(where: { $0.id == threadID }) else {
+      throw AIChatRemoteConfigurationError.threadNotFound
+    }
+    let thread = aiChatThreads[index]
+    guard thread.destinationID != destinationID else { return }
+    guard let destination = aiChatDestination(id: destinationID), destination.isEnabled else {
+      throw AIChatRemoteConfigurationError.unknownDestination(destinationID)
+    }
+    guard thread.canChangeAIRuntime, !isAIChatThreadRunning(threadID) else {
+      throw AIChatRemoteConfigurationError.destinationLocked
+    }
+    let lastConfiguration = preferredAIChatConfiguration(forDestinationID: destinationID)
+    aiChatThreads[index] = thread.replacingAIChatMetadata(
+      runtime: destination.runtime,
+      destinationID: destinationID,
+      runtimeThreadID: .some(nil),
+      runtimeThreadIDsByDestination: [:],
+      model: .some(lastConfiguration?.model),
+      reasoningEffort: .some(lastConfiguration?.reasoningEffort)
+    )
+    sortAIChatThreadsForDisplay()
+    scheduleAIChatTranscriptPersistenceAfterInteraction()
+    if selectedAIChatThreadID == threadID {
+      if !applyCachedAIChatConfiguration(for: aiChatThreads[index]) {
+        aiChatModelOptions = []
+        aiChatReasoningOptions = []
+        aiChatEffectiveModel = nil
+        aiChatDefaultReasoningEffort = nil
+      }
+      Task { @MainActor [weak self] in
+        await self?.refreshAIChatConfiguration()
+      }
+    }
   }
 
   public func aiChatRemoteConfiguration(
@@ -2004,7 +2068,7 @@ extension WorkspaceStore {
       }()
     switch adapter {
     case .codexLocal, .codexRemote, .codexManagedRemote:
-      let models = try await modelsForAIChatDestination(thread.destinationID)
+      let models = try await remoteModelsForAIChatDestination(thread.destinationID)
       let selected = thread.model.flatMap { model in
         models.first(where: { $0.id == model })
       } ?? models.first(where: \.isDefault)
@@ -2016,7 +2080,7 @@ extension WorkspaceStore {
         defaultReasoningEffort: selected?.defaultReasoningEffort
       )
     case .claudeLocal:
-      let models = try await modelsForAIChatDestination(thread.destinationID)
+      let models = try await remoteModelsForAIChatDestination(thread.destinationID)
       return AIChatRemoteConfiguration(
         models: models,
         effectiveModel: thread.model,
@@ -2025,7 +2089,7 @@ extension WorkspaceStore {
         defaultReasoningEffort: nil
       )
     case .piLocal, .piRemote, .openCodeLocal, .openCodeRemote:
-      let models = try await modelsForAIChatDestination(thread.destinationID)
+      let models = try await remoteModelsForAIChatDestination(thread.destinationID)
       return AIChatRemoteConfiguration(
         models: models,
         effectiveModel: thread.model ?? aiChatDestination(id: thread.destinationID)?.model,
@@ -2049,7 +2113,7 @@ extension WorkspaceStore {
         defaultReasoningEffort: configuration?.defaultReasoningEffort
       )
     case .openAI, .anthropic, .openRouter, .ollama:
-      let models = try await modelsForAIChatDestination(thread.destinationID)
+      let models = try await remoteModelsForAIChatDestination(thread.destinationID)
       let preset = aiChatDestination(id: thread.destinationID)?.providerPreset
       return AIChatRemoteConfiguration(
         models: models,
@@ -2080,9 +2144,15 @@ extension WorkspaceStore {
       throw AIChatRemoteConfigurationError.turnInProgress
     }
 
-    let options = try await aiChatRemoteModelOptions(for: threadID)
+    var options = try await aiChatRemoteModelOptions(for: threadID)
     if let model, !options.contains(where: { $0.id == model }) {
-      throw AIChatRemoteConfigurationError.unknownModel(model)
+      // The phone's list can come from the cached catalog; confirm against a
+      // live listing before refusing a model the runtime may have added.
+      options = try await modelsForAIChatDestination(thread.destinationID)
+      cacheAIChatModelCatalog(destinationID: thread.destinationID, models: options)
+      guard options.contains(where: { $0.id == model }) else {
+        throw AIChatRemoteConfigurationError.unknownModel(model)
+      }
     }
 
     if aiChatDestination(id: thread.destinationID)?.adapter == .openClaw {

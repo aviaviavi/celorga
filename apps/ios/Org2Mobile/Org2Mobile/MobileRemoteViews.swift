@@ -1701,6 +1701,11 @@ struct MobileRemoteThreadView: View {
             .buttonStyle(.bordered)
           }
 
+          if messages.isEmpty, optimisticMessage == nil, !isSending,
+             !detail.thread.isRunning, detail.thread.isSharedRoom != true {
+            newChatSetup
+          }
+
           ForEach(messages[page]) { message in
             MobileRemoteMessageBubble(message: message) { citation in
               selectedFileCitation = citation
@@ -1813,12 +1818,15 @@ struct MobileRemoteThreadView: View {
       HStack(alignment: .bottom, spacing: 7) {
         composerActionsMenu
 
-        TextField("Talk to \(agentTitle)", text: $draft, axis: .vertical)
-          .lineLimit(1...6)
-          .textFieldStyle(.plain)
-          .padding(.vertical, 6)
-          .frame(minHeight: 32)
-          .disabled(isSettled)
+        // A UITextView keeps the reader's scroll position inside a long
+        // draft. A vertical SwiftUI TextField scrolls back to the caret
+        // whenever polling redraws the thread, every one to four seconds.
+        MobileRemoteComposerTextView(
+          text: draft,
+          placeholder: "Talk to \(agentTitle)",
+          isEnabled: !isSettled,
+          maximumLines: 6
+        ) { draft = $0 }
 
         Button {
           if voiceTranscriber.isRecording {
@@ -1956,29 +1964,28 @@ struct MobileRemoteThreadView: View {
 
       Divider()
 
+      if canChangeDestination {
+        Menu {
+          destinationMenuItems
+        } label: {
+          Label("Agent · \(agentTitle)", systemImage: "person.crop.circle")
+        }
+        .disabled(remote.isUpdatingConfiguration)
+      }
+
       Menu {
         modelMenuItems
       } label: {
         Label("Model · \(modelLabel)", systemImage: "cpu")
       }
-      .disabled(
-        isSettled || isRunning || isSending ||
-        remote.threadDetail?.thread.isSharedRoom == true ||
-        remote.isRefreshingConfiguration || remote.isUpdatingConfiguration ||
-        remote.threadConfiguration == nil
-      )
+      .disabled(!canChangeModel)
 
       Menu {
         reasoningMenuItems
       } label: {
         Label("Reasoning · \(reasoningLabel)", systemImage: "brain")
       }
-      .disabled(
-        isSettled || isRunning || isSending ||
-        remote.threadDetail?.thread.isSharedRoom == true ||
-        remote.isRefreshingConfiguration || remote.isUpdatingConfiguration ||
-        !hasReasoningChoices
-      )
+      .disabled(!canChangeModel || !hasReasoningChoices)
     } label: {
       Image(systemName: "plus")
         .font(.system(size: 14, weight: .semibold))
@@ -2003,11 +2010,10 @@ struct MobileRemoteThreadView: View {
       }
     }
 
-    if remote.isRefreshingConfiguration {
-      Divider()
-      Text("Loading models…")
-    } else if let configuration = remote.threadConfiguration,
-              !configuration.models.isEmpty {
+    // Show a known catalog while the host confirms it; only an empty one
+    // waits on "Loading models…".
+    if let configuration = remote.threadConfiguration,
+       !configuration.models.isEmpty {
       Divider()
       ForEach(configuration.models) { model in
         Button {
@@ -2021,10 +2027,111 @@ struct MobileRemoteThreadView: View {
           }
         }
       }
+    } else if remote.isRefreshingConfiguration {
+      Divider()
+      Text("Loading models…")
     } else {
       Divider()
       Text("Models unavailable")
     }
+  }
+
+  @ViewBuilder
+  private var destinationMenuItems: some View {
+    ForEach(aiChatDestinations) { destination in
+      Button {
+        Task { await remote.setDestination(destination, threadID: threadID) }
+      } label: {
+        HStack {
+          Text(destination.name)
+          if destination.id == currentDestinationID {
+            Image(systemName: "checkmark")
+          }
+        }
+      }
+    }
+  }
+
+  /// Agent and model choices for a chat that has no messages yet, so picking
+  /// another agent never needs an @mention (which would open a shared room).
+  private var newChatSetup: some View {
+    VStack(spacing: 12) {
+      Text("New chat")
+        .font(.headline)
+      Text(
+        canChangeDestination
+          ? "Choose the agent and model before you send."
+          : "Choose a model before you send."
+      )
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+      HStack(spacing: 8) {
+        if canChangeDestination {
+          Menu {
+            destinationMenuItems
+          } label: {
+            newChatChip(agentTitle, systemImage: "person.crop.circle")
+          }
+          .disabled(remote.isUpdatingConfiguration)
+          .accessibilityLabel("Agent, \(agentTitle)")
+        }
+        Menu {
+          modelMenuItems
+        } label: {
+          newChatChip(modelLabel, systemImage: "cpu")
+        }
+        .disabled(!canChangeModel)
+        .accessibilityLabel("Model, \(modelLabel)")
+      }
+      if remote.isUpdatingConfiguration {
+        ProgressView()
+          .controlSize(.small)
+      }
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.vertical, 28)
+  }
+
+  private func newChatChip(_ title: String, systemImage: String) -> some View {
+    HStack(spacing: 5) {
+      Image(systemName: systemImage)
+      Text(title)
+        .lineLimit(1)
+        .truncationMode(.middle)
+      Image(systemName: "chevron.up.chevron.down")
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(.secondary)
+    }
+    .font(.subheadline.weight(.medium))
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
+    .background(Color(.tertiarySystemFill), in: Capsule())
+  }
+
+  private var currentDestinationID: String? {
+    guard let thread = remote.threadDetail?.thread, thread.id == threadID else { return nil }
+    return thread.destinationID
+      ?? aiChatDestinations.first(where: { $0.runtime == thread.runtime })?.id
+  }
+
+  /// Only a new, empty single-agent chat can move to another agent.
+  private var canChangeDestination: Bool {
+    guard remote.supportsDestinationChange,
+          let detail = remote.threadDetail,
+          detail.thread.id == threadID,
+          detail.thread.isSharedRoom != true,
+          detail.messages.isEmpty,
+          !detail.thread.isRunning
+    else { return false }
+    return !isSettled && !isSending && optimisticMessage == nil && aiChatDestinations.count > 1
+  }
+
+  private var canChangeModel: Bool {
+    !isSettled && !isRunning && !isSending &&
+      remote.threadDetail?.thread.isSharedRoom != true &&
+      !remote.isUpdatingConfiguration &&
+      remote.threadConfiguration != nil
   }
 
   @ViewBuilder
@@ -3993,6 +4100,109 @@ private struct MobileRemoteSourceTextView: UIViewRepresentable {
     }
 
     return (output, highlightRange)
+  }
+}
+
+/// The chat composer's growing text field. It writes text into the view only
+/// when the draft changed elsewhere (dictation, mention completion, sending),
+/// so redrawing the thread never moves the reader's place in a long draft.
+private struct MobileRemoteComposerTextView: View {
+  let text: String
+  let placeholder: String
+  let isEnabled: Bool
+  let maximumLines: Int
+  let onChange: (String) -> Void
+
+  var body: some View {
+    MobileRemoteComposerUITextView(
+      text: text,
+      isEnabled: isEnabled,
+      maximumLines: maximumLines,
+      onChange: onChange
+    )
+    .overlay(alignment: .topLeading) {
+      if text.isEmpty {
+        Text(placeholder)
+          .foregroundStyle(.tertiary)
+          .padding(.vertical, MobileRemoteComposerUITextView.verticalInset)
+          .lineLimit(1)
+          .allowsHitTesting(false)
+          .accessibilityHidden(true)
+      }
+    }
+    .accessibilityLabel(placeholder)
+  }
+}
+
+private struct MobileRemoteComposerUITextView: UIViewRepresentable {
+  static let verticalInset: CGFloat = 6
+
+  let text: String
+  let isEnabled: Bool
+  let maximumLines: Int
+  let onChange: (String) -> Void
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator(onChange: onChange)
+  }
+
+  func makeUIView(context: Context) -> UITextView {
+    let view = UITextView()
+    view.delegate = context.coordinator
+    view.font = UIFont.preferredFont(forTextStyle: .body)
+    view.adjustsFontForContentSizeCategory = true
+    view.backgroundColor = .clear
+    view.textContainerInset = UIEdgeInsets(
+      top: Self.verticalInset,
+      left: 0,
+      bottom: Self.verticalInset,
+      right: 0
+    )
+    view.textContainer.lineFragmentPadding = 0
+    view.isScrollEnabled = true
+    view.alwaysBounceVertical = false
+    view.showsVerticalScrollIndicator = true
+    view.text = text
+    view.isEditable = isEnabled
+    view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    return view
+  }
+
+  func updateUIView(_ view: UITextView, context: Context) {
+    context.coordinator.onChange = onChange
+    if view.isEditable != isEnabled {
+      view.isEditable = isEnabled
+    }
+    // Leave the text, selection, and scroll offset alone unless the draft
+    // really changed outside the view.
+    guard view.text != text, view.markedTextRange == nil else { return }
+    view.text = text
+    let end = view.endOfDocument
+    view.selectedTextRange = view.textRange(from: end, to: end)
+    view.scrollRangeToVisible(NSRange(location: (text as NSString).length, length: 0))
+  }
+
+  func sizeThatFits(_ proposal: ProposedViewSize, uiView view: UITextView, context: Context) -> CGSize? {
+    let width = proposal.width ?? view.bounds.width
+    guard width > 0, width.isFinite else { return nil }
+    let lineHeight = view.font?.lineHeight ?? UIFont.preferredFont(forTextStyle: .body).lineHeight
+    let insets = view.textContainerInset.top + view.textContainerInset.bottom
+    let minimumHeight = max(32, ceil(lineHeight + insets))
+    let maximumHeight = ceil(lineHeight * CGFloat(maximumLines) + insets)
+    let fitted = view.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+    return CGSize(width: width, height: min(max(ceil(fitted), minimumHeight), maximumHeight))
+  }
+
+  final class Coordinator: NSObject, UITextViewDelegate {
+    var onChange: (String) -> Void
+
+    init(onChange: @escaping (String) -> Void) {
+      self.onChange = onChange
+    }
+
+    func textViewDidChange(_ textView: UITextView) {
+      onChange(textView.text)
+    }
   }
 }
 

@@ -503,6 +503,50 @@ final class OpenCodeClientTests: XCTestCase {
     ])
     XCTAssertEqual(models.first(where: \.isDefault)?.id, "anthropic/claude-opus-4-6")
   }
+
+  func testModelCatalogIsReusedUntilItExpires() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("OpenCodeClientTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let executable = root.appendingPathComponent("opencode")
+    try """
+    #!/bin/sh
+    if [ "$1" = "models" ]; then
+      /bin/echo listed >> calls.log
+      /bin/sleep 0.2
+      printf '%s\\n' 'example/fast' 'example/deep'
+    fi
+    """.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700],
+      ofItemAtPath: executable.path
+    )
+    func listingCount() throws -> Int {
+      let log = root.appendingPathComponent("calls.log")
+      guard FileManager.default.fileExists(atPath: log.path) else { return 0 }
+      return try String(contentsOf: log, encoding: .utf8)
+        .split(separator: "\n").count
+    }
+
+    let client = OpenCodeClient(
+      executableURL: executable,
+      environment: ["PATH": root.path]
+    ) { _, _ in }
+    async let first = client.listModels(cwd: root)
+    async let second = client.listModels(cwd: root)
+    let (firstModels, secondModels) = try await (first, second)
+    XCTAssertEqual(firstModels.map(\.id), ["example/deep", "example/fast"])
+    XCTAssertEqual(secondModels.map(\.id), firstModels.map(\.id))
+    XCTAssertEqual(try listingCount(), 1, "concurrent requests share one listing")
+
+    _ = try await client.listModels(cwd: root, configuredModel: "example/other")
+    XCTAssertEqual(try listingCount(), 1, "a fresh catalog is reused")
+
+    _ = try await client.listModels(cwd: root, maximumAge: 0)
+    XCTAssertEqual(try listingCount(), 2, "a forced reload lists again")
+  }
 }
 
 private actor EventLog {

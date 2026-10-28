@@ -662,6 +662,101 @@ final class MobileRemoteHTTPServerTests: XCTestCase {
   }
 
   @MainActor
+  func testRemoteEmptyChatSwitchesAgentWithoutCreatingARoom() throws {
+    let suiteName = "MobileRemoteHTTPServerTests.Destination.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let transcriptURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-mobile-remote-destination-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: transcriptURL) }
+    let store = WorkspaceStore(
+      cli: Org2CLI(repoRoot: try Org2CLI.defaultRepoRoot()),
+      defaults: defaults,
+      aiChatTranscriptURL: transcriptURL
+    )
+    var openCode = try XCTUnwrap(
+      AIChatDestinationConfiguration.defaults.first(where: {
+        $0.id == AIChatDestinationConfiguration.localOpenCodeID
+      })
+    )
+    openCode.isEnabled = true
+    store.updateAIChatDestination(openCode)
+    let threadCount = store.aiChatThreads.count
+    let remoteID = store.createAIChatRemoteThread(runtime: .codex)
+
+    try store.setAIChatRemoteDestination(
+      AIChatDestinationConfiguration.localOpenCodeID,
+      threadID: remoteID
+    )
+
+    let moved = try XCTUnwrap(store.aiChatThreads.first(where: { $0.id == remoteID }))
+    XCTAssertEqual(moved.destinationID, AIChatDestinationConfiguration.localOpenCodeID)
+    XCTAssertEqual(moved.runtime, .openCode)
+    XCTAssertFalse(moved.isSharedRoom)
+    XCTAssertEqual(store.aiChatThreads.count, threadCount + 1, "switching reuses the chat")
+
+    XCTAssertThrowsError(try store.setAIChatRemoteDestination("missing.destination", threadID: remoteID))
+
+    let index = try XCTUnwrap(store.aiChatThreads.firstIndex(where: { $0.id == remoteID }))
+    store.aiChatThreads[index] = store.aiChatThreads[index].replacingMessages([
+      AIChatMessage(role: .user, content: "Hello")
+    ])
+    XCTAssertThrowsError(try store.setAIChatRemoteDestination(
+      AIChatDestinationConfiguration.localCodexID,
+      threadID: remoteID
+    )) { error in
+      XCTAssertEqual(
+        error.localizedDescription,
+        AIChatRemoteConfigurationError.destinationLocked.localizedDescription
+      )
+    }
+    XCTAssertEqual(
+      store.aiChatThreads.first(where: { $0.id == remoteID })?.destinationID,
+      AIChatDestinationConfiguration.localOpenCodeID
+    )
+  }
+
+  @MainActor
+  func testRemoteConfigurationAnswersFromTheCachedModelCatalog() async throws {
+    let suiteName = "MobileRemoteHTTPServerTests.ModelCache.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let transcriptURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-mobile-remote-model-cache-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: transcriptURL) }
+    let store = WorkspaceStore(
+      cli: Org2CLI(repoRoot: try Org2CLI.defaultRepoRoot()),
+      defaults: defaults,
+      aiChatTranscriptURL: transcriptURL
+    )
+    var openCode = try XCTUnwrap(
+      AIChatDestinationConfiguration.defaults.first(where: {
+        $0.id == AIChatDestinationConfiguration.localOpenCodeID
+      })
+    )
+    openCode.isEnabled = true
+    store.updateAIChatDestination(openCode)
+    store.cacheAIChatConfigurationForTesting(
+      destinationID: AIChatDestinationConfiguration.localOpenCodeID,
+      models: [
+        AIChatModelOption(id: "example/fast", label: "example/fast"),
+        AIChatModelOption(id: "example/deep", label: "example/deep")
+      ],
+      effectiveModel: nil,
+      reasoningOptions: [],
+      defaultReasoningEffort: nil
+    )
+    let remoteID = store.createAIChatRemoteThread(
+      destinationID: AIChatDestinationConfiguration.localOpenCodeID
+    )
+
+    // Without a corpus a live `opencode models` listing would throw, so this
+    // only succeeds by answering from the cached catalog.
+    let configuration = try await store.aiChatRemoteConfiguration(for: remoteID)
+    XCTAssertEqual(configuration.models.map(\.id), ["example/fast", "example/deep"])
+  }
+
+  @MainActor
   func testFilePreviewReadsCompleteFilesOnlyInsideMountedCorpora() async throws {
     let suiteName = "MobileRemoteHTTPServerTests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suiteName)!

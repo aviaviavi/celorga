@@ -44,6 +44,8 @@ struct MobileRemoteServerStatus: Codable, Hashable {
   let supportsClientThreadIDs: Bool?
   /// The host serves `GET /v1/threads/ID/outputs`.
   let supportsThreadOutputs: Bool?
+  /// The host can move a new, empty chat to another agent.
+  let supportsThreadDestinationChange: Bool?
 }
 
 struct MobileRemotePushRegistrationRequest: Codable {
@@ -254,6 +256,11 @@ struct MobileRemoteUpdateThreadConfigurationRequest: Codable {
     setting = "reasoning"
     value = reasoningEffort
   }
+
+  init(destinationID: String) {
+    setting = "destination"
+    value = destinationID
+  }
 }
 
 struct MobileRemoteReasoningOption: Codable, Hashable, Identifiable {
@@ -301,6 +308,30 @@ struct MobileRemoteThreadSummary: Codable, Hashable, Identifiable {
   let latestAssistantPreview: String?
   /// The OpenOrg host running (or that last ran) the conversation.
   var executionHostName: String? = nil
+}
+
+extension MobileRemoteThreadSummary {
+  /// The same chat addressed to another agent, before the host confirms it.
+  func movingTo(_ destination: MobileRemoteAIDestination) -> MobileRemoteThreadSummary {
+    MobileRemoteThreadSummary(
+      id: id,
+      title: title,
+      runtime: destination.runtime,
+      destinationID: destination.id,
+      destinationName: destination.name,
+      isSharedRoom: isSharedRoom,
+      model: nil,
+      updatedAt: updatedAt,
+      isSettled: isSettled,
+      isPinned: isPinned,
+      isRunning: isRunning,
+      unreadMessageCount: unreadMessageCount,
+      preview: preview,
+      latestAssistantMessageID: latestAssistantMessageID,
+      latestAssistantPreview: latestAssistantPreview,
+      executionHostName: executionHostName
+    )
+  }
 }
 
 extension Array where Element == MobileRemoteThreadSummary {
