@@ -2088,6 +2088,8 @@ extension WorkspaceStore {
         makeSurfacePrimary(.externalThreads)
       case "n":
         makeSurfacePrimary(.activity)
+      case "k":
+        makeSurfacePrimary(.calendar)
       default:
         return false
       }

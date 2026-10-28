@@ -93,6 +93,11 @@ public struct CalendarMeetingEvent: Codable, Equatable, Hashable, Identifiable, 
   public var attendees: [CalendarMeetingAttendee]
   /// The `externalSources` profile the event was synced by.
   public var sourceProfileID: String
+  /// The event description as plain text.
+  public var details: String?
+  public var recurringEventId: String?
+  /// The staged raw-zone file the event was read from.
+  public var sourceFile: String?
 
   public var id: String { "\(calendarId):\(eventId)" }
   /// Identifies one occurrence, so a moved meeting prompts again.
@@ -117,7 +122,10 @@ public struct CalendarMeetingEvent: Codable, Equatable, Hashable, Identifiable, 
     organizer: CalendarMeetingAttendee? = nil,
     selfResponse: String? = nil,
     attendees: [CalendarMeetingAttendee] = [],
-    sourceProfileID: String = "calendar"
+    sourceProfileID: String = "calendar",
+    details: String? = nil,
+    recurringEventId: String? = nil,
+    sourceFile: String? = nil
   ) {
     self.calendarId = calendarId
     self.eventId = eventId
@@ -133,6 +141,9 @@ public struct CalendarMeetingEvent: Codable, Equatable, Hashable, Identifiable, 
     self.selfResponse = selfResponse
     self.attendees = attendees
     self.sourceProfileID = sourceProfileID
+    self.details = details
+    self.recurringEventId = recurringEventId
+    self.sourceFile = sourceFile
   }
 }
 
@@ -164,6 +175,8 @@ public enum CalendarMeetingEventLoader {
     var organizer: CalendarMeetingAttendee?
     var selfResponse: String?
     var attendees: [CalendarMeetingAttendee]?
+    var description: String?
+    var recurringEventId: String?
   }
 
   /// Raw zones to scan: the default location for every profile plus any
@@ -186,9 +199,11 @@ public enum CalendarMeetingEventLoader {
       guard seenDirectories.insert(standardized).inserted,
             let files = try? fileManager.contentsOfDirectory(atPath: standardized)
       else { continue }
-      for name in files where name.hasSuffix(".json") {
-        guard let data = fileManager.contents(atPath: (standardized as NSString).appendingPathComponent(name)) else { continue }
-        for event in parse(data, fallbackProfileID: directory.lastPathComponent) {
+      for name in files.sorted() where name.hasSuffix(".json") {
+        let path = (standardized as NSString).appendingPathComponent(name)
+        guard let data = fileManager.contents(atPath: path) else { continue }
+        for var event in parse(data, fallbackProfileID: directory.lastPathComponent) {
+          event.sourceFile = path
           events[event.id] = event
         }
       }
@@ -221,7 +236,9 @@ public enum CalendarMeetingEventLoader {
         organizer: payload.organizer,
         selfResponse: payload.selfResponse,
         attendees: payload.attendees ?? [],
-        sourceProfileID: profileID
+        sourceProfileID: profileID,
+        details: payload.description?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+        recurringEventId: payload.recurringEventId
       )
     }
   }

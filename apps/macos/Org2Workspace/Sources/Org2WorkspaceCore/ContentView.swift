@@ -1780,6 +1780,8 @@ struct WorkspaceSurfaceView: View {
           HomeView()
         case .agenda:
           AgendaView()
+        case .calendar:
+          CalendarView()
         case .savedViews:
           SavedViewsView()
         case .approvals:

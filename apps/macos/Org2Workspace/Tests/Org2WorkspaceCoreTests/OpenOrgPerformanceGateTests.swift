@@ -1191,7 +1191,7 @@ private final class WorkspaceRenderPerformanceHarness {
     case .sources: ("0", [.command], 29)
     case .search: ("f", [.command, .shift], 3)
     case .skills: ("k", [.command, .shift], 40)
-    case .externalThreads, .activity: nil
+    case .externalThreads, .activity, .calendar: nil
     }
   }
 

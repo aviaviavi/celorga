@@ -3316,6 +3316,15 @@ public final class WorkspaceStore {
   public internal(set) var calendarMeetingEvents: [CalendarMeetingEvent] = []
   /// The meeting currently offered for recording, if any.
   public internal(set) var calendarRecordingPrompt: CalendarMeetingEvent?
+  /// The Calendar surface: the day it is showing and the agenda it read for
+  /// that day's month grid (`celorga agenda --from --to`).
+  public var calendarAnchorDate = Date()
+  public internal(set) var calendarAgenda: AgendaPayload?
+  public internal(set) var calendarAgendaWindow: String?
+  public internal(set) var calendarAgendaLoadedAt: Date?
+  public internal(set) var isRefreshingCalendar = false
+  public internal(set) var isSyncingCalendarSources = false
+  public internal(set) var calendarErrorText: String?
   @ObservationIgnored var calendarRecordingPromptTask: Task<Void, Never>?
   @ObservationIgnored private var pendingMeetingCalendarEvent: CalendarMeetingEvent?
   /// Presents and dismisses the floating recording prompt; set by the desktop app.
@@ -4553,6 +4562,8 @@ final class SourceRunOutputCollector: @unchecked Sendable {
 public enum WorkspaceSurface: String, CaseIterable, Identifiable, Sendable {
   case home
   case agenda
+  /// Synced calendar events and agenda TODOs on a day, week, or month grid.
+  case calendar
   case savedViews
   case approvals
   case files
@@ -4573,7 +4584,7 @@ public enum WorkspaceSurface: String, CaseIterable, Identifiable, Sendable {
   /// Sidebar order. Saved Views and Canvases sit at the bottom of the
   /// Workspace section, below Review Queue and Automations.
   public static var sidebarCases: [WorkspaceSurface] {
-    [.home, .activity, .agenda, .approvals, .meetings, .sources, .skills, .externalThreads, .savedViews]
+    [.home, .activity, .agenda, .calendar, .approvals, .meetings, .sources, .skills, .externalThreads, .savedViews]
   }
 
   /// Surfaces listed after the Agent Work pages (Review Queue, Automations).
@@ -4588,6 +4599,7 @@ public enum WorkspaceSurface: String, CaseIterable, Identifiable, Sendable {
     switch self {
     case .home: "Home"
     case .agenda: "Agenda"
+    case .calendar: "Calendar"
     case .savedViews: "Saved Views"
     case .approvals: "Agent Work"
     case .files: "Files"
@@ -4606,6 +4618,7 @@ public enum WorkspaceSurface: String, CaseIterable, Identifiable, Sendable {
     switch self {
     case .home: "house"
     case .agenda: "calendar"
+    case .calendar: "calendar.day.timeline.left"
     case .savedViews: "tablecells"
     case .approvals: "bolt.horizontal.circle"
     case .files: "doc.text"
@@ -4624,6 +4637,7 @@ public enum WorkspaceSurface: String, CaseIterable, Identifiable, Sendable {
     switch self {
     case .home: "⌘1"
     case .agenda: "⌘2"
+    case .calendar: "⌥⌘K"
     case .savedViews: "⌥⌘V"
     case .approvals: "⌘4"
     case .files: "⌘3"

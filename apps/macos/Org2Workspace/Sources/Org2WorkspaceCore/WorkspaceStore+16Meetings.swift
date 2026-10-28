@@ -1853,7 +1853,8 @@ extension WorkspaceStore {
         systemAudioArtifact: meetingProperty("system_audio_artifact", in: prefix),
         transcriptArtifact: meetingProperty("transcript_artifact", in: prefix),
         transcriptionStatus: meetingProperty("transcription_status", in: prefix),
-        idValue: meetingNodeID(in: prefix)
+        idValue: meetingNodeID(in: prefix),
+        calendarEventID: meetingProperty("calendar_event_id", in: prefix)
       ))
     }
 

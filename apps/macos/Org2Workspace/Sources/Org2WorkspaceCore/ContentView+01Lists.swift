@@ -1645,6 +1645,7 @@ struct KeyboardShortcutsView: View {
             ShortcutHelpItem(keys: "⌥⌘N", action: "Activity (what's happening now)"),
             ShortcutHelpItem(keys: "⌘1", action: "Home"),
             ShortcutHelpItem(keys: "⌘2", action: "Agenda"),
+            ShortcutHelpItem(keys: "⌥⌘K", action: "Calendar"),
             ShortcutHelpItem(keys: "⌘3", action: "Files"),
             ShortcutHelpItem(keys: "⌘4", action: "Agent Work"),
             ShortcutHelpItem(keys: "⌘⇧F", action: "Corpus search"),

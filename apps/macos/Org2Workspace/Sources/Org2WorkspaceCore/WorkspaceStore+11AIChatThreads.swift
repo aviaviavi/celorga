@@ -71,6 +71,10 @@ extension WorkspaceStore {
     if invalidatedSurfaces.contains(.files) {
       invalidatedSurfaces.insert(.canvases)
     }
+    // The calendar shows agenda items, synced events, and meeting notes.
+    if !invalidatedSurfaces.isDisjoint(with: [.agenda, .meetings, .sources]) {
+      invalidatedSurfaces.insert(.calendar)
+    }
     if invalidatedSurfaces.contains(.approvals) {
       markRunReviewPagesDirty()
     }
@@ -146,6 +150,8 @@ extension WorkspaceStore {
       } else {
         await refreshAgenda(preserveSelection: true, updatesStatus: false)
       }
+    case .calendar:
+      await refreshCalendar(force: true)
     case .savedViews:
       break
     case .approvals:
@@ -181,6 +187,8 @@ extension WorkspaceStore {
       false
     case .agenda:
       agendaMode == .assigned ? isRefreshingAssignedWork : isRefreshingAgenda
+    case .calendar:
+      isRefreshingCalendar
     case .savedViews:
       false
     case .approvals:

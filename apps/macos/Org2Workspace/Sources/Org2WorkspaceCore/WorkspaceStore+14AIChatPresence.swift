@@ -907,7 +907,7 @@ extension WorkspaceStore {
     return originalPath
   }
 
-  func startNewAIThread(with rawPointers: [AIChatContextPointer]) {
+  func startNewAIThread(with rawPointers: [AIChatContextPointer], title: String? = nil) {
     var seen = Set<String>()
     let pointers = rawPointers.filter {
       seen.insert("\($0.kind)|\($0.reference)|\($0.displayTitle)").inserted
@@ -918,9 +918,9 @@ extension WorkspaceStore {
     }
 
     let destination = selectedAIChatDestination
-    let threadTitle = pointers.count == 1
+    let threadTitle = title ?? (pointers.count == 1
       ? pointers[0].threadTitle
-      : "Context: \(pointers.count) selected items"
+      : "Context: \(pointers.count) selected items")
     createAIChatThread(
       title: Self.normalizedAIChatThreadTitle(threadTitle),
       statusText: "New \(destination.title) context chat",

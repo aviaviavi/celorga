@@ -142,6 +142,17 @@ extension WorkspaceStore {
       UserDefaults.standard.set(mode == "activity-map" ? "Map" : "Now", forKey: "workspaceActivityMode")
       await refreshActivitySources()
       selectedSurface = .activity
+    case "calendar", "calendar-month", "calendar-day":
+      UserDefaults.standard.set(
+        mode == "calendar-month" ? "month" : mode == "calendar-day" ? "day" : "week",
+        forKey: CalendarView.scaleDefaultsKey
+      )
+      if let target, let date = WorkspaceCalendarDates.date(fromKey: target) {
+        calendarAnchorDate = date
+      }
+      selectedSurface = .calendar
+      isWorkspaceDetailPaneClosed = true
+      await refreshCalendar(force: true)
     case "agenda":
       selectedSurface = .agenda
       agendaMode = .focus

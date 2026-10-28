@@ -2479,6 +2479,8 @@ public struct MeetingWorkspaceItem: Identifiable, Hashable, Sendable {
   public let transcriptArtifact: String?
   public let transcriptionStatus: String?
   public let idValue: String?
+  /// The synced calendar event the meeting was recorded for, if any.
+  public let calendarEventID: String?
 
   public init(
     title: String,
@@ -2490,11 +2492,13 @@ public struct MeetingWorkspaceItem: Identifiable, Hashable, Sendable {
     systemAudioArtifact: String? = nil,
     transcriptArtifact: String?,
     transcriptionStatus: String?,
-    idValue: String?
+    idValue: String?,
+    calendarEventID: String? = nil
   ) {
     self.title = title
     self.file = file
     self.line = line
+    self.calendarEventID = calendarEventID
     self.recordedAt = recordedAt
     self.modifiedAt = modifiedAt
     self.audioArtifact = audioArtifact
