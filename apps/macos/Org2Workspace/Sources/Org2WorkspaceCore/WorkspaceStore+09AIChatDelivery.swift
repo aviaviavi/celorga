@@ -1745,16 +1745,98 @@ extension WorkspaceStore {
     if selectedAIChatThreadID == threadID, isActiveAIChatSendOrigin(sendOrigin) {
       aiChatStatusText = "Waiting for \(destination.name)"
     }
+    // This turn reads the conversation itself, so stop the previous watch
+    // and continue from where it left off.
+    cancelOpenAIDotFollowUps(destinationID: destination.id)
     let result = try await client.send(
       text: text,
       // Reusing the Celorga message ID makes a retried send idempotent.
       requestID: userMessageID.uuidString.lowercased(),
+      resumingAfter: openAIDotRoomPositionsByDestinationID[destination.id],
       onMessage: { [weak self] message in
         await self?.handleOpenAIDotMessage(message, threadID: threadID, destinationName: destination.name)
       }
     )
+    openAIDotRoomPositionsByDestinationID[destination.id] = result.position
     try Task.checkCancellation()
+    startOpenAIDotFollowUps(
+      client: client,
+      from: result.position,
+      threadID: threadID,
+      destination: destination,
+      transcriptURL: sendOrigin.transcriptURL,
+      isSharedRoom: thread.isSharedRoom
+    )
     return result.transcriptText
+  }
+
+  /// Dots often answer "I'm taking a look" and post the result minutes later,
+  /// after the turn has ended. Keep reading the conversation and add each
+  /// later message to the thread as its own reply.
+  private func startOpenAIDotFollowUps(
+    client: OpenAIDotChatClient,
+    from position: OpenAIDotRoomPosition,
+    threadID: UUID,
+    destination: AIChatDestinationConfiguration,
+    transcriptURL: URL,
+    isSharedRoom: Bool
+  ) {
+    cancelOpenAIDotFollowUps(destinationID: destination.id)
+    let token = UUID()
+    let destinationID = destination.id
+    let destinationName = destination.name
+    let authorRuntime: AIChatRuntime? = isSharedRoom ? destination.runtime : nil
+    let authorDestinationID: String? = isSharedRoom ? destinationID : nil
+    let task = Task { @MainActor [weak self] in
+      _ = try? await client.watchFollowUps(from: position) { message, next in
+        await MainActor.run {
+          guard let self,
+                self.openAIDotFollowUpWatchesByDestinationID[destinationID]?.token == token
+          else { return }
+          self.openAIDotRoomPositionsByDestinationID[destinationID] = next
+          let added = self.appendAIChatFollowUpReply(
+            OpenAIDotTurnResult.followUpText(message),
+            replyID: Self.openAIDotFollowUpReplyID(destinationID: destinationID, messageID: message.id),
+            in: threadID,
+            transcriptURL: transcriptURL,
+            authorRuntime: authorRuntime,
+            authorDestinationID: authorDestinationID
+          )
+          if added, self.selectedAIChatThreadID == threadID, self.isActiveAIChatTranscript(transcriptURL),
+             self.aiChatPendingUserMessageIDs(for: threadID).isEmpty {
+            self.aiChatStatusText = "\(destinationName) replied"
+          }
+        }
+      }
+      guard let self,
+            self.openAIDotFollowUpWatchesByDestinationID[destinationID]?.token == token
+      else { return }
+      self.openAIDotFollowUpWatchesByDestinationID.removeValue(forKey: destinationID)
+    }
+    openAIDotFollowUpWatchesByDestinationID[destinationID] = (token, threadID, task)
+  }
+
+  func cancelOpenAIDotFollowUps(destinationID: String) {
+    openAIDotFollowUpWatchesByDestinationID.removeValue(forKey: destinationID)?.task.cancel()
+  }
+
+  /// Stopping a thread also stops listening for its dot's later replies.
+  func cancelOpenAIDotFollowUps(threadID: UUID) {
+    for (destinationID, watch) in openAIDotFollowUpWatchesByDestinationID where watch.threadID == threadID {
+      cancelOpenAIDotFollowUps(destinationID: destinationID)
+    }
+  }
+
+  /// A stable reply ID per dot message, so the same message is never added twice.
+  nonisolated static func openAIDotFollowUpReplyID(destinationID: String, messageID: String) -> UUID {
+    let digest = SHA256.hash(data: Data("openorg-openai-dot-follow-up:\(destinationID):\(messageID)".utf8))
+    var bytes = Array(digest.prefix(16))
+    bytes[6] = (bytes[6] & 0x0F) | 0x50
+    bytes[8] = (bytes[8] & 0x3F) | 0x80
+    return UUID(uuid: (
+      bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+      bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+    ))
   }
 
   private func handleOpenAIDotMessage(

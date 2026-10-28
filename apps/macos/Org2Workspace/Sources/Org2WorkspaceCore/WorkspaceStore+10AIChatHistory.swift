@@ -1867,6 +1867,68 @@ extension WorkspaceStore {
     return assistantMessage.id
   }
 
+  /// Adds a reply that a destination sent on its own after its turn ended,
+  /// such as a dot's result following "I'm taking a look". It joins the live
+  /// end of the chat, before any queued messages, and leaves running turns
+  /// alone. Returns false when the thread is gone or already has the reply.
+  @discardableResult
+  func appendAIChatFollowUpReply(
+    _ reply: String,
+    replyID: UUID,
+    in threadID: UUID,
+    transcriptURL: URL,
+    authorRuntime: AIChatRuntime? = nil,
+    authorDestinationID: String? = nil
+  ) -> Bool {
+    let trimmed = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          !stoppedAIChatThreadIDs.contains(threadID),
+          let thread = aiChatThread(threadID, transcriptURL: transcriptURL)
+    else { return false }
+    var messages = aiChatMessages(for: threadID, transcriptURL: transcriptURL)
+    guard !messages.contains(where: { $0.id == replyID }) else { return false }
+    let assistantMessage = AIChatMessage(
+      id: replyID,
+      role: .assistant,
+      content: trimmed,
+      authorRuntime: authorRuntime,
+      authorDestinationID: authorDestinationID,
+      provenance: AIChatMessageProvenance(
+        executionHostRef: aiChatHostIdentity.ref,
+        executionHostName: aiChatHostIdentity.name
+      )
+    )
+    var insertionIndex = messages.endIndex
+    while insertionIndex > messages.startIndex {
+      let previous = messages[messages.index(before: insertionIndex)]
+      guard previous.role == .user, previous.deliveryStatus == .sending else { break }
+      insertionIndex = messages.index(before: insertionIndex)
+    }
+    messages.insert(assistantMessage, at: insertionIndex)
+    var dispatchIDs: [UUID] = []
+    if thread.isSharedRoom, canRequestAIChatAgentTurns(in: threadID, transcriptURL: transcriptURL) {
+      let requested = appendingAIChatAgentTurnRequests(
+        to: messages,
+        in: thread,
+        from: assistantMessage,
+        requesterLabel: authorDestinationID.map(aiChatDestinationTitle) ?? "An agent",
+        requesterDestinationID: authorDestinationID,
+        mentionedIn: trimmed
+      )
+      messages = requested.messages
+      dispatchIDs = requested.dispatchIDs
+    }
+    updateAIChatThread(
+      threadID,
+      messages: messages,
+      notifiesForNewAssistantMessages: true,
+      transcriptURL: transcriptURL,
+      shouldPersist: true
+    )
+    enqueueAIChatAgentTurnRequests(dispatchIDs, in: threadID)
+    return true
+  }
+
   /// Hand-offs run through this process's send queue, which always drains
   /// the transcript of the room's send origin (or the active transcript).
   func canRequestAIChatAgentTurns(in threadID: UUID, transcriptURL: URL) -> Bool {
@@ -2395,6 +2457,7 @@ extension WorkspaceStore {
     let targetTranscriptURL = transcriptURL ?? aiChatTranscriptURL
     let statusText = explicitStatusText ?? "\(aiChatDestinationTitle(aiChatThread(threadID, transcriptURL: targetTranscriptURL)?.destinationID ?? selectedAIChatDestination.id)) stopped"
     stoppedAIChatThreadIDs.insert(threadID)
+    cancelOpenAIDotFollowUps(threadID: threadID)
     let pendingTurn = aiChatThread(
       threadID,
       transcriptURL: targetTranscriptURL

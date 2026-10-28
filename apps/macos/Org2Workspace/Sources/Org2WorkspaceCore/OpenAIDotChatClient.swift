@@ -37,15 +37,27 @@ public struct OpenAIDotChatClient: Sendable {
     public var settleInterval: TimeInterval
     /// How long to wait for the dot's first reply before ending the turn.
     public var firstReplyTimeout: TimeInterval
+    /// After a turn ends, how often to check for later messages. The check
+    /// slows from the first interval to the second while the dot is quiet.
+    public var followUpPollInterval: TimeInterval
+    public var followUpMaxPollInterval: TimeInterval
+    /// How long to keep checking for later messages after the dot's latest one.
+    public var followUpWindow: TimeInterval
 
     public init(
       pollInterval: TimeInterval = 2,
       settleInterval: TimeInterval = 10,
-      firstReplyTimeout: TimeInterval = 15 * 60
+      firstReplyTimeout: TimeInterval = 15 * 60,
+      followUpPollInterval: TimeInterval = 5,
+      followUpMaxPollInterval: TimeInterval = 30,
+      followUpWindow: TimeInterval = 3 * 60 * 60
     ) {
       self.pollInterval = pollInterval
       self.settleInterval = settleInterval
       self.firstReplyTimeout = firstReplyTimeout
+      self.followUpPollInterval = followUpPollInterval
+      self.followUpMaxPollInterval = max(followUpPollInterval, followUpMaxPollInterval)
+      self.followUpWindow = followUpWindow
     }
   }
 
@@ -119,9 +131,13 @@ public struct OpenAIDotChatClient: Sendable {
   /// quiet for `timing.settleInterval`. If the dot does not answer within
   /// `timing.firstReplyTimeout`, the turn ends with `timedOut` set; the message
   /// was still delivered, so callers must not resend it.
+  ///
+  /// Pass the position an earlier turn or follow-up watch reached as
+  /// `resumingAfter` so messages the dot sent in between are not skipped.
   public func send(
     text: String,
     requestID: String,
+    resumingAfter previous: OpenAIDotRoomPosition? = nil,
     onMessage: (@Sendable (OpenAIDotMessage) async -> Void)? = nil
   ) async throws -> OpenAIDotTurnResult {
     let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -139,9 +155,12 @@ public struct OpenAIDotChatClient: Sendable {
       throw OpenAIDotChatError.invalidResponse("the sent message had no ID")
     }
 
+    let resumeCursor = previous.flatMap {
+      $0.roomID == roomID && $0.selfMemberID == sent.memberID ? $0.cursor : nil
+    }
     var tracker = OpenAIDotReplyTracker(
       selfMemberID: sent.memberID,
-      cursor: sent.id,
+      cursor: resumeCursor ?? sent.id,
       startedAt: clock(),
       timing: timing
     )
@@ -149,31 +168,100 @@ public struct OpenAIDotChatClient: Sendable {
       try Task.checkCancellation()
       try await sleep(timing.pollInterval)
       try Task.checkCancellation()
-      var pageFull = true
-      while pageFull {
-        let page = try await requestJSON(
-          "GET",
-          path: "\(roomPath)/messages",
-          query: [
-            URLQueryItem(name: "after", value: tracker.cursor),
-            URLQueryItem(name: "limit", value: String(Self.pageSize)),
-          ]
-        )
-        let items = (page["items"] as? [[String: Any]] ?? []).compactMap(OpenAIDotMessage.init(json:))
-        let replies = tracker.ingest(items, at: clock())
-        for reply in replies {
-          await onMessage?(reply)
-        }
-        pageFull = items.count >= Self.pageSize
-      }
+      try await readNewMessages(roomPath: roomPath, tracker: &tracker, onMessage: onMessage)
+      let timedOut: Bool
       switch tracker.state(at: clock()) {
       case .waiting:
         continue
       case .settled:
-        return OpenAIDotTurnResult(dot: dot, sentMessageID: sent.id, replies: tracker.replies, timedOut: false)
+        timedOut = false
       case .timedOut:
-        return OpenAIDotTurnResult(dot: dot, sentMessageID: sent.id, replies: tracker.replies, timedOut: true)
+        timedOut = true
       }
+      return OpenAIDotTurnResult(
+        dot: dot,
+        sentMessageID: sent.id,
+        replies: tracker.replies,
+        timedOut: timedOut,
+        position: OpenAIDotRoomPosition(roomID: roomID, selfMemberID: sent.memberID, cursor: tracker.cursor)
+      )
+    }
+  }
+
+  /// Keeps reading the dot's conversation after a turn has ended.
+  ///
+  /// A dot often acknowledges a request ("I'm taking a look"), keeps working,
+  /// and posts its result minutes later from a scheduled wake-up. Each later
+  /// message is reported through `onMessage` with the position after it. The
+  /// watch checks less often while the dot is quiet and returns the final
+  /// position once `timing.followUpWindow` passes without a new message.
+  /// Brief network or server failures are retried; cancel the task to stop.
+  public func watchFollowUps(
+    from position: OpenAIDotRoomPosition,
+    onMessage: @escaping @Sendable (OpenAIDotMessage, OpenAIDotRoomPosition) async -> Void
+  ) async throws -> OpenAIDotRoomPosition {
+    let roomPath = "/messaging/rooms/\(Self.pathComponent(position.roomID))"
+    var tracker = OpenAIDotReplyTracker(
+      selfMemberID: position.selfMemberID,
+      cursor: position.cursor,
+      startedAt: clock(),
+      timing: timing
+    )
+    var lastActivityAt = clock()
+    var interval = timing.followUpPollInterval
+    while clock().timeIntervalSince(lastActivityAt) < timing.followUpWindow {
+      try Task.checkCancellation()
+      try await sleep(interval)
+      try Task.checkCancellation()
+      let before = tracker.replies.count
+      do {
+        try await readNewMessages(roomPath: roomPath, tracker: &tracker) { message in
+          await onMessage(message, OpenAIDotRoomPosition(
+            roomID: position.roomID,
+            selfMemberID: position.selfMemberID,
+            cursor: message.id
+          ))
+        }
+      } catch let error as OpenAIDotChatError where error.isTransient {
+        interval = min(timing.followUpMaxPollInterval, interval * 2)
+        continue
+      }
+      if tracker.replies.count > before {
+        lastActivityAt = clock()
+        interval = timing.followUpPollInterval
+      } else {
+        interval = min(timing.followUpMaxPollInterval, interval * 1.5)
+      }
+    }
+    return OpenAIDotRoomPosition(
+      roomID: position.roomID,
+      selfMemberID: position.selfMemberID,
+      cursor: tracker.cursor
+    )
+  }
+
+  /// Reads every message after the tracker's cursor, one page at a time.
+  private func readNewMessages(
+    roomPath: String,
+    tracker: inout OpenAIDotReplyTracker,
+    onMessage: (@Sendable (OpenAIDotMessage) async -> Void)?
+  ) async throws {
+    var pageFull = true
+    while pageFull {
+      let page = try await requestJSON(
+        "GET",
+        path: "\(roomPath)/messages",
+        query: [
+          URLQueryItem(name: "after", value: tracker.cursor),
+          URLQueryItem(name: "limit", value: String(Self.pageSize)),
+        ]
+      )
+      let items = (page["items"] as? [[String: Any]] ?? []).compactMap(OpenAIDotMessage.init(json:))
+      let replies = tracker.ingest(items, at: clock())
+      for reply in replies {
+        await onMessage?(reply)
+      }
+      pageFull = items.count >= Self.pageSize
     }
   }
 
@@ -345,11 +433,28 @@ public struct OpenAIDotMessage: Sendable, Equatable {
   }
 }
 
+/// The last message read in a dot's conversation, so a later read can
+/// continue from it.
+public struct OpenAIDotRoomPosition: Sendable, Equatable {
+  public let roomID: String
+  /// The signed-in user's member ID; their own messages are never replies.
+  public let selfMemberID: String
+  public let cursor: String
+
+  public init(roomID: String, selfMemberID: String, cursor: String) {
+    self.roomID = roomID
+    self.selfMemberID = selfMemberID
+    self.cursor = cursor
+  }
+}
+
 public struct OpenAIDotTurnResult: Sendable, Equatable {
   public let dot: OpenAIDotProfile
   public let sentMessageID: String
   public let replies: [OpenAIDotMessage]
   public let timedOut: Bool
+  /// Where the turn stopped reading; later replies follow this position.
+  public let position: OpenAIDotRoomPosition
 
   /// The reply text for the chat transcript.
   public var transcriptText: String {
@@ -358,7 +463,7 @@ public struct OpenAIDotTurnResult: Sendable, Equatable {
       .filter { !$0.isEmpty }
       .joined(separator: "\n\n")
     if timedOut {
-      let note = "/\(dot.displayName) hasn't replied yet. Your message was delivered; later replies appear in \(dot.displayName)'s ChatGPT conversation./"
+      let note = "/\(dot.displayName) hasn't replied yet. Your message was delivered; Celorga adds later replies here while it's open, and they always appear in \(dot.displayName)'s ChatGPT conversation./"
       return body.isEmpty ? note : body + "\n\n" + note
     }
     return body
@@ -366,6 +471,11 @@ public struct OpenAIDotTurnResult: Sendable, Equatable {
 }
 
 extension OpenAIDotTurnResult {
+  /// Transcript text for one message the dot sent after its turn ended.
+  public static func followUpText(_ message: OpenAIDotMessage) -> String {
+    orgLinks(message.text.trimmingCharacters(in: .whitespacesAndNewlines))
+  }
+
   private static let markdownLink = try! NSRegularExpression(
     pattern: #"(?<!!)\[([^\]\n]+)\]\((https?://[^\s)]+)\)"#
   )
@@ -518,6 +628,19 @@ public enum OpenAIDotChatError: LocalizedError, Equatable {
   case http(status: Int, detail: String?)
   case invalidResponse(String)
   case transport(String)
+
+  /// A failure worth retrying later: the network or ChatGPT was briefly
+  /// unavailable, rather than the sign-in or the dot being wrong.
+  public var isTransient: Bool {
+    switch self {
+    case .transport:
+      true
+    case .http(let status, _):
+      status == 408 || status == 429 || (500..<600).contains(status)
+    default:
+      false
+    }
+  }
 
   public var errorDescription: String? {
     switch self {

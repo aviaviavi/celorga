@@ -201,6 +201,161 @@ final class OpenAIDotChatClientTests: XCTestCase {
     XCTAssertTrue(result.transcriptText.contains("Your message was delivered"))
   }
 
+  func testTurnReportsPositionAndNextTurnResumesFromIt() async throws {
+    let clock = TestClock()
+    let polls = PollScript([
+      [message("m5", member: dotMember, text: "Earlier result")],
+    ])
+    OpenAIDotTestURLProtocol.setHandler { request in
+      switch (request.httpMethod, request.url?.path ?? "") {
+      case ("GET", "/backend-api/cloud-aeons/primary"):
+        return (200, self.primaryJSON())
+      case ("POST", _):
+        return (200, self.message("m6", member: self.selfMember, text: "Next question"))
+      default:
+        let after = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+          .queryItems?.first(where: { $0.name == "after" })?.value
+        return (200, ["items": polls.next(after: after)])
+      }
+    }
+    let previous = OpenAIDotRoomPosition(roomID: roomID, selfMemberID: selfMember, cursor: "m4")
+    let result = try await client(clock: clock).send(
+      text: "Next question",
+      requestID: "r",
+      resumingAfter: previous
+    )
+    // A message the dot sent between the watch ending and this turn is kept.
+    XCTAssertEqual(polls.afterCursors.first, "m4")
+    XCTAssertEqual(result.replies.map(\.id), ["m5"])
+    XCTAssertEqual(result.position, OpenAIDotRoomPosition(roomID: roomID, selfMemberID: selfMember, cursor: "m5"))
+
+    // A position from another room or account is ignored.
+    polls.reset([])
+    _ = try await client(clock: clock).send(
+      text: "Next question",
+      requestID: "r2",
+      resumingAfter: OpenAIDotRoomPosition(roomID: "room-other", selfMemberID: selfMember, cursor: "x9")
+    )
+    XCTAssertEqual(polls.afterCursors.first, "m6")
+  }
+
+  func testFollowUpWatchDeliversLateRepliesAndRetriesBriefFailures() async throws {
+    let clock = TestClock()
+    let polls = PollScript([
+      [],
+      [],
+      // The dot's result arrives minutes after its acknowledgement.
+      [message("m4", member: dotMember, text: "Done. See [the report](https://example.test/r).")],
+      [message("m5", member: selfMember, text: "thanks"), message("m6", member: dotMember, text: "One more note.")],
+    ])
+    let failures = FailureScript(remaining: 1)
+    OpenAIDotTestURLProtocol.setHandler { request in
+      XCTAssertEqual(request.httpMethod, "GET")
+      XCTAssertEqual(request.url?.path, "/backend-api/messaging/rooms/room-juniper/messages")
+      if failures.take() { return (503, ["detail": "busy"]) }
+      let after = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+        .queryItems?.first(where: { $0.name == "after" })?.value
+      return (200, ["items": polls.next(after: after)])
+    }
+    let streamed = StreamedMessages()
+    let positions = StreamedMessages()
+    let start = OpenAIDotRoomPosition(roomID: roomID, selfMemberID: selfMember, cursor: "m3")
+    let final = try await client(clock: clock, followUpWindow: 600).watchFollowUps(from: start) { message, position in
+      await streamed.append(OpenAIDotTurnResult.followUpText(message))
+      await positions.append(position.cursor)
+    }
+    let texts = await streamed.ids
+    XCTAssertEqual(texts, ["Done. See [[https://example.test/r][the report]].", "One more note."])
+    let cursors = await positions.ids
+    XCTAssertEqual(cursors, ["m4", "m6"])
+    XCTAssertEqual(final.cursor, "m6")
+    XCTAssertEqual(polls.afterCursors.prefix(4), ["m3", "m3", "m3", "m4"])
+    XCTAssertEqual(polls.afterCursors.last, "m6")
+  }
+
+  func testFollowUpWatchStopsOnPermanentFailureAndCancellation() async throws {
+    OpenAIDotTestURLProtocol.setHandler { _ in (401, ["detail": "expired"]) }
+    let start = OpenAIDotRoomPosition(roomID: roomID, selfMemberID: selfMember, cursor: "m1")
+    do {
+      _ = try await client().watchFollowUps(from: start) { _, _ in }
+      XCTFail("A rejected sign-in must end the watch")
+    } catch {
+      XCTAssertEqual(error as? OpenAIDotChatError, .http(status: 401, detail: "expired"))
+    }
+    XCTAssertTrue(OpenAIDotChatError.transport("offline").isTransient)
+    XCTAssertTrue(OpenAIDotChatError.http(status: 429, detail: nil).isTransient)
+    XCTAssertFalse(OpenAIDotChatError.http(status: 404, detail: nil).isTransient)
+
+    OpenAIDotTestURLProtocol.setHandler { _ in (200, ["items": [Any]()]) }
+    let watcher = client(followUpWindow: 3_600)
+    let task = Task { try await watcher.watchFollowUps(from: start) { _, _ in } }
+    task.cancel()
+    do {
+      _ = try await task.value
+      XCTFail("A cancelled watch must stop")
+    } catch {
+      XCTAssertTrue(error is CancellationError)
+    }
+  }
+
+  @MainActor
+  func testFollowUpReplyJoinsTheLiveEndOnceAndRespectsStop() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-dot-follow-up-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let suiteName = "OpenAIDot.FollowUp.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let transcriptURL = root.appendingPathComponent("chat.json")
+    let store = WorkspaceStore(defaults: defaults, aiChatTranscriptURL: transcriptURL, legacyDefaultsDomains: [])
+    store.setCorpusRoot(root, persistsDefault: false)
+    let threadID = store.createAIChatThread(runtime: .openClaw)
+    let queued = AIChatMessage(role: .user, content: "Queued question", deliveryStatus: .sending)
+    store.updateAIChatThread(
+      threadID,
+      messages: [
+        AIChatMessage(role: .user, content: "Check the three items"),
+        AIChatMessage(role: .assistant, content: "On it, taking a look."),
+        queued,
+      ],
+      transcriptURL: transcriptURL,
+      shouldPersist: true
+    )
+
+    let replyID = WorkspaceStore.openAIDotFollowUpReplyID(destinationID: "dot-juniper", messageID: "m4")
+    XCTAssertEqual(replyID, WorkspaceStore.openAIDotFollowUpReplyID(destinationID: "dot-juniper", messageID: "m4"))
+    XCTAssertNotEqual(replyID, WorkspaceStore.openAIDotFollowUpReplyID(destinationID: "dot-juniper", messageID: "m5"))
+    XCTAssertTrue(store.appendAIChatFollowUpReply(
+      "Done: three items checked.",
+      replyID: replyID,
+      in: threadID,
+      transcriptURL: transcriptURL
+    ))
+    XCTAssertFalse(store.appendAIChatFollowUpReply(
+      "Done: three items checked.",
+      replyID: replyID,
+      in: threadID,
+      transcriptURL: transcriptURL
+    ))
+    let messages = store.aiChatMessages(for: threadID, transcriptURL: transcriptURL)
+    XCTAssertEqual(
+      messages.map(\.content),
+      ["Check the three items", "On it, taking a look.", "Done: three items checked.", "Queued question"]
+    )
+    XCTAssertEqual(messages[2].id, replyID)
+    XCTAssertEqual(messages[2].role, .assistant)
+    XCTAssertEqual(messages[3].deliveryStatus, .sending)
+
+    store.markAIChatRunStopped(in: threadID, transcriptURL: transcriptURL)
+    XCTAssertFalse(store.appendAIChatFollowUpReply(
+      "A late note",
+      replyID: UUID(),
+      in: threadID,
+      transcriptURL: transcriptURL
+    ))
+  }
+
   func testNamedDotAndPausedDotResolution() async throws {
     OpenAIDotTestURLProtocol.setHandler { request in
       XCTAssertEqual(request.url?.path, "/backend-api/cloud-aeons")
@@ -296,13 +451,21 @@ final class OpenAIDotChatClientTests: XCTestCase {
   private func client(
     clock: TestClock = TestClock(),
     selector: String = "",
-    firstReplyTimeout: TimeInterval = 600
+    firstReplyTimeout: TimeInterval = 600,
+    followUpWindow: TimeInterval = 60
   ) -> OpenAIDotChatClient {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [OpenAIDotTestURLProtocol.self]
     return OpenAIDotChatClient(
       settings: try! OpenAIDotChatClient.Settings(endpoint: "", dotSelector: selector),
-      timing: OpenAIDotChatClient.Timing(pollInterval: 2, settleInterval: 6, firstReplyTimeout: firstReplyTimeout),
+      timing: OpenAIDotChatClient.Timing(
+        pollInterval: 2,
+        settleInterval: 6,
+        firstReplyTimeout: firstReplyTimeout,
+        followUpPollInterval: 5,
+        followUpMaxPollInterval: 30,
+        followUpWindow: followUpWindow
+      ),
       session: URLSession(configuration: configuration),
       credentials: { OpenAIDotCredentials(accessToken: "test-token", accountID: "account-1", expiresAt: nil) },
       clock: { clock.now },
@@ -363,6 +526,29 @@ private final class PollScript: @unchecked Sendable {
   }
 
   var afterCursors: [String?] { lock.withLock { cursors } }
+
+  func reset(_ pages: [[[String: Any]]]) {
+    lock.withLock {
+      self.pages = pages
+      cursors = []
+    }
+  }
+}
+
+private final class FailureScript: @unchecked Sendable {
+  private let lock = NSLock()
+  private var remaining: Int
+
+  init(remaining: Int) { self.remaining = remaining }
+
+  /// Returns true while scripted failures remain.
+  func take() -> Bool {
+    lock.withLock {
+      guard remaining > 0 else { return false }
+      remaining -= 1
+      return true
+    }
+  }
 }
 
 private actor StreamedMessages {

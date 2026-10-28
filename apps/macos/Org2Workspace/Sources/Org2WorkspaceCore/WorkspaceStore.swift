@@ -3492,6 +3492,13 @@ public final class WorkspaceStore {
   var externalThreadDetailCacheOrder: [String] = []
   static let externalThreadDetailCacheLimit = 6
   var codexActiveTurnsByThreadID: [UUID: (runtimeThreadID: String, turnID: String)] = [:]
+  /// One watch per dot destination keeps reading its ChatGPT conversation
+  /// after a turn ends, so a result the dot posts later still reaches the
+  /// thread that asked. The position lets the next turn resume from it.
+  @ObservationIgnored var openAIDotFollowUpWatchesByDestinationID: [
+    String: (token: UUID, threadID: UUID, task: Task<Void, Never>)
+  ] = [:]
+  @ObservationIgnored var openAIDotRoomPositionsByDestinationID: [String: OpenAIDotRoomPosition] = [:]
   var codexDeliveryReceiptsByMessageID: [UUID: AIChatDeliveryReceipt] = [:]
   var codexDeliveryIdentityByRuntimeThreadID: [
     String: (messageID: UUID, attemptID: UUID)
