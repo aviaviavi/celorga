@@ -12388,6 +12388,9 @@ final class Org2ModelsTests: XCTestCase {
       }
     )
     store.setCorpusRoot(root)
+    // The brief chat inherits the selected chat's destination, and the send
+    // handler stands in for the OpenClaw Gateway.
+    store.createAIChatThread(destinationID: AIChatDestinationConfiguration.openClawID)
     store.select(.aiChatThreadRecord(AIChatThreadRecord(
       title: "Target Node",
       file: target.path,
@@ -12457,6 +12460,9 @@ final class Org2ModelsTests: XCTestCase {
       }
     )
     store.setCorpusRoot(root)
+    // The brief chat inherits the selected chat's destination, and the send
+    // handler stands in for the OpenClaw Gateway.
+    store.createAIChatThread(destinationID: AIChatDestinationConfiguration.openClawID)
     store.select(.aiChatThreadRecord(AIChatThreadRecord(
       title: "Target Node",
       file: target.path,
