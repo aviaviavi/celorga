@@ -406,6 +406,11 @@ public actor CodexAppServerClient {
   private var standardOutput: FileHandle?
   private var standardError: FileHandle?
   private var outputBuffer = Data()
+  /// Delivers stdout and stderr reads to this actor one at a time, in arrival
+  /// order. A fresh launch bumps the generation so late reads from an earlier
+  /// process are dropped.
+  private var outputReaderTask: Task<Void, Never>?
+  private var outputGeneration = 0
   private var startupTask: Task<Void, Error>?
   private var initialized = false
   private var requestCounter: Int64 = 0
@@ -467,6 +472,7 @@ public actor CodexAppServerClient {
   deinit {
     standardOutput?.readabilityHandler = nil
     standardError?.readabilityHandler = nil
+    outputReaderTask?.cancel()
     if process?.isRunning == true {
       process?.terminate()
     }
@@ -1852,8 +1858,7 @@ while True:
     managedRemoteRecoveryTask = nil
     let processToStop = process
     process = nil
-    standardOutput?.readabilityHandler = nil
-    standardError?.readabilityHandler = nil
+    stopOutputReader()
     standardOutput = nil
     standardError = nil
     standardInput = nil
@@ -2170,23 +2175,70 @@ while True:
     }
   }
 
+  private enum OutputRead: Sendable {
+    case stdout(Data)
+    case stderr(Data)
+  }
+
   private func startReaders(stdout: FileHandle, stderr: FileHandle) {
+    outputReaderTask?.cancel()
+    outputGeneration += 1
+    let generation = outputGeneration
     standardOutput = stdout
     standardError = stderr
     outputBuffer = Data()
-    stdout.readabilityHandler = { [weak self] handle in
+    // A protocol line can span many pipe reads. Starting one Task per read let
+    // those reads reach the actor out of order, which spliced unrelated lines
+    // into a single parseable message: a thread/read snapshot could then show
+    // an in-progress turn as finished, with an old progress note as its reply.
+    // FileHandle calls each handler serially, so one ordered stream keeps the
+    // bytes in arrival order.
+    let (reads, continuation) = AsyncStream<OutputRead>.makeStream()
+    stdout.readabilityHandler = { handle in
       let data = handle.availableData
-      Task {
-        await self?.receiveOutput(data)
+      continuation.yield(.stdout(data))
+      if data.isEmpty {
+        handle.readabilityHandler = nil
+        continuation.finish()
       }
     }
-    stderr.readabilityHandler = { [weak self] handle in
+    stderr.readabilityHandler = { handle in
       let data = handle.availableData
-      guard !data.isEmpty else { return }
-      Task {
-        await self?.recordStderr(data)
+      guard !data.isEmpty else {
+        handle.readabilityHandler = nil
+        return
+      }
+      continuation.yield(.stderr(data))
+    }
+    outputReaderTask = Task { [weak self] in
+      for await read in reads {
+        guard let self else { return }
+        switch read {
+        case .stdout(let data):
+          await self.receiveOutput(data, generation: generation)
+        case .stderr(let data):
+          await self.recordStderr(data, generation: generation)
+        }
       }
     }
+  }
+
+  private func stopOutputReader() {
+    standardOutput?.readabilityHandler = nil
+    standardError?.readabilityHandler = nil
+    outputReaderTask?.cancel()
+    outputReaderTask = nil
+    outputGeneration += 1
+  }
+
+  private func receiveOutput(_ data: Data, generation: Int) async {
+    guard generation == outputGeneration else { return }
+    await receiveOutput(data)
+  }
+
+  private func recordStderr(_ data: Data, generation: Int) {
+    guard generation == outputGeneration else { return }
+    recordStderr(data)
   }
 
   private func receiveOutput(_ data: Data) async {
@@ -2224,8 +2276,7 @@ while True:
     webSocketTask?.cancel(with: .goingAway, reason: nil)
     webSocketTask = nil
     standardInput = nil
-    standardOutput?.readabilityHandler = nil
-    standardError?.readabilityHandler = nil
+    stopOutputReader()
     standardOutput = nil
     standardError = nil
     outputBuffer = Data()
@@ -2297,9 +2348,11 @@ while True:
               "includeTurns": .bool(true)
             ])
           )
-          guard let turn = result["thread"]?["turns"]?.arrayValue?.first(where: {
-            $0["id"]?.stringValue == turnID
-          }) else {
+          guard result["thread"]?["id"]?.stringValue == threadID,
+                let turn = result["thread"]?["turns"]?.arrayValue?.first(where: {
+                  $0["id"]?.stringValue == turnID
+                })
+          else {
             continue
           }
           // Only a recognized terminal status is completion evidence. A missing,

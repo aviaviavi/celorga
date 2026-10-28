@@ -1350,6 +1350,79 @@ final class CodexAppServerClientTests: XCTestCase {
     await client.shutdown()
   }
 
+  func testLargeStdoutStreamKeepsProtocolLinesIntactAndInOrder() async throws {
+    // A long Codex task produces protocol lines (deltas, thread/read
+    // snapshots) that span many pipe reads. Each read must reach the line
+    // parser in arrival order; out-of-order reads spliced unrelated lines into
+    // one valid-looking message, so an in-progress turn could read as finished
+    // and its reply could be an old progress note.
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-codex-large-stdout-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    let chunkCount = 1_500
+    let chunkLength = 4_096
+    let executable = temporaryDirectory.appendingPathComponent("fake-codex-large-stdout")
+    let script = #"""
+    #!/usr/bin/env python3
+    import json, sys
+
+    def send(message):
+        sys.stdout.write(json.dumps(message, separators=(",", ":")) + "\n")
+
+    for line in sys.stdin:
+        request = json.loads(line)
+        method = request.get("method")
+        request_id = request.get("id")
+        if method == "initialize":
+            send({"id": request_id, "result": {"userAgent": "fake-codex"}})
+        elif method == "thread/start":
+            send({"id": request_id, "result": {"thread": {"id": "thr-large"}}})
+        elif method == "turn/start":
+            send({"id": request_id, "result": {"turn": {"id": "turn-large", "status": "inProgress"}}})
+            for index in range(\#(chunkCount)):
+                send({"method": "item/agentMessage/delta", "params": {
+                    "threadId": "thr-large", "turnId": "turn-large", "itemId": "msg-large",
+                    "delta": "<%04d>" % index + chr(97 + index % 26) * \#(chunkLength)}})
+                sys.stdout.flush()
+            send({"method": "turn/completed", "params": {
+                "threadId": "thr-large", "turn": {"id": "turn-large", "status": "completed", "items": []}}})
+        sys.stdout.flush()
+    """#
+    try script.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+
+    let recorder = CodexTestRecorder()
+    let client = CodexAppServerClient(
+      executableURL: executable,
+      eventHandler: { event in await recorder.record(event) },
+      dynamicToolHandler: { _ in CodexDynamicToolResult(success: false, text: "unused") }
+    )
+    let threadID = try await client.ensureThread(existingThreadID: nil, cwd: temporaryDirectory)
+    let result = try await client.runTurn(
+      threadID: threadID,
+      turnID: "local-turn",
+      message: "Stream a long answer.",
+      attachments: [],
+      cwd: temporaryDirectory,
+      attemptIdentity: CodexTurnAttemptIdentity(messageID: UUID(), attemptID: UUID())
+    )
+    await client.shutdown()
+
+    let expected = (0..<chunkCount).map { index in
+      String(format: "<%04d>", index)
+        + String(repeating: String(UnicodeScalar(UInt8(97 + index % 26))), count: chunkLength)
+    }.joined()
+    let warnings = await recorder.warnings
+    XCTAssertEqual(warnings, [], "Every protocol line should parse intact")
+    XCTAssertEqual(result.status, .completed)
+    XCTAssertEqual(result.reply.count, expected.count)
+    XCTAssertTrue(result.reply == expected, "Streamed reply arrived spliced or out of order")
+    let streamed = await recorder.streamedText
+    XCTAssertTrue(streamed == expected, "Delta events arrived spliced or out of order")
+  }
+
   func testAgedModelCatalogRestartsIdleAppServerBeforeRefresh() async throws {
     let temporaryDirectory = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-codex-model-refresh-\(UUID().uuidString)", isDirectory: true)
@@ -3950,8 +4023,12 @@ private actor CodexTestRecorder {
   private(set) var toolCall: CodexDynamicToolCall?
   private(set) var streamedText = ""
   private(set) var contextCompactionCount = 0
+  private(set) var warnings: [String] = []
 
   func record(_ event: CodexAppServerEvent) {
+    if case .warning(_, let message) = event {
+      warnings.append(message)
+    }
     if case .agentMessageDelta(_, _, _, let delta) = event {
       streamedText += delta
     }
