@@ -1745,48 +1745,90 @@ extension WorkspaceStore {
     if selectedAIChatThreadID == threadID, isActiveAIChatSendOrigin(sendOrigin) {
       aiChatStatusText = "Waiting for \(destination.name)"
     }
-    // This turn reads the conversation itself, so stop the previous watch
-    // and continue from where it left off.
-    cancelOpenAIDotFollowUps(destinationID: destination.id)
+    let destinationID = destination.id
+    let route = OpenAIDotReplyRouter.Route(threadID: threadID, transcriptURL: sendOrigin.transcriptURL)
+    let requestID = userMessageID.uuidString.lowercased()
+    // Later messages in a chat reply to the dot's latest message in it, so the
+    // dot answers in that reply thread and its answers can be routed back.
+    let replyTo = thread.runtimeThreadIDsByDestination[destinationID]
+    openAIDotActiveTurnThreadIDsByDestinationID[destinationID, default: []].insert(threadID)
+    defer { openAIDotActiveTurnThreadIDsByDestinationID[destinationID]?.remove(threadID) }
     let result = try await client.send(
       text: text,
       // Reusing the Celorga message ID makes a retried send idempotent.
-      requestID: userMessageID.uuidString.lowercased(),
-      resumingAfter: openAIDotRoomPositionsByDestinationID[destination.id],
+      requestID: requestID,
+      replyTo: replyTo,
+      resumingAfter: openAIDotRoomPositionsByDestinationID[destinationID],
+      onSent: { [weak self] sent, isReply in
+        await self?.recordOpenAIDotSent(
+          sent,
+          requestID: requestID,
+          isReply: isReply,
+          route: route,
+          destinationID: destinationID
+        )
+      },
+      accept: { [weak self] message in
+        await self?.acceptOpenAIDotTurnMessage(message, route: route, destination: destination) ?? true
+      },
       onMessage: { [weak self] message in
         await self?.handleOpenAIDotMessage(message, threadID: threadID, destinationName: destination.name)
       }
     )
-    openAIDotRoomPositionsByDestinationID[destination.id] = result.position
+    openAIDotRoomPositionsByDestinationID[destinationID] = result.position
+    if let latest = result.replies.last {
+      setOpenAIDotReplyAnchor(latest.id, route: route, destinationID: destinationID)
+    }
     try Task.checkCancellation()
-    startOpenAIDotFollowUps(
-      client: client,
-      from: result.position,
-      threadID: threadID,
-      destination: destination,
-      transcriptURL: sendOrigin.transcriptURL,
-      isSharedRoom: thread.isSharedRoom
-    )
+    startOpenAIDotFollowUps(client: client, from: result.position, destination: destination)
     return result.transcriptText
   }
 
+  func recordOpenAIDotSent(
+    _ sent: OpenAIDotMessage,
+    requestID: String,
+    isReply: Bool,
+    route: OpenAIDotReplyRouter.Route,
+    destinationID: String
+  ) {
+    var router = openAIDotRoutersByDestinationID[destinationID]
+      ?? OpenAIDotReplyRouter(selfMemberID: sent.memberID)
+    router.recordSent(sent, requestID: requestID, isReply: isReply, route: route)
+    openAIDotRoutersByDestinationID[destinationID] = router
+  }
+
+  /// Keeps a dot message in the running turn only when it answers that turn.
+  /// An answer to another chat goes to that chat, unless that chat's own turn
+  /// is running and will collect it.
+  func acceptOpenAIDotTurnMessage(
+    _ message: OpenAIDotMessage,
+    route: OpenAIDotReplyRouter.Route,
+    destination: AIChatDestinationConfiguration
+  ) -> Bool {
+    guard var router = openAIDotRoutersByDestinationID[destination.id] else { return true }
+    guard !router.wasDelivered(message.id),
+          let target = router.route(for: message, lookup: openAIDotRouteLookup(destinationID: destination.id))
+    else { return false }
+    if target == route {
+      router.recordDelivered(message.id, route: route)
+      openAIDotRoutersByDestinationID[destination.id] = router
+      return true
+    }
+    deliverOpenAIDotFollowUp(message, to: target, destination: destination)
+    return false
+  }
+
   /// Dots often answer "I'm taking a look" and post the result minutes later,
-  /// after the turn has ended. Keep reading the conversation and add each
-  /// later message to the thread as its own reply.
+  /// after the turn has ended. One watch per dot keeps reading its
+  /// conversation and adds each later message to the chat it answers.
   private func startOpenAIDotFollowUps(
     client: OpenAIDotChatClient,
     from position: OpenAIDotRoomPosition,
-    threadID: UUID,
-    destination: AIChatDestinationConfiguration,
-    transcriptURL: URL,
-    isSharedRoom: Bool
+    destination: AIChatDestinationConfiguration
   ) {
     cancelOpenAIDotFollowUps(destinationID: destination.id)
     let token = UUID()
     let destinationID = destination.id
-    let destinationName = destination.name
-    let authorRuntime: AIChatRuntime? = isSharedRoom ? destination.runtime : nil
-    let authorDestinationID: String? = isSharedRoom ? destinationID : nil
     let task = Task { @MainActor [weak self] in
       _ = try? await client.watchFollowUps(from: position) { message, next in
         await MainActor.run {
@@ -1794,18 +1836,10 @@ extension WorkspaceStore {
                 self.openAIDotFollowUpWatchesByDestinationID[destinationID]?.token == token
           else { return }
           self.openAIDotRoomPositionsByDestinationID[destinationID] = next
-          let added = self.appendAIChatFollowUpReply(
-            OpenAIDotTurnResult.followUpText(message),
-            replyID: Self.openAIDotFollowUpReplyID(destinationID: destinationID, messageID: message.id),
-            in: threadID,
-            transcriptURL: transcriptURL,
-            authorRuntime: authorRuntime,
-            authorDestinationID: authorDestinationID
-          )
-          if added, self.selectedAIChatThreadID == threadID, self.isActiveAIChatTranscript(transcriptURL),
-             self.aiChatPendingUserMessageIDs(for: threadID).isEmpty {
-            self.aiChatStatusText = "\(destinationName) replied"
-          }
+          guard let router = self.openAIDotRoutersByDestinationID[destinationID],
+                let target = router.route(for: message, lookup: self.openAIDotRouteLookup(destinationID: destinationID))
+          else { return }
+          self.deliverOpenAIDotFollowUp(message, to: target, destination: destination)
         }
       }
       guard let self,
@@ -1813,18 +1847,75 @@ extension WorkspaceStore {
       else { return }
       self.openAIDotFollowUpWatchesByDestinationID.removeValue(forKey: destinationID)
     }
-    openAIDotFollowUpWatchesByDestinationID[destinationID] = (token, threadID, task)
+    openAIDotFollowUpWatchesByDestinationID[destinationID] = (token, task)
+  }
+
+  /// Adds a dot message to a chat as its own reply, once. A chat whose turn
+  /// with this dot is running collects the message itself.
+  private func deliverOpenAIDotFollowUp(
+    _ message: OpenAIDotMessage,
+    to route: OpenAIDotReplyRouter.Route,
+    destination: AIChatDestinationConfiguration
+  ) {
+    guard var router = openAIDotRoutersByDestinationID[destination.id],
+          !router.wasDelivered(message.id),
+          openAIDotActiveTurnThreadIDsByDestinationID[destination.id]?.contains(route.threadID) != true,
+          let thread = aiChatThread(route.threadID, transcriptURL: route.transcriptURL)
+    else { return }
+    router.recordDelivered(message.id, route: route)
+    openAIDotRoutersByDestinationID[destination.id] = router
+    let added = appendAIChatFollowUpReply(
+      OpenAIDotTurnResult.followUpText(message),
+      replyID: Self.openAIDotFollowUpReplyID(destinationID: destination.id, messageID: message.id),
+      in: route.threadID,
+      transcriptURL: route.transcriptURL,
+      authorRuntime: thread.isSharedRoom ? destination.runtime : nil,
+      authorDestinationID: thread.isSharedRoom ? destination.id : nil
+    )
+    guard added else { return }
+    setOpenAIDotReplyAnchor(message.id, route: route, destinationID: destination.id)
+    if selectedAIChatThreadID == route.threadID, isActiveAIChatTranscript(route.transcriptURL),
+       aiChatPendingUserMessageIDs(for: route.threadID).isEmpty {
+      aiChatStatusText = "\(destination.name) replied"
+    }
+  }
+
+  /// Saves the dot's latest message in a chat with the chat, so the chat's
+  /// next message replies to it, even after a relaunch.
+  private func setOpenAIDotReplyAnchor(
+    _ messageID: String,
+    route: OpenAIDotReplyRouter.Route,
+    destinationID: String
+  ) {
+    guard let thread = aiChatThread(route.threadID, transcriptURL: route.transcriptURL),
+          thread.runtimeThreadIDsByDestination[destinationID] != messageID
+    else { return }
+    var anchors = thread.runtimeThreadIDsByDestination
+    anchors[destinationID] = messageID
+    replaceAIChatThread(
+      thread.replacingAIChatMetadata(runtimeThreadIDsByDestination: anchors),
+      transcriptURL: route.transcriptURL
+    )
+  }
+
+  /// Finds chats the router's memory doesn't cover, such as after a relaunch.
+  private func openAIDotRouteLookup(destinationID: String) -> OpenAIDotReplyRouter.Lookup {
+    let transcriptURL = aiChatTranscriptURL
+    let threads = aiChatThreads
+    return OpenAIDotReplyRouter.Lookup(
+      celorgaMessage: { messageID in
+        threads.first { $0.messages.contains { $0.id == messageID } }
+          .map { OpenAIDotReplyRouter.Route(threadID: $0.id, transcriptURL: transcriptURL) }
+      },
+      anchor: { messageID in
+        threads.first { $0.runtimeThreadIDsByDestination[destinationID] == messageID }
+          .map { OpenAIDotReplyRouter.Route(threadID: $0.id, transcriptURL: transcriptURL) }
+      }
+    )
   }
 
   func cancelOpenAIDotFollowUps(destinationID: String) {
     openAIDotFollowUpWatchesByDestinationID.removeValue(forKey: destinationID)?.task.cancel()
-  }
-
-  /// Stopping a thread also stops listening for its dot's later replies.
-  func cancelOpenAIDotFollowUps(threadID: UUID) {
-    for (destinationID, watch) in openAIDotFollowUpWatchesByDestinationID where watch.threadID == threadID {
-      cancelOpenAIDotFollowUps(destinationID: destinationID)
-    }
   }
 
   /// A stable reply ID per dot message, so the same message is never added twice.

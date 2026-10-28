@@ -2457,7 +2457,6 @@ extension WorkspaceStore {
     let targetTranscriptURL = transcriptURL ?? aiChatTranscriptURL
     let statusText = explicitStatusText ?? "\(aiChatDestinationTitle(aiChatThread(threadID, transcriptURL: targetTranscriptURL)?.destinationID ?? selectedAIChatDestination.id)) stopped"
     stoppedAIChatThreadIDs.insert(threadID)
-    cancelOpenAIDotFollowUps(threadID: threadID)
     let pendingTurn = aiChatThread(
       threadID,
       transcriptURL: targetTranscriptURL

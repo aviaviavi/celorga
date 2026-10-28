@@ -134,10 +134,24 @@ public struct OpenAIDotChatClient: Sendable {
   ///
   /// Pass the position an earlier turn or follow-up watch reached as
   /// `resumingAfter` so messages the dot sent in between are not skipped.
+  ///
+  /// `replyTo` sends the message as a reply to an earlier message, the way
+  /// ChatGPT's Reply action does; the dot then answers in that reply thread,
+  /// so its answers name the message they answer. If ChatGPT rejects the
+  /// reply target, the message is sent without it.
+  ///
+  /// `onSent` reports the posted message, and whether it went out as a
+  /// reply, before any reply is read. `accept`
+  /// decides whether a new message from the dot belongs to this turn; one it
+  /// declines is left out of the turn, for example because it answers
+  /// another chat's message.
   public func send(
     text: String,
     requestID: String,
+    replyTo replyToMessageID: String? = nil,
     resumingAfter previous: OpenAIDotRoomPosition? = nil,
+    onSent: (@Sendable (OpenAIDotMessage, _ isReply: Bool) async -> Void)? = nil,
+    accept: (@Sendable (OpenAIDotMessage) async -> Bool)? = nil,
     onMessage: (@Sendable (OpenAIDotMessage) async -> Void)? = nil
   ) async throws -> OpenAIDotTurnResult {
     let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -146,14 +160,29 @@ public struct OpenAIDotChatClient: Sendable {
     let roomID = dot.messagingRoomID ?? ""
     let roomPath = "/messaging/rooms/\(Self.pathComponent(roomID))"
 
-    let sentObject = try await requestJSON(
-      "POST",
-      path: "\(roomPath)/messages",
-      body: Self.sendBody(text: body, requestID: requestID, timeZone: .current, now: clock())
-    )
+    let replyTo = replyToMessageID?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let sentObject: [String: Any]
+    var sentAsReply = replyTo?.isEmpty == false
+    do {
+      sentObject = try await requestJSON(
+        "POST",
+        path: "\(roomPath)/messages",
+        body: Self.sendBody(text: body, requestID: requestID, timeZone: .current, now: clock(), replyTo: replyTo)
+      )
+    } catch let error as OpenAIDotChatError where replyTo?.isEmpty == false && error.rejectsReplyTarget {
+      // The earlier message may have been deleted. The rejected request
+      // created nothing, so the same request ID is still safe to reuse.
+      sentAsReply = false
+      sentObject = try await requestJSON(
+        "POST",
+        path: "\(roomPath)/messages",
+        body: Self.sendBody(text: body, requestID: requestID, timeZone: .current, now: clock())
+      )
+    }
     guard let sent = OpenAIDotMessage(json: sentObject) else {
       throw OpenAIDotChatError.invalidResponse("the sent message had no ID")
     }
+    await onSent?(sent, sentAsReply)
 
     let resumeCursor = previous.flatMap {
       $0.roomID == roomID && $0.selfMemberID == sent.memberID ? $0.cursor : nil
@@ -168,7 +197,7 @@ public struct OpenAIDotChatClient: Sendable {
       try Task.checkCancellation()
       try await sleep(timing.pollInterval)
       try Task.checkCancellation()
-      try await readNewMessages(roomPath: roomPath, tracker: &tracker, onMessage: onMessage)
+      try await readNewMessages(roomPath: roomPath, tracker: &tracker, accept: accept, onMessage: onMessage)
       let timedOut: Bool
       switch tracker.state(at: clock()) {
       case .waiting:
@@ -215,7 +244,7 @@ public struct OpenAIDotChatClient: Sendable {
       try Task.checkCancellation()
       let before = tracker.replies.count
       do {
-        try await readNewMessages(roomPath: roomPath, tracker: &tracker) { message in
+        try await readNewMessages(roomPath: roomPath, tracker: &tracker, accept: nil) { message in
           await onMessage(message, OpenAIDotRoomPosition(
             roomID: position.roomID,
             selfMemberID: position.selfMemberID,
@@ -240,10 +269,12 @@ public struct OpenAIDotChatClient: Sendable {
     )
   }
 
-  /// Reads every message after the tracker's cursor, one page at a time.
+  /// Reads every message after the tracker's cursor, one page at a time,
+  /// and records the dot's messages that `accept` keeps.
   private func readNewMessages(
     roomPath: String,
     tracker: inout OpenAIDotReplyTracker,
+    accept: (@Sendable (OpenAIDotMessage) async -> Bool)?,
     onMessage: (@Sendable (OpenAIDotMessage) async -> Void)?
   ) async throws {
     var pageFull = true
@@ -257,7 +288,12 @@ public struct OpenAIDotChatClient: Sendable {
         ]
       )
       let items = (page["items"] as? [[String: Any]] ?? []).compactMap(OpenAIDotMessage.init(json:))
-      let replies = tracker.ingest(items, at: clock())
+      var replies: [OpenAIDotMessage] = []
+      for message in tracker.ingest(items) {
+        if let accept, !(await accept(message)) { continue }
+        replies.append(message)
+      }
+      tracker.record(replies, at: clock())
       for reply in replies {
         await onMessage?(reply)
       }
@@ -272,15 +308,20 @@ public struct OpenAIDotChatClient: Sendable {
     text: String,
     requestID: String,
     timeZone: TimeZone,
-    now: Date
+    now: Date,
+    replyTo: String? = nil
   ) -> [String: Any] {
-    [
+    var body: [String: Any] = [
       "content": ["text": text, "attachments": [Any]()],
       "request_id": requestID,
       "idempotency_token": requestID,
       // Matches JavaScript's Date#getTimezoneOffset: minutes behind UTC.
       "timezone_offset_min": -timeZone.secondsFromGMT(for: now) / 60,
     ]
+    if let replyTo, !replyTo.isEmpty {
+      body["reply_to"] = ["message_id": replyTo]
+    }
+    return body
   }
 
   static func pathComponent(_ value: String) -> String {
@@ -412,12 +453,21 @@ public struct OpenAIDotMessage: Sendable, Equatable {
   public let memberID: String
   public let text: String
   public let isDeleted: Bool
+  /// The message this one answers, when it was sent as a reply.
+  public let replyTo: OpenAIDotReplyTarget?
 
-  public init(id: String, memberID: String, text: String, isDeleted: Bool = false) {
+  public init(
+    id: String,
+    memberID: String,
+    text: String,
+    isDeleted: Bool = false,
+    replyTo: OpenAIDotReplyTarget? = nil
+  ) {
     self.id = id
     self.memberID = memberID
     self.text = text
     self.isDeleted = isDeleted
+    self.replyTo = replyTo
   }
 
   init?(json: [String: Any]) {
@@ -428,7 +478,38 @@ public struct OpenAIDotMessage: Sendable, Equatable {
       id: id,
       memberID: json["account_user_id"] as? String ?? "",
       text: content?["text"] as? String ?? "",
-      isDeleted: deleted
+      isDeleted: deleted,
+      replyTo: (json["reply_to"] as? [String: Any]).flatMap(OpenAIDotReplyTarget.init(json:))
+    )
+  }
+}
+
+/// The earlier message a reply answers. ChatGPT includes a copy of it, so a
+/// reply to a message Celorga sent carries that message's request ID, which
+/// is the Celorga message ID.
+public struct OpenAIDotReplyTarget: Sendable, Equatable {
+  public let messageID: String
+  public let memberID: String?
+  public let requestID: String?
+
+  public init(messageID: String, memberID: String? = nil, requestID: String? = nil) {
+    self.messageID = messageID
+    self.memberID = memberID
+    self.requestID = requestID
+  }
+
+  init?(json: [String: Any]) {
+    let message = json["message"] as? [String: Any]
+    guard let id = (json["message_id"] as? String) ?? (message?["id"] as? String), !id.isEmpty else {
+      return nil
+    }
+    func nonEmpty(_ value: Any?) -> String? {
+      (value as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
+    self.init(
+      messageID: id,
+      memberID: nonEmpty(message?["account_user_id"]),
+      requestID: nonEmpty(message?["request_id"])
     )
   }
 }
@@ -512,10 +593,10 @@ struct OpenAIDotReplyTracker {
     self.seenIDs = [cursor]
   }
 
-  /// Records a page of messages newer than the cursor and returns the new
-  /// replies from the dot. The user's own messages advance the cursor but are
+  /// Advances past a page of messages newer than the cursor and returns the
+  /// dot's new messages. The user's own messages advance the cursor but are
   /// never treated as replies.
-  mutating func ingest(_ messages: [OpenAIDotMessage], at now: Date) -> [OpenAIDotMessage] {
+  mutating func ingest(_ messages: [OpenAIDotMessage]) -> [OpenAIDotMessage] {
     var fresh: [OpenAIDotMessage] = []
     for message in messages {
       cursor = message.id
@@ -526,11 +607,14 @@ struct OpenAIDotReplyTracker {
       else { continue }
       fresh.append(message)
     }
-    if !fresh.isEmpty {
-      replies += fresh
-      lastReplyAt = now
-    }
     return fresh
+  }
+
+  /// Counts messages as replies to this turn; each one restarts the quiet period.
+  mutating func record(_ messages: [OpenAIDotMessage], at now: Date) {
+    guard !messages.isEmpty else { return }
+    replies += messages
+    lastReplyAt = now
   }
 
   func state(at now: Date) -> State {
@@ -628,6 +712,14 @@ public enum OpenAIDotChatError: LocalizedError, Equatable {
   case http(status: Int, detail: String?)
   case invalidResponse(String)
   case transport(String)
+
+  /// ChatGPT refused the message's reply target rather than the message.
+  var rejectsReplyTarget: Bool {
+    if case .http(let status, _) = self {
+      return [400, 404, 409, 422].contains(status)
+    }
+    return false
+  }
 
   /// A failure worth retrying later: the network or ChatGPT was briefly
   /// unavailable, rather than the sign-in or the dot being wrong.

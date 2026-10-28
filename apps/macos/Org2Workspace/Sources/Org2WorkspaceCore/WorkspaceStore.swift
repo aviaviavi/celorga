@@ -3504,11 +3504,15 @@ public final class WorkspaceStore {
   var codexActiveTurnsByThreadID: [UUID: (runtimeThreadID: String, turnID: String)] = [:]
   /// One watch per dot destination keeps reading its ChatGPT conversation
   /// after a turn ends, so a result the dot posts later still reaches the
-  /// thread that asked. The position lets the next turn resume from it.
+  /// chat it answers. The position lets the next turn resume from it, the
+  /// router decides which chat each message answers, and chats with a
+  /// running turn collect their own answers.
   @ObservationIgnored var openAIDotFollowUpWatchesByDestinationID: [
-    String: (token: UUID, threadID: UUID, task: Task<Void, Never>)
+    String: (token: UUID, task: Task<Void, Never>)
   ] = [:]
   @ObservationIgnored var openAIDotRoomPositionsByDestinationID: [String: OpenAIDotRoomPosition] = [:]
+  @ObservationIgnored var openAIDotRoutersByDestinationID: [String: OpenAIDotReplyRouter] = [:]
+  @ObservationIgnored var openAIDotActiveTurnThreadIDsByDestinationID: [String: Set<UUID>] = [:]
   var codexDeliveryReceiptsByMessageID: [UUID: AIChatDeliveryReceipt] = [:]
   var codexDeliveryIdentityByRuntimeThreadID: [
     String: (messageID: UUID, attemptID: UUID)
