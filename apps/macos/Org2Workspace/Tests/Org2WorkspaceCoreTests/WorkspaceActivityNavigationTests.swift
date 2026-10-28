@@ -369,6 +369,8 @@ final class WorkspaceActivityNavigationTests: XCTestCase {
       legacyDefaultsDomains: []
     )
     store.setCorpusRoot(root, persistsDefault: false)
+    // The send handler stands in for the OpenClaw Gateway destination.
+    store.createAIChatThread(destinationID: AIChatDestinationConfiguration.openClawID)
     let location = WorkspaceLocation.aiChatThreadRecord(AIChatThreadRecord(
       title: "Draft the launch email",
       file: file.path,
@@ -426,7 +428,7 @@ final class WorkspaceActivityNavigationTests: XCTestCase {
       legacyDefaultsDomains: []
     )
     store.setCorpusRoot(root, persistsDefault: false)
-    let currentID = store.createAIChatThread(destinationID: store.selectedAIChatDestination.id)
+    let currentID = store.createAIChatThread(destinationID: AIChatDestinationConfiguration.openClawID)
     store.selectAIChatThread(currentID)
     func location(_ title: String, line: Int) -> WorkspaceLocation {
       .aiChatThreadRecord(AIChatThreadRecord(title: title, file: file.path, line: line, zone: "entry", modifiedAt: nil))

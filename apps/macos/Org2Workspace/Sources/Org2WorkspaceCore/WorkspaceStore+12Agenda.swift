@@ -727,7 +727,9 @@ extension WorkspaceStore {
   }
 
   public var activeAIChatGatewayCommands: [AIChatSlashCommand] {
-    selectedAIChatRuntime == .openClaw ? openClawGatewayCommands : []
+    // Gateway commands belong to the OpenClaw Gateway adapter, not to direct
+    // providers or Dots that share its runtime family.
+    selectedAIChatDestination.adapter == .openClaw ? openClawGatewayCommands : []
   }
 
   public func refreshCorpusAgentSkills(force: Bool = false) {

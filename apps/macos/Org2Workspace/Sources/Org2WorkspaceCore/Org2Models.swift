@@ -1618,7 +1618,7 @@ public struct ApprovalItem: Identifiable, Hashable, Sendable, Decodable {
 
   public var discussionText: String {
     """
-    OpenClaw approval thread:
+    Approval thread:
 
     \(Org2Display.cleanInline(title))
     Source: \(sourceLabel)

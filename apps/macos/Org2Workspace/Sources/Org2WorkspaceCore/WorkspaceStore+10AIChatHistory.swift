@@ -1086,7 +1086,7 @@ extension WorkspaceStore {
     let resolvedDestinationID = destinationID
       ?? aiChatThreads.first(where: { $0.id == threadID })?.destinationID
       ?? AIChatDestinationConfiguration.openClawID
-    let destinationName = aiChatDestination(id: resolvedDestinationID)?.name ?? "OpenClaw"
+    let destinationName = aiChatDestinationTitle(resolvedDestinationID)
     let coalescesEventTimestamp: Bool
     switch event {
     case .text(_, _), .reasoning(_, _), .reconciliationHeartbeat:
@@ -2212,7 +2212,7 @@ extension WorkspaceStore {
     if selectedAIChatThreadID == threadID {
       let destinationID = message.targetDestinationID
         ?? aiChatThreads.first(where: { $0.id == threadID })?.destinationID
-        ?? AIChatDestinationConfiguration.openClawID
+        ?? selectedAIChatDestination.id
       aiChatStatusText = "Steering \(aiChatDestinationTitle(destinationID))…"
     }
     await deliverAIChatSteer(
@@ -2255,7 +2255,7 @@ extension WorkspaceStore {
     return message.authorLabel
       ?? message.authorDestinationID.map(aiChatDestinationTitle)
       ?? message.authorRuntime?.title
-      ?? (message.role == .system ? WorkspaceProductIdentity.displayName : selectedAIChatRuntime.title)
+      ?? (message.role == .system ? WorkspaceProductIdentity.displayName : selectedAIChatDestinationTitle)
   }
 
   public func editQueuedAIChatMessage(_ messageID: UUID) {
@@ -2377,7 +2377,11 @@ extension WorkspaceStore {
     openClawGatewayDetailByThreadID[threadID] = failureText
     if selectedAIChatThreadID == threadID,
        isActiveAIChatTranscript(targetTranscriptURL) {
-      let title = pendingTurn.destinationID.map(aiChatDestinationTitle) ?? "OpenClaw"
+      let title = aiChatDestinationTitle(
+        pendingTurn.destinationID
+          ?? aiChatThread(threadID, transcriptURL: targetTranscriptURL)?.destinationID
+          ?? selectedAIChatDestination.id
+      )
       aiChatStatusText = "\(title) could not complete this turn"
     }
   }
@@ -2385,10 +2389,11 @@ extension WorkspaceStore {
   func markAIChatRunStopped(
     in threadID: UUID,
     transcriptURL: URL? = nil,
-    statusText: String = "OpenClaw stopped"
+    statusText explicitStatusText: String? = nil
   ) {
     cancelAIChatPendingTurnRecovery(for: threadID)
     let targetTranscriptURL = transcriptURL ?? aiChatTranscriptURL
+    let statusText = explicitStatusText ?? "\(aiChatDestinationTitle(aiChatThread(threadID, transcriptURL: targetTranscriptURL)?.destinationID ?? selectedAIChatDestination.id)) stopped"
     stoppedAIChatThreadIDs.insert(threadID)
     let pendingTurn = aiChatThread(
       threadID,

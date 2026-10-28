@@ -2314,8 +2314,8 @@ extension WorkspaceStore {
     switch action {
     case .aiChatDraft(let previous, _):
       publishAIChatComposerDraft(previous)
-      aiChatStatusText = "Undid OpenClaw draft change"
-      statusText = "Undid OpenClaw draft change"
+      aiChatStatusText = "Undid AI chat draft change"
+      statusText = "Undid AI chat draft change"
       workspaceRedoStack.append(action)
       return true
     case .fileSnapshot:
@@ -2327,8 +2327,8 @@ extension WorkspaceStore {
     switch action {
     case .aiChatDraft(_, let next):
       publishAIChatComposerDraft(next)
-      aiChatStatusText = "Redid OpenClaw draft change"
-      statusText = "Redid OpenClaw draft change"
+      aiChatStatusText = "Redid AI chat draft change"
+      statusText = "Redid AI chat draft change"
       workspaceUndoStack.append(action)
       return true
     case .fileSnapshot:

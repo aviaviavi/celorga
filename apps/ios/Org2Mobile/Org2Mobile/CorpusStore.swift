@@ -206,7 +206,7 @@ final class CorpusStore: ObservableObject {
     do {
       if approval.isRunApproval {
         try appendRunApprovalDecision(approval, decision: "approved")
-        statusMessage = "Queued the exact run approval decision for OpenClaw"
+        statusMessage = "Queued the exact run approval decision for the agent"
         approvals.removeAll { $0.id == approval.id }
         return
       }
@@ -226,7 +226,7 @@ final class CorpusStore: ObservableObject {
     do {
       if approval.isRunApproval {
         try appendRunApprovalDecision(approval, decision: "rejected", note: reason)
-        statusMessage = "Queued the exact run rejection for OpenClaw"
+        statusMessage = "Queued the exact run rejection for the agent"
         approvals.removeAll { $0.id == approval.id }
         return
       }

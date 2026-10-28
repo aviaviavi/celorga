@@ -154,7 +154,7 @@ struct ApprovalEntry: Identifiable, Hashable, Codable {
 
   var whatsappText: String {
     """
-    OpenClaw approval thread:
+    Approval thread:
 
     \(title)
     Source: \(sourceLabel)

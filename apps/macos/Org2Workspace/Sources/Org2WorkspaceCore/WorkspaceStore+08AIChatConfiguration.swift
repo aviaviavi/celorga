@@ -765,14 +765,14 @@ extension WorkspaceStore {
       // the recovery loop from immediately resurrecting it.
       guard isAIChatThreadRunning(threadID) else {
         if selectedAIChatThreadID == threadID {
-          aiChatStatusText = "No active OpenClaw run to stop"
+          aiChatStatusText = "No active \(aiChatDestinationTitle(thread.destinationID)) run to stop"
         }
         return false
       }
       if let ownerID = thread.pendingTurn?.dispatchOwnerID,
          ownerID != Self.aiChatDispatchOwnerID {
         if selectedAIChatThreadID == threadID {
-          aiChatStatusText = "This OpenClaw run is active on another host"
+          aiChatStatusText = "This \(aiChatDestinationTitle(thread.destinationID)) run is active on another host"
         }
         return false
       }
@@ -787,7 +787,7 @@ extension WorkspaceStore {
     do {
       try await gateway.abort()
       if selectedAIChatThreadID == threadID {
-        aiChatStatusText = thread.isSharedRoom ? "Shared room stopped" : "OpenClaw stopped"
+        aiChatStatusText = thread.isSharedRoom ? "Shared room stopped" : "\(aiChatDestinationTitle(thread.destinationID)) stopped"
       }
       return true
     } catch {
@@ -2307,7 +2307,7 @@ extension WorkspaceStore {
         attachments: [],
         context: context
       )
-      aiChatStatusText = "Sending /\(name) to \(selectedAIChatRuntime.title)…"
+      aiChatStatusText = "Sending /\(name) to \(selectedAIChatDestinationTitle)…"
       let result = submitAIChatMessage(
         text,
         attachments: [],
@@ -2663,7 +2663,7 @@ extension WorkspaceStore {
     if shouldTrySteering {
       let steerDestinationID = roomSteerDestinationID
         ?? steeringThread?.destinationID
-        ?? AIChatDestinationConfiguration.openClawID
+        ?? selectedAIChatDestination.id
       let userMessage = AIChatMessage(
         role: .user,
         content: roomSteerTargets?.normalizedText ?? text,

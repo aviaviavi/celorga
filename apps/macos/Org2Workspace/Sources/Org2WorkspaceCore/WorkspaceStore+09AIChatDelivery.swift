@@ -917,7 +917,7 @@ extension WorkspaceStore {
         if isActiveAIChatSendOrigin(sendOrigin), hasFinishedQueue {
           if let configurationFallbackNotice {
             aiChatStatusText = configurationFallbackNotice
-          } else if dispatchRuntime == .openClaw,
+          } else if dispatchDestination.adapter == .openClaw,
              openClawGatewayStateByThreadID[threadID] == .fallbackHTTP {
             aiChatStatusText = "OpenClaw replied via HTTP compatibility"
           } else {

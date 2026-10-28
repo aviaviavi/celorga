@@ -2018,9 +2018,15 @@ extension WorkspaceStore {
     guard let selectedAIChatThreadID,
           let thread = aiChatThreads.first(where: { $0.id == selectedAIChatThreadID })
     else {
-      return .openClaw
+      return defaultAIChatDestination.runtime
     }
     return thread.runtime
+  }
+
+  /// Display name of the selected chat's destination, such as a configured
+  /// Dot or remote host. Use this, not the runtime family, to name who replies.
+  public var selectedAIChatDestinationTitle: String {
+    selectedAIChatDestination.title
   }
 
   public var enabledAIChatDestinations: [AIChatDestinationConfiguration] {
@@ -2031,10 +2037,18 @@ extension WorkspaceStore {
     aiChatDestinations.first(where: { $0.id == id })
   }
 
+  /// The destination used when nothing more specific was chosen: the first
+  /// enabled destination in the user's configured order. No runtime, including
+  /// the built-in OpenClaw Gateway, is privileged as an implicit fallback.
+  public var defaultAIChatDestination: AIChatDestinationConfiguration {
+    enabledAIChatDestinations.first
+      ?? aiChatDestinations.first
+      ?? AIChatDestinationConfiguration.defaults[0]
+  }
+
   public var selectedAIChatDestination: AIChatDestinationConfiguration {
     guard let thread = selectedAIChatThread else {
-      return aiChatDestinations.first(where: { $0.id == AIChatDestinationConfiguration.openClawID })
-        ?? AIChatDestinationConfiguration.defaults[1]
+      return defaultAIChatDestination
     }
     return aiChatDestination(id: thread.destinationID)
       ?? aiChatDestinations.first(where: { $0.runtime == thread.runtime })

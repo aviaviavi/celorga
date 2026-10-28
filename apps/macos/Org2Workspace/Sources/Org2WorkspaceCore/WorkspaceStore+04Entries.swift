@@ -204,7 +204,7 @@ extension WorkspaceStore {
       pendingNodeBriefTitle = briefTitle
       setAIChatAssistantPanelPresented(true)
       prepareAIChatThreadForNodeBrief(title: briefTitle)
-      let runtimeTitle = selectedAIChatRuntime.title
+      let runtimeTitle = selectedAIChatDestinationTitle
       let briefContext: AIChatWorkspaceContext?
       if let thread = selectedAIChatThread {
         briefContext = currentAIChatWorkspaceContext(

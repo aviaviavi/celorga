@@ -524,7 +524,7 @@ extension WorkspaceStore {
           aiChatMessages(for: threadID).first(where: { $0.id == messageID })?.targetDestinationID
         }
         ?? aiChatThreads.first(where: { $0.id == threadID })?.destinationID
-    } ?? AIChatDestinationConfiguration.openClawID
+    } ?? selectedAIChatDestination.id
     let title = aiChatDestinationTitle(destinationID)
     if aiChatQueuedMessageCount > 1 {
       return "Sending to \(title)... \(aiChatQueuedMessageCount - 1) queued"
@@ -571,18 +571,29 @@ extension WorkspaceStore {
     }
     aiChatScrollPosition = nil
     aiChatAssistantChatScrollPosition = nil
-    switch selectedAIChatRuntime {
-    case .codex:
-      aiChatStatusText = "Ready for a Codex message"
-    case .claude:
-      aiChatStatusText = "Ready for a Claude Code message"
-    case .pi:
-      aiChatStatusText = "Ready for a Pi message"
-    case .openCode:
-      aiChatStatusText = "Ready for an OpenCode message"
-    case .openClaw:
-      aiChatStatusText = Self.aiChatStatusText(settings: currentOpenClawSettings())
+    aiChatStatusText = aiChatIdleStatusText(destinationID: selectedAIChatThread?.destinationID)
+  }
+
+  /// Idle composer status for a chat routed to `destinationID`, named after
+  /// that destination. Only the OpenClaw Gateway adapter reports gateway
+  /// configuration; direct providers and Dots share its runtime family but
+  /// not its endpoint.
+  func aiChatIdleStatusText(destinationID: String?) -> String {
+    let destination = destinationID.flatMap(aiChatDestination(id:)) ?? selectedAIChatDestination
+    return Self.aiChatIdleStatusText(
+      destination: destination,
+      openClawSettings: destination.adapter == .openClaw ? currentOpenClawSettings() : nil
+    )
+  }
+
+  nonisolated static func aiChatIdleStatusText(
+    destination: AIChatDestinationConfiguration,
+    openClawSettings: OpenClawGatewaySettings?
+  ) -> String {
+    if destination.adapter == .openClaw, let openClawSettings {
+      return aiChatStatusText(settings: openClawSettings)
     }
+    return "Ready for a \(destination.title) message"
   }
 
   public var selectedAIChatThread: AIChatThread? {
@@ -850,10 +861,13 @@ extension WorkspaceStore {
       return
     }
 
+    let destination = selectedAIChatDestination
     let thread = createAIChatThread(
       title: "Resource: \(resource.title)",
-      statusText: "New OpenClaw resource thread",
-      resource: resource
+      statusText: "New \(destination.title) resource thread",
+      resource: resource,
+      runtime: destination.runtime,
+      destinationID: destination.id
     )
     if let pointer {
       addAIChatContext(pointer, threadMode: .currentThread)
@@ -1111,7 +1125,7 @@ extension WorkspaceStore {
     statusText: String,
     resource: AIChatResourceReference? = nil,
     sessionKey: String? = nil,
-    runtime: AIChatRuntime = .openClaw,
+    runtime requestedRuntime: AIChatRuntime? = nil,
     destinationID: String? = nil,
     isSharedRoom: Bool = false,
     roomAudience: AIChatAudience = .thread,
@@ -1121,8 +1135,19 @@ extension WorkspaceStore {
     defersPersistence: Bool = false,
     selectsThread: Bool = true
   ) -> AIChatThread {
+    // Without an explicit destination, a requested runtime picks its preferred
+    // destination; otherwise the user's default destination answers. OpenClaw
+    // is never an implicit fallback.
     let resolvedDestinationID = destinationID
-      ?? AIChatDestinationConfiguration.defaultID(for: runtime)
+      ?? requestedRuntime.map { runtime in
+        enabledAIChatDestinations.first(where: {
+          $0.id == AIChatDestinationConfiguration.defaultID(for: runtime)
+        })?.id
+          ?? enabledAIChatDestinations.first(where: { $0.runtime == runtime })?.id
+          ?? AIChatDestinationConfiguration.defaultID(for: runtime)
+      }
+      ?? defaultAIChatDestination.id
+    let runtime = requestedRuntime ?? aiChatDestinationRuntime(resolvedDestinationID)
     let lastConfiguration: AIChatLastConfiguration?
     if isSharedRoom {
       lastConfiguration = nil
@@ -1181,11 +1206,14 @@ extension WorkspaceStore {
       ensureAIChatThread()
       return
     }
-    let runtime = selectedAIChatThread?.runtime ?? .openClaw
+    let destination = selectedAIChatDestination
     createAIChatThread(
       title: Self.normalizedAIChatThreadTitle(title),
-      statusText: statusText.replacingOccurrences(of: "OpenClaw", with: runtime.title),
-      runtime: runtime
+      statusText: statusText.hasPrefix("New ")
+        ? "New \(destination.title) " + statusText.dropFirst("New ".count)
+        : statusText,
+      runtime: destination.runtime,
+      destinationID: destination.id
     )
   }
 
@@ -1237,7 +1265,7 @@ extension WorkspaceStore {
     prepareAIChatThread(
       mode: .newThread,
       title: "Brief: \(title)",
-      statusText: "New OpenClaw brief chat"
+      statusText: "New brief chat"
     )
   }
 
@@ -1342,7 +1370,7 @@ extension WorkspaceStore {
         let next = remainingThreads[replacementIndex]
         selectAIChatThread(next.id, persistsSelection: true)
       } else {
-        createAIChatThread(runtime: thread.runtime)
+        createAIChatThread(destinationID: thread.destinationID)
       }
     }
   }
@@ -1526,10 +1554,8 @@ extension WorkspaceStore {
     let nextStatus = requiresHydration
       ? "Loading conversation…"
       : isSendingAIChatMessage
-        ? "\(thread.runtime.title) is working"
-        : thread.runtime == .codex
-          ? "Ready for a Codex message"
-          : Self.aiChatStatusText(settings: currentOpenClawSettings())
+        ? "\(aiChatDestinationTitle(thread.destinationID)) is working"
+        : aiChatIdleStatusText(destinationID: thread.destinationID)
     if aiChatStatusText != nextStatus { aiChatStatusText = nextStatus }
     aiChatScrollPosition = aiChatScrollPositionsByThreadID[thread.id]
     aiChatAssistantChatScrollPosition = aiChatAssistantChatScrollPositionsByThreadID[thread.id]
@@ -1668,10 +1694,8 @@ extension WorkspaceStore {
         self.replaceAIChatMessages(hydrated.messages, shouldPersist: false)
         self.syncSelectedAIChatSendState()
         self.aiChatStatusText = self.isSendingAIChatMessage
-          ? "\(hydrated.runtime.title) is working"
-          : hydrated.runtime == .codex
-            ? "Ready for a Codex message"
-            : Self.aiChatStatusText(settings: self.currentOpenClawSettings())
+          ? "\(self.aiChatDestinationTitle(hydrated.destinationID)) is working"
+          : self.aiChatIdleStatusText(destinationID: hydrated.destinationID)
       }
       if publishesSelectedThread,
          self.selectedSurface == .aiChat || self.isAIChatAssistantPresented {
@@ -1997,6 +2021,8 @@ extension WorkspaceStore {
        aiChatThreads.contains(where: { $0.id == selectedAIChatThreadID }) {
       return
     }
+    // Legacy single-transcript migration: loose messages predate threads and
+    // belong to the original OpenClaw Gateway session they were sent through.
     let thread = AIChatThread(
       title: Self.aiChatThreadTitle(from: aiChatMessages),
       sessionKey: openClawSessionKey,
@@ -2651,7 +2677,9 @@ extension WorkspaceStore {
       removeCachedAIChatConfiguration(
         destinationID: AIChatDestinationConfiguration.openClawID
       )
-      aiChatStatusText = Self.aiChatStatusText(settings: currentOpenClawSettings())
+      if selectedAIChatDestination.adapter == .openClaw {
+        aiChatStatusText = Self.aiChatStatusText(settings: currentOpenClawSettings())
+      }
       Task { @MainActor [weak self] in
         await self?.refreshAIChatCommands(force: true)
       }

@@ -2384,7 +2384,12 @@ final class AgentRunModelsTests: XCTestCase {
       store.aiChatDraft,
       "Use agent run “Prepare a cited briefing” at /remote/org2/.org2/runs/run-1.org2:1 as context.\n\n"
     )
-    XCTAssertEqual(store.aiChatStatusText, "Added .org2/runs/run-1.org2:1 to OpenClaw")
+    // With no chat selected, the run chat opens on the user's default
+    // destination; OpenClaw is not an implicit fallback.
+    XCTAssertEqual(
+      store.aiChatStatusText,
+      "Added .org2/runs/run-1.org2:1 to \(store.defaultAIChatDestination.title)"
+    )
   }
 
   @MainActor

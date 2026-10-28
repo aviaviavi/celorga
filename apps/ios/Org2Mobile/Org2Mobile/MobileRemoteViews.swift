@@ -5,11 +5,16 @@ import UIKit
 import VisionKit
 import WebKit
 
+/// Runtime-family name, used only when the host sent no destination name.
+/// An unknown runtime is never presented as OpenClaw.
 private func mobileAIRuntimeTitle(_ runtime: String) -> String {
   switch runtime {
   case "codex": "Codex"
   case "claude": "Claude Code"
-  default: "OpenClaw"
+  case "pi": "Pi"
+  case "openCode": "OpenCode"
+  case "openClaw": "OpenClaw"
+  default: "Assistant"
   }
 }
 
@@ -2207,7 +2212,7 @@ struct MobileRemoteThreadView: View {
     if let destinationName = remote.threadDetail?.thread.destinationName {
       return destinationName
     }
-    return mobileAIRuntimeTitle(remote.threadDetail?.thread.runtime ?? "openClaw")
+    return remote.threadDetail.map { mobileAIRuntimeTitle($0.thread.runtime) } ?? "Assistant"
   }
 
   private var aiChatDestinations: [MobileRemoteAIDestination] {
@@ -4333,6 +4338,11 @@ private struct MobileRemoteInProgressBubble: View {
       .trimmingCharacters(in: .whitespacesAndNewlines),
        !activeDestinationName.isEmpty {
       return activeDestinationName
+    }
+    if let destinationName = detail.thread.destinationName?
+      .trimmingCharacters(in: .whitespacesAndNewlines),
+       !destinationName.isEmpty {
+      return destinationName
     }
     return mobileAIRuntimeTitle(detail.thread.runtime)
   }

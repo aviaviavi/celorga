@@ -4269,7 +4269,7 @@ public final class WorkspaceStore {
     // their potentially interactive keychain access off MainActor below.
     orgCryptHasStoredPassphrase = OrgCryptKeychain.containsPassphrase()
     scarfMetabaseHasStoredAPIKey = DataSourceCredentialsKeychain.containsScarfMetabaseAPIKey()
-    aiChatStatusText = Self.aiChatStatusText(settings: currentOpenClawSettings())
+    aiChatStatusText = aiChatIdleStatusText(destinationID: selectedAIChatThread?.destinationID)
     restoreInterruptedAIChatSendStatusIfNeeded()
   }
 }

@@ -1532,6 +1532,9 @@ struct ChatBubbleView: View {
 
   let message: AIChatMessage
   let runtime: AIChatRuntime
+  /// Name for an assistant message that recorded no author: the destination
+  /// that answers this chat or room column, never just its runtime family.
+  let defaultAuthorTitle: String?
   let destinationTitlesByID: [String: String]
   let compact: Bool
   let isQueued: Bool
@@ -1557,6 +1560,7 @@ struct ChatBubbleView: View {
   init(
     message: AIChatMessage,
     runtime: AIChatRuntime = .openClaw,
+    defaultAuthorTitle: String? = nil,
     destinationTitlesByID: [String: String] = [:],
     compact: Bool = false,
     isQueued: Bool = false,
@@ -1571,6 +1575,7 @@ struct ChatBubbleView: View {
   ) {
     self.message = message
     self.runtime = runtime
+    self.defaultAuthorTitle = defaultAuthorTitle
     self.destinationTitlesByID = destinationTitlesByID
     self.compact = compact
     self.isQueued = isQueued
@@ -1984,7 +1989,9 @@ struct ChatBubbleView: View {
     case .assistant:
       return message.authorLabel
         ?? message.authorDestinationID.map(destinationTitle)
-        ?? (message.authorRuntime ?? runtime).title
+        ?? message.authorRuntime?.title
+        ?? defaultAuthorTitle
+        ?? runtime.title
     case .system:
       return message.authorLabel
         ?? message.authorDestinationID.map(destinationTitle)
@@ -2566,6 +2573,7 @@ struct AIChatRoomRoundView: View {
       ChatBubbleView(
         message: round.trigger,
         runtime: store.selectedAIChatRuntime,
+        defaultAuthorTitle: store.selectedAIChatDestinationTitle,
         destinationTitlesByID: store.aiChatDestinationTitlesByID,
         compact: compact,
         isQueued: store.isAIChatMessageQueued(round.trigger.id),
@@ -2680,6 +2688,7 @@ private struct AIChatRoomAgentSlot: View {
         ChatBubbleView(
           message: response,
           runtime: runtime,
+          defaultAuthorTitle: destinationTitle,
           destinationTitlesByID: store.aiChatDestinationTitlesByID,
           compact: true,
           isRoomResponse: true,
@@ -5835,11 +5844,11 @@ struct AIChatTypingIndicatorView: View {
     }
     switch connectionState {
     case .connecting:
-      return "Connecting to OpenClaw"
+      return "Connecting to \(displayTitle)"
     case .reconnecting:
-      return "Reconnecting to OpenClaw"
+      return "Reconnecting to \(displayTitle)"
     case .fallbackHTTP:
-      return "OpenClaw is working over HTTP"
+      return "\(displayTitle) is working over HTTP"
     case .disconnected:
       return "Connection interrupted"
     case .connected:
@@ -5847,12 +5856,12 @@ struct AIChatTypingIndicatorView: View {
         return "Running \(latest.title.lowercased())"
       }
       if runID == nil {
-        return "Starting OpenClaw"
+        return "Starting \(displayTitle)"
       }
       if hasReasoning {
-        return "OpenClaw is thinking"
+        return "\(displayTitle) is thinking"
       }
-      return "OpenClaw is working"
+      return "\(displayTitle) is working"
     }
   }
 

@@ -917,14 +917,15 @@ extension WorkspaceStore {
       return
     }
 
-    let runtime = selectedAIChatThread?.runtime ?? .openClaw
+    let destination = selectedAIChatDestination
     let threadTitle = pointers.count == 1
       ? pointers[0].threadTitle
       : "Context: \(pointers.count) selected items"
     createAIChatThread(
       title: Self.normalizedAIChatThreadTitle(threadTitle),
-      statusText: "New \(runtime.title) context chat",
-      runtime: runtime
+      statusText: "New \(destination.title) context chat",
+      runtime: destination.runtime,
+      destinationID: destination.id
     )
     let draft = pointers.map(injectedAIChatContext).joined()
     publishAIChatComposerDraft(draft)
@@ -932,7 +933,7 @@ extension WorkspaceStore {
     setAIChatAssistantPanelPresented(true)
 
     let countLabel = pointers.count == 1 ? "1 item" : "\(pointers.count) items"
-    aiChatStatusText = "Added \(countLabel) to \(runtime.title)"
+    aiChatStatusText = "Added \(countLabel) to \(destination.title)"
     statusText = "Started a new AI thread with \(countLabel)"
   }
 
@@ -1103,7 +1104,7 @@ extension WorkspaceStore {
       prepareAIChatThread(
         mode: threadMode,
         title: pointer.threadTitle,
-        statusText: "New OpenClaw context chat"
+        statusText: "New context chat"
       )
     }
     let previousDraft = currentAIChatDraftForSelectedThread()
@@ -1120,7 +1121,7 @@ extension WorkspaceStore {
     }
 
     setAIChatAssistantPanelPresented(true)
-    let runtimeTitle = selectedAIChatRuntime.title
+    let runtimeTitle = selectedAIChatDestinationTitle
     aiChatStatusText = "Added \(pointer.displayReference) to \(runtimeTitle)"
     statusText = "Added \(pointer.displayReference) to \(runtimeTitle)"
   }
@@ -1507,7 +1508,7 @@ extension WorkspaceStore {
         enforceHydratedAIChatThreadLimit()
         return true
       } catch {
-        errorText = "OpenClaw transcript save failed: \(error.localizedDescription)"
+        errorText = "AI chat transcript save failed: \(error.localizedDescription)"
         return false
       }
     }
@@ -1553,7 +1554,7 @@ extension WorkspaceStore {
         )
       } catch {
         guard let self, self.isCurrentAIChatCorpusContext(context) else { return }
-        self.errorText = "OpenClaw transcript save failed: \(error.localizedDescription)"
+        self.errorText = "AI chat transcript save failed: \(error.localizedDescription)"
         return
       }
       guard let self, self.isCurrentAIChatCorpusContext(context) else { return }
@@ -1603,7 +1604,7 @@ extension WorkspaceStore {
         try aiChatTranscriptSaverForTesting()
       } catch {
         guard isCurrentAIChatCorpusContext(context) else { return false }
-        errorText = "OpenClaw transcript save failed: \(error.localizedDescription)"
+        errorText = "AI chat transcript save failed: \(error.localizedDescription)"
         return false
       }
     } else {
@@ -1621,7 +1622,7 @@ extension WorkspaceStore {
         )
       } catch {
         guard isCurrentAIChatCorpusContext(context) else { return false }
-        errorText = "OpenClaw transcript save failed: \(error.localizedDescription)"
+        errorText = "AI chat transcript save failed: \(error.localizedDescription)"
         return false
       }
     }
@@ -1680,7 +1681,7 @@ extension WorkspaceStore {
           self.registerMissingHydratedAIChatThreadsInLRU()
           self.enforceHydratedAIChatThreadLimit()
         } catch {
-          self.errorText = "OpenClaw transcript save failed: \(error.localizedDescription)"
+          self.errorText = "AI chat transcript save failed: \(error.localizedDescription)"
         }
         if generation == self.aiChatTranscriptPersistenceGeneration {
           self.deferredAIChatTranscriptPersistenceTask = nil

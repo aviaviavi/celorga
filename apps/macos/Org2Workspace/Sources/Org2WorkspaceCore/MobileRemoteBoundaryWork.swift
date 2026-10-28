@@ -233,9 +233,11 @@ public enum MobileRemoteThreadProjection {
           sendFailure: message.sendFailure,
           authorRuntime: message.authorRuntime?.rawValue,
           authorDestinationID: message.authorDestinationID,
-          authorDestinationName: message.authorDestinationID.flatMap {
-            context.threads.destinationNamesByID[$0]
-          },
+          // A direct chat's replies may omit their author; they come from
+          // the thread's destination, not from a runtime family.
+          authorDestinationName: (message.authorDestinationID
+            ?? (message.role == .assistant && !thread.isSharedRoom ? thread.destinationID : nil))
+            .flatMap { context.threads.destinationNamesByID[$0] },
           audience: message.audience?.rawValue,
           audienceDestinationNames: audienceDestinationIDs.compactMap {
             context.threads.destinationNamesByID[$0]

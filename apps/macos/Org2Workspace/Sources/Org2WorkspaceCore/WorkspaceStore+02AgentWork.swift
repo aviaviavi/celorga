@@ -1652,13 +1652,28 @@ extension WorkspaceStore {
     }
   }
 
+  /// Destination for a run continuation that the OpenClaw lifecycle adapter
+  /// handed back with a Gateway session. The run's own destination wins; the
+  /// fallback is an OpenClaw Gateway destination, never a direct provider or
+  /// Dot that merely shares the OpenClaw runtime family.
+  func openClawRunContinuationDestination(for run: AgentRunItem) -> AIChatDestinationConfiguration {
+    if let ref = run.destinationRef?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !ref.isEmpty,
+       let destination = enabledAIChatDestinations.first(where: { $0.id == ref }) {
+      return destination
+    }
+    return enabledAIChatDestinations.first(where: { $0.id == AIChatDestinationConfiguration.openClawID })
+      ?? enabledAIChatDestinations.first(where: { $0.adapter == .openClaw })
+      ?? aiChatDestination(id: AIChatDestinationConfiguration.openClawID)
+      ?? AIChatDestinationConfiguration.defaults.first(where: { $0.adapter == .openClaw })!
+  }
+
   private func resolvedAutomationDestination(_ destinationRef: String?) -> AIChatDestinationConfiguration? {
     if let destinationRef = destinationRef?.trimmingCharacters(in: .whitespacesAndNewlines),
        !destinationRef.isEmpty {
       return enabledAIChatDestinations.first(where: { $0.id == destinationRef })
     }
-    return enabledAIChatDestinations.first(where: { $0.id == AIChatDestinationConfiguration.openClawID })
-      ?? enabledAIChatDestinations.first
+    return enabledAIChatDestinations.first
   }
 
   nonisolated static func automationDestinationSupportsReasoning(
@@ -1989,13 +2004,16 @@ extension WorkspaceStore {
         hasSessionKey: continuation.sessionKey != nil,
         hasApprovedAction: !run.approvedCurrentApprovalBoundary.isEmpty
       )
+      let destination = openClawRunContinuationDestination(for: run)
       thread = createAIChatThread(
         title: "\(titlePrefix): \(run.goal)",
         statusText: continuationStatus,
         sessionKey: continuation.sessionKey ?? Self.approvedRunContinuationSessionKey(
           runID: run.id,
           agentID: openClawAgentID
-        )
+        ),
+        runtime: destination.runtime,
+        destinationID: destination.id
       )
     }
     if presentThread {
@@ -2102,10 +2120,13 @@ extension WorkspaceStore {
       if existing.isSettled { reopenAIChatThread(existing.id) }
       thread = aiChatThreads.first(where: { $0.id == existing.id }) ?? existing
     } else {
+      let destination = openClawRunContinuationDestination(for: run)
       thread = createAIChatThread(
         title: "Workflow: \(run.goal)",
         statusText: "Continuing requested revision",
-        sessionKey: continuation.sessionKey
+        sessionKey: continuation.sessionKey,
+        runtime: destination.runtime,
+        destinationID: destination.id
       )
     }
     navigateToSurface(.aiChat)
@@ -2293,10 +2314,13 @@ extension WorkspaceStore {
       if existing.isSettled { reopenAIChatThread(existing.id) }
       thread = aiChatThreads.first(where: { $0.id == existing.id }) ?? existing
     } else {
+      let destination = openClawRunContinuationDestination(for: run)
       thread = createAIChatThread(
         title: "Revision: \(run.goal)",
         statusText: "Revising after requested changes",
-        sessionKey: sessionKey
+        sessionKey: sessionKey,
+        runtime: destination.runtime,
+        destinationID: destination.id
       )
     }
     guard let pointer = aiChatContextPointer(for: run, requiresExistingRecord: false) else {
@@ -2441,12 +2465,15 @@ extension WorkspaceStore {
         if existing.isSettled { reopenAIChatThread(existing.id) }
         thread = aiChatThreads.first(where: { $0.id == existing.id }) ?? existing
       } else {
+        let destination = openClawRunContinuationDestination(for: run)
         thread = createAIChatThread(
           title: "Resume: \(run.goal)",
           statusText: continuation.sessionKey == nil
-            ? "Continuing in a new OpenClaw session"
+            ? "Continuing in a new \(destination.title) session"
             : "Continuing after clarification",
-          sessionKey: continuation.sessionKey
+          sessionKey: continuation.sessionKey,
+          runtime: destination.runtime,
+          destinationID: destination.id
         )
       }
       selectAIChatThread(thread.id)

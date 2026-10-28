@@ -1087,7 +1087,7 @@ private struct ApprovalDetailView: View {
           }
         }
 
-        Section("Message to OpenClaw") {
+        Section("Message to your agent") {
           TextEditor(text: $message)
             .frame(minHeight: 96)
         }
@@ -1164,7 +1164,7 @@ private struct ApprovalDetailView: View {
               dismiss()
             }
           } label: {
-            Label("Discuss via OpenClaw", systemImage: "paperplane")
+            Label("Discuss in AI chat", systemImage: "paperplane")
               .frame(maxWidth: .infinity)
           }
           .disabled(isApproving)

@@ -191,13 +191,9 @@ extension WorkspaceStore {
         ? "Codex delivery confirmation is pending"
         : isSendingAIChatMessage
         ? "\(aiChatDestinationTitle(selectedThread.destinationID)) is working"
-        : selectedThread.runtime == .codex
-          ? "Ready for a Codex message"
-          : aiChatDestination(id: selectedThread.destinationID)?.adapter == .openClaw
-            ? Self.aiChatStatusText(settings: currentOpenClawSettings())
-            : "Ready for a \(aiChatDestinationTitle(selectedThread.destinationID)) message"
+        : aiChatIdleStatusText(destinationID: selectedThread.destinationID)
     } else {
-      aiChatStatusText = Self.aiChatStatusText(settings: currentOpenClawSettings())
+      aiChatStatusText = aiChatIdleStatusText(destinationID: nil)
     }
     if shouldPersist || (allowsMaintenanceWrites && (
       migratedThreadMetadata
@@ -301,7 +297,7 @@ extension WorkspaceStore {
       $0.role == .user && $0.deliveryStatus == .interrupted
     }.count
     guard interruptedCount > 0 else { return }
-    let runtime = selectedAIChatRuntime.title
+    let runtime = selectedAIChatDestinationTitle
     aiChatStatusText = interruptedCount == 1
       ? "\(runtime) response interrupted; retry the message"
       : "\(interruptedCount) \(runtime) responses interrupted; retry the messages"
@@ -1546,8 +1542,10 @@ extension WorkspaceStore {
       .filter { !$0.isEmpty })
   }
 
+  /// Status shown before any chat or destination has loaded. It names no
+  /// runtime: the selected destination replaces it once transcripts load.
   static func defaultAIChatStatusText() -> String {
-    aiChatStatusText(settings: OpenClawGatewaySettings.resolve())
+    "Ready for a message"
   }
 
   static func defaultMeetingStatusText() -> String {
@@ -1949,7 +1947,7 @@ extension WorkspaceStore {
     return "\(prefix)\n...[truncated \(text.count - maxCharacters) characters]"
   }
 
-  static func aiChatStatusText(settings: OpenClawGatewaySettings) -> String {
+  nonisolated static func aiChatStatusText(settings: OpenClawGatewaySettings) -> String {
     if settings.chatCompletionsEnabled != true {
       return "OpenClaw chat endpoint may need enabling in the local gateway config"
     }

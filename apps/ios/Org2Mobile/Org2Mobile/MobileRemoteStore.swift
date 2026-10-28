@@ -888,10 +888,18 @@ final class MobileRemoteStore: ObservableObject {
     let content = UNMutableNotificationContent()
     content.title = thread.title
     let runtimeTitle: String
-    switch thread.runtime {
-    case "codex": runtimeTitle = "Codex"
-    case "claude": runtimeTitle = "Claude Code"
-    default: runtimeTitle = "OpenClaw"
+    if let destinationName = thread.destinationName?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !destinationName.isEmpty {
+      runtimeTitle = destinationName
+    } else {
+      switch thread.runtime {
+      case "codex": runtimeTitle = "Codex"
+      case "claude": runtimeTitle = "Claude Code"
+      case "pi": runtimeTitle = "Pi"
+      case "openCode": runtimeTitle = "OpenCode"
+      case "openClaw": runtimeTitle = "OpenClaw"
+      default: runtimeTitle = "The assistant"
+      }
     }
     let preview = thread.latestAssistantPreview?.trimmingCharacters(in: .whitespacesAndNewlines)
     if let preview, !preview.isEmpty {

@@ -519,7 +519,7 @@ struct AIChatTranscriptDocument: View {
       }
     } else {
       base = message.authorLabel ?? message.authorDestinationID.map(store.aiChatDestinationTitle)
-        ?? message.authorRuntime?.title ?? (message.role == .system ? WorkspaceProductIdentity.displayName : store.selectedAIChatRuntime.title)
+        ?? message.authorRuntime?.title ?? (message.role == .system ? WorkspaceProductIdentity.displayName : store.selectedAIChatDestinationTitle)
     }
     guard let caption = store.aiChatProvenanceCaption(for: message) else { return base }
     return "\(base) · \(caption)"

@@ -2792,7 +2792,9 @@ final class Org2ModelsTests: XCTestCase {
       cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()),
       aiChatTranscriptURL: root.appendingPathComponent("openclaw-chat.json")
     )
-    let expectedEmptyThreadStatus = store.aiChatStatusText
+    let expectedEmptyThreadStatus = store.aiChatIdleStatusText(
+      destinationID: AIChatDestinationConfiguration.openClawID
+    )
     store.createAIChatThread(runtime: .openClaw)
     let firstThreadID = try XCTUnwrap(store.selectedAIChatThreadID)
     store.createAIChatThread(runtime: .openClaw)
@@ -4437,6 +4439,7 @@ final class Org2ModelsTests: XCTestCase {
       }
     )
     store.setCorpusRoot(root, persistsDefault: false)
+    store.createAIChatThread(destinationID: AIChatDestinationConfiguration.openClawID)
 
     await store.refreshApprovals(updatesStatus: true)
 
@@ -4449,7 +4452,7 @@ final class Org2ModelsTests: XCTestCase {
 
     let calls = await recorder.recordedCalls()
     let sentText = try XCTUnwrap(calls.first?.last?.content)
-    XCTAssertTrue(sentText.contains("OpenClaw approval thread"))
+    XCTAssertTrue(sentText.contains("Approval thread:"))
     XCTAssertTrue(sentText.contains("Please review the launch email"))
     let discussionThreadID = try XCTUnwrap(store.selectedAIChatThreadID)
     let discussionThread = try XCTUnwrap(store.aiChatThreads.first(where: { $0.id == discussionThreadID }))
@@ -8297,7 +8300,7 @@ final class Org2ModelsTests: XCTestCase {
       store.aiChatDraft,
       "Use selected entry “Test” at /remote/org2/daily.org2:7 as context.\n\nWhat should I do next?"
     )
-    XCTAssertEqual(store.aiChatStatusText, "Added daily.org2:7 to OpenClaw")
+    XCTAssertEqual(store.aiChatStatusText, "Added daily.org2:7 to \(store.selectedAIChatDestinationTitle)")
 
     store.askAIChatAboutCurrentSelection()
     XCTAssertEqual(store.selectedAIChatThreadID, contextThreadID)
@@ -8309,14 +8312,14 @@ final class Org2ModelsTests: XCTestCase {
 
     store.performUndoCommand()
     XCTAssertEqual(store.aiChatDraft, "What should I do next?")
-    XCTAssertEqual(store.aiChatStatusText, "Undid OpenClaw draft change")
+    XCTAssertEqual(store.aiChatStatusText, "Undid AI chat draft change")
 
     store.performRedoCommand()
     XCTAssertEqual(
       store.aiChatDraft,
       "Use selected entry “Test” at /remote/org2/daily.org2:7 as context.\n\nWhat should I do next?"
     )
-    XCTAssertEqual(store.aiChatStatusText, "Redid OpenClaw draft change")
+    XCTAssertEqual(store.aiChatStatusText, "Redid AI chat draft change")
   }
 
   @MainActor
@@ -8500,7 +8503,7 @@ final class Org2ModelsTests: XCTestCase {
       store.aiChatDraft,
       "Use selected block “First paragraph” at /remote/org2/project.org2:13-14 as context.\n\n"
     )
-    XCTAssertEqual(store.aiChatStatusText, "Added project.org2:13-14 to OpenClaw")
+    XCTAssertEqual(store.aiChatStatusText, "Added project.org2:13-14 to \(store.selectedAIChatDestinationTitle)")
   }
 
   @MainActor
@@ -8580,7 +8583,7 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertEqual(store.selectedBlockID, heading.id)
     XCTAssertEqual(store.selectedSurface, .aiChat)
     XCTAssertEqual(store.aiChatDraft, "Use selected block “Target heading” at /remote/org2/project.org2:22 as context.\n\n")
-    XCTAssertEqual(store.aiChatStatusText, "Added project.org2:22 to OpenClaw")
+    XCTAssertEqual(store.aiChatStatusText, "Added project.org2:22 to \(store.selectedAIChatDestinationTitle)")
   }
 
   @MainActor

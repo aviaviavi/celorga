@@ -857,7 +857,7 @@ extension WorkspaceStore {
     prepareAIChatThread(
       mode: threadMode,
       title: "Discuss: \(Org2Display.cleanInline(item.title))",
-      statusText: "New OpenClaw approval chat"
+      statusText: "New approval chat"
     )
     await sendAIChatMessage(text: text)
   }
@@ -2481,7 +2481,7 @@ extension WorkspaceStore {
     prepareAIChatThread(
       mode: threadMode,
       title: "Meeting: \(Org2Display.cleanInline(meeting.title))",
-      statusText: "New OpenClaw meeting chat"
+      statusText: "New meeting chat"
     )
     let pointer = aiChatContextPointer(for: .meeting(meeting))
     publishAIChatComposerDraft(automaticAIChatActionText(
