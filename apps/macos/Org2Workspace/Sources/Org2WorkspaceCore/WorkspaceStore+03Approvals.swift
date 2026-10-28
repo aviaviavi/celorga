@@ -184,7 +184,7 @@ extension WorkspaceStore {
   public func snoozeSelectedApprovals(until: Date) async {
     let items = selectedApprovalItemsForBulkMutation()
     guard !items.isEmpty else { return }
-    await performBulkApprovalAction(items) { store, item in
+    await performBulkApprovalAction(items, batchesAgentRunUpdates: true) { store, item in
       await store.setApprovalSnooze(item, until: until, updatesApprovalQueue: false)
     }
   }
@@ -192,16 +192,19 @@ extension WorkspaceStore {
   public func wakeSelectedApprovals() async {
     let items = selectedApprovalItemsForBulkMutation()
     guard !items.isEmpty else { return }
-    await performBulkApprovalAction(items) { store, item in
+    await performBulkApprovalAction(items, batchesAgentRunUpdates: true) { store, item in
       await store.setApprovalSnooze(item, until: nil, updatesApprovalQueue: false)
     }
   }
 
   private func performBulkApprovalAction(
     _ items: [ApprovalItem],
+    batchesAgentRunUpdates: Bool = false,
     action: @escaping @MainActor @Sendable (WorkspaceStore, ApprovalItem) async -> Void
   ) async {
     let selectedIDs = Set(items.map(\.id))
+    let ownsAgentRunBatch = batchesAgentRunUpdates && batchedAgentRunUpdates == nil
+    if ownsAgentRunBatch { batchedAgentRunUpdates = [:] }
     await withTaskGroup(of: Void.self) { group in
       for item in items {
         group.addTask { [weak self] in
@@ -209,6 +212,10 @@ extension WorkspaceStore {
           await action(self, item)
         }
       }
+    }
+    if ownsAgentRunBatch, let updates = batchedAgentRunUpdates {
+      batchedAgentRunUpdates = nil
+      applyAgentRunUpdates(updates)
     }
 
     let failedIDs = selectedIDs.filter { approvalActionErrorsByItemID[$0] != nil }
@@ -377,10 +384,26 @@ extension WorkspaceStore {
       }
       updated = try await cli.runJSON(arguments)
     }
-    if let index = agentRuns.firstIndex(where: { $0.id == updated.id }) {
+    if batchedAgentRunUpdates != nil {
+      batchedAgentRunUpdates?[updated.id] = updated
+    } else if let index = agentRuns.firstIndex(where: { $0.id == updated.id }) {
       agentRuns[index] = updated
     }
     return untilText
+  }
+
+  /// Replaces known runs with `updates` in a single `agentRuns` assignment.
+  private func applyAgentRunUpdates(_ updates: [AgentRunItem.ID: AgentRunItem]) {
+    guard !updates.isEmpty else { return }
+    var runs = agentRuns
+    var changed = false
+    for index in runs.indices {
+      if let updated = updates[runs[index].id] {
+        runs[index] = updated
+        changed = true
+      }
+    }
+    if changed { agentRuns = runs }
   }
 
   private func setHeadlineApprovalSnooze(_ item: ApprovalItem, until: Date?) async throws -> String? {

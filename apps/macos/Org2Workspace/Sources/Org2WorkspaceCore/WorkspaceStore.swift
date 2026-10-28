@@ -4006,6 +4006,10 @@ public final class WorkspaceStore {
   var isRefreshingAIChatThreadRecords = false
   var scheduledAgendaRefreshTask: Task<Void, Never>?
   var scheduledApprovalsRefreshTask: Task<Void, Never>?
+  /// Run records returned by a bulk snooze or wake, applied to `agentRuns` in
+  /// one assignment when the batch ends. Replacing them one at a time copies
+  /// the whole run archive and reschedules its projection for every row.
+  @ObservationIgnored var batchedAgentRunUpdates: [AgentRunItem.ID: AgentRunItem]?
   var scheduledAgentRunsRefreshTask: Task<Void, Never>?
   var agendaSelectionAnchor: AgendaSelectionAnchor?
   var approvalSelectionAnchor: ApprovalSelectionAnchor?

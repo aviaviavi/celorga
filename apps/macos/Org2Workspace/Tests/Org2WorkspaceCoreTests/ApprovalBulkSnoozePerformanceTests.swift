@@ -16,7 +16,9 @@ final class ApprovalBulkSnoozePerformanceTests: XCTestCase {
     store.replaceAgentRunsForTesting(runs)
     let queue = (0..<24).map { Self.queueItem(run: runs[$0], index: $0) }
     store.replaceApprovalItemsForTesting(queue)
-    store.approvalQueueLoaderForTesting = { (queue, []) }
+    let snoozeUntil = Date().addingTimeInterval(3 * 3600)
+    let rescannedQueue = Self.queue(queue, snoozingFirst: 15, until: snoozeUntil)
+    store.approvalQueueLoaderForTesting = { (rescannedQueue, []) }
     let runsByID = Dictionary(uniqueKeysWithValues: runs.map { ($0.id, $0) })
     store.agentRunApprovalSnoozeForTesting = { runID, _, _ in
       try XCTUnwrap(runsByID[runID])
@@ -28,7 +30,7 @@ final class ApprovalBulkSnoozePerformanceTests: XCTestCase {
 
     let probe = MainActorStallProbe()
     probe.start()
-    await store.snoozeSelectedApprovals(until: Date().addingTimeInterval(3 * 3600))
+    await store.snoozeSelectedApprovals(until: snoozeUntil)
     // Cover the debounced queue refresh that follows the batch.
     try await Task.sleep(nanoseconds: 700_000_000)
     let longest = probe.stop()
@@ -38,12 +40,49 @@ final class ApprovalBulkSnoozePerformanceTests: XCTestCase {
     XCTAssertLessThan(longest, 250, "bulk snooze blocked the main actor for \(longest) ms")
   }
 
-  static func runs(count: Int) throws -> [AgentRunItem] {
+  /// A bulk snooze applies the returned run records together, in one
+  /// archive update, and keeps every one of them.
+  func testBulkSnoozeAppliesEveryUpdatedRunInOneArchiveUpdate() async throws {
+    let store = try WorkspaceStore(cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()))
+    store.corpusRoot = FileManager.default.temporaryDirectory
+      .appendingPathComponent("celorga-bulk-snooze-batch-\(UUID().uuidString)", isDirectory: true)
+    store.deferredAgentRunsRefreshDelayNanoseconds = 60_000_000_000
+    let runs = try Self.runs(count: 300)
+    store.replaceAgentRunsForTesting(runs)
+    let queue = (0..<6).map { Self.queueItem(run: runs[$0], index: $0) }
+    store.replaceApprovalItemsForTesting(queue)
+    let snoozeUntil = Date().addingTimeInterval(3 * 3600)
+    let rescannedQueue = Self.queue(queue, snoozingFirst: 4, until: snoozeUntil)
+    store.approvalQueueLoaderForTesting = { (rescannedQueue, []) }
+    let updatedByID = Dictionary(
+      uniqueKeysWithValues: try Self.runs(count: 6, goalPrefix: "Snoozed outcome").map { ($0.id, $0) }
+    )
+    store.agentRunApprovalSnoozeForTesting = { runID, _, _ in
+      try XCTUnwrap(updatedByID[runID])
+    }
+    for item in queue.prefix(4) {
+      store.toggleApprovalItemBulkSelection(item)
+    }
+    let revisionBefore = store.agentRunsRevision
+
+    await store.snoozeSelectedApprovals(until: snoozeUntil)
+
+    XCTAssertEqual(store.agentRunsRevision, revisionBefore + 1)
+    XCTAssertEqual(store.agentRuns.count, 300)
+    XCTAssertEqual(
+      store.agentRuns.prefix(6).map(\.goal),
+      ["Snoozed outcome 0", "Snoozed outcome 1", "Snoozed outcome 2", "Snoozed outcome 3",
+       "Synthetic outcome 4", "Synthetic outcome 5"]
+    )
+    XCTAssertNil(store.batchedAgentRunUpdates)
+  }
+
+  static func runs(count: Int, goalPrefix: String = "Synthetic outcome") throws -> [AgentRunItem] {
     let objects: [[String: Any]] = (0..<count).map { index in
       [
         "schema": "org2:agent-run:v1",
         "id": "bulk-run-\(index)",
-        "goal": "Synthetic outcome \(index)",
+        "goal": "\(goalPrefix) \(index)",
         "acceptanceCriteria": [],
         "status": index < 24 ? "waiting-approval" : "completed",
         "riskClass": "external-action",
@@ -57,6 +96,15 @@ final class ApprovalBulkSnoozePerformanceTests: XCTestCase {
       [AgentRunItem].self,
       from: JSONSerialization.data(withJSONObject: objects)
     )
+  }
+
+  /// The queue a rescan returns after the first `count` approvals were
+  /// snoozed until `until`.
+  static func queue(_ queue: [ApprovalItem], snoozingFirst count: Int, until: Date) -> [ApprovalItem] {
+    let timestamp = WorkspaceStore.approvalSnoozeTimestamp(until)
+    return queue.enumerated().map { index, item in
+      index < count ? item.withSnoozedUntil(timestamp) : item
+    }
   }
 
   static func queueItem(run: AgentRunItem, index: Int) -> ApprovalItem {

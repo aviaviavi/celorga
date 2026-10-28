@@ -2270,7 +2270,12 @@ final class OpenOrgPerformanceGateTests: XCTestCase {
     store.replaceAgentRunsForTesting(runs)
     let queue = (0..<24).map { ApprovalBulkSnoozePerformanceTests.queueItem(run: runs[$0], index: $0) }
     store.replaceApprovalItemsForTesting(queue)
-    store.approvalQueueLoaderForTesting = { (queue, []) }
+    let snoozeUntil = Date().addingTimeInterval(3 * 3600)
+    // The follow-up rescan reports the batch as snoozed, as the CLI does. A
+    // rescan that returned them as pending would re-insert 15 rows, which is
+    // a different interaction from the one this gate measures.
+    let rescannedQueue = ApprovalBulkSnoozePerformanceTests.queue(queue, snoozingFirst: 15, until: snoozeUntil)
+    store.approvalQueueLoaderForTesting = { (rescannedQueue, []) }
     let runsByID = Dictionary(uniqueKeysWithValues: runs.map { ($0.id, $0) })
     store.agentRunApprovalSnoozeForTesting = { runID, _, _ in
       try await Task.sleep(nanoseconds: 20_000_000)
@@ -2282,6 +2287,11 @@ final class OpenOrgPerformanceGateTests: XCTestCase {
     let harness = WorkspaceRenderPerformanceHarness(store: store)
     defer { harness.close() }
     try await harness.waitForVisibleDestination(.approvals, runPage: .review, store: store)
+    // Review always shows a selected approval's detail. Build it before the
+    // measurement so the first-ever detail layout is not charged to the
+    // batch; snoozing the selected row still moves the selection mid-batch.
+    store.selectApprovalItem(queue[0])
+    await harness.drawAfterDeferredViewUpdates()
     for item in queue.prefix(15) {
       store.toggleApprovalItemBulkSelection(item)
     }
@@ -2289,7 +2299,7 @@ final class OpenOrgPerformanceGateTests: XCTestCase {
 
     var frames: [Double] = []
     let snooze = Task { @MainActor in
-      await store.snoozeSelectedApprovals(until: Date().addingTimeInterval(3 * 3600))
+      await store.snoozeSelectedApprovals(until: snoozeUntil)
     }
     let deadline = CACurrentMediaTime() + 1.5
     while CACurrentMediaTime() < deadline {
