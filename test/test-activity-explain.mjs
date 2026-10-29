@@ -89,6 +89,16 @@ try {
   let silentRun = createAgentRun({ id: "run-silent", title: "Old work", goal: "Old work", now: minutesAgo(60 * 30).toISOString() });
   silentRun = transitionAgentRun(silentRun, "running", { actor: "OpenClaw", now: minutesAgo(60 * 30).toISOString() });
   saveAgentRun(root, silentRun, { expectedRevision: null });
+  // Resumed from blocked by an executor that then stopped without recording a
+  // transition: well inside a day, but long past the trace's quiet window.
+  let resumedRun = createAgentRun({ id: "run-resumed-quiet", title: "Resumed work", goal: "Resumed work", now: minutesAgo(120).toISOString() });
+  resumedRun = transitionAgentRun(resumedRun, "running", { actor: "Codex", now: minutesAgo(119).toISOString() });
+  resumedRun = transitionAgentRun(resumedRun, "blocked", { actor: "Codex", reason: "Awaiting review", now: minutesAgo(90).toISOString() });
+  resumedRun = transitionAgentRun(resumedRun, "running", { actor: "Codex", now: minutesAgo(50).toISOString() });
+  saveAgentRun(root, resumedRun, { expectedRevision: null });
+  let recentRun = createAgentRun({ id: "run-recent", title: "Recent work", goal: "Recent work", now: minutesAgo(6).toISOString() });
+  recentRun = transitionAgentRun(recentRun, "running", { actor: "Codex", now: minutesAgo(5).toISOString() });
+  saveAgentRun(root, recentRun, { expectedRevision: null });
 
   // Hosts.
   assert.equal(classifyHostState({ isOnline: false, updatedAtMs: now.getTime(), authenticationNeededDestinationIDs: [] }, now).state, "offline");
@@ -157,6 +167,14 @@ try {
   assert.equal(silent.state, "working");
   assert.equal(silent.confidence, "uncertain");
   assert.equal(silent.reason.code, "silent");
+  const resumedQuiet = explain({ run: "run-resumed-quiet" });
+  assert.equal(resumedQuiet.state, "working");
+  assert.equal(resumedQuiet.confidence, "uncertain", "a quiet running run without presence is not confirmed as working");
+  assert.equal(resumedQuiet.reason.code, "silent");
+  assert.match(resumedQuiet.reason.summary, /no host reports a turn for it and the last run event was 50 min/u);
+  const recent = explain({ run: "run-recent" });
+  assert.equal(recent.reason.code, "running", "a recently started run stays working inside the quiet window");
+  assert.equal(recent.confidence, "cached");
 
   // Full listing ranks attention first and skips idle work.
   const listing = explainActivity(root, { now });

@@ -44,8 +44,15 @@ export const ACTIVITY_HOST_HEARTBEAT_SECONDS = 45;
 export const ACTIVITY_HOST_FRESHNESS_SECONDS = 150;
 /** A host silent for longer than this is stale rather than reconnecting. */
 export const ACTIVITY_HOST_STALE_SECONDS = 15 * 60;
-/** Open runs without any event for this long may have lost their executor. */
+/** Queued runs without any event for this long may have lost their dispatcher. */
 export const ACTIVITY_RUN_SILENCE_SECONDS = 24 * 3600;
+/**
+ * A running run with no live turn and no run event for this long cannot be
+ * confirmed as executing. `celorga activity trace` uses the same window, so
+ * the coordinator, attention digest, and trace agree on when "running" stops
+ * being believable.
+ */
+export const ACTIVITY_RUNNING_QUIET_SECONDS = 15 * 60;
 /** Activity lists attention items this recent (older open runs are history). */
 export const ACTIVITY_ATTENTION_WINDOW_SECONDS = 7 * 24 * 3600;
 
@@ -912,8 +919,22 @@ export function explainRun(run: AgentRun, context: RunContext): ActivityExplanat
       if (live) {
         return make("working", "turn-unconfirmed", `Last reported running on ${live.host.hostName}, which is ${live.host.state}`, "uncertain", live.host.stateReason, []);
       }
-      if (silence > ACTIVITY_RUN_SILENCE_SECONDS) {
-        return make("working", "silent", `Marked running, but no run event for ${describeAge(silence)}`, "uncertain", "The executor may have stopped without recording a transition", []);
+      // No host reports a turn for this run. Its status is only a claim; once
+      // the run has also been quiet for the trace's window, nothing confirms
+      // that an executor is still working on it.
+      const lastEventMs = Date.parse(lastEvent?.at ?? run.updatedAt);
+      const quiet = Number.isFinite(lastEventMs) ? ageSeconds(now, lastEventMs) : silence;
+      if (quiet > ACTIVITY_RUNNING_QUIET_SECONDS) {
+        return make(
+          "working",
+          "silent",
+          `Marked running, but no host reports ${threadID ? "a turn for its conversation" : "a turn for it"} and the last run event was ${describeAge(quiet)}`,
+          "uncertain",
+          threadID
+            ? "The executor may have stopped without recording a transition"
+            : "This run is not linked to a conversation, so no host presence can confirm its executor; it may have stopped without recording a transition",
+          [],
+        );
       }
       return make("working", "running", run.workflowId ? `Automation ${run.workflowId} running` : "Run in progress", "cached", "Recorded by the run's latest transition; no live presence links this run to a turn", []);
     }

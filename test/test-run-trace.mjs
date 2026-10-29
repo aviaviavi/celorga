@@ -212,6 +212,7 @@ try {
     const result = trace("run-silent");
     assert.equal(result.verdict, "unknown");
     assert.ok(findingCodes(result).includes("silent-run"));
+    assert.match(result.retry.reason, /`celorga run block run-silent --reason TEXT`/u, "recovery names the transition a person records");
   }
 
   // A completed run without a linked conversation is completed.

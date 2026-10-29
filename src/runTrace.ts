@@ -19,6 +19,7 @@
 import path from "node:path";
 import { loadAgentRun, type AgentRun } from "./agentRun.js";
 import {
+  ACTIVITY_RUNNING_QUIET_SECONDS,
   describeAge,
   isHostLive,
   linkedThreadID,
@@ -44,7 +45,7 @@ export const RUN_TRACE_SCHEMA = "org2:run-trace:v1" as const;
 /** A tool still running after this long without an update is reported as slow. */
 export const RUN_TRACE_SLOW_TOOL_SECONDS = 5 * 60;
 /** A run event this recent is cached evidence that a run without presence is still running. */
-export const RUN_TRACE_RECENT_EVENT_SECONDS = 15 * 60;
+export const RUN_TRACE_RECENT_EVENT_SECONDS = ACTIVITY_RUNNING_QUIET_SECONDS;
 /** A hand-off this recent may simply not have been accepted yet. */
 export const RUN_TRACE_HANDOFF_GRACE_SECONDS = 2 * 60;
 
@@ -545,6 +546,15 @@ export function assessRetry(verdict: RunTraceVerdict, code: string, run: Pick<Ag
       return { safe: false, recommendation: "none", reason: "The run is complete" };
     case "unknown":
     default:
+      // A run left "running" by an executor that stopped is not retried
+      // directly: the person who confirms it stopped records that first.
+      if (run.status === "running") {
+        return {
+          safe: false,
+          recommendation: "inspect",
+          reason: `The executor's state cannot be confirmed; it may still be running. Once you confirm it stopped, record that on the run: \`celorga run block ${run.id} --reason TEXT\` to continue it with direction, or \`celorga run fail ${run.id} --reason TEXT\` to retry it`,
+        };
+      }
       return { safe: false, recommendation: "inspect", reason: "The executor's state cannot be confirmed; it may still be running. Confirm it stopped before retrying" };
   }
 }
