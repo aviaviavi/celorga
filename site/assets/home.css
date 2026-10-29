@@ -1,0 +1,1697 @@
+/* Homepage showcase layer, loaded only by index.org on top of site.css.
+   Motion is opt-in: an inline script adds .celorga-motion when the reader has
+   not asked for reduced motion. Without it (or without script), every scene
+   renders in its finished state. assets/home-motion.js drives the loops. */
+
+:root {
+  --home-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --home-ease-io: cubic-bezier(0.65, 0, 0.35, 1);
+  --home-glass: color-mix(in srgb, var(--surface-raised) 82%, transparent);
+  --home-ok: #1f9d6a;
+  --home-window-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 70px 120px -40px rgba(29, 43, 38, 0.32),
+    0 30px 60px -30px rgba(29, 43, 38, 0.28);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --home-ok: #4fd39a;
+    --home-window-shadow:
+      0 70px 120px -40px rgba(0, 0, 0, 0.7),
+      0 30px 60px -30px rgba(0, 0, 0, 0.6);
+  }
+}
+
+/* The page title lives in the hero below; keep #+TITLE for metadata only. */
+#content main:has(.celorga-hero2) > .org2-document-header {
+  display: none;
+}
+
+/* ───────────────────────── Hero ───────────────────────── */
+
+#content .celorga-hero2 {
+  position: relative;
+  max-width: none;
+  margin: 0 0 clamp(4rem, 8vw, 7rem);
+  padding: clamp(2.5rem, 7vw, 5.5rem) 0 0;
+  text-align: center;
+  isolation: isolate;
+}
+
+.celorga-hero2-backdrop {
+  position: absolute;
+  z-index: -1;
+  top: -7rem;
+  left: 50%;
+  width: 100vw;
+  height: min(70rem, 120vh);
+  overflow: hidden;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.celorga-hero2-backdrop i {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: 0.55;
+}
+
+.celorga-hero2-backdrop i:nth-child(1) {
+  top: 8%;
+  left: 12%;
+  width: 34rem;
+  height: 26rem;
+  background: color-mix(in srgb, var(--signal) 32%, transparent);
+}
+
+.celorga-hero2-backdrop i:nth-child(2) {
+  top: 2%;
+  right: 8%;
+  width: 36rem;
+  height: 30rem;
+  background: color-mix(in srgb, var(--link) 26%, transparent);
+}
+
+.celorga-hero2-backdrop i:nth-child(3) {
+  top: 38%;
+  left: 38%;
+  width: 30rem;
+  height: 24rem;
+  background: color-mix(in srgb, var(--mint) 60%, transparent);
+  opacity: 0.45;
+}
+
+.celorga-hero2-backdrop span {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(color-mix(in srgb, var(--fg) 22%, transparent) 1px, transparent 1.3px);
+  background-size: 24px 24px;
+  -webkit-mask-image: radial-gradient(ellipse 62% 48% at 50% 30%, #000 20%, transparent 75%);
+  mask-image: radial-gradient(ellipse 62% 48% at 50% 30%, #000 20%, transparent 75%);
+  opacity: 0.55;
+}
+
+.celorga-motion .celorga-hero2-backdrop i:nth-child(1) { animation: home-drift-a 22s var(--home-ease-io) infinite alternate; }
+.celorga-motion .celorga-hero2-backdrop i:nth-child(2) { animation: home-drift-b 26s var(--home-ease-io) infinite alternate; }
+.celorga-motion .celorga-hero2-backdrop i:nth-child(3) { animation: home-drift-c 19s var(--home-ease-io) infinite alternate; }
+
+@keyframes home-drift-a { to { transform: translate(14rem, 6rem) scale(1.15); } }
+@keyframes home-drift-b { to { transform: translate(-12rem, 8rem) scale(0.9); } }
+@keyframes home-drift-c { to { transform: translate(-10rem, -5rem) scale(1.2); } }
+
+#content .celorga-hero2 > .celorga-hero2-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 auto 1.6rem;
+  padding: 0.4rem 0.9rem 0.4rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--home-glass);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  box-shadow: var(--shadow-small);
+}
+
+.celorga-hero2-pulse {
+  position: relative;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--home-ok);
+}
+
+.celorga-hero2-pulse::after {
+  position: absolute;
+  inset: -4px;
+  border: 2px solid var(--home-ok);
+  border-radius: 50%;
+  content: "";
+  opacity: 0;
+}
+
+.celorga-motion .celorga-hero2-pulse::after {
+  animation: home-ping 2.4s ease-out infinite;
+}
+
+@keyframes home-ping {
+  0% { transform: scale(0.6); opacity: 0.7; }
+  80%, 100% { transform: scale(1.8); opacity: 0; }
+}
+
+#content .celorga-hero2-title {
+  max-width: none;
+  margin: 0 auto;
+  color: var(--fg);
+  font-size: clamp(2.7rem, 6.6vw, 5.9rem);
+  font-weight: 500;
+  letter-spacing: -0.058em;
+  line-height: 0.95;
+  text-wrap: balance;
+}
+
+#content .celorga-hero2-line {
+  display: block;
+}
+
+@media (min-width: 760px) {
+  #content .celorga-hero2-line {
+    white-space: nowrap;
+  }
+}
+
+#content .celorga-hero2-title em {
+  position: relative;
+  color: var(--signal);
+  font-style: normal;
+  white-space: nowrap;
+}
+
+#content .celorga-hero2-title em::after {
+  position: absolute;
+  right: 0.02em;
+  bottom: -0.06em;
+  left: 0.02em;
+  height: 0.09em;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--signal), color-mix(in srgb, var(--signal) 30%, transparent));
+  content: "";
+  transform-origin: 0 50%;
+}
+
+#content .celorga-hero2-title .w {
+  display: inline-block;
+}
+
+.celorga-motion #content .celorga-hero2-title .w {
+  animation: home-word 1s var(--home-ease) both;
+  animation-delay: calc(80ms + var(--i) * 75ms);
+}
+
+.celorga-motion #content .celorga-hero2-title em::after {
+  animation: home-underline 0.9s var(--home-ease) 1s both;
+}
+
+@keyframes home-word {
+  from { opacity: 0; transform: translateY(0.42em) rotate(3deg); filter: blur(14px); }
+  to { opacity: 1; transform: none; filter: blur(0); }
+}
+
+@keyframes home-underline {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+#content .celorga-hero2 > .celorga-hero2-kinetic {
+  margin: clamp(1.4rem, 2.5vw, 2rem) auto 0;
+  color: var(--fg);
+  font-size: clamp(1.25rem, 2.5vw, 1.95rem);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+
+.celorga-rotator {
+  display: inline-grid;
+  vertical-align: bottom;
+  text-align: left;
+  transition: width 0.55s var(--home-ease);
+}
+
+.celorga-rotator > span {
+  grid-area: 1 / 1;
+  opacity: 0;
+  white-space: nowrap;
+}
+
+.celorga-rotator > span.is-on {
+  opacity: 1;
+}
+
+#content .celorga-hero2-kinetic .celorga-rotator {
+  padding-bottom: 0.08em;
+  color: var(--link);
+  background: linear-gradient(90deg, var(--link), color-mix(in srgb, var(--link) 0%, transparent)) 0 100% / 100% 2px no-repeat;
+}
+
+.celorga-motion .celorga-rotator > span {
+  transform: translateY(0.55em);
+  filter: blur(6px);
+  transition: opacity 0.5s var(--home-ease), transform 0.6s var(--home-ease), filter 0.5s var(--home-ease);
+}
+
+.celorga-motion .celorga-rotator > span.is-on {
+  transform: none;
+  filter: none;
+}
+
+.celorga-motion .celorga-rotator > span.is-out {
+  opacity: 0;
+  transform: translateY(-0.55em);
+  filter: blur(6px);
+}
+
+#content .celorga-hero2 > .celorga-hero2-lead {
+  max-width: 44rem;
+  margin: 1.1rem auto 0;
+  color: var(--muted);
+  font-size: clamp(1rem, 1.4vw, 1.1rem);
+  line-height: 1.6;
+}
+
+#content .celorga-hero2 .celorga-hero-actions {
+  justify-content: center;
+  margin-top: 2rem;
+}
+
+#content .celorga-hero2 > p.celorga-home-hero-note {
+  margin: 1rem auto 0;
+  font-size: 0.82rem;
+}
+
+/* Staggered entrance for the hero copy (pure CSS; no script required). */
+.celorga-motion #content .celorga-hero2-eyebrow,
+.celorga-motion #content .celorga-hero2-kinetic,
+.celorga-motion #content .celorga-hero2-lead,
+.celorga-motion #content .celorga-hero2 .celorga-hero-actions,
+.celorga-motion #content .celorga-hero2 .celorga-home-hero-note {
+  animation: home-rise 0.9s var(--home-ease) both;
+}
+
+.celorga-motion #content .celorga-hero2 > .celorga-hero2-eyebrow { animation-delay: 0s; }
+.celorga-motion #content .celorga-hero2 > .celorga-hero2-kinetic { animation-delay: 0.75s; }
+.celorga-motion #content .celorga-hero2 > .celorga-hero2-lead { animation-delay: 0.9s; }
+.celorga-motion #content .celorga-hero2 .celorga-hero-actions { animation-delay: 1.05s; }
+.celorga-motion #content .celorga-hero2 .celorga-home-hero-note { animation-delay: 1.15s; }
+
+@keyframes home-rise {
+  from { opacity: 0; transform: translateY(18px); filter: blur(6px); }
+  to { opacity: 1; transform: none; filter: blur(0); }
+}
+
+/* Buttons: a little more presence everywhere on the homepage. */
+#content main:has(.celorga-hero2) .celorga-hero-action {
+  position: relative;
+  overflow: hidden;
+  padding: 0.78rem 1.05rem;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  transition: transform 0.2s var(--home-ease), box-shadow 0.2s var(--home-ease), border-color 0.2s, background 0.2s, color 0.2s;
+}
+
+#content main:has(.celorga-hero2) .celorga-hero-action:not(.celorga-hero-action-primary) {
+  background: var(--home-glass);
+}
+
+#content main:has(.celorga-hero2) .celorga-hero-action-primary {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--link) 88%, white), var(--link));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.25) inset, 0 10px 24px -8px color-mix(in srgb, var(--link) 60%, transparent);
+}
+
+#content main:has(.celorga-hero2) .celorga-hero-action-primary::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.35) 50%, transparent 70%);
+  content: "";
+  transform: translateX(-120%);
+}
+
+#content main:has(.celorga-hero2) .celorga-hero-action:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 28px -12px rgba(29, 43, 38, 0.35);
+}
+
+#content main:has(.celorga-hero2) .celorga-hero-action-primary:hover::after {
+  transform: translateX(120%);
+  transition: transform 0.8s var(--home-ease);
+}
+
+#content main:has(.celorga-hero2) .celorga-hero-action span[aria-hidden] {
+  display: inline-block;
+  transition: transform 0.2s var(--home-ease);
+}
+
+#content main:has(.celorga-hero2) .celorga-hero-action:hover span[aria-hidden] {
+  transform: translateX(3px);
+}
+
+#content .celorga-hero2 .celorga-hero-cli {
+  padding: 0.66rem 0.9rem;
+  border-radius: 8px;
+  background: var(--home-glass);
+}
+
+/* The product window: tilted back, it settles flat as you scroll. */
+#content .celorga-hero2-stage {
+  position: relative;
+  width: min(100%, 68rem);
+  margin: clamp(3rem, 6vw, 4.5rem) auto 0;
+  perspective: 2200px;
+}
+
+#content .celorga-hero2-glow {
+  position: absolute;
+  z-index: -1;
+  inset: 6% 4% -4%;
+  border-radius: 40px;
+  background:
+    radial-gradient(40% 50% at 25% 40%, color-mix(in srgb, var(--signal) 45%, transparent), transparent 70%),
+    radial-gradient(45% 55% at 78% 55%, color-mix(in srgb, var(--link) 45%, transparent), transparent 70%);
+  filter: blur(60px);
+  opacity: 0.5;
+}
+
+.celorga-motion #content .celorga-hero2-glow {
+  animation: home-glow 8s ease-in-out infinite alternate;
+}
+
+@keyframes home-glow {
+  from { opacity: 0.35; transform: scale(0.96); }
+  to { opacity: 0.6; transform: scale(1.03); }
+}
+
+#content .celorga-hero2-window.celorga-home-hero-shot,
+#content .celorga-hero2-window.celorga-home-hero-shot:has(.celorga-hero-demo) {
+  width: 100%;
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
+  border-radius: 14px;
+  box-shadow: var(--home-window-shadow);
+  transform-origin: 50% 0;
+  transform: rotateX(var(--tilt, 0deg)) scale(var(--tilt-scale, 1));
+  will-change: transform;
+}
+
+.celorga-motion #content .celorga-hero2-stage {
+  animation: home-rise-far 1.3s var(--home-ease) 0.9s both;
+}
+
+@keyframes home-rise-far {
+  from { opacity: 0; transform: translateY(60px); }
+  to { opacity: 1; transform: none; }
+}
+
+#content .celorga-hero2-titlebar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: 2.1rem;
+  padding: 0 0.85rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--canvas) 70%, var(--surface-raised));
+}
+
+#content .celorga-hero2-titlebar i {
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 50%;
+  background: #ff5f57;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.15);
+}
+
+#content .celorga-hero2-titlebar i:nth-child(2) { background: #febc2e; }
+#content .celorga-hero2-titlebar i:nth-child(3) { background: #28c840; }
+
+#content .celorga-hero2-titlebar span {
+  position: absolute;
+  left: 50%;
+  color: var(--quiet);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+#content .celorga-hero2-stage > figcaption {
+  max-width: 40rem;
+  margin: 1.6rem auto 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+/* Floating status chips: what Celorga is doing around the window. */
+.celorga-hero2-chips {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+#content .celorga-hero2-chip {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.85rem 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--home-glass);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  backdrop-filter: blur(14px) saturate(1.4);
+  box-shadow: 0 18px 40px -16px rgba(29, 43, 38, 0.35), var(--shadow-small);
+  text-align: left;
+  white-space: nowrap;
+}
+
+#content .celorga-hero2-chip > span {
+  display: grid;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.3;
+}
+
+#content .celorga-hero2-chip strong {
+  color: var(--fg);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+#content .celorga-hero2-chip svg.celorga-logo,
+#content .celorga-hero2-chip svg.celorga-topology-icon {
+  width: 1.35rem;
+  height: 1.35rem;
+  color: var(--link);
+}
+
+#content .celorga-hero2-chip:nth-child(1) { top: 9%; left: -6%; }
+#content .celorga-hero2-chip:nth-child(2) { top: 31%; right: -7%; }
+#content .celorga-hero2-chip:nth-child(3) { bottom: 26%; left: -8%; }
+#content .celorga-hero2-chip:nth-child(4) { bottom: 9%; right: -5%; }
+
+.celorga-motion #content .celorga-hero2-chip {
+  animation:
+    home-chip-in 0.9s var(--home-ease) both,
+    home-float 6s ease-in-out infinite alternate;
+  animation-delay: calc(2.1s + var(--c) * 0.35s), calc(var(--c) * -1.7s);
+}
+
+@keyframes home-chip-in {
+  from { opacity: 0; scale: 0.9; filter: blur(8px); }
+  to { opacity: 1; scale: 1; filter: blur(0); }
+}
+
+@keyframes home-float {
+  from { translate: 0 -6px; }
+  to { translate: 0 6px; }
+}
+
+.celorga-hero2-needs {
+  position: relative;
+  width: 0.62rem;
+  height: 0.62rem;
+  margin: 0 0.35rem;
+  border-radius: 50%;
+  background: var(--signal);
+}
+
+.celorga-motion .celorga-hero2-needs::after {
+  position: absolute;
+  inset: -4px;
+  border: 2px solid var(--signal);
+  border-radius: 50%;
+  content: "";
+  animation: home-ping 2s ease-out infinite;
+}
+
+#content svg.celorga-hero2-ok {
+  width: 1rem;
+  height: 1rem;
+  color: var(--home-ok);
+}
+
+.celorga-spinner {
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 2px solid color-mix(in srgb, var(--link) 25%, transparent);
+  border-top-color: var(--link);
+  border-radius: 50%;
+}
+
+.celorga-motion .celorga-spinner {
+  animation: home-spin 0.9s linear infinite;
+}
+
+@keyframes home-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 1180px) {
+  .celorga-hero2-chips { display: none; }
+}
+
+/* ───────────────────────── Agents marquee ───────────────────────── */
+
+#content .celorga-harness2 {
+  display: block;
+  max-width: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: center;
+}
+
+#content .celorga-harness2 .celorga-home-harnesses-copy {
+  max-width: 44rem;
+  margin: 0 auto 2rem;
+}
+
+#content .celorga-harness2 h2 {
+  font-size: clamp(1.6rem, 3vw, 2.3rem);
+}
+
+.celorga-marquee {
+  position: relative;
+  overflow: hidden;
+  padding: 0.5rem 0;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+
+#content .celorga-harness2 .celorga-home-harness-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+#content .celorga-harness2 .celorga-marquee.is-ready .celorga-home-harness-list {
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  width: max-content;
+  animation: home-marquee 42s linear infinite;
+}
+
+#content .celorga-harness2 .celorga-marquee:hover .celorga-home-harness-list {
+  animation-play-state: paused;
+}
+
+@keyframes home-marquee {
+  to { transform: translateX(calc(-50% - 0.375rem)); }
+}
+
+#content .celorga-harness2 .celorga-home-harness-list li {
+  flex-direction: row;
+  gap: 0.65rem;
+  min-height: 0;
+  padding: 0.75rem 1.2rem 0.75rem 0.9rem;
+  border-radius: 999px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-small);
+  white-space: nowrap;
+}
+
+#content .celorga-harness2 .celorga-home-harness-list svg.celorga-logo {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+
+#content .celorga-harness2 .celorga-home-harness-list strong {
+  font-size: 0.95rem;
+}
+
+#content .celorga-harness2 .celorga-home-harness-mcp {
+  margin-top: 1.75rem;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* ───────────────────────── Bento: live feature scenes ───────────────────────── */
+
+#content .celorga-bento-section {
+  margin: 0 0 clamp(4rem, 8vw, 7rem);
+}
+
+#content .celorga-bento-head {
+  max-width: 50rem;
+  margin: 0 auto clamp(2rem, 4vw, 3rem);
+  text-align: center;
+}
+
+#content main:has(.celorga-hero2) .celorga-sample-intro h2,
+#content main:has(.celorga-hero2) .celorga-home-story-copy h2 {
+  font-size: clamp(1.75rem, 3.4vw, 2.65rem);
+  letter-spacing: -0.04em;
+  line-height: 1.08;
+  text-wrap: balance;
+}
+
+#content .celorga-bento-head > p:not(.celorga-home-kicker) {
+  max-width: 42rem;
+  margin-inline: auto;
+  color: var(--muted);
+  font-size: 1.04rem;
+}
+
+#content .celorga-bento {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+#content .celorga-bento-card {
+  --mx: 50%;
+  --my: 0%;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+  min-width: 0;
+  padding: 1.5rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-small);
+  transition: border-color 0.3s, box-shadow 0.3s var(--home-ease), transform 0.3s var(--home-ease);
+}
+
+#content .celorga-bento-card::before {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(420px circle at var(--mx) var(--my), color-mix(in srgb, var(--link) 9%, transparent), transparent 60%);
+  content: "";
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+#content .celorga-bento-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 28px 60px -28px rgba(29, 43, 38, 0.35);
+  transform: translateY(-3px);
+}
+
+#content .celorga-bento-card:hover::before {
+  opacity: 1;
+}
+
+#content .celorga-bento-wide {
+  grid-column: span 2;
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  align-items: center;
+  gap: 1.75rem;
+}
+
+#content .celorga-bento-label {
+  margin: 0 0 0.5rem;
+  color: var(--signal);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+#content .celorga-bento-copy h3 {
+  margin: 0 0 0.45rem;
+  font-size: 1.28rem;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+}
+
+#content .celorga-bento-copy > p:not(.celorga-bento-label) {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+#content .celorga-bento-visual {
+  position: relative;
+  min-height: 12.5rem;
+  margin-top: auto;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background:
+    radial-gradient(color-mix(in srgb, var(--fg) 9%, transparent) 1px, transparent 1.2px) 0 0 / 16px 16px,
+    color-mix(in srgb, var(--canvas) 70%, var(--surface-raised));
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+#content .celorga-bento-visual p {
+  margin: 0;
+}
+
+#content .celorga-bento-visual code {
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  font-size: 0.68rem;
+}
+
+#content .celorga-bento-visual svg.celorga-logo {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* Timeline primitives: [data-at] appears, [data-off] leaves. The finished
+   frame (no motion) shows everything except transitional [data-off] parts. */
+html:not(.celorga-motion) #content .celorga-bento [data-off] {
+  display: none;
+}
+
+.celorga-motion #content .celorga-bento [data-at] {
+  transition: opacity 0.45s var(--home-ease), transform 0.55s var(--home-ease), filter 0.45s var(--home-ease);
+}
+
+.celorga-motion #content .celorga-bento [data-at]:not(.is-on) {
+  opacity: 0;
+  transform: translateY(8px);
+  filter: blur(4px);
+}
+
+.celorga-motion #content .celorga-bento [data-off].is-off {
+  opacity: 0;
+  transform: translateY(-4px);
+  filter: blur(4px);
+}
+
+#content .celorga-pill {
+  display: inline-block;
+  margin-left: 0.25rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: var(--blue-soft);
+  color: var(--link-strong);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+#content .celorga-pill-signal {
+  background: var(--signal-soft);
+  color: var(--signal);
+}
+
+/* Room */
+#content .celorga-demo-room {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-height: 17.5rem;
+}
+
+#content .celorga-msg {
+  display: grid;
+  gap: 0.15rem;
+  max-width: 88%;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px 12px 12px 12px;
+  background: var(--bg);
+  box-shadow: 0 4px 12px -8px rgba(29, 43, 38, 0.3);
+}
+
+#content .celorga-msg-you {
+  display: block;
+  align-self: flex-end;
+  border-color: transparent;
+  border-radius: 12px 4px 12px 12px;
+  background: #2854d7;
+  color: white;
+}
+
+#content .celorga-msg b { color: var(--link); font-weight: 600; }
+#content .celorga-msg-you b { color: white; }
+
+#content .celorga-msg-who {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+#content .celorga-msg-text {
+  grid-area: 2 / 1;
+}
+
+#content .celorga-typing {
+  grid-area: 2 / 1;
+  display: inline-flex;
+  gap: 0.22rem;
+  align-items: center;
+  height: 1.15rem;
+}
+
+#content .celorga-typing i {
+  width: 0.36rem;
+  height: 0.36rem;
+  border-radius: 50%;
+  background: var(--quiet);
+}
+
+.celorga-motion #content .celorga-typing i {
+  animation: home-typing 1s ease-in-out infinite;
+}
+
+.celorga-motion #content .celorga-typing i:nth-child(2) { animation-delay: 0.15s; }
+.celorga-motion #content .celorga-typing i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes home-typing {
+  0%, 100% { opacity: 0.3; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-3px); }
+}
+
+.celorga-motion #content .celorga-msg [data-at].celorga-msg-text:not(.is-on) {
+  transform: none;
+}
+
+/* Crypt */
+#content .celorga-crypt-viewers {
+  display: flex;
+  gap: 0.3rem;
+  margin-bottom: 0.75rem;
+  padding: 0.2rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+}
+
+#content .celorga-crypt-viewers span {
+  flex: 1;
+  padding: 0.25rem 0.4rem;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+  transition: background 0.35s, color 0.35s;
+}
+
+#content .celorga-crypt-viewers span.is-on {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+#content .celorga-crypt-file {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+#content .celorga-crypt-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem !important;
+  font-weight: 600;
+}
+
+#content svg.celorga-crypt-lock {
+  width: 0.95rem;
+  height: 0.95rem;
+  margin-left: auto;
+  color: var(--home-ok);
+  transition: color 0.3s;
+}
+
+#content .celorga-crypt-file.is-sealed svg.celorga-crypt-lock {
+  color: var(--signal);
+}
+
+#content .celorga-crypt-line {
+  padding-left: 1rem;
+  overflow: hidden;
+  color: var(--fg);
+  white-space: nowrap;
+  text-overflow: clip;
+  transition: color 0.3s;
+}
+
+#content .celorga-crypt-file.is-sealed .celorga-crypt-line {
+  color: var(--quiet);
+}
+
+#content .celorga-crypt-status {
+  display: grid;
+  margin-top: 0.6rem !important;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--border);
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+}
+
+#content .celorga-crypt-status span {
+  grid-area: 1 / 1;
+  color: var(--home-ok);
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+#content .celorga-crypt-status span[data-for="codex"] { color: var(--signal); }
+#content .celorga-demo-crypt[data-viewer="you"] .celorga-crypt-status [data-for="you"],
+#content .celorga-demo-crypt[data-viewer="claude"] .celorga-crypt-status [data-for="claude"],
+#content .celorga-demo-crypt[data-viewer="codex"] .celorga-crypt-status [data-for="codex"],
+#content .celorga-demo-crypt:not([data-viewer]) .celorga-crypt-status [data-for="you"] {
+  opacity: 1;
+}
+
+/* Publish */
+#content .celorga-demo-publish {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+#content .celorga-publish-doc {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  font-size: 0.72rem;
+}
+
+#content .celorga-publish-doc > p {
+  max-height: 3em;
+  margin-bottom: 0.3rem;
+  overflow: hidden;
+}
+
+#content .celorga-publish-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+#content .celorga-publish-private {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  text-decoration: line-through;
+  text-decoration-color: var(--signal);
+  text-decoration-thickness: 1.5px;
+}
+
+.celorga-motion #content .celorga-publish-private {
+  text-decoration-color: transparent;
+  transition: opacity 0.4s, max-height 0.5s var(--home-ease) 0.25s, margin 0.5s var(--home-ease) 0.25s, text-decoration-color 0.2s, filter 0.4s;
+}
+
+.celorga-motion #content .celorga-demo-publish.is-redacting .celorga-publish-private {
+  text-decoration-color: var(--signal);
+}
+
+.celorga-motion #content .celorga-publish-private.is-off {
+  max-height: 0;
+  margin-bottom: 0;
+  transform: none;
+}
+
+#content .celorga-publish-targets {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#content .celorga-publish-targets li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+#content .celorga-publish-targets li:nth-child(1) svg { color: #4285f4; }
+#content .celorga-publish-targets li:nth-child(2) svg { color: #f4b400; }
+#content .celorga-publish-targets li:nth-child(3) svg { color: #0f9d58; }
+
+#content .celorga-publish-toast {
+  grid-column: 1 / -1;
+  justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  background: var(--fg);
+  color: var(--bg);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+#content .celorga-publish-toast svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--mint);
+}
+
+/* Prose */
+#content .celorga-prose-text {
+  font-family: Charter, "Iowan Old Style", Georgia, serif;
+  font-size: 0.98rem;
+  line-height: 1.65;
+}
+
+#content .celorga-prose-alt {
+  padding: 0 0.15rem;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--link) 10%, transparent);
+  box-shadow: inset 0 -1.5px 0 color-mix(in srgb, var(--link) 55%, transparent);
+  transition: width 0.45s var(--home-ease);
+}
+
+#content .celorga-prose-ghost {
+  opacity: 0.32;
+  text-decoration: underline dotted color-mix(in srgb, var(--fg) 40%, transparent);
+}
+
+.celorga-motion #content .celorga-prose-ghost[data-at]:not(.is-on) {
+  opacity: 1;
+  transform: none;
+  filter: none;
+  text-decoration-color: transparent;
+}
+
+.celorga-motion #content .celorga-prose-ghost.is-on {
+  opacity: 0.32;
+}
+
+.celorga-motion #content .celorga-prose-cut {
+  transition: opacity 0.5s, filter 0.5s, background 0.3s;
+}
+
+.celorga-motion #content .celorga-demo-prose.is-selecting .celorga-prose-cut:not(.is-off) {
+  background: color-mix(in srgb, var(--signal) 18%, transparent);
+}
+
+#content .celorga-prose-overflow {
+  margin-top: 0.9rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+}
+
+#content .celorga-prose-overflow > span {
+  display: block;
+  margin-bottom: 0.2rem;
+  color: var(--quiet);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+#content .celorga-prose-overflow p {
+  color: var(--muted);
+  font-family: Charter, "Iowan Old Style", Georgia, serif;
+  font-size: 0.82rem;
+}
+
+/* Phone */
+#content .celorga-demo-phone {
+  display: grid;
+  place-items: center;
+  padding: 0.9rem 0 0;
+  overflow: hidden;
+}
+
+#content .celorga-phone {
+  position: relative;
+  width: 12.5rem;
+  height: 15rem;
+  margin-bottom: -2.5rem;
+  padding: 1rem 0.6rem;
+  border: 5px solid var(--fg);
+  border-radius: 2rem;
+  background:
+    radial-gradient(120% 80% at 20% 0%, color-mix(in srgb, var(--link) 35%, transparent), transparent 60%),
+    radial-gradient(100% 70% at 100% 100%, color-mix(in srgb, var(--signal) 30%, transparent), transparent 60%),
+    color-mix(in srgb, var(--canvas) 60%, var(--surface-raised));
+}
+
+#content .celorga-phone::before {
+  position: absolute;
+  top: 0.4rem;
+  left: 50%;
+  width: 3.4rem;
+  height: 0.95rem;
+  border-radius: 999px;
+  background: var(--fg);
+  content: "";
+  transform: translateX(-50%);
+}
+
+#content .celorga-phone-time {
+  margin: 0.6rem 0 0.7rem !important;
+  color: var(--fg);
+  font-size: 1.9rem;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  text-align: center;
+}
+
+#content .celorga-phone-card {
+  position: relative;
+  padding: 0.6rem 0.65rem;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--home-glass);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 10px 24px -12px rgba(0, 0, 0, 0.35);
+  font-size: 0.68rem;
+}
+
+#content .celorga-phone-app {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 600;
+}
+
+#content .celorga-phone-app svg.celorga-logo {
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
+#content .celorga-phone-ask {
+  margin: 0.2rem 0 0.45rem !important;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+#content .celorga-phone-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.3rem;
+}
+
+#content .celorga-phone-buttons span {
+  padding: 0.25rem;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  font-weight: 600;
+  text-align: center;
+}
+
+#content .celorga-phone-buttons .celorga-phone-approve {
+  background: var(--home-ok);
+  color: white;
+}
+
+#content .celorga-phone-done {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  background: var(--home-ok);
+  color: white;
+  font-weight: 700;
+}
+
+#content .celorga-phone-done svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+#content .celorga-phone-tap {
+  position: absolute;
+  bottom: 0.4rem;
+  left: 22%;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 2px solid white;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.celorga-motion #content .celorga-phone-tap.is-on {
+  animation: home-tap 0.6s ease-out both;
+}
+
+@keyframes home-tap {
+  from { scale: 0.4; opacity: 1; }
+  to { scale: 1.6; opacity: 0; }
+}
+
+.celorga-motion #content .celorga-phone-card[data-at]:not(.is-on) {
+  transform: translateY(-140%);
+  filter: none;
+}
+
+/* Meeting */
+#content .celorga-demo-meeting {
+  display: grid;
+  gap: 0.5rem;
+  align-content: start;
+  min-height: 16rem;
+}
+
+#content .celorga-meeting-rec {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+#content .celorga-meeting-rec > svg {
+  width: 1rem;
+  height: 1rem;
+  color: var(--signal);
+}
+
+#content .celorga-meeting-rec em {
+  margin-left: auto;
+  color: var(--quiet);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-style: normal;
+  text-transform: uppercase;
+}
+
+.celorga-wave {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 2px;
+  height: 1.2rem;
+}
+
+.celorga-wave i {
+  flex: 1;
+  max-width: 3px;
+  height: 40%;
+  border-radius: 2px;
+  background: var(--signal);
+  opacity: 0.75;
+}
+
+.celorga-wave i:nth-child(3n) { height: 75%; }
+.celorga-wave i:nth-child(4n+1) { height: 55%; }
+.celorga-wave i:nth-child(5n) { height: 95%; }
+
+.celorga-motion .celorga-wave i {
+  animation: home-wave 1.1s ease-in-out infinite alternate;
+}
+
+.celorga-wave i:nth-child(2n) { animation-delay: -0.3s; }
+.celorga-wave i:nth-child(3n) { animation-delay: -0.6s; }
+.celorga-wave i:nth-child(5n) { animation-delay: -0.9s; }
+
+@keyframes home-wave {
+  from { transform: scaleY(0.35); }
+  to { transform: scaleY(1); }
+}
+
+#content .celorga-meeting-line {
+  padding: 0.35rem 0.6rem;
+  border-left: 2px solid var(--border-strong);
+  color: var(--fg);
+}
+
+#content .celorga-meeting-line b {
+  margin-right: 0.35rem;
+  color: var(--link);
+}
+
+#content .celorga-meeting-tasks {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+#content .celorga-meeting-assign {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: max-content;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: var(--blue-soft);
+  color: var(--link-strong);
+  font-family: var(--font-sans);
+  font-weight: 600;
+}
+
+/* Data */
+#content .celorga-data-query {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--fg);
+}
+
+#content .celorga-data-query span { color: var(--syntax-keyword); font-weight: 700; }
+#content .celorga-data-query em { color: var(--quiet); font-style: normal; }
+
+#content .celorga-data-chart {
+  display: block;
+  width: 100%;
+  height: 7.5rem;
+  margin: 0.6rem 0;
+  overflow: visible;
+}
+
+.celorga-data-grid {
+  fill: none;
+  stroke: var(--border);
+  stroke-dasharray: 3 4;
+}
+
+.celorga-data-line {
+  fill: none;
+  stroke: var(--link);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.celorga-data-line-b {
+  stroke: var(--signal);
+  stroke-width: 2;
+}
+
+.celorga-data-area {
+  fill: color-mix(in srgb, var(--link) 14%, transparent);
+}
+
+.celorga-motion #content .celorga-data-line[data-at] {
+  stroke-dasharray: 420;
+  stroke-dashoffset: 420;
+  transition: stroke-dashoffset 1.6s var(--home-ease-io);
+}
+
+.celorga-motion #content .celorga-data-line[data-at]:not(.is-on) {
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+.celorga-motion #content .celorga-data-line.is-on {
+  stroke-dashoffset: 0;
+}
+
+#content .celorga-data-note {
+  display: flex;
+  gap: 0.45rem;
+  align-items: flex-start;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  font-size: 0.74rem;
+}
+
+#content .celorga-bento-links {
+  justify-content: center;
+  margin-top: 1.75rem;
+}
+
+@media (max-width: 1020px) {
+  #content .celorga-bento {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #content .celorga-bento-wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 680px) {
+  #content .celorga-bento {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #content .celorga-bento-wide {
+    grid-column: auto;
+  }
+}
+
+/* ───────────────────────── Scroll reveal ───────────────────────── */
+
+.celorga-motion #content .celorga-reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  filter: blur(6px);
+  transition: opacity 0.9s var(--home-ease), transform 1s var(--home-ease), filter 0.9s var(--home-ease);
+  transition-delay: calc(var(--reveal-i, 0) * 90ms);
+}
+
+.celorga-motion #content .celorga-reveal.is-in {
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+.celorga-motion #content .celorga-bento-card.celorga-reveal.is-in:hover {
+  transform: translateY(-3px);
+  transition-delay: 0s;
+}
+
+/* Story screenshots get a subtle lift as they arrive. */
+.celorga-motion #content .celorga-home-story-media.celorga-reveal {
+  transform: translateY(40px) scale(0.97);
+}
+
+.celorga-motion #content .celorga-home-story-media.celorga-reveal.is-in {
+  transform: none;
+}
+
+#content main:has(.celorga-hero2) .celorga-home-story-media img {
+  transition: transform 0.6s var(--home-ease);
+}
+
+#content main:has(.celorga-hero2) figure.celorga-home-story-media:hover img {
+  transform: scale(1.015);
+}
+
+/* Full-app screenshots get the same window chrome as the hero. */
+#content figure.celorga-home-window::before {
+  display: block;
+  height: 1.75rem;
+  border-bottom: 1px solid var(--border);
+  background:
+    radial-gradient(circle at 1rem 50%, #ff5f57 0.3rem, transparent 0.32rem),
+    radial-gradient(circle at 1.9rem 50%, #febc2e 0.3rem, transparent 0.32rem),
+    radial-gradient(circle at 2.8rem 50%, #28c840 0.3rem, transparent 0.32rem),
+    color-mix(in srgb, var(--canvas) 70%, var(--surface-raised));
+  content: "";
+}
+
+#content main:has(.celorga-hero2) figure.celorga-home-story-media {
+  border-radius: 14px;
+  box-shadow: 0 40px 80px -40px rgba(29, 43, 38, 0.35), var(--shadow-small);
+}
+
+/* ───────────────────────── Closing call to action ───────────────────────── */
+
+#content .celorga-cta2 {
+  --cta-bg: #141b18;
+  --cta-fg: #f3f5f0;
+  --cta-muted: #a9b6b0;
+  position: relative;
+  margin: clamp(3rem, 6vw, 5rem) 0 clamp(3rem, 6vw, 5rem);
+  padding: clamp(3rem, 8vw, 6rem) clamp(1.25rem, 5vw, 4rem);
+  overflow: hidden;
+  border-radius: 28px;
+  background: var(--cta-bg);
+  color: var(--cta-fg);
+  text-align: center;
+  isolation: isolate;
+}
+
+.celorga-cta2-backdrop {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+}
+
+.celorga-cta2-backdrop i {
+  position: absolute;
+  width: 32rem;
+  height: 22rem;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.5;
+}
+
+.celorga-cta2-backdrop i:nth-child(1) { top: -30%; left: -5%; background: var(--signal); opacity: 0.35; }
+.celorga-cta2-backdrop i:nth-child(2) { right: -10%; bottom: -40%; background: #3b62e6; }
+
+.celorga-motion .celorga-cta2-backdrop i:nth-child(1) { animation: home-drift-a 20s var(--home-ease-io) infinite alternate; }
+.celorga-motion .celorga-cta2-backdrop i:nth-child(2) { animation: home-drift-b 24s var(--home-ease-io) infinite alternate; }
+
+.celorga-cta2-backdrop span {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.14) 1px, transparent 1.3px);
+  background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(ellipse 60% 70% at 50% 50%, #000, transparent 80%);
+  mask-image: radial-gradient(ellipse 60% 70% at 50% 50%, #000, transparent 80%);
+}
+
+#content .celorga-cta2-kicker {
+  margin: 0 0 1rem;
+  color: #ff9b80;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+#content .celorga-cta2 h2 {
+  max-width: 24ch;
+  margin: 0 auto;
+  color: var(--cta-fg);
+  font-size: clamp(2.1rem, 5vw, 3.9rem);
+  font-weight: 500;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  text-wrap: balance;
+}
+
+#content .celorga-cta2 h2 em {
+  color: #ff9b80;
+  font-style: normal;
+}
+
+#content .celorga-cta2 > p:not(.celorga-cta2-kicker) {
+  max-width: 36rem;
+  margin: 1.2rem auto 0;
+  color: var(--cta-muted);
+  font-size: 1.05rem;
+}
+
+#content .celorga-cta2 .celorga-hero-actions {
+  justify-content: center;
+  margin-top: 2rem;
+}
+
+#content main:has(.celorga-hero2) .celorga-cta2 .celorga-hero-action:not(.celorga-hero-action-primary) {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--cta-fg);
+}
+
+#content main:has(.celorga-hero2) .celorga-cta2 .celorga-hero-action:not(.celorga-hero-action-primary):hover {
+  border-color: rgba(255, 255, 255, 0.5);
+  color: white;
+}
+
+#content .celorga-cta2-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.62rem 0.7rem 0.62rem 0.9rem;
+  border: 1px dashed rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--cta-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+#content .celorga-cta2-copy code {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cta-fg);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+#content .celorga-cta2-copy code::before {
+  margin-right: 0.45rem;
+  color: var(--cta-muted);
+  content: "$";
+}
+
+#content .celorga-cta2-copy span {
+  padding: 0.12rem 0.45rem;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+}
+
+#content .celorga-cta2-copy:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  color: white;
+}
+
+@media (max-width: 759px) {
+  #content .celorga-hero2 > .celorga-hero2-eyebrow {
+    font-size: 0.6rem;
+    letter-spacing: 0.03em;
+  }
+
+  #content .celorga-hero2 {
+    padding-top: 2rem;
+    text-align: left;
+  }
+
+  #content .celorga-hero2-title,
+  #content .celorga-hero2 > .celorga-hero2-lead {
+    margin-inline: 0;
+  }
+
+  #content .celorga-hero2 .celorga-hero-actions,
+  #content .celorga-hero2 .celorga-home-hero-note {
+    justify-content: flex-start;
+  }
+
+  #content .celorga-hero2-stage {
+    perspective: none;
+  }
+
+  #content .celorga-hero2-window.celorga-home-hero-shot {
+    transform: none;
+  }
+
+  #content .celorga-cta2 {
+    border-radius: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #content .celorga-hero2-window.celorga-home-hero-shot {
+    transform: none;
+  }
+}
