@@ -652,6 +652,20 @@ public struct AgentRunItem: Identifiable, Decodable, Hashable, Sendable {
     }
     return nil
   }
+  /// The AI chat currently linked to this run: the latest `AI chat thread: ID`
+  /// line in its comments, lowercased. Run traces, the coordinator, and host
+  /// presence use the same link to confirm whether an executor is working.
+  public var linkedAIChatThreadID: String? {
+    for comment in comments.reversed() {
+      guard let range = comment.body.range(
+        of: #"AI chat thread:?\s+[0-9A-Fa-f-]{36}"#,
+        options: .regularExpression
+      ) else { continue }
+      let id = comment.body[range].suffix(36)
+      return String(id).lowercased()
+    }
+    return nil
+  }
   public var hasOpenClawApprovalContinuation: Bool {
     workflowId != nil
       || isOpenClawExternalDraft
@@ -668,6 +682,13 @@ public struct AgentRunItem: Identifiable, Decodable, Hashable, Sendable {
         options: .regularExpression
       ) != nil
     }
+  }
+  /// Whether Resume on this blocked run hands it back to an agent. A plain
+  /// status change starts no executor, so the run would read "running" while
+  /// nothing works on it. A run with a decided approval boundary keeps the plain
+  /// change, because Continue Approved Work is the hand-off that follows it.
+  public var resumeHandsOffToAgent: Bool {
+    status == "blocked" && revisionAwaitingHandoff == nil && currentApprovalBoundary.isEmpty
   }
   public var canContinueApprovedWork: Bool {
     status == "running"

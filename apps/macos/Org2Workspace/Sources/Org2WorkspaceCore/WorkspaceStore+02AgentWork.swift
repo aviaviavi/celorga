@@ -1652,6 +1652,28 @@ extension WorkspaceStore {
     }
   }
 
+  /// Records the AI chat that now carries a run's work. A continuation often
+  /// runs in a different conversation from the one that started the run; without
+  /// this link, run traces and the coordinator keep reading the earlier
+  /// conversation and report the run as not executing while it is.
+  func linkAgentRunToContinuationThread(_ runID: String, thread: AIChatThread) async {
+    let threadID = thread.id.uuidString.lowercased()
+    if agentRuns.first(where: { $0.id == runID })?.linkedAIChatThreadID == threadID { return }
+    let comment = "AI destination: \(thread.destinationID)\nAI chat thread: \(threadID)"
+    if let agentRunContinuationLinkForTesting {
+      await agentRunContinuationLinkForTesting(runID, comment)
+      return
+    }
+    guard let corpusRoot else { return }
+    _ = try? await cli.run([
+      "run", "comment", runID,
+      "--author", "Celorga",
+      "--body", comment,
+      "--dir", corpusRoot.path,
+      "--json"
+    ])
+  }
+
   /// Destination for a run continuation that the OpenClaw lifecycle adapter
   /// handed back with a Gateway session. The run's own destination wins; the
   /// fallback is an OpenClaw Gateway destination, never a direct provider or
@@ -2020,6 +2042,7 @@ extension WorkspaceStore {
       navigateToSurface(.aiChat)
       selectAIChatThread(thread.id)
     }
+    await linkAgentRunToContinuationThread(run.id, thread: thread)
     guard let pointer = aiChatContextPointer(for: run, requiresExistingRecord: false) else {
       throw CocoaError(.fileReadCorruptFile, userInfo: [
         NSLocalizedDescriptionKey: "The approved run could not be attached to its continuation thread."
@@ -2133,6 +2156,7 @@ extension WorkspaceStore {
     }
     navigateToSurface(.aiChat)
     selectAIChatThread(thread.id)
+    await linkAgentRunToContinuationThread(run.id, thread: thread)
     guard let pointer = aiChatContextPointer(for: run, requiresExistingRecord: false) else {
       return false
     }
@@ -2327,6 +2351,7 @@ extension WorkspaceStore {
         destinationID: destination.id
       )
     }
+    await linkAgentRunToContinuationThread(run.id, thread: thread)
     guard let pointer = aiChatContextPointer(for: run, requiresExistingRecord: false) else {
       throw CocoaError(.fileReadCorruptFile, userInfo: [
         NSLocalizedDescriptionKey: "The run could not be attached to its revision thread."
@@ -2487,6 +2512,9 @@ extension WorkspaceStore {
         )
       }
       selectAIChatThread(thread.id)
+      // Link the run to this conversation before the turn starts, so traces and
+      // the coordinator follow the executing turn rather than an earlier one.
+      await linkAgentRunToContinuationThread(run.id, thread: thread)
       guard let pointer = aiChatContextPointer(for: run, requiresExistingRecord: false) else {
         statusText = "Run context could not be resolved"
         return false
@@ -2531,6 +2559,24 @@ extension WorkspaceStore {
     let current = agentRuns[index]
     guard current.status == "blocked" || !Self.isAgentRun(current, newerThan: resumed) else { return }
     agentRuns[index] = resumed
+  }
+
+  nonisolated static let agentRunResumeWithoutDirectionResponse =
+    "Resume without new direction. Check whether the recorded blocker still applies; continue if it does not, and otherwise block again with the current, specific question."
+
+  /// Resume for a blocked run: hand it back to its agent the same way Reply &
+  /// Resume does, with no new direction, so "running" means an agent turn was
+  /// actually handed the work.
+  @discardableResult
+  public func resumeBlockedAgentRun(_ run: AgentRunItem) async -> Bool {
+    guard run.resumeHandsOffToAgent else {
+      await mutateAgentRun(run, action: "resume")
+      return agentRuns.first(where: { $0.id == run.id })?.status == "running"
+    }
+    return await respondToAgentRunClarification(
+      run,
+      response: Self.agentRunResumeWithoutDirectionResponse
+    )
   }
 
   nonisolated static func normalizedAgentRunClarificationResponse(_ value: String) -> String? {

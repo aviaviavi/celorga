@@ -2077,6 +2077,70 @@ final class AgentRunModelsTests: XCTestCase {
     XCTAssertNil(try makeRun(status: "running", blockedReason: nil).clarificationPrompt)
   }
 
+  func testLinkedAIChatThreadIDUsesTheLatestThreadComment() throws {
+    XCTAssertNil(try makeRun(comments: ["No conversation yet"]).linkedAIChatThreadID)
+    let run = try makeRun(comments: [
+      "AI destination: builtin.openclaw\nAI chat thread: aaaaaaaa-0000-4000-8000-000000000001",
+      "AI chat thread AAAAAAAA-0000-4000-8000-000000000001 replied:\nBlocked on access.",
+      "AI destination: builtin.openclaw\nAI chat thread: BBBBBBBB-0000-4000-8000-000000000002",
+      "Workspace user: try again"
+    ])
+    XCTAssertEqual(run.linkedAIChatThreadID, "bbbbbbbb-0000-4000-8000-000000000002")
+  }
+
+  func testResumeHandsOffUnlessApprovedWorkOrARevisionFollows() throws {
+    XCTAssertTrue(try makeRun(status: "blocked", blockedReason: "Which period?").resumeHandsOffToAgent)
+    XCTAssertFalse(try makeRun(status: "running").resumeHandsOffToAgent)
+    XCTAssertFalse(
+      try makeRun(status: "blocked", blockedReason: "Restore the connection", approvalStatus: "approved")
+        .resumeHandsOffToAgent,
+      "a decided approval boundary resumes through Continue Approved Work"
+    )
+  }
+
+  @MainActor
+  func testResumeHandsTheBlockedRunToAnAgentAndLinksItsConversation() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-resume-handoff-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let blocked = try makeRun(
+      id: "blocked-run",
+      status: "blocked",
+      blockedReason: "Which reporting period should this cover?",
+      comments: ["AI destination: builtin.openclaw\nAI chat thread: aaaaaaaa-0000-4000-8000-000000000001"]
+    )
+    let store = try WorkspaceStore(
+      cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()),
+      aiChatTranscriptURL: root.appendingPathComponent(".org2/openclaw-chat.json"),
+      aiChatSendHandler: { _, _, _, _ in "Done" }
+    )
+    store.corpusRoot = root
+    store.replaceAgentRunsForTesting([blocked])
+    store.agentRunListLoaderForTesting = { [blocked] }
+    var recordedResponse: String?
+    store.agentRunClarificationReplyForTesting = { requestedRun, response in
+      recordedResponse = response
+      return OpenClawRunContinuation(runID: requestedRun.id, sessionKey: nil, prompt: "Continue")
+    }
+    var links: [(runID: String, comment: String)] = []
+    store.agentRunContinuationLinkForTesting = { runID, comment in
+      links.append((runID, comment))
+    }
+
+    let succeeded = await store.resumeBlockedAgentRun(blocked)
+
+    XCTAssertTrue(succeeded, store.errorText ?? "")
+    XCTAssertEqual(recordedResponse, WorkspaceStore.agentRunResumeWithoutDirectionResponse)
+    let continuationThread = try XCTUnwrap(store.aiChatThreads.first { $0.title.hasPrefix("Resume: ") })
+    XCTAssertEqual(links.count, 1, "the run is linked to the conversation that continues it")
+    XCTAssertEqual(links.first?.runID, blocked.id)
+    XCTAssertEqual(
+      links.first?.comment,
+      "AI destination: \(continuationThread.destinationID)\nAI chat thread: \(continuationThread.id.uuidString.lowercased())"
+    )
+  }
+
   func testAgentRunClarificationResponseRequiresText() {
     XCTAssertNil(WorkspaceStore.normalizedAgentRunClarificationResponse(" \n\t"))
     XCTAssertEqual(

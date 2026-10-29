@@ -3877,6 +3877,10 @@ public final class WorkspaceStore {
   var agentRunApprovalContinuationForTesting: ((
     _ run: AgentRunItem
   ) async throws -> OpenClawApprovedRunContinuation)?
+  var agentRunContinuationLinkForTesting: ((
+    _ runID: String,
+    _ comment: String
+  ) async -> Void)?
   var agentRunApprovalContinuationFailureForTesting: ((
     _ run: AgentRunItem,
     _ reason: String

@@ -1188,6 +1188,15 @@ struct RunCenterDetail: View {
           .buttonStyle(WorkspaceActionButtonStyle())
           .disabled(isMutating)
           .help("Resume this run and send your requested changes to an agent, which will request a new approval")
+        } else if run.resumeHandsOffToAgent {
+          Button {
+            Task { await store.resumeBlockedAgentRun(run) }
+          } label: {
+            Label("Resume", systemImage: "play.fill")
+          }
+          .buttonStyle(WorkspaceActionButtonStyle())
+          .disabled(isMutating)
+          .help("Hand this run back to its agent without new direction. To add direction, use Reply & Resume below.")
         } else {
           actionButton("Resume", "play.fill", "resume")
         }
@@ -1234,6 +1243,13 @@ struct RunCenterDetail: View {
         }
         if run.status == "failed" {
           Button("Dismiss Failure") { Task { await store.mutateAgentRun(run, action: "cancel") } }
+        }
+        if run.resumeHandsOffToAgent {
+          // Only for work an agent outside Celorga is already doing; this
+          // starts no agent turn.
+          Button("Mark Running Without Starting an Agent") {
+            Task { await store.mutateAgentRun(run, action: "resume") }
+          }
         }
         if run.status == "completed" && run.workflowId == nil {
           Button("Create Reusable Workflow…") { isWorkflowConfirmationPresented = true }
