@@ -666,7 +666,7 @@ public enum WorkspaceThemeDocumentStyle {
     \(r) .system-badge { color: \(c(.planning)); background: \(mix(.planning, 14)); }
     \(r) .queued-badge { background: \(mix(.text, 10)); }
     \(r) .attachment-preview { border-color: \(c(.hairline)); background: \(c(.canvas)); }
-    \(r) button:hover { background: \(mix(.text, 10)); }
+    \(r) button:not(.context-pill):hover { background: \(mix(.text, 10)); }
     \(r) .icon-button.copied, \(r) .insertions { color: \(c(.done)); }
     \(r) .deletions { color: \(c(.todo)); }
     \(r) #latest { background: \(c(.document)); border-color: \(c(.hairline)); }

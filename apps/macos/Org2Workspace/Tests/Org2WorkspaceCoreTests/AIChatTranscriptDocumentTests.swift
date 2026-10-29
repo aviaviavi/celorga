@@ -388,6 +388,56 @@ final class AIChatTranscriptDocumentTests: XCTestCase {
     XCTAssertTrue(events.contains { $0["action"] as? String == "reply" && $0["id"] as? String == "answer" })
   }
 
+  func testContextPillsOpenTheirSourceAndReplyPillsShowTheQuotedMessage() async throws {
+    let quotedID = UUID()
+    let content = AIChatContextPresentation.replyContext(
+      author: "Codex", messageID: quotedID, content: "The build is green."
+    ) + "\n\nUse selected block “Celorga items” at ~/avi.org2/daily/2026-10-28.org:3 as context.\n\nIs this fixable?"
+    let message = AIChatMessage(role: .user, content: content)
+    let presentation = AIChatContextPresentation(content)
+    XCTAssertEqual(presentation.contexts.count, 2)
+
+    // The page posts only the pill's position; the source comes from the message.
+    let opened = try XCTUnwrap(AIChatTranscriptHTML.openableContext(in: message, index: "1"))
+    XCTAssertEqual(opened.title, "Celorga items")
+    let reference = AIChatFileReference(path: opened.reference, line: nil)
+    XCTAssertEqual(reference.path, "~/avi.org2/daily/2026-10-28.org")
+    XCTAssertEqual(reference.line, 3)
+    XCTAssertNil(AIChatTranscriptHTML.openableContext(in: message, index: "0"), "reply pills scroll in the page")
+    XCTAssertNil(AIChatTranscriptHTML.openableContext(in: message, index: "2"))
+    XCTAssertNil(AIChatTranscriptHTML.openableContext(in: message, index: nil))
+
+    let contexts = presentation.contexts.map(AIChatTranscriptHTML.Context.init)
+    XCTAssertEqual(contexts.map(\.replyMessageID), [quotedID.uuidString.lowercased(), nil])
+    let userEntry = AIChatTranscriptHTML.Entry(
+      id: "asker", role: "user", title: "You", timestamp: "Today",
+      html: "<main><p>Is this fixable?</p></main>", plainText: nil, preparing: false,
+      contexts: contexts, attachments: [], failure: nil,
+      queued: false, canSteer: false, isRoomResponse: false, copied: false, isTruncated: false,
+      responseTrace: nil, changeSummary: nil
+    )
+    let view = try await document()
+    try await update(view, payload([
+      entry(quotedID.uuidString.lowercased(), "<main><p>The build is green.</p></main>"), userEntry,
+    ]))
+    let result = try await view.evaluateJavaScript("""
+      (()=>{
+        const pills=[...document.querySelectorAll('#message-asker .context-pill')];
+        pills[1].click(); pills[0].click();
+        return {tags:pills.map(p=>p.tagName), labels:pills.map(p=>p.getAttribute('aria-label')),
+          highlighted:document.querySelector('article.match')?.id ?? null};
+      })()
+      """) as? [String: Any]
+    XCTAssertEqual(result?["tags"] as? [String], ["BUTTON", "BUTTON"])
+    XCTAssertEqual(result?["labels"] as? [String], ["Show the quoted message", "Open Celorga items"])
+    XCTAssertEqual(result?["highlighted"] as? String, "message-" + quotedID.uuidString.lowercased())
+    let events = try await view.evaluateJavaScript("events") as? [[String: Any]] ?? []
+    let contextEvents = events.filter { $0["action"] as? String == "context" }
+    XCTAssertEqual(contextEvents.count, 1)
+    XCTAssertEqual(contextEvents.first?["id"] as? String, "asker")
+    XCTAssertEqual(contextEvents.first?["detail"] as? String, "1")
+  }
+
   func testImageAttachmentsRenderInlinePreviews() async throws {
     let bitmap = try XCTUnwrap(NSBitmapImageRep(
       bitmapDataPlanes: nil,

@@ -612,6 +612,9 @@ struct AIChatTranscriptDocument: View {
     case "delete": store.deleteQueuedAIChatMessage(uuid)
     case "steer": Task { await store.steerQueuedAIChatMessage(uuid) }
     case "reply": store.beginAIChatReply(to: uuid)
+    case "context":
+      guard let context = AIChatTranscriptHTML.openableContext(in: message, index: detail) else { return }
+      store.openAIChatContext(store.resolvedAIChatContext(context))
     default: break
     }
   }
@@ -646,15 +649,32 @@ enum AIChatTranscriptHTML {
     )
   }
 
+  /// The context a transcript pill click opens. The page posts the pill's
+  /// position, and the context is parsed again from the stored message, so the
+  /// page never supplies a path. Reply pills scroll within the page instead.
+  static func openableContext(in message: AIChatMessage, index: String?) -> AIChatPresentedContext? {
+    guard let index = index.flatMap(Int.init) else { return nil }
+    let contexts = AIChatContextPresentation(message.content).contexts
+    guard contexts.indices.contains(index), !contexts[index].isReply else { return nil }
+    return contexts[index]
+  }
+
   struct Context: Codable, Equatable {
     let title: String
     let kind: String
     let isAutomatic: Bool
+    /// The transcript message a reply pill quotes, so clicking it scrolls
+    /// there. Other pills open their source through the `context` action.
+    let replyMessageID: String?
 
     init(_ context: AIChatPresentedContext) {
       title = context.title
       kind = context.kind
       isAutomatic = context.automaticPrompt != nil
+      let replyPrefix = "ai-chat-message:"
+      replyMessageID = context.isReply && context.reference.hasPrefix(replyPrefix)
+        ? String(context.reference.dropFirst(replyPrefix.count))
+        : nil
     }
   }
 
@@ -904,15 +924,16 @@ enum AIChatTranscriptHTML {
   .system-badge,.queued-badge { padding:2px 5px; border-radius:4px; font-size:10px; font-weight:600; background:light-dark(#f9ead6,#503b26); color:light-dark(#a05b08,#f0aa5b); }
   .queued-badge { color:inherit; background:light-dark(#eee,#383838); }
   button { font:inherit; color:inherit; border:0; border-radius:4px; padding:3px 6px; background:transparent; cursor:pointer; user-select:none; -webkit-user-select:none; }
-  button:hover { background:light-dark(#e5e5e5,#424242); }
+  button:not(.context-pill):hover { background:light-dark(#e5e5e5,#424242); }
   .icon-button { display:grid; place-items:center; width:24px; height:24px; padding:0; opacity:.5; }
   .icon-button:hover,.icon-button.copied { opacity:1; }
   .icon-button.copied { color:#25a244; }
   .glyph { display:inline-grid; place-items:center; flex:0 0 14px; width:14px; height:14px; line-height:0; }
   .glyph svg,.icon-button svg,.detail-icon svg,.activity-icon svg,.change-icon svg { width:14px; height:14px; }
   .context-pills { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:6px; }
+  .context-pill:hover { text-decoration:underline; }
   .context-pill.reply-pill { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:light-dark(#555,#bbb); background:light-dark(#f2f2f2,#2c2c2e); border-color:light-dark(#ddd,#444); }
-  .context-pill { padding:3px 7px; border-radius:999px; font-size:10px; color:light-dark(#2773bd,#83bafa); background:light-dark(#eaf3fc,#27394b); border:1px solid light-dark(#bdd8f0,#34516b); }
+  .context-pill { padding:3px 7px; border-radius:999px; font-size:10px; line-height:normal; cursor:pointer; color:light-dark(#2773bd,#83bafa); background:light-dark(#eaf3fc,#27394b); border:1px solid light-dark(#bdd8f0,#34516b); }
   .message-placeholder { display:flex; align-items:center; gap:9px; min-width:215px; height:23px; padding:4px 0; color:light-dark(#777,#aaa); }
   .message-placeholder-pulse { flex:0 0 6px; width:6px; height:6px; border-radius:50%; background:currentColor; animation:pulse .85s ease-in-out infinite alternate; }
   .message-placeholder-lines { display:flex; flex-direction:column; gap:6px; }
@@ -1163,7 +1184,19 @@ enum AIChatTranscriptHTML {
       card.append(header);
       if(e.contexts.length && !e.startWork) {
         const pills=document.createElement('div'); pills.className='context-pills';
-        for(const context of e.contexts) { const pill=document.createElement('span'); const reply=context.kind==='reply to message'; pill.className='context-pill'+(reply?' reply-pill':''); pill.textContent=(reply?'↩ ':context.isAutomatic?'✦ ':'')+context.title; pills.append(pill); }
+        e.contexts.forEach((context,index)=>{
+          const pill=document.createElement('button'); const reply=context.kind==='reply to message';
+          pill.className='context-pill'+(reply?' reply-pill':''); pill.textContent=(reply?'↩ ':context.isAutomatic?'✦ ':'')+context.title;
+          pill.title=reply?'Show the quoted message':'Open '+context.title; pill.setAttribute('aria-label',pill.title);
+          pill.addEventListener('click',()=>{
+            if(!reply) { post('context',e.id,String(index)); return; }
+            const target=context.replyMessageID && document.getElementById('message-'+context.replyMessageID);
+            if(!target) return;
+            target.scrollIntoView({block:'center',behavior:'smooth'});
+            target.classList.add('match'); setTimeout(()=>target.classList.remove('match'),1200);
+          });
+          pills.append(pill);
+        });
         card.append(pills);
       }
       if(e.preparing) {
