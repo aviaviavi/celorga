@@ -2030,7 +2030,9 @@ extension WorkspaceStore {
       prompt: continuation.prompt
     )
     let context = captureAIChatCorpusContext()
-    let outcome = await awaitAIChatEnqueueAndImmediateDrain(
+    // Return once the continuation is queued; the agent's turn continues in
+    // the chat thread and may take far longer than this hand-off.
+    let outcome = await resolveDeferredAIChatEnqueue(
       enqueueAIChatMessage(
         actionText,
         attachments: [],
@@ -2139,7 +2141,9 @@ extension WorkspaceStore {
       prompt: continuation.prompt
     )
     let context = captureAIChatCorpusContext()
-    let outcome = await awaitAIChatEnqueueAndImmediateDrain(
+    // Return once the continuation is queued; the agent's turn continues in
+    // the chat thread and may take far longer than this hand-off.
+    let outcome = await resolveDeferredAIChatEnqueue(
       enqueueAIChatMessage(
         actionText,
         attachments: [],
@@ -2334,7 +2338,9 @@ extension WorkspaceStore {
       userText: approval.decisionNote?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     )
     let context = captureAIChatCorpusContext()
-    let outcome = await awaitAIChatEnqueueAndImmediateDrain(
+    // Return once the continuation is queued; the agent's turn continues in
+    // the chat thread and may take far longer than this hand-off.
+    let outcome = await resolveDeferredAIChatEnqueue(
       enqueueAIChatMessage(
         actionText,
         attachments: [],
@@ -2443,19 +2449,23 @@ extension WorkspaceStore {
           "--dir", corpusRoot.path,
           "--json"
         ])
-        if let index = agentRuns.firstIndex(where: { $0.id == resumed.id }) {
-          agentRuns[index] = resumed
-        }
         continuation = OpenClawRunContinuation(
           runID: resumed.id,
           sessionKey: run.openClawSessionKey,
           prompt: Self.agentRunClarificationContinuationPrompt(
             run: commented,
             response: response
-          )
+          ),
+          run: resumed
         )
       }
       agentRunClarificationPhases[run.id] = .resuming
+      // The run is durably running again. Show that now rather than after the
+      // agent's turn or the next corpus sync; a later list refresh keeps this
+      // copy until the corpus has caught up to it.
+      if let resumed = continuation.run, resumed.id == run.id {
+        applyResumedAgentRun(resumed)
+      }
       await refreshAgentRuns()
 
       agentRunClarificationPhases[run.id] = .handingOff
@@ -2487,7 +2497,9 @@ extension WorkspaceStore {
         userText: response
       )
       let context = captureAIChatCorpusContext()
-      let outcome = await awaitAIChatEnqueueAndImmediateDrain(
+      // Hand the answer to the chat and return once it is queued. The agent's
+      // turn can run for hours; it continues in the chat thread, not here.
+      let outcome = await resolveDeferredAIChatEnqueue(
         enqueueAIChatMessage(
           actionText,
           attachments: [],
@@ -2512,6 +2524,13 @@ extension WorkspaceStore {
       statusText = "Clarification response failed"
       return false
     }
+  }
+
+  private func applyResumedAgentRun(_ resumed: AgentRunItem) {
+    guard let index = agentRuns.firstIndex(where: { $0.id == resumed.id }) else { return }
+    let current = agentRuns[index]
+    guard current.status == "blocked" || !Self.isAgentRun(current, newerThan: resumed) else { return }
+    agentRuns[index] = resumed
   }
 
   nonisolated static func normalizedAgentRunClarificationResponse(_ value: String) -> String? {

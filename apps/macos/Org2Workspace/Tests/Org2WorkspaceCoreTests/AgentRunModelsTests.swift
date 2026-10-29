@@ -2130,6 +2130,65 @@ final class AgentRunModelsTests: XCTestCase {
     XCTAssertEqual(store.statusText, "Clarification response failed")
   }
 
+  @MainActor
+  func testReplyAndResumeReturnsOnceHandedOffAndShowsTheRunRunning() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-clarification-handoff-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let blocked = try makeRun(
+      id: "blocked-run",
+      status: "blocked",
+      blockedReason: "Which reporting period should this cover?"
+    )
+    let resumed = try makeRun(
+      id: "blocked-run",
+      status: "running",
+      updatedAt: "2026-07-14T00:02:00.000Z"
+    )
+    let turn = PausedAgentTurn()
+    let store = try WorkspaceStore(
+      cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()),
+      aiChatTranscriptURL: root.appendingPathComponent(".org2/openclaw-chat.json"),
+      aiChatSendHandler: { _, _, _, _ in
+        await turn.wait()
+        return "Done"
+      }
+    )
+    store.corpusRoot = root
+    store.replaceAgentRunsForTesting([blocked])
+    // The corpus copy has not caught up with the responder yet.
+    store.agentRunListLoaderForTesting = { [blocked] }
+    store.agentRunClarificationReplyForTesting = { requestedRun, response in
+      OpenClawRunContinuation(
+        runID: requestedRun.id,
+        sessionKey: nil,
+        prompt: "Continue with: \(response)",
+        run: resumed
+      )
+    }
+
+    // If the reply waited for the turn, this watchdog ends the turn so the
+    // test fails on `finished` instead of hanging.
+    let watchdog = Task {
+      try await Task.sleep(for: .seconds(5))
+      await turn.release()
+    }
+    defer { watchdog.cancel() }
+
+    let succeeded = await store.respondToAgentRunClarification(blocked, response: "Use Q3 actuals.")
+
+    XCTAssertTrue(succeeded, store.errorText ?? "")
+    let started = await turn.waitUntilStarted()
+    XCTAssertTrue(started, "the agent turn must have been handed off")
+    let finished = await turn.finished
+    XCTAssertFalse(finished, "Reply & Resume must not wait for the agent's whole turn")
+    XCTAssertEqual(store.agentRuns.first?.status, "running")
+    XCTAssertNil(store.agentRunClarificationPhases[blocked.id])
+    XCTAssertFalse(store.mutatingAgentRunIDs.contains(blocked.id))
+    await turn.release()
+  }
+
   func testAgentRunClarificationFallbackOnlyAcceptsAnUnavailableGatewayMethod() {
     XCTAssertTrue(WorkspaceStore.shouldUseLocalClarificationResumeFallback(
       for: OpenClawGatewayError.gateway(
@@ -2728,5 +2787,33 @@ final class AgentRunModelsTests: XCTestCase {
       AgentRunItem.self,
       from: JSONSerialization.data(withJSONObject: value)
     )
+  }
+}
+
+private actor PausedAgentTurn {
+  private(set) var started = false
+  private(set) var finished = false
+  private var continuation: CheckedContinuation<Void, Never>?
+  private var released = false
+
+  func wait() async {
+    started = true
+    if !released {
+      await withCheckedContinuation { continuation = $0 }
+    }
+    finished = true
+  }
+
+  func waitUntilStarted() async -> Bool {
+    for _ in 0..<500 where !started {
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    return started
+  }
+
+  func release() {
+    released = true
+    continuation?.resume()
+    continuation = nil
   }
 }

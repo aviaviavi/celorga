@@ -367,11 +367,16 @@ public struct OpenClawRunContinuation: Sendable {
   public let runID: String
   public let sessionKey: String?
   public let prompt: String
+  /// The durable run after it left the blocked state, when the responder
+  /// returned it. Lets the app show the run as running before its corpus
+  /// copy catches up.
+  public let run: AgentRunItem?
 
-  public init(runID: String, sessionKey: String?, prompt: String) {
+  public init(runID: String, sessionKey: String?, prompt: String, run: AgentRunItem? = nil) {
     self.runID = runID
     self.sessionKey = sessionKey
     self.prompt = prompt
+    self.run = run
   }
 }
 
@@ -932,10 +937,13 @@ public actor OpenClawGatewayClient {
       throw OpenClawGatewayError.protocolFailure("org2.run.replyAndResume returned an invalid payload")
     }
     let sessionKey = Self.string(payload["sessionKey"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let resumedRun = (try? JSONSerialization.data(withJSONObject: run))
+      .flatMap { try? JSONDecoder().decode(AgentRunItem.self, from: $0) }
     return OpenClawRunContinuation(
       runID: returnedRunID,
       sessionKey: sessionKey?.isEmpty == false ? sessionKey : nil,
-      prompt: prompt
+      prompt: prompt,
+      run: resumedRun?.id == returnedRunID ? resumedRun : nil
     )
   }
 
