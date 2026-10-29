@@ -30,6 +30,8 @@ Main workflows:
 - =compile corpus=
 - =render-chart=
 - =property-view=
+- =crm= for People & Companies: people, companies, outreach ledgers, follow-ups, and calendar briefs
+- =apps= for optional workspace apps and plugin app pages
 - =view= for saved, refreshable interactive workspace views
 - =query-data=
 - =table recalculate=
@@ -126,6 +128,9 @@ dependency-install step.
     ],
     "hooks": [
       { "id": "notify", "events": ["run.blocked", "approval.requested"], "entry": "notify.mjs" }
+    ],
+    "surfaces": [
+      { "id": "pipeline", "title": "Pipeline", "symbol": "square.grid.2x2", "entry": "pipeline.mjs", "capabilities": ["read-corpus"] }
     ]
   }
 }
@@ -139,7 +144,7 @@ to receive.
 
 ** Contributions and process protocol
 
-V1 has five additive contribution kinds:
+V1 has six additive contribution kinds:
 
 - *Commands* run explicitly with =celorga plugin exec PLUGIN COMMAND -- ARG...=.
   The process receives one =celorga:plugin-invocation:v1= JSON object on stdin and
@@ -164,6 +169,18 @@ V1 has five additive contribution kinds:
   =celorga plugin hooks dispatch --apply= (once, from a cursor, or with
   =--follow=) invokes them; the scheduler host in Celorga dispatches them
   automatically. Each event is delivered to a hook once.
+- *App surfaces* add pages to the Celorga app sidebar as an optional workspace
+  app named =plugin:PLUGIN_ID=. Each surface declares =id=, =title=, an
+  optional SF Symbol =symbol=, an =entry=, and optional =capabilities=
+  (=read-corpus=, =network=). =celorga apps render PLUGIN:SURFACE= runs the
+  entry under the same sandbox as actions with a =kind: "surface"= invocation
+  (including =corpus.root= only with =read-corpus=) and expects
+  =celorga:plugin-render-result:v1= HTML with optional CSS and JavaScript. The
+  app shows it in a non-persistent web view whose content security policy
+  blocks all network requests, frames, and form submissions, and that has no
+  bridge to the corpus. A surface never writes the corpus. A plugin app is on
+  once the plugin is installed; turn it off with
+  =celorga apps disable plugin:PLUGIN_ID --apply=.
 
 Actions and hooks cannot mutate the corpus silently. The process receives an
 =celorga:plugin-action-invocation:v1= object containing only the selected object
@@ -571,6 +588,106 @@ celorga property-view edit --dir CORPUS --file notes/work.org --kind heading --l
 For updates to an existing definition, both preview and apply require its =--if-revision= from =list= or the previous save. New saves require the destination to be absent. Each query row includes =file=, =kind=, =line=, source =revision=, local =properties=, =inheritedProperties=, requested =values=, and =editable=. Pass the exact row identity and revision to =edit=, inspect its old/proposed values and content, then repeat with =--apply=. Atomic writes check the same revision before replacement. A stale row must be queried again; never guess a line after the source changes.
 
 Editing uses canonical parsed source ranges, retains unrelated lines and CRLF line endings, and writes only the selected local drawer. Inherited values become local overrides; an empty value is explicit and does not remove a property. IDs, built-in fields and =CELORGA_= metadata cannot be changed through this command. Paths outside the active corpus, hidden state and =raw/= imports are rejected. Property views do not mutate TODO keywords or stable links. Malformed or duplicate property drawers fail closed. A view definition can be copied to another corpus without machine bindings; its selected corpus-relative sources must exist there for results to appear.
+
+* People and companies
+
+=celorga crm= is the shared runtime behind the People & Companies app. It is a
+view over ordinary corpus records, not a separate database:
+
+- *People and companies* are entity notes with =:ORG2_ENTITY_TYPE: person= or
+  =company= (=organization= also counts as a company). The ID, title, and
+  aliases come from the note.
+- *Fields* are ordinary properties: =CRM_STAGE=, =EMAIL=, =DOMAIN=, =ROLE=,
+  =OWNER=, and, for a person, =COMPANY= (an =[[id:…]]= link or a company name).
+- *Follow-ups* are TODO headings in the note itself, TODOs whose =COMPANY=,
+  =ACCOUNT=, =PERSON=, =ATTENDEES= or similar property names, links, or emails
+  point at the entity, and TODOs inside a related meeting.
+- *Meetings* are headings with =:kind: meeting= or calendar properties. A
+  meeting relates to everyone it links or lists.
+- *Outreach* comes from work-ledger accounts (=notes/LEDGER/accounts/=). An
+  account joins a company by an explicit =org-id:<company ID>= identity key,
+  then by =domain:= or =email:= identity keys, then by an unambiguous name
+  (ignoring suffixes such as Inc. or Corporation). Accounts without a company
+  note are listed as outreach-only companies.
+- *Upcoming meetings* come from staged =celorga:calendar-event:v1= records
+  under =raw/connectors/google-calendar/=. Attendees match people by email and
+  companies by domain. Your own domain and common free-mail domains never
+  identify a company.
+
+A person's company is the explicit =COMPANY= property, else their email
+domain, else the single company their note links to. People's meetings and
+follow-ups also appear on their company. A company without a stage that has
+outreach shows the inferred stage =lead=.
+
+#+begin_src sh
+celorga crm list --dir CORPUS [--kind people|companies] [--stage customer] [--query acme]
+celorga crm show 'Acme Robotics' --dir CORPUS
+celorga crm resolve jane@acme.test --dir CORPUS
+celorga crm set 'Acme Robotics' --field stage --value customer --dir CORPUS --apply
+celorga crm set 'Jane Doe' --field company --value 'Acme Robotics' --dir CORPUS --apply
+celorga crm follow-up 'Acme Robotics' --title 'Send pricing' --scheduled '2026-03-03 10:00' --dir CORPUS --apply
+celorga crm create company --from-ledger outreach/initech --dir CORPUS --apply
+celorga crm create person --title 'Dana Lee' --email dana@initech.test --company Initech --dir CORPUS --apply
+celorga crm link --dir CORPUS
+celorga crm link --only PROPOSAL_ID --dir CORPUS --apply
+celorga crm upcoming --dir CORPUS --days 7
+celorga crm schedule --dir CORPUS --days 5 --hours 09:00-17:00 --duration 30
+#+end_src
+
+A reference is an ID, title, alias, email, domain, or =ledger:LEDGER/ID=;
+ambiguous references fail. All responses are JSON (=celorga:crm-index:v1=,
+=celorga:crm-entity:v1=, and so on). Writes preview by default and are
+revision guarded; =set= accepts =--if-revision=.
+
+- =set= edits one property in the entity's own drawer. =company= values are
+  resolved to an ID link and require the company note to have an =:ID:=.
+- =follow-up= appends a TODO with optional =SCHEDULED=, =DEADLINE=, priority,
+  and a =CREATED= timestamp to the note (or under a heading entity).
+- =create= writes a new note in the configured notes folder. With
+  =--from-ledger= it uses the account's title and domain and adds the
+  =org-id:= identity key to the ledger account under the ledger lock.
+- =link= lists explicit links for matches Celorga inferred: ledger account to
+  company (=org-id:= key), person to company (=COMPANY=), a person's only email
+  (=EMAIL=), and a company's ledger domain (=DOMAIN=). Each proposal has a
+  stable ID; apply all or =--only= some of them.
+- =upcoming= briefs the next external meetings with each company's stage, last
+  touch, last outreach, and next follow-up.
+- =schedule= proposes free working-hour slots for open follow-ups that are due
+  within =--days= (default 5) or overdue by at most =--overdue-days= (default
+  14). Busy time comes from staged calendar events and already-timed TODOs.
+  Applying rewrites only each TODO's =SCHEDULED= line, for example to
+  =<2026-03-02 Mon 16:00-16:30>=. Nothing is written to a calendar provider.
+
+Optional =celorga.json= keys: =crm.stages= (pipeline stages; default =lead=,
+=prospect=, =opportunity=, =customer=, =partner=, =former=), =crm.include=
+(extra corpus globs to scan), and =crm.selfDomains= (your team's email
+domains). The index uses a disposable, machine-local compile cache, so repeat
+reads of a large corpus are fast.
+
+* Workspace apps
+
+Optional workspace apps add pages to the Celorga app sidebar and stay hidden
+until a corpus turns them on. Built-in apps are =crm= (People & Companies) and
+=canvases= (Canvases); installed plugins with app surfaces appear as
+=plugin:PLUGIN_ID=. The choice is portable corpus intent in =celorga.json=:
+
+#+begin_src json
+{ "apps": { "enabled": ["crm"], "disabled": ["plugin:example.board"] } }
+#+end_src
+
+#+begin_src sh
+celorga apps list --dir CORPUS
+celorga apps enable crm --dir CORPUS --apply
+celorga apps disable canvases --dir CORPUS --apply
+celorga apps render example.board:pipeline --dir CORPUS
+#+end_src
+
+=apps list= returns each app with =enabled=, =defaultEnabled=, its surfaces,
+and a =suggestion= when the corpus already holds data the app is useful for,
+such as people and company notes or ledger accounts for People & Companies.
+=enable= and =disable= preview the new =celorga.json= and write only the
+=apps= key with =--apply=. =render= runs a trusted, enabled plugin surface; see
+the plugin contribution reference above.
 
 * Interactive workspace views
 

@@ -165,7 +165,7 @@ The panel scans only the active corpus and observes its =ignorePatterns=. Archiv
 
 * Spatial Canvas workspaces
 
-Enable *Experimental Features* in Settings to show *Canvases* in the left navigation. Open *Canvases* and choose *New Canvas…* to create a =.canvas= file inside the active corpus. Existing Canvas files appear there and open directly as spatial boards. *Import Canvas…* copies a JSON Canvas document into the corpus; its original remains unchanged. The board uses the open [[https://jsoncanvas.org/spec/1.0/][JSON Canvas 1.0 format]], so the file can move between compatible applications.
+Turn on *Canvases* in *Settings → Apps* (or with =celorga apps enable canvases --apply=) to show it in the left navigation. Open *Canvases* and choose *New Canvas…* to create a =.canvas= file inside the active corpus. Existing Canvas files appear there and open directly as spatial boards. *Import Canvas…* copies a JSON Canvas document into the corpus; its original remains unchanged. The board uses the open [[https://jsoncanvas.org/spec/1.0/][JSON Canvas 1.0 format]], so the file can move between compatible applications.
 
 Use *Add card* for text, a note or stable-ID heading, an image or attachment already inside the corpus, a web link, or a group. Drag a card’s header to move it and its lower-right handle to resize it. Select a card and choose *Edit* to change text or a link, or *Color* to distinguish it. Markdown text is preserved in the file and displayed as text on the board. Imported node order is retained in the JSON file; groups are displayed behind connections and other cards. Moving a group moves its frame, not its contents.
 
@@ -290,6 +290,29 @@ Click a property cell in either layout, edit the value, choose *Preview Change*,
 
 Definitions are ordinary JSON files in =views/=, named by view ID, using =celorga:property-view:v1=. Copy one into another corpus's =views/= directory, keeping its filename matched to its ID, to reuse it there. Views contain relative scope and presentation/query choices, with no private database or machine paths. Rows are derived on Apply/Refresh and after a successful edit; a saved view never copies note bodies. The default builder shows at most 500 rows and indicates truncation. The CLI supports limits up to 5,000 and multiple sort fields. See [[file:tooling-reference.org][Tooling reference]] for the portable schema and automation commands.
 
+* Optional apps
+
+Some pages are useful only to some people, so they are optional apps that stay out of the sidebar until you turn them on. Open *Settings → Apps*, or click *Apps…* at the bottom of the Workspace section, to see each app with a switch. When the corpus already holds data an app is useful for, the sidebar offers it once, for example “Try People & Companies: your corpus already has 150 people, 210 companies.” Choose *Turn On*, or *Not Now* to hide that suggestion on this Mac. The on/off choice is saved in the corpus's =celorga.json=, so another Mac opening the same corpus shows the same pages.
+
+Installed plugins can add their own app pages (see =contributes.surfaces= in the [[file:tooling-reference.org][tooling reference]]). Each page appears in the sidebar under its title. It renders in a sandboxed web view with no network access, no corpus bridge, and no write access. Turn a plugin app off in *Settings → Apps* like any other.
+
+* People & Companies
+
+With *People & Companies* on, *People* (=Cmd-Option-U=) and *Companies* (=Cmd-Option-O=) appear below Meetings. They are a lightweight CRM over records you already have: person and company notes (=:ORG2_ENTITY_TYPE: person= or =company=), meetings that link or list them, TODOs that belong to them, work-ledger outreach accounts, and your synced calendar.
+
+Each list shows the stage, the company or domain, the next follow-up (red when overdue), and the last touch. Filter by name, email, or domain, and by stage. Companies can show only those with notes, only outreach-only accounts, or both. Select a row to see:
+
+- *Facts*: email, role, company, domain, and owner. The pencil edits the property in the note, and the stage menu sets =CRM_STAGE=.
+- *Upcoming*: synced calendar events with them in the next 30 days.
+- *Follow-ups*: open TODOs for the person or company, including those from their meetings and, for a company, from its people. Click the circle to mark one done, or click it to open the source.
+- *People*: for a company, everyone who works there.
+- *Outreach*: linked ledger accounts with state, status, and last contact.
+- *History*: meetings, mentions, closed follow-ups, and outreach events, newest first.
+
+*Follow-up* adds a TODO with an optional date, time, and priority to the end of the note, so it appears in Agenda and Calendar. An outreach-only company offers *Create Company Note*, which creates the note and links the ledger account to it. *New* creates a person or company note.
+
+The *Assist* menu has three helpers. *Upcoming Meetings* briefs the next week's external meetings with each company's stage, last touch, and next follow-up. *Plan Follow-ups* proposes free slots in the next five working days for due follow-ups, using busy times from your synced calendar; accepting rewrites only each TODO's =SCHEDULED= line and adds nothing to your calendar. *Review Suggested Links* lists matches Celorga inferred (an outreach account to a company, a person to a company by email domain, a missing email or domain) and writes the ones you accept as explicit links. Everything is computed by =celorga crm=, so agents see the same data.
+
 * Data notebooks and charts
 
 #+begin_export html
@@ -308,7 +331,7 @@ Back up or sync the corpus with a file-oriented tool you understand, such as Git
 
 * Keyboard essentials
 
-- =Cmd-1= through =Cmd-6= open the main workspace surfaces. Every other Workspace sidebar entry has one too: =Cmd-Option-K= Calendar, =Cmd-0= Sources, =Cmd-Shift-K= Skills, =Cmd-Shift-R= Review Queue, =Cmd-Option-A= Automations, =Cmd-Option-E= External Threads, =Cmd-Option-V= Saved Views, and =Cmd-Option-C= Canvases (with Experimental Features on). Saved Views and Canvases are listed last in the Workspace section.
+- =Cmd-1= through =Cmd-6= open the main workspace surfaces. Every other Workspace sidebar entry has one too: =Cmd-Option-K= Calendar, =Cmd-0= Sources, =Cmd-Shift-K= Skills, =Cmd-Shift-R= Review Queue, =Cmd-Option-A= Automations, =Cmd-Option-E= External Threads, =Cmd-Option-V= Saved Views, =Cmd-Option-U= People and =Cmd-Option-O= Companies (when People & Companies is on), and =Cmd-Option-C= Canvases (when Canvases is on). Saved Views, Canvases, and plugin app pages are listed last in the Workspace section.
 - =Cmd-P= opens Quick Open. =Cmd-K= also opens Quick Open outside the Source editor; inside it, =Cmd-K= inserts a link. With an empty query, files you open often and recently are listed first; while searching, they win close matches. Searching also lists chat threads by title and pending approvals by title or requested action; choosing an approval opens it in *Agent Work → Review*, where you decide it. =Cmd-Return= opens the selection in a new tab, and =Shift-Return= hands the query to the full Search surface. Recent-file history is kept per corpus on this Mac and is never written to the corpus.
 - =Cmd-[= and =Cmd-]= go back and forward through the documents and views you visited in the current tab.
 - Hover a link in a rendered document to preview the target heading or file; =Cmd=-click a link to open it in a new tab.

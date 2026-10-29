@@ -4117,6 +4117,15 @@ public final class WorkspaceStore {
   public internal(set) var pendingPluginProposals: [WorkspacePluginProposal] = []
   /// The plugin output and proposal currently under review.
   public var activePluginReview: WorkspacePluginReview?
+  /// Optional workspace apps (`celorga apps list`) for the active corpus.
+  public internal(set) var workspaceApps: [WorkspaceAppInfo] = []
+  /// The corpus path `workspaceApps` was read from; nil until loaded.
+  public internal(set) var workspaceAppsRootPath: String?
+  public internal(set) var workspaceAppsError: String?
+  /// The plugin app page shown by the `.pluginApp` surface.
+  public var selectedPluginSurface: WorkspacePluginSurfaceRef?
+  /// People & Companies data shared by the People and Companies surfaces.
+  public let crm = CRMWorkspaceModel()
   /// The in-app web browser surface.
   public let browser = WorkspaceBrowserModel()
   /// Show the selected HTML file's source instead of the rendered page.
@@ -4605,11 +4614,18 @@ public enum WorkspaceSurface: String, CaseIterable, Identifiable, Sendable {
   /// What is happening across the corpus: work needing you, live agent work,
   /// schedules, recent changes, and a zoomable map.
   case activity
+  /// People & Companies app (optional): person notes with their company,
+  /// stage, meetings, tasks, and outreach.
+  case people
+  /// People & Companies app (optional): company notes and outreach accounts.
+  case companies
+  /// A page contributed by an enabled plugin app; see `selectedPluginSurface`.
+  case pluginApp
 
   public var id: String { rawValue }
 
-  /// Sidebar order. Saved Views and Canvases sit at the bottom of the
-  /// Workspace section, below Review Queue and Automations.
+  /// Sidebar order for the always-on surfaces. Saved Views sits at the bottom
+  /// of the Workspace section, below Review Queue and Automations.
   public static var sidebarCases: [WorkspaceSurface] {
     [.home, .activity, .agenda, .calendar, .approvals, .meetings, .sources, .skills, .externalThreads, .savedViews]
   }
@@ -4617,9 +4633,23 @@ public enum WorkspaceSurface: String, CaseIterable, Identifiable, Sendable {
   /// Surfaces listed after the Agent Work pages (Review Queue, Automations).
   public static let sidebarTrailingCases: Set<WorkspaceSurface> = [.savedViews, .canvases]
 
-  public static func sidebarCases(experimentalFeaturesEnabled: Bool) -> [WorkspaceSurface] {
-    guard experimentalFeaturesEnabled else { return sidebarCases }
-    return sidebarCases + [.canvases]
+  /// The optional app (`celorga apps`) that owns this surface, if any.
+  public var workspaceAppID: String? {
+    switch self {
+    case .people, .companies: "crm"
+    case .canvases: "canvases"
+    default: nil
+    }
+  }
+
+  /// Sidebar surfaces, including those of enabled optional apps.
+  public static func sidebarCases(enabledApps: Set<String>) -> [WorkspaceSurface] {
+    var cases = sidebarCases
+    if enabledApps.contains("crm"), let index = cases.firstIndex(of: .meetings) {
+      cases.insert(contentsOf: [.people, .companies], at: index + 1)
+    }
+    if enabledApps.contains("canvases") { cases.append(.canvases) }
+    return cases
   }
 
   public var title: String {
@@ -4638,6 +4668,9 @@ public enum WorkspaceSurface: String, CaseIterable, Identifiable, Sendable {
     case .externalThreads: "External Threads"
     case .skills: "Skills"
     case .activity: "Activity"
+    case .people: "People"
+    case .companies: "Companies"
+    case .pluginApp: "App"
     }
   }
 
@@ -4657,6 +4690,9 @@ public enum WorkspaceSurface: String, CaseIterable, Identifiable, Sendable {
     case .externalThreads: "rectangle.stack.badge.person.crop"
     case .skills: "wand.and.stars"
     case .activity: "map"
+    case .people: "person.crop.circle"
+    case .companies: "building.2"
+    case .pluginApp: "puzzlepiece.extension"
     }
   }
 
@@ -4676,6 +4712,9 @@ public enum WorkspaceSurface: String, CaseIterable, Identifiable, Sendable {
     case .externalThreads: "⌥⌘E"
     case .skills: "⌘⇧K"
     case .activity: "⌥⌘N"
+    case .people: "⌥⌘U"
+    case .companies: "⌥⌘O"
+    case .pluginApp: ""
     }
   }
 }

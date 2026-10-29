@@ -1192,6 +1192,7 @@ private final class WorkspaceRenderPerformanceHarness {
     case .search: ("f", [.command, .shift], 3)
     case .skills: ("k", [.command, .shift], 40)
     case .externalThreads, .activity, .calendar: nil
+    case .people, .companies, .pluginApp: nil
     }
   }
 

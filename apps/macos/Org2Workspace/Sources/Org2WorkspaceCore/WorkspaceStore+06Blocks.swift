@@ -1767,7 +1767,7 @@ extension WorkspaceStore {
       focusCorpusFileFilter()
     case .home, .aiChat:
       presentAIChatThreadFind()
-    case .calendar, .savedViews, .meetings, .sources, .externalThreads, .skills, .activity:
+    case .calendar, .savedViews, .meetings, .sources, .externalThreads, .skills, .activity, .people, .companies, .pluginApp:
       return focusPageSearch()
     case .search:
       if selectedLocation != nil {

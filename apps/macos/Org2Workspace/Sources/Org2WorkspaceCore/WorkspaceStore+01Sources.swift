@@ -978,6 +978,11 @@ extension WorkspaceStore {
     pendingPluginProposals = []
     corpusAutomationHostRef = nil
     Task { @MainActor [weak self] in await self?.refreshPluginActions() }
+    workspaceApps = []
+    workspaceAppsRootPath = nil
+    workspaceAppsError = nil
+    selectedPluginSurface = nil
+    crm.reset()
     activeCorpusIdentity = cachedWorkspace?.identity
     upsertCorpusMount(path: standardized.path, identity: nil)
     openClawRemoteCorpusPath = restoreOpenClawRemoteCorpusPath(for: standardized)
@@ -1450,6 +1455,13 @@ extension WorkspaceStore {
     }
     if classified.hasConfigurationChanges || hasAgentSkillChanges {
       refreshCorpusAgentSkills(force: true)
+    }
+    if classified.hasConfigurationChanges, workspaceAppsRootPath != nil {
+      // Another Mac may have turned an app on or off in celorga.json.
+      Task { @MainActor [weak self] in await self?.refreshWorkspaceApps() }
+    }
+    if requiresFullScan || !classified.contentPaths.isEmpty {
+      crm.markStale()
     }
     if requiresFullScan || classified.hasConfigurationChanges {
       scheduleFullCorpusFileRefreshAfterEvents()

@@ -13294,10 +13294,19 @@ final class Org2ModelsTests: XCTestCase {
       [.home, .activity, .agenda, .calendar, .approvals, .meetings, .sources, .skills, .externalThreads, .savedViews]
     )
     XCTAssertEqual(
-      WorkspaceSurface.sidebarCases(experimentalFeaturesEnabled: true).suffix(2),
+      WorkspaceSurface.sidebarCases(enabledApps: ["canvases"]).suffix(2),
       [.savedViews, .canvases]
     )
-    for surface in WorkspaceSurface.sidebarCases(experimentalFeaturesEnabled: true) {
+    XCTAssertEqual(
+      WorkspaceSurface.sidebarCases(enabledApps: ["crm"]),
+      [.home, .activity, .agenda, .calendar, .approvals, .meetings, .people, .companies, .sources, .skills, .externalThreads, .savedViews]
+    )
+    XCTAssertEqual(WorkspaceSurface.sidebarCases(enabledApps: []), WorkspaceSurface.sidebarCases)
+    XCTAssertEqual(WorkspaceSurface.people.workspaceAppID, "crm")
+    XCTAssertEqual(WorkspaceSurface.companies.workspaceAppID, "crm")
+    XCTAssertEqual(WorkspaceSurface.canvases.workspaceAppID, "canvases")
+    XCTAssertNil(WorkspaceSurface.agenda.workspaceAppID)
+    for surface in WorkspaceSurface.sidebarCases(enabledApps: ["crm", "canvases"]) {
       XCTAssertFalse(surface.commandShortcutTitle.isEmpty, "\(surface.title) needs a shortcut")
     }
   }

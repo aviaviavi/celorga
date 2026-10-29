@@ -4,7 +4,8 @@
   "title": "Org2 plugin process invocation v1",
   "oneOf": [
     { "$ref": "#/$defs/commandInvocation" },
-    { "$ref": "#/$defs/renderInvocation" }
+    { "$ref": "#/$defs/renderInvocation" },
+    { "$ref": "#/$defs/surfaceInvocation" }
   ],
   "$defs": {
     "plugin": {
@@ -35,6 +36,30 @@
         "corpusRoot": { "type": "string" },
         "cwd": { "type": "string" },
         "arguments": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "surfaceInvocation": {
+      "description": "Renders a workspace app page. corpus.root is present only when the surface requests read-corpus.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$schema", "kind", "plugin", "contribution", "capabilities"],
+      "properties": {
+        "$schema": { "const": "org2:plugin-invocation:v1" },
+        "kind": { "const": "surface" },
+        "plugin": { "$ref": "#/$defs/plugin" },
+        "contribution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "title"],
+          "properties": { "id": { "type": "string" }, "title": { "type": "string" } }
+        },
+        "capabilities": { "type": "array", "items": { "enum": ["read-corpus", "network"] } },
+        "corpus": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["root"],
+          "properties": { "root": { "type": "string" } }
+        }
       }
     },
     "renderInvocation": {

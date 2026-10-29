@@ -23,6 +23,12 @@ struct WorkspaceSettingsView: View {
           Label("Appearance", systemImage: "circle.lefthalf.filled")
         }
 
+      WorkspaceAppsSettingsView()
+        .tag(WorkspaceSettingsNavigation.apps)
+        .tabItem {
+          Label("Apps", systemImage: "square.grid.2x2")
+        }
+
       DocumentSettingsView()
         .tag("documents")
         .tabItem {

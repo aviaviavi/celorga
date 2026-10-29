@@ -1804,6 +1804,12 @@ struct WorkspaceSurfaceView: View {
           SkillsView()
         case .activity:
           WorkspaceActivityView()
+        case .people:
+          PeopleCompaniesView(kind: .people)
+        case .companies:
+          PeopleCompaniesView(kind: .companies)
+        case .pluginApp:
+          PluginAppSurfaceView()
         }
       }
       // Some surface controls and rows have a useful minimum content width.
@@ -2467,10 +2473,13 @@ private struct SidebarView: View {
     let pinnedCorpusFiles = store.pinnedCorpusFiles
     VStack(spacing: 0) {
       SidebarHeader(showsCommandShortcuts: showsCommandShortcuts)
+        .task(id: store.corpusRoot?.standardizedFileURL.path) {
+          await store.loadWorkspaceAppsIfNeeded()
+        }
 
       List {
         let sidebarSurfaces = WorkspaceSurface.sidebarCases(
-          experimentalFeaturesEnabled: store.experimentalFeaturesEnabled
+          enabledApps: store.enabledWorkspaceAppIDs
         )
         Section {
           if isSidebarSectionExpanded(.workspace) {
@@ -2517,6 +2526,29 @@ private struct SidebarView: View {
             ForEach(sidebarSurfaces.filter { WorkspaceSurface.sidebarTrailingCases.contains($0) }) { surface in
               sidebarSurfaceButton(surface)
             }
+
+            ForEach(store.enabledPluginSurfaces) { surface in
+              Button {
+                store.openPluginSurface(surface)
+              } label: {
+                SidebarAgentWorkPageRow(
+                  title: surface.title,
+                  systemImage: surface.symbol,
+                  shortcut: "",
+                  showsCommandShortcut: false,
+                  notificationCount: 0
+                )
+                .modifier(ReadableListSelectionModifier(
+                  isSelected: store.selectedSurface == .pluginApp && store.selectedPluginSurface == surface,
+                  verticalPadding: 4
+                ))
+              }
+              .buttonStyle(.plain)
+              .help("\(surface.title), from the \(surface.appTitle) plugin")
+              .accessibilityIdentifier("sidebar-plugin-surface-\(surface.id)")
+            }
+
+            WorkspaceAppsSidebarFooter()
           }
         } header: {
           SidebarSectionLabel("Workspace", section: .workspace)

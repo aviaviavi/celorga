@@ -9467,6 +9467,8 @@ Roam / IDs:
   celorga render-chart --file FILE [--block-id ID|--line N] [--out FILE] [--format svg|json]
   celorga property-view list|query|save|edit --dir CORPUS [--help]
   celorga view list|create|show|refresh|state|action|undo|bridge --dir CORPUS [--help]
+  celorga crm list|show|resolve|set|follow-up|create|link|upcoming|schedule --dir CORPUS [--help]
+  celorga apps list|enable|disable|render --dir CORPUS [--help]
   celorga query-data (--file FILE|--stdin) [--results NAME|--line N] [--out FILE|--apply] [--format org|json]
   celorga table recalculate --file FILE [--line N] [--formula-index N] [--apply] [--format text|diff|json]
   celorga agent capabilities

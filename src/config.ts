@@ -150,7 +150,27 @@ export interface Org2Config {
   externalSources?: Record<string, Org2ExternalSourceConfig>;
   /** Deterministic attention digest preferences; see `celorga workspace attention`. */
   attention?: Org2AttentionConfig;
+  /** Optional workspace apps shown in the app sidebar; see `celorga apps`. */
+  apps?: Org2AppsConfig;
+  /** People & Companies preferences; see `celorga crm`. */
+  crm?: Org2CrmConfig;
 }
+
+export type Org2AppsConfig = {
+  /** App IDs turned on for this corpus, such as `crm` or `plugin:PLUGIN_ID`. */
+  enabled?: string[];
+  /** App IDs turned off even when they default to on. */
+  disabled?: string[];
+};
+
+export type Org2CrmConfig = {
+  /** Relationship stages offered for companies and people, in pipeline order. */
+  stages?: string[];
+  /** Extra corpus-relative globs to scan for people, companies, meetings and tasks. */
+  include?: string[];
+  /** Email domains that belong to you or your team; never used to infer a company. */
+  selfDomains?: string[];
+};
 
 export const ATTENTION_CATEGORIES = ["approval", "blocked", "review", "reply", "failed", "overdue", "today"] as const;
 export type AttentionCategory = (typeof ATTENTION_CATEGORIES)[number];

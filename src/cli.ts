@@ -85,6 +85,16 @@ async function main(): Promise<void> {
     await runPropertyViewsCommand(args.slice(1));
     return;
   }
+  if (args[0] === "crm") {
+    const { runCrmCommand } = await import("./crmCli.js");
+    await runCrmCommand(args.slice(1));
+    return;
+  }
+  if (args[0] === "apps") {
+    const { runAppsCommand } = await import("./appsCli.js");
+    await runAppsCommand(args.slice(1));
+    return;
+  }
   if (args[0] === "view") {
     const { runInteractiveViewCommand } = await import("./interactiveViewsCli.js");
     await runInteractiveViewCommand(args.slice(1));

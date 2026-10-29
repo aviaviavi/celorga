@@ -314,6 +314,7 @@ function validateManifestEntries(packageRoot: string, manifest: ReturnType<typeo
   for (const command of manifest.contributes?.commands || []) pluginEntryPath(packageRoot, command.entry);
   for (const renderer of manifest.contributes?.renderers || []) pluginEntryPath(packageRoot, renderer.entry);
   for (const template of manifest.contributes?.templates || []) pluginEntryPath(packageRoot, template.path);
+  for (const surface of manifest.contributes?.surfaces || []) pluginEntryPath(packageRoot, surface.entry);
 }
 
 export function resolveGitPlugin(
@@ -405,6 +406,7 @@ function pluginStatuses(corpus: string): Array<Record<string, unknown>> {
         templates: entry.manifest.contributes?.templates?.map((item) => item.id) || [],
         ...(entry.manifest.contributes?.actions?.length ? { actions: entry.manifest.contributes.actions.map((item) => ({ id: item.id, contexts: item.contexts })) } : {}),
         ...(entry.manifest.contributes?.hooks?.length ? { hooks: entry.manifest.contributes.hooks.map((item) => ({ id: item.id, events: item.events })) } : {}),
+        ...(entry.manifest.contributes?.surfaces?.length ? { surfaces: entry.manifest.contributes.surfaces.map((item) => ({ id: item.id, title: item.title })) } : {}),
       },
       ...(store.issue ? { issue: store.issue } : {}),
       ...(compatibilityIssue ? { compatibilityIssue } : {}),

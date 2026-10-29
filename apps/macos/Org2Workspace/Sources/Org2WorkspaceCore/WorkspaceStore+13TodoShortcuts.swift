@@ -2082,8 +2082,14 @@ extension WorkspaceStore {
       case "v":
         makeSurfacePrimary(.savedViews)
       case "c":
-        guard experimentalFeaturesEnabled else { return false }
+        guard isWorkspaceAppEnabled("canvases") else { return false }
         makeSurfacePrimary(.canvases)
+      case "u":
+        guard isWorkspaceAppEnabled("crm") else { return false }
+        makeSurfacePrimary(.people)
+      case "o":
+        guard isWorkspaceAppEnabled("crm") else { return false }
+        makeSurfacePrimary(.companies)
       case "e":
         makeSurfacePrimary(.externalThreads)
       case "n":

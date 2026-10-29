@@ -4,9 +4,9 @@ import XCTest
 @testable import Org2WorkspaceCore
 
 final class JSONCanvasTests: XCTestCase {
-  func testCanvasNavigationRequiresExperimentalFeatures() {
-    XCTAssertFalse(WorkspaceSurface.sidebarCases(experimentalFeaturesEnabled: false).contains(.canvases))
-    XCTAssertTrue(WorkspaceSurface.sidebarCases(experimentalFeaturesEnabled: true).contains(.canvases))
+  func testCanvasNavigationRequiresCanvasesApp() {
+    XCTAssertFalse(WorkspaceSurface.sidebarCases(enabledApps: []).contains(.canvases))
+    XCTAssertTrue(WorkspaceSurface.sidebarCases(enabledApps: ["canvases"]).contains(.canvases))
     XCTAssertFalse(WorkspaceSurface.sidebarCases.contains(.files))
   }
 

@@ -70,6 +70,21 @@ export type Org2PluginActionContribution = {
   capabilities?: Org2PluginActionCapability[];
 };
 
+/**
+ * A workspace app surface: a sidebar entry whose page is rendered by the
+ * plugin as sandboxed HTML. The entry returns org2:plugin-render-result:v1 and
+ * runs under the same sandbox as actions; it never writes the corpus.
+ */
+export type Org2PluginSurfaceContribution = {
+  id: string;
+  title: string;
+  description?: string;
+  /** SF Symbol name shown in the app sidebar. */
+  symbol?: string;
+  entry: string;
+  capabilities?: Org2PluginActionCapability[];
+};
+
 export type Org2PluginHookContribution = {
   id: string;
   description?: string;
@@ -92,6 +107,7 @@ export type Org2PluginManifest = {
     templates?: Org2PluginTemplateContribution[];
     actions?: Org2PluginActionContribution[];
     hooks?: Org2PluginHookContribution[];
+    surfaces?: Org2PluginSurfaceContribution[];
   };
 };
 
@@ -305,7 +321,7 @@ export function validatePluginManifest(value: unknown, label: string = "org2-plu
     throw new Error(`${label}.contributes must be an object`);
   }
   const contributesRecord = (rawContributes || {}) as Record<string, unknown>;
-  assertOnlyKeys(contributesRecord, ["commands", "renderers", "templates", "actions", "hooks"], `${label}.contributes`);
+  assertOnlyKeys(contributesRecord, ["commands", "renderers", "templates", "actions", "hooks", "surfaces"], `${label}.contributes`);
   const seen = new Set<string>();
   const commands = contributionArray(contributesRecord.commands, `${label}.contributes.commands`).map((item, index) => {
     assertOnlyKeys(item, ["id", "description", "entry"], `${label}.contributes.commands[${index}]`);
@@ -404,6 +420,25 @@ export function validatePluginManifest(value: unknown, label: string = "org2-plu
       ...(capabilities.length ? { capabilities } : {}),
     };
   });
+  const surfaces = contributionArray(contributesRecord.surfaces, `${label}.contributes.surfaces`).map((item, index) => {
+    const itemLabel = `${label}.contributes.surfaces[${index}]`;
+    assertOnlyKeys(item, ["id", "title", "description", "symbol", "entry", "capabilities"], itemLabel);
+    const contributionId = requiredString(item.id, `${itemLabel}.id`).toLowerCase();
+    if (!CONTRIBUTION_ID_PATTERN.test(contributionId)) throw new Error(`invalid surface id ${contributionId}`);
+    if (seen.has(`surface:${contributionId}`)) throw new Error(`duplicate surface id ${contributionId}`);
+    seen.add(`surface:${contributionId}`);
+    const symbol = optionalString(item.symbol);
+    if (symbol && !/^[a-z0-9][a-z0-9.]{0,79}$/.test(symbol)) throw new Error(`surface ${contributionId} symbol must be an SF Symbol name`);
+    const capabilities = capabilityList(item.capabilities, itemLabel);
+    return {
+      id: contributionId,
+      title: requiredString(item.title, `${itemLabel}.title`),
+      ...(optionalString(item.description) ? { description: optionalString(item.description) } : {}),
+      ...(symbol ? { symbol } : {}),
+      entry: safeProcessEntry(item.entry, `${itemLabel}.entry`),
+      ...(capabilities.length ? { capabilities } : {}),
+    };
+  });
   const permissionsRaw = raw.permissions;
   if (permissionsRaw !== undefined && (!permissionsRaw || typeof permissionsRaw !== "object" || Array.isArray(permissionsRaw))) {
     throw new Error(`${label}.permissions must be an object`);
@@ -437,6 +472,7 @@ export function validatePluginManifest(value: unknown, label: string = "org2-plu
       ...(templates.length ? { templates } : {}),
       ...(actions.length ? { actions } : {}),
       ...(hooks.length ? { hooks } : {}),
+      ...(surfaces.length ? { surfaces } : {}),
     },
   };
 }

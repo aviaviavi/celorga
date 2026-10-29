@@ -177,6 +177,10 @@ extension WorkspaceStore {
       refreshCorpusAgentSkills()
     case .activity:
       await refreshActivitySources()
+    case .people, .companies:
+      crm.markStale()
+    case .pluginApp:
+      break
     }
     markWorkspaceSurfaceCleanIfUnchanged(surface, generation: dirtyGeneration)
   }
@@ -215,6 +219,10 @@ extension WorkspaceStore {
       false
     case .activity:
       isRefreshingAgentRuns || isRefreshingApprovals || isRefreshingAgentWorkflows
+    case .people, .companies:
+      crm.isLoading
+    case .pluginApp:
+      false
     }
   }
 

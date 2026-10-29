@@ -86,6 +86,7 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
       "Run and workflow mutations use atomic guarded writes. Pass `--if-revision sha256:...` when carrying run state across requests; a stale revision, concurrent writer, duplicate create, or out-of-band readable-state edit fails instead of silently overwriting newer source.",
       "Keep curated account identity, aliases, commercial context, and idempotent work history in a ledger account under notes/. Keep immutable imports and provider payloads under raw/, and link approvals to their canonical run instead of copying decision state.",
       "Resolve every available stable identity before creating recurring account work. Treat ambiguity or source drift as a blocker rather than guessing.",
+      "Use `celorga crm resolve` to find the person or company note behind an email, domain, name or ledger account. A ledger account linked to a company note carries the identity key `org-id:<company ID>`; propose missing links with `celorga crm link` instead of writing them silently.",
       "Plugin Git sources are inert until their exact SHA-256 content hash is trusted on the current machine. Review a locked package before `celorga plugin trust --apply`; use `--revoke` to stop executing that hash.",
     ],
     workflows: [
@@ -171,6 +172,18 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
         id: "work-ledger",
         purpose: "Maintain stable per-account identity and idempotent event history for high-volume recurring work without growing one monolithic agent note.",
         commands: ["celorga ledger list", "celorga ledger resolve", "celorga ledger show", "celorga ledger create", "celorga ledger update", "celorga ledger event", "celorga doctor"],
+        writes: "preview-by-default",
+      },
+      {
+        id: "people-and-companies",
+        purpose: "Run a lightweight CRM over ordinary entity notes: list and resolve people and companies with stage, contact details, linked work-ledger outreach, meetings, TODO follow-ups and upcoming calendar meetings; set fields, add follow-ups, promote ledger-only accounts into company notes, accept inferred link proposals, and propose free calendar slots for due follow-ups.",
+        commands: ["celorga crm list", "celorga crm show", "celorga crm resolve", "celorga crm set", "celorga crm follow-up", "celorga crm create", "celorga crm link", "celorga crm upcoming", "celorga crm schedule"],
+        writes: "preview-by-default",
+      },
+      {
+        id: "workspace-apps",
+        purpose: "List, enable and disable optional workspace apps (built-in People & Companies and Canvases, plus plugin-contributed surfaces) as portable celorga.json intent, see data-based suggestions, and render a trusted plugin surface as sandboxed HTML.",
+        commands: ["celorga apps list", "celorga apps enable", "celorga apps disable", "celorga apps render"],
         writes: "preview-by-default",
       },
       {
