@@ -154,35 +154,12 @@ public struct OpenAIDotChatClient: Sendable {
     accept: (@Sendable (OpenAIDotMessage) async -> Bool)? = nil,
     onMessage: (@Sendable (OpenAIDotMessage) async -> Void)? = nil
   ) async throws -> OpenAIDotTurnResult {
-    let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !body.isEmpty else { throw OpenAIDotChatError.emptyMessage }
-    let dot = try await resolveDot()
+    let posted = try await post(text: text, requestID: requestID, replyTo: replyToMessageID)
+    let dot = posted.dot
+    let sent = posted.sent
     let roomID = dot.messagingRoomID ?? ""
     let roomPath = "/messaging/rooms/\(Self.pathComponent(roomID))"
-
-    let replyTo = replyToMessageID?.trimmingCharacters(in: .whitespacesAndNewlines)
-    let sentObject: [String: Any]
-    var sentAsReply = replyTo?.isEmpty == false
-    do {
-      sentObject = try await requestJSON(
-        "POST",
-        path: "\(roomPath)/messages",
-        body: Self.sendBody(text: body, requestID: requestID, timeZone: .current, now: clock(), replyTo: replyTo)
-      )
-    } catch let error as OpenAIDotChatError where replyTo?.isEmpty == false && error.rejectsReplyTarget {
-      // The earlier message may have been deleted. The rejected request
-      // created nothing, so the same request ID is still safe to reuse.
-      sentAsReply = false
-      sentObject = try await requestJSON(
-        "POST",
-        path: "\(roomPath)/messages",
-        body: Self.sendBody(text: body, requestID: requestID, timeZone: .current, now: clock())
-      )
-    }
-    guard let sent = OpenAIDotMessage(json: sentObject) else {
-      throw OpenAIDotChatError.invalidResponse("the sent message had no ID")
-    }
-    await onSent?(sent, sentAsReply)
+    await onSent?(sent, posted.isReply)
 
     let resumeCursor = previous.flatMap {
       $0.roomID == roomID && $0.selfMemberID == sent.memberID ? $0.cursor : nil
@@ -216,6 +193,141 @@ public struct OpenAIDotChatClient: Sendable {
       )
     }
   }
+
+  /// Posts one message to the dot without waiting for a reply.
+  ///
+  /// `replyTo` sends it as a reply to an earlier message; if ChatGPT rejects
+  /// that target, the message is sent without it and `isReply` is false.
+  public func post(
+    text: String,
+    requestID: String,
+    replyTo replyToMessageID: String? = nil
+  ) async throws -> (dot: OpenAIDotProfile, sent: OpenAIDotMessage, isReply: Bool) {
+    let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !body.isEmpty else { throw OpenAIDotChatError.emptyMessage }
+    let dot = try await resolveDot()
+    let roomPath = "/messaging/rooms/\(Self.pathComponent(dot.messagingRoomID ?? ""))"
+    let replyTo = replyToMessageID?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let sentObject: [String: Any]
+    var sentAsReply = replyTo?.isEmpty == false
+    do {
+      sentObject = try await requestJSON(
+        "POST",
+        path: "\(roomPath)/messages",
+        body: Self.sendBody(text: body, requestID: requestID, timeZone: .current, now: clock(), replyTo: replyTo)
+      )
+    } catch let error as OpenAIDotChatError where replyTo?.isEmpty == false && error.rejectsReplyTarget {
+      // The earlier message may have been deleted. The rejected request
+      // created nothing, so the same request ID is still safe to reuse.
+      sentAsReply = false
+      sentObject = try await requestJSON(
+        "POST",
+        path: "\(roomPath)/messages",
+        body: Self.sendBody(text: body, requestID: requestID, timeZone: .current, now: clock())
+      )
+    }
+    guard let sent = OpenAIDotMessage(json: sentObject) else {
+      throw OpenAIDotChatError.invalidResponse("the sent message had no ID")
+    }
+    return (dot, sent, sentAsReply)
+  }
+
+  // MARK: Conversation history
+
+  /// Resolves the dot and its conversation, including which member is the
+  /// signed-in user, so every message can be attributed without sending one.
+  public func resolveRoom() async throws -> OpenAIDotRoom {
+    let dot = try await resolveDot()
+    let roomID = dot.messagingRoomID ?? ""
+    let object = try await requestJSON("GET", path: "/messaging/rooms/\(Self.pathComponent(roomID))")
+    let members = object["members"] as? [[String: Any]] ?? []
+    // The dot's member carries its agent ID; the person's does not.
+    let person = members.first { member in
+      let aeonID = (member["aeon_id"] as? String) ?? ""
+      return aeonID.isEmpty && (member["account_user_id"] as? String)?.isEmpty == false
+    }
+    guard let selfMemberID = (person?["account_user_id"] as? String)
+      ?? (object["creator_account_user_id"] as? String),
+      !selfMemberID.isEmpty
+    else {
+      throw OpenAIDotChatError.invalidResponse("the conversation lists no signed-in member")
+    }
+    return OpenAIDotRoom(dot: dot, roomID: roomID, selfMemberID: selfMemberID)
+  }
+
+  /// Reads up to `limit` of the newest messages, oldest first. Returns fewer
+  /// when the conversation is shorter.
+  public func latestMessages(roomID: String, limit: Int) async throws -> OpenAIDotHistoryPage {
+    try await messages(roomID: roomID, before: nil, limit: limit)
+  }
+
+  /// Reads up to `limit` messages older than `before` (or the newest when
+  /// nil), oldest first. `reachedStart` is true once the first message of the
+  /// conversation is included.
+  public func messages(roomID: String, before: String?, limit: Int) async throws -> OpenAIDotHistoryPage {
+    let roomPath = "/messaging/rooms/\(Self.pathComponent(roomID))"
+    var collected: [OpenAIDotMessage] = []
+    var cursor = before
+    var reachedStart = false
+    while collected.count < limit {
+      var query = [URLQueryItem(name: "limit", value: String(min(Self.historyPageSize, limit - collected.count)))]
+      if let cursor { query.append(URLQueryItem(name: "before", value: cursor)) }
+      let page = try await requestJSON("GET", path: "\(roomPath)/messages", query: query)
+      let items = (page["items"] as? [[String: Any]] ?? []).compactMap(OpenAIDotMessage.init(json:))
+      let requested = min(Self.historyPageSize, limit - collected.count)
+      // Pages are oldest first. A page that does not move the cursor would
+      // loop forever, so it also counts as the start.
+      guard let oldest = items.first, oldest.id != cursor else {
+        reachedStart = true
+        break
+      }
+      collected.insert(contentsOf: items.filter { $0.id != cursor }, at: 0)
+      cursor = oldest.id
+      if items.count < requested {
+        reachedStart = true
+        break
+      }
+    }
+    return OpenAIDotHistoryPage(messages: collected, reachedStart: reachedStart)
+  }
+
+  /// Reads messages newer than `after`, oldest first, at most `maxPages`
+  /// pages at a time. `hasMore` means more are waiting; call again from the
+  /// returned cursor.
+  public func messages(
+    roomID: String,
+    after: String,
+    maxPages: Int = 25
+  ) async throws -> (messages: [OpenAIDotMessage], cursor: String, hasMore: Bool) {
+    let roomPath = "/messaging/rooms/\(Self.pathComponent(roomID))"
+    var collected: [OpenAIDotMessage] = []
+    var cursor = after
+    for _ in 0..<max(1, maxPages) {
+      let page = try await requestJSON(
+        "GET",
+        path: "\(roomPath)/messages",
+        query: [
+          URLQueryItem(name: "after", value: cursor),
+          URLQueryItem(name: "limit", value: String(Self.historyPageSize)),
+        ]
+      )
+      let items = (page["items"] as? [[String: Any]] ?? [])
+        .compactMap(OpenAIDotMessage.init(json:))
+        .filter { $0.id != cursor }
+      guard let newest = items.last else {
+        return (collected, cursor, false)
+      }
+      collected += items
+      cursor = newest.id
+      if items.count < Self.historyPageSize {
+        return (collected, cursor, false)
+      }
+    }
+    return (collected, cursor, true)
+  }
+
+  /// ChatGPT's largest accepted page.
+  static let historyPageSize = 32
 
   /// Keeps reading the dot's conversation after a turn has ended.
   ///
@@ -455,32 +567,105 @@ public struct OpenAIDotMessage: Sendable, Equatable {
   public let isDeleted: Bool
   /// The message this one answers, when it was sent as a reply.
   public let replyTo: OpenAIDotReplyTarget?
+  public let createdAt: Date?
+  /// The client request ID. Messages Celorga sends carry the Celorga
+  /// message ID here.
+  public let requestID: String?
+  public let attachments: [OpenAIDotAttachment]
 
   public init(
     id: String,
     memberID: String,
     text: String,
     isDeleted: Bool = false,
-    replyTo: OpenAIDotReplyTarget? = nil
+    replyTo: OpenAIDotReplyTarget? = nil,
+    createdAt: Date? = nil,
+    requestID: String? = nil,
+    attachments: [OpenAIDotAttachment] = []
   ) {
     self.id = id
     self.memberID = memberID
     self.text = text
     self.isDeleted = isDeleted
     self.replyTo = replyTo
+    self.createdAt = createdAt
+    self.requestID = requestID
+    self.attachments = attachments
   }
 
   init?(json: [String: Any]) {
     guard let id = json["id"] as? String, !id.isEmpty else { return nil }
     let content = json["content"] as? [String: Any]
     let deleted = json["deleted_at"].map { !($0 is NSNull) } ?? false
+    let requestID = (json["request_id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
     self.init(
       id: id,
       memberID: json["account_user_id"] as? String ?? "",
       text: content?["text"] as? String ?? "",
       isDeleted: deleted,
-      replyTo: (json["reply_to"] as? [String: Any]).flatMap(OpenAIDotReplyTarget.init(json:))
+      replyTo: (json["reply_to"] as? [String: Any]).flatMap(OpenAIDotReplyTarget.init(json:)),
+      createdAt: (json["created_at"] as? String).flatMap(Self.timestamp),
+      requestID: requestID?.isEmpty == false ? requestID : nil,
+      attachments: (content?["attachments"] as? [[String: Any]] ?? []).compactMap(OpenAIDotAttachment.init(json:))
     )
+  }
+
+  /// Parses ChatGPT's ISO 8601 timestamps, which carry microseconds.
+  static func timestamp(_ raw: String) -> Date? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    // Foundation's parser reliably reads at most millisecond precision.
+    let normalized = trimmed.replacingOccurrences(
+      of: #"(\.\d{3})\d+"#,
+      with: "$1",
+      options: .regularExpression
+    )
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractional.date(from: normalized) { return date }
+    return ISO8601DateFormatter().date(from: normalized)
+  }
+
+  /// Whether the message has anything to show: text or an attachment.
+  public var hasVisibleContent: Bool {
+    !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty
+  }
+}
+
+/// A non-text item in a dot message, such as a voice call or a file.
+/// Celorga shows a short description; the item itself stays in ChatGPT.
+public struct OpenAIDotAttachment: Sendable, Equatable {
+  public let type: String
+  public let name: String?
+  public let durationMilliseconds: Int?
+
+  public init(type: String, name: String? = nil, durationMilliseconds: Int? = nil) {
+    self.type = type
+    self.name = name
+    self.durationMilliseconds = durationMilliseconds
+  }
+
+  init?(json: [String: Any]) {
+    let type = (json["type"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let name = ["file_name", "name", "title", "filename"]
+      .lazy
+      .compactMap { (json[$0] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .first { !$0.isEmpty }
+    guard !type.isEmpty || name != nil else { return nil }
+    self.init(
+      type: type.isEmpty ? "file" : type,
+      name: name,
+      durationMilliseconds: (json["duration_ms"] as? NSNumber)?.intValue
+    )
+  }
+
+  /// A one-line Org description, for example =/Call · 6 min/=.
+  public var summary: String {
+    if type == "call" {
+      let minutes = durationMilliseconds.map { max(1, Int(($0 + 30_000) / 60_000)) }
+      return "/Call\(minutes.map { " · \($0) min" } ?? "")/"
+    }
+    if let name { return "/Attachment: \(name)/" }
+    return "/\(type.prefix(1).uppercased() + type.dropFirst()) attachment/"
   }
 }
 
@@ -511,6 +696,32 @@ public struct OpenAIDotReplyTarget: Sendable, Equatable {
       memberID: nonEmpty(message?["account_user_id"]),
       requestID: nonEmpty(message?["request_id"])
     )
+  }
+}
+
+/// A dot's ChatGPT conversation and the signed-in user's place in it.
+public struct OpenAIDotRoom: Sendable, Equatable {
+  public let dot: OpenAIDotProfile
+  public let roomID: String
+  /// The signed-in user's member ID; every other member is the dot.
+  public let selfMemberID: String
+
+  public init(dot: OpenAIDotProfile, roomID: String, selfMemberID: String) {
+    self.dot = dot
+    self.roomID = roomID
+    self.selfMemberID = selfMemberID
+  }
+}
+
+/// A run of consecutive messages, oldest first.
+public struct OpenAIDotHistoryPage: Sendable, Equatable {
+  public let messages: [OpenAIDotMessage]
+  /// True when the run begins with the conversation's first message.
+  public let reachedStart: Bool
+
+  public init(messages: [OpenAIDotMessage], reachedStart: Bool) {
+    self.messages = messages
+    self.reachedStart = reachedStart
   }
 }
 

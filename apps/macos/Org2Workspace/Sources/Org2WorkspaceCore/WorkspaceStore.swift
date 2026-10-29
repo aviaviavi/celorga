@@ -2781,6 +2781,7 @@ public final class WorkspaceStore {
   public internal(set) var aiChatThreads: [AIChatThread] = [] {
     didSet {
       guard !isApplyingIncrementalAIChatThreadMutation else { return }
+      scheduleOpenAIDotMirrorReconcile()
       rebuildAIChatThreadDisplayCache()
       rebuildQuickOpenChatIndex()
       if isQuickOpenPresented,
@@ -2838,7 +2839,12 @@ public final class WorkspaceStore {
   public internal(set) var aiChatModelOptions: [AIChatModelOption] = []
   public internal(set) var aiChatRoomModelOptions: [AIChatRuntime: [AIChatModelOption]] = [:]
   public internal(set) var aiChatDestinationModelOptions: [String: [AIChatModelOption]] = [:]
-  public internal(set) var aiChatDestinations: [AIChatDestinationConfiguration] = []
+  public internal(set) var aiChatDestinations: [AIChatDestinationConfiguration] = [] {
+    didSet {
+      guard oldValue != aiChatDestinations else { return }
+      scheduleOpenAIDotMirrorReconcile()
+    }
+  }
   public internal(set) var aiChatDestinationSettingsError: String?
   public internal(set) var aiChatReasoningOptions: [AIChatReasoningOption] = []
   public internal(set) var aiChatEffectiveModel: String?
@@ -3522,6 +3528,19 @@ public final class WorkspaceStore {
   @ObservationIgnored var openAIDotRoomPositionsByDestinationID: [String: OpenAIDotRoomPosition] = [:]
   @ObservationIgnored var openAIDotRoutersByDestinationID: [String: OpenAIDotReplyRouter] = [:]
   @ObservationIgnored var openAIDotActiveTurnThreadIDsByDestinationID: [String: Set<UUID>] = [:]
+  /// One watch per mirrored dot conversation keeps its chat current.
+  @ObservationIgnored var openAIDotMirrorWatchesByThreadID: [UUID: OpenAIDotMirrorWatch] = [:]
+  @ObservationIgnored var openAIDotMirrorActivityAtByThreadID: [UUID: Date] = [:]
+  @ObservationIgnored var openAIDotMirrorRoomsByThreadID: [UUID: OpenAIDotRoom] = [:]
+  @ObservationIgnored var isOpenAIDotMirrorReconcileScheduled = false
+  /// Replaces the ChatGPT client dot chats use, for tests.
+  @ObservationIgnored var openAIDotClientFactoryForTesting: (
+    @MainActor (AIChatDestinationConfiguration) throws -> OpenAIDotChatClient
+  )?
+  /// Earlier messages of a mirrored dot conversation, read from ChatGPT on
+  /// request. They are shown but never saved: ChatGPT keeps the history.
+  public internal(set) var openAIDotMirrorEarlierMessagesByThreadID: [UUID: [AIChatMessage]] = [:]
+  public internal(set) var openAIDotMirrorHistoryStateByThreadID: [UUID: OpenAIDotMirrorHistoryState] = [:]
   var codexDeliveryReceiptsByMessageID: [UUID: AIChatDeliveryReceipt] = [:]
   var codexDeliveryIdentityByRuntimeThreadID: [
     String: (messageID: UUID, attemptID: UUID)

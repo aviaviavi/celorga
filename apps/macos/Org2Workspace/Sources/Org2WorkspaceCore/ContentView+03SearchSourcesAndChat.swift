@@ -2371,6 +2371,16 @@ struct AIChatView: View {
           Label("New \(destination.title) Chat", systemImage: destination.systemImage)
         }
       }
+      if !store.openAIDotConversationDestinations.isEmpty {
+        Divider()
+        ForEach(store.openAIDotConversationDestinations) { destination in
+          Button {
+            store.openOpenAIDotConversation(destinationID: destination.id)
+          } label: {
+            Label("Open \(destination.title)'s Conversation", systemImage: "bubble.left.and.text.bubble.right")
+          }
+        }
+      }
       Divider()
       Button {
         store.createAIChatSharedRoom()
@@ -2434,21 +2444,52 @@ struct AIChatView: View {
   }
 
   private var chatTranscriptDocument: some View {
+    // A dot mirror keeps only the newest stretch of the conversation; earlier
+    // messages read from ChatGPT are shown above it without being saved.
+    let earlierDotMessages = store.openAIDotMirrorEarlierMessages(for: store.selectedAIChatThreadID)
     let window = AIChatTranscriptWindow(
-      messages: store.aiChatMessages,
+      messages: earlierDotMessages.isEmpty
+        ? store.aiChatMessages
+        : earlierDotMessages + store.aiChatMessages,
       isSharedRoom: store.selectedAIChatIsSharedRoom,
       displayLimit: transcriptDisplayLimit,
       anchor: transcriptWindowAnchor
     )
+    let loadsEarlierDotMessages = !window.hasEarlierMessages
+      && store.selectedAIChatCanLoadEarlierOpenAIDotMessages
+    let earlierTitle: String? = if window.hasEarlierMessages {
+      window.earlierMessagesTitle
+    } else if loadsEarlierDotMessages {
+      store.selectedAIChatIsLoadingEarlierOpenAIDotMessages
+        ? "Loading earlier messages…"
+        : "Load earlier messages from \(store.selectedAIChatDestinationTitle)"
+    } else {
+      nil
+    }
     return AIChatTranscriptDocument(
       liveState: store.aiChatLiveState,
       items: window.visibleItems,
       compact: presentation.isCompact,
-      earlierTitle: window.hasEarlierMessages ? window.earlierMessagesTitle : nil,
+      earlierTitle: earlierTitle,
       searchMessageID: selectedThreadFindMessageID,
       searchGeneration: threadFindNavigationGeneration,
       onEarlier: {
-        if window.nextDisplayLimit > window.displayLimit {
+        if loadsEarlierDotMessages {
+          guard let threadID = store.selectedAIChatThreadID else { return }
+          let firstShownID = window.visibleItems.first?.id
+          Task { @MainActor in
+            let added = await store.loadEarlierOpenAIDotMirrorMessages(threadID: threadID)
+            guard added > 0, store.selectedAIChatThreadID == threadID else { return }
+            // Keep the reader in place: show the newly read messages just
+            // above the message that was at the top.
+            if let firstShownID {
+              transcriptWindowAnchor = AIChatTranscriptAnchor(
+                itemID: firstShownID,
+                rawMessageIndex: added
+              )
+            }
+          }
+        } else if window.nextDisplayLimit > window.displayLimit {
           transcriptWindowAnchor = nil
           transcriptDisplayLimit = window.nextDisplayLimit
         } else if let anchor = window.earlierPageAnchor {

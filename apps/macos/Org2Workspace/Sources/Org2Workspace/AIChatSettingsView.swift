@@ -426,6 +426,9 @@ private struct AIChatDestinationEditor: View {
             text: $destination.agentID,
             prompt: Text("Primary dot")
           )
+          Text("To follow the dot’s whole ChatGPT conversation in one chat, choose its “Open … Conversation” item in AI chat’s New menu.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
 
         if destination.acceptsBearerToken && !isBuiltInOpenClaw {

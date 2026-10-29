@@ -1867,6 +1867,30 @@ extension WorkspaceStore {
     return assistantMessage.id
   }
 
+  /// Marks a delivered message sent when its answers arrive separately,
+  /// as in a dot mirror, so the turn ends without a reply of its own.
+  func settleAIChatUserMessageWithoutReply(
+    _ userMessageID: UUID,
+    in threadID: UUID,
+    transcriptURL: URL
+  ) {
+    var messages = aiChatMessages(for: threadID, transcriptURL: transcriptURL)
+    if let index = messages.firstIndex(where: { $0.id == userMessageID }) {
+      messages[index] = messages[index].replacingDeliveryAttemptState(
+        nil,
+        status: .sent,
+        sendFailure: nil
+      )
+    }
+    updateAIChatThread(
+      threadID,
+      messages: messages,
+      transcriptURL: transcriptURL,
+      shouldPersist: true,
+      pendingTurnUpdate: .replace(nil)
+    )
+  }
+
   /// Adds a reply that a destination sent on its own after its turn ended,
   /// such as a dot's result following "I'm taking a look". It joins the live
   /// end of the chat, before any queued messages, and leaves running turns

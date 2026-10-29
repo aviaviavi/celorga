@@ -842,6 +842,27 @@ extension WorkspaceStore {
           clearAIChatCompletedRunPresentation(for: threadID)
           return
         }
+        // A dot mirror's answers arrive on their own as separate messages;
+        // its turn only delivers the message.
+        if dispatchDestination.adapter == .openAIDot,
+           reply.isEmpty,
+           chatThread.isOpenAIDotMirror {
+          settleAIChatUserMessageWithoutReply(
+            userMessageID,
+            in: threadID,
+            transcriptURL: sendOrigin.transcriptURL
+          )
+          activeAIChatUserMessageIDByThreadID.removeValue(forKey: threadID)
+          aiChatDispatchedUserMessageIDs.remove(userMessageID)
+          clearAIChatCompletedRunPresentation(for: threadID)
+          removePendingAIChatUserMessage(userMessageID, in: threadID)
+          if isActiveAIChatSendOrigin(sendOrigin) {
+            aiChatStatusText = aiChatPendingUserMessageIDs(for: threadID).isEmpty
+              ? "Sent to \(dispatchDestination.name)"
+              : aiChatQueuedStatusText()
+          }
+          continue
+        }
         let assistantMessageID = insertAIChatReply(
           reply,
           after: userMessageID,
@@ -1729,12 +1750,7 @@ extension WorkspaceStore {
     } else {
       text = userMessage.content
     }
-    let client = OpenAIDotChatClient(
-      settings: try OpenAIDotChatClient.Settings(
-        endpoint: destination.endpoint,
-        dotSelector: destination.agentID
-      )
-    )
+    let client = try makeOpenAIDotClient(destination)
     openClawGatewayStateByThreadID[threadID] = .connecting
     openClawGatewayDetailByThreadID[threadID] = destination.name
     if selectedAIChatThreadID == threadID, isActiveAIChatSendOrigin(sendOrigin) {
@@ -1748,6 +1764,21 @@ extension WorkspaceStore {
     let destinationID = destination.id
     let route = OpenAIDotReplyRouter.Route(threadID: threadID, transcriptURL: sendOrigin.transcriptURL)
     let requestID = userMessageID.uuidString.lowercased()
+    if thread.openAIDotMirrorDestinationID == destinationID {
+      // A mirror is the dot's main conversation: messages go out as ordinary
+      // messages, and its watch adds each of the dot's answers as it arrives
+      // instead of collecting them into one reply.
+      let posted = try await client.post(text: text, requestID: requestID)
+      recordOpenAIDotSent(
+        posted.sent,
+        requestID: requestID,
+        isReply: false,
+        route: route,
+        destinationID: destinationID
+      )
+      noteOpenAIDotMirrorActivity(threadID: threadID)
+      return ""
+    }
     // Later messages in a chat reply to the dot's latest message in it, so the
     // dot answers in that reply thread and its answers can be routed back.
     let replyTo = thread.runtimeThreadIDsByDestination[destinationID]
@@ -1864,6 +1895,8 @@ extension WorkspaceStore {
     else { return }
     router.recordDelivered(message.id, route: route)
     openAIDotRoutersByDestinationID[destination.id] = router
+    // A mirror chat's own watch shows every message in the conversation.
+    guard !thread.isOpenAIDotMirror else { return }
     let added = appendAIChatFollowUpReply(
       OpenAIDotTurnResult.followUpText(message),
       replyID: Self.openAIDotFollowUpReplyID(destinationID: destination.id, messageID: message.id),

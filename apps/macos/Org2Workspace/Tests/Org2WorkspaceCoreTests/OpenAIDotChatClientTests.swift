@@ -638,6 +638,116 @@ final class OpenAIDotChatClientTests: XCTestCase {
     XCTAssertEqual(OpenAIDotTurnResult.orgLinks("no links [here]"), "no links [here]")
   }
 
+  // MARK: Conversation history
+
+  func testHistoryReadsTheConversationBackwardAndForwardInPages() async throws {
+    // A 70-message conversation, served the way ChatGPT pages it: oldest
+    // first, newest page when no cursor is given, at most 32 per page.
+    let ids = (1...70).map { "m\($0)" }
+    OpenAIDotTestURLProtocol.setHandler { request in
+      let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+      func value(_ name: String) -> String? { query.first(where: { $0.name == name })?.value }
+      let limit = Int(value("limit") ?? "") ?? 0
+      XCTAssertLessThanOrEqual(limit, 32)
+      let window: ArraySlice<String>
+      if let after = value("after"), let index = ids.firstIndex(of: after) {
+        window = ids[(index + 1)...].prefix(limit)
+      } else if let before = value("before"), let index = ids.firstIndex(of: before) {
+        window = ids[..<index].suffix(limit)
+      } else {
+        window = ids.suffix(limit)
+      }
+      let items = window.map { id -> [String: Any] in
+        let member = Int(id.dropFirst())! % 2 == 0 ? self.dotMember : self.selfMember
+        return self.message(id, member: member, text: "Message \(id)")
+      }
+      return (200, ["items": items, "next_cursor": NSNull()])
+    }
+    let dot = client()
+
+    let latest = try await dot.latestMessages(roomID: roomID, limit: 40)
+    XCTAssertEqual(latest.messages.map(\.id), Array(ids[30...]))
+    XCTAssertFalse(latest.reachedStart)
+
+    let earlier = try await dot.messages(roomID: roomID, before: "m31", limit: 64)
+    XCTAssertEqual(earlier.messages.map(\.id), Array(ids[..<30]))
+    XCTAssertTrue(earlier.reachedStart)
+
+    let newer = try await dot.messages(roomID: roomID, after: "m60")
+    XCTAssertEqual(newer.messages.map(\.id), Array(ids[60...]))
+    XCTAssertEqual(newer.cursor, "m70")
+    XCTAssertFalse(newer.hasMore)
+
+    // A long gap is read a bounded number of pages at a time.
+    let firstPages = try await dot.messages(roomID: roomID, after: "m1", maxPages: 1)
+    XCTAssertEqual(firstPages.messages.map(\.id), Array(ids[1..<33]))
+    XCTAssertEqual(firstPages.cursor, "m33")
+    XCTAssertTrue(firstPages.hasMore)
+  }
+
+  func testResolveRoomIdentifiesTheSignedInMember() async throws {
+    OpenAIDotTestURLProtocol.setHandler { request in
+      switch (request.httpMethod, request.url?.path ?? "") {
+      case ("GET", "/backend-api/cloud-aeons/primary"):
+        return (200, self.primaryJSON())
+      case ("GET", "/backend-api/messaging/rooms/room-juniper"):
+        return (200, [
+          "id": self.roomID,
+          "creator_account_user_id": "user-creator",
+          "members": [
+            ["account_user_id": self.dotMember, "aeon_id": "dot-juniper", "name": "Juniper"],
+            ["account_user_id": self.selfMember, "name": "Robin"],
+          ],
+        ])
+      default:
+        XCTFail("Unexpected request \(request.url?.path ?? "")")
+        return (404, [:])
+      }
+    }
+    let room = try await client().resolveRoom()
+    XCTAssertEqual(room.roomID, roomID)
+    XCTAssertEqual(room.selfMemberID, selfMember)
+    XCTAssertEqual(room.dot.displayName, "Juniper")
+  }
+
+  func testPostSendsWithoutWaitingForAReply() async throws {
+    OpenAIDotTestURLProtocol.setHandler { request in
+      switch (request.httpMethod, request.url?.path ?? "") {
+      case ("GET", "/backend-api/cloud-aeons/primary"):
+        return (200, self.primaryJSON())
+      case ("POST", "/backend-api/messaging/rooms/room-juniper/messages"):
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any])
+        XCTAssertNil(body["reply_to"])
+        return (200, self.message("m1", member: self.selfMember, text: "Hello"))
+      default:
+        XCTFail("A post must not read replies")
+        return (404, [:])
+      }
+    }
+    let posted = try await client().post(text: "Hello", requestID: "request-1")
+    XCTAssertEqual(posted.sent.id, "m1")
+    XCTAssertFalse(posted.isReply)
+    XCTAssertEqual(OpenAIDotTestURLProtocol.requests.count, 2)
+  }
+
+  func testMessageParsesTimestampRequestIDAndAttachments() throws {
+    var object = message("m7", member: selfMember, text: "")
+    object["created_at"] = "2026-03-04T05:06:07.123456Z"
+    object["request_id"] = "8D3B5F8C-3C2C-4E35-9B4E-2E9F0F9C1A11"
+    object["content"] = [
+      "text": "",
+      "attachments": [["type": "call", "duration_ms": 362_837], ["type": "file", "file_name": "notes.pdf"]],
+    ]
+    let parsed = try XCTUnwrap(OpenAIDotMessage(json: object))
+    let createdAt = try XCTUnwrap(parsed.createdAt)
+    XCTAssertEqual(createdAt.timeIntervalSince1970, 1_772_600_767.123, accuracy: 0.001)
+    XCTAssertEqual(parsed.requestID, "8D3B5F8C-3C2C-4E35-9B4E-2E9F0F9C1A11")
+    XCTAssertEqual(parsed.attachments.map(\.summary), ["/Call · 6 min/", "/Attachment: notes.pdf/"])
+    XCTAssertTrue(parsed.hasVisibleContent)
+    XCTAssertNil(OpenAIDotMessage.timestamp("not a date"))
+    XCTAssertNotNil(OpenAIDotMessage.timestamp("2026-03-04T05:06:07Z"))
+  }
+
   // MARK: Helpers
 
   private func client(
