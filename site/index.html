@@ -101,6 +101,7 @@ a { text-decoration-thickness: 0.08em; text-underline-offset: 0.15em; }
 <symbol id="glyph-plug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/></symbol>
 <symbol id="glyph-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></symbol>
 <symbol id="glyph-unlock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 7.6-1.7"/></symbol>
+<symbol id="glyph-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
 <symbol id="glyph-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
 <symbol id="glyph-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></symbol>
 </svg>
@@ -110,7 +111,7 @@ a { text-decoration-thickness: 0.08em; text-underline-offset: 0.15em; }
   <div class="celorga-hero2-backdrop" aria-hidden="true"><i></i><i></i><i></i><span></span></div>
   <h1 class="celorga-hero2-title" id="home-hero-title"><span class="celorga-hero2-line"><span class="w" style="--i:0">Every</span> <span class="w" style="--i:1">AI</span> <span class="w" style="--i:2">agent</span> <span class="w" style="--i:3">you</span> <span class="w" style="--i:4">use.</span></span> <span class="celorga-hero2-line"><span class="w" style="--i:5">One</span> <span class="w" style="--i:6">workspace</span> <em><span class="w" style="--i:7">you</span> <span class="w" style="--i:8">own.</span></em></span></h1>
   <p class="celorga-hero2-kinetic"><span class="sr-only">Claude Code, Codex, and local models, working on your meetings, research, roadmap, numbers, writing, and code.</span><span aria-hidden="true">Your agents, working on your <span class="celorga-rotator" data-rotator><span class="is-on">meetings.</span><span>research.</span><span>roadmap.</span><span>numbers.</span><span>writing.</span><span>follow-ups.</span><span>code, too.</span></span></span></p>
-  <p class="celorga-hero2-lead">Celorga is the open-source workspace for running Claude Code, Codex, and local models on knowledge work. Start agent work from any task, let agents hand off to each other, keep them running on an always-on server, and approve what matters from your phone. Everything they read and write is a plain-text file you own.</p>
+  <p class="celorga-hero2-lead">Celorga is the open-source workspace for running Claude Code, Codex, and local models on knowledge work. Start agent work from any task, let agents hand off to each other, schedule automations, and approve what matters from your phone. Everything they read and write is a plain-text file you own.</p>
   <nav class="celorga-hero-actions" aria-label="Start with Celorga">
     <a class="celorga-hero-action celorga-hero-action-primary" href="downloads.html">Download for Mac <span aria-hidden="true">→</span></a>
     <a class="celorga-hero-action" href="features.html">See everything it does <span aria-hidden="true">→</span></a>
@@ -136,7 +137,7 @@ a { text-decoration-thickness: 0.08em; text-underline-offset: 0.15em; }
     <div class="celorga-hero2-chips" aria-hidden="true">
       <div class="celorga-hero2-chip" style="--c:0"><svg class="celorga-logo"><use href="#logo-codex"></use></svg><span><strong>Codex</strong>Drafting pilot follow-ups</span><i class="celorga-spinner"></i></div>
       <div class="celorga-hero2-chip" style="--c:1"><b class="celorga-hero2-needs"></b><span><strong>Needs you</strong>Publish brief to Google Docs</span></div>
-      <div class="celorga-hero2-chip" style="--c:2"><svg class="celorga-topology-icon"><use href="#glyph-server"></use></svg><span><strong>Server · always on</strong>Morning brief ran at 7:00</span><svg class="celorga-hero2-ok"><use href="#glyph-check"></use></svg></div>
+      <div class="celorga-hero2-chip" style="--c:2"><svg class="celorga-topology-icon"><use href="#glyph-clock"></use></svg><span><strong>Automation</strong>Morning brief ran at 7:00</span><svg class="celorga-hero2-ok"><use href="#glyph-check"></use></svg></div>
       <div class="celorga-hero2-chip" style="--c:3"><svg class="celorga-topology-icon"><use href="#glyph-lock"></use></svg><span><strong>pricing.org</strong>Sealed to Claude only</span></div>
     </div>
     <figcaption>Start work on any task. The agent reads the notes behind it, does the work in a thread you can watch, and hands it back when it's your turn.</figcaption>
@@ -324,7 +325,7 @@ a { text-decoration-thickness: 0.08em; text-underline-offset: 0.15em; }
     <ul>
       <li><strong>Automations.</strong> Give a prompt a schedule and an agent. Missed runs catch up after sleep, and attempts never overlap.</li>
       <li><strong>Activity.</strong> See what's running, on which machine, what's waiting on you, and why.</li>
-      <li><strong>Keeps going when your laptop sleeps.</strong> A headless Celorga server can own agent turns and schedules, while your laptop and phone become clients.</li>
+      <li><strong>An optional server.</strong> If you want work to continue while your laptop is closed, a Celorga server can take over agent turns and schedules.</li>
     </ul>
     <p class="celorga-home-links"><a href="workflows.html">Automations and workflows</a><a href="headless-server.html">Headless server</a></p>
   </div>
@@ -358,10 +359,10 @@ a { text-decoration-thickness: 0.08em; text-underline-offset: 0.15em; }
 
 <section class="celorga-home-anywhere" id="home-anywhere" aria-labelledby="home-anywhere-title">
   <div class="celorga-sample-intro">
-    <h2 id="home-anywhere-title">Your agents keep working. Every device stays in the loop.</h2>
-    <p>Run the Celorga server on an always-on machine, at home or in the cloud. It hosts agent turns and automations, so work keeps going when your laptop is closed. Your laptop, phone, and editors connect to it, and every machine shares the same folder of plain-text files.</p>
+    <h2 id="home-anywhere-title">Start on one machine. Bring in every device when you want.</h2>
+    <p>Celorga runs entirely on your desktop, and that's all you need to get started. When you want more, pair your phone to steer agents and approve from anywhere. If you'd like work to keep going while your laptop is closed, you can also run the Celorga server at home or in the cloud. Every machine shares the same folder of plain-text files.</p>
   </div>
-  <div class="celorga-topology" role="img" aria-label="Diagram: a laptop, a phone, editors, and MCP clients connect privately to a Celorga server running agents and automations. Every machine shares the same synced folder of plain-text notes.">
+  <div class="celorga-topology" role="img" aria-label="Diagram: a laptop, a phone, editors, and MCP clients connect privately to an optional Celorga server running agents and automations. Every machine shares the same synced folder of plain-text notes.">
     <div class="celorga-topology-devices">
       <div class="celorga-topology-device"><svg class="celorga-topology-icon" aria-hidden="true"><use href="#glyph-laptop"></use></svg><strong>Desktop</strong><span>Chat, write, and review</span></div>
       <div class="celorga-topology-device"><svg class="celorga-topology-icon" aria-hidden="true"><use href="#glyph-phone"></use></svg><strong>Phone</strong><span>Approve and steer agents</span></div>
@@ -372,14 +373,14 @@ a { text-decoration-thickness: 0.08em; text-underline-offset: 0.15em; }
     <div class="celorga-topology-server">
       <div class="celorga-topology-server-head">
         <svg class="celorga-topology-icon" aria-hidden="true"><use href="#glyph-server"></use></svg>
-        <div><strong>Celorga server</strong><span>At home or in the cloud · always on</span></div>
+        <div><strong>Celorga server</strong><span>Optional · at home or in the cloud</span></div>
         <p class="celorga-topology-status"><i></i>Online</p>
       </div>
       <div class="celorga-topology-server-grid">
         <div>
           <p class="celorga-topology-label">Agents</p>
           <div class="celorga-topology-logos"><svg class="celorga-logo" aria-hidden="true"><use href="#logo-claude-code"></use></svg><svg class="celorga-logo" aria-hidden="true"><use href="#logo-codex"></use></svg><svg class="celorga-logo" aria-hidden="true"><use href="#logo-opencode"></use></svg><svg class="celorga-logo" aria-hidden="true"><use href="#logo-pi"></use></svg><svg class="celorga-logo" aria-hidden="true"><use href="#logo-openclaw"></use></svg><svg class="celorga-logo" aria-hidden="true"><use href="#logo-ollama"></use></svg></div>
-          <p class="celorga-topology-note">3 turns running while your laptop sleeps</p>
+          <p class="celorga-topology-note">3 agent turns running</p>
         </div>
         <div>
           <p class="celorga-topology-label">Automations</p>
@@ -427,7 +428,7 @@ a { text-decoration-thickness: 0.08em; text-underline-offset: 0.15em; }
         <li><strong>Multi-agent rooms</strong> with visible handoffs and loop limits.</li>
         <li><strong>Durable runs</strong> that start from a task, survive restarts, and record their outcome.</li>
         <li><strong>Scheduled automations</strong> with catch-up and a clear owner machine.</li>
-        <li><strong>Remote control from your phone</strong>, plus a headless server for always-on agents.</li>
+        <li><strong>Remote control from your phone</strong>, plus an optional headless server.</li>
         <li><strong>Projects</strong> that group chats around one shared brief.</li>
         <li><strong>Skills and MCP.</strong> Workspace skills for every agent, and an MCP server for any client.</li>
         <li><strong>Live, interactive answers.</strong> Charts, tables, and sandboxed HTML render right in the chat.</li>
@@ -560,7 +561,7 @@ a { text-decoration-thickness: 0.08em; text-underline-offset: 0.15em; }
   <div class="celorga-home-platform-grid">
     <a href="downloads.html"><span class="celorga-home-platform-status">Available</span><strong>Mac app</strong><span>The full workspace: agents, agenda, meetings, data, and publishing. Apple Silicon and Intel.</span></a>
     <a href="getting-started.html#ios-app"><span class="celorga-home-platform-status">Beta</span><strong>iPhone</strong><span>Capture, agenda, approvals, and remote control of agent chats on your desktop or server.</span></a>
-    <a href="headless-server.html"><span class="celorga-home-platform-status">Available</span><strong>Headless server</strong><span>Keep agents and automations running on an always-on machine, and pair your laptop and phone to it.</span></a>
+    <a href="headless-server.html"><span class="celorga-home-platform-status">Optional</span><strong>Headless server</strong><span>Run agents and automations on another machine when you want them to outlast your laptop, and pair your laptop and phone to it.</span></a>
     <a href="tooling-reference.html"><span class="celorga-home-platform-status">macOS · Linux</span><strong>CLI and MCP server</strong><span>Agenda, search, publishing, and agent tools from a terminal, a script, or any MCP client.</span></a>
     <a href="editors.html"><span class="celorga-home-platform-status">macOS · Linux</span><strong>Editors</strong><span>A language server and plugins for VS Code, Vim and Neovim, and Emacs.</span></a>
     <a href="https://github.com/aviaviavi/celorga"><span class="celorga-home-platform-status celorga-home-platform-status-next">Next</span><strong>Linux desktop</strong><span>The runtime already runs on Linux. A native desktop app is on the roadmap; follow along on GitHub.</span></a>
