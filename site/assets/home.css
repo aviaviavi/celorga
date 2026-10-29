@@ -34,7 +34,7 @@
   position: relative;
   max-width: none;
   margin: 0 0 clamp(4rem, 8vw, 7rem);
-  padding: clamp(2.5rem, 7vw, 5.5rem) 0 0;
+  padding: clamp(2.5rem, 6vw, 4.5rem) 0 0;
   text-align: center;
   isolation: isolate;
 }
@@ -54,8 +54,8 @@
 .celorga-hero2-backdrop i {
   position: absolute;
   border-radius: 50%;
-  filter: blur(70px);
-  opacity: 0.55;
+  filter: blur(90px);
+  opacity: 0.2;
 }
 
 .celorga-hero2-backdrop i:nth-child(1) {
@@ -79,8 +79,7 @@
   left: 38%;
   width: 30rem;
   height: 24rem;
-  background: color-mix(in srgb, var(--mint) 60%, transparent);
-  opacity: 0.45;
+  display: none;
 }
 
 .celorga-hero2-backdrop span {
@@ -90,7 +89,7 @@
   background-size: 24px 24px;
   -webkit-mask-image: radial-gradient(ellipse 62% 48% at 50% 30%, #000 20%, transparent 75%);
   mask-image: radial-gradient(ellipse 62% 48% at 50% 30%, #000 20%, transparent 75%);
-  opacity: 0.55;
+  opacity: 0.3;
 }
 
 .celorga-motion .celorga-hero2-backdrop i:nth-child(1) { animation: home-drift-a 22s var(--home-ease-io) infinite alternate; }
@@ -101,47 +100,6 @@
 @keyframes home-drift-b { to { transform: translate(-12rem, 8rem) scale(0.9); } }
 @keyframes home-drift-c { to { transform: translate(-10rem, -5rem) scale(1.2); } }
 
-#content .celorga-hero2 > .celorga-hero2-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.6rem;
-  margin: 0 auto 1.6rem;
-  padding: 0.4rem 0.9rem 0.4rem 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--home-glass);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  box-shadow: var(--shadow-small);
-}
-
-.celorga-hero2-pulse {
-  position: relative;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: var(--home-ok);
-}
-
-.celorga-hero2-pulse::after {
-  position: absolute;
-  inset: -4px;
-  border: 2px solid var(--home-ok);
-  border-radius: 50%;
-  content: "";
-  opacity: 0;
-}
-
-.celorga-motion .celorga-hero2-pulse::after {
-  animation: home-ping 2.4s ease-out infinite;
-}
-
 @keyframes home-ping {
   0% { transform: scale(0.6); opacity: 0.7; }
   80%, 100% { transform: scale(1.8); opacity: 0; }
@@ -151,7 +109,7 @@
   max-width: none;
   margin: 0 auto;
   color: var(--fg);
-  font-size: clamp(2.7rem, 6.6vw, 5.9rem);
+  font-size: clamp(2.6rem, 5.8vw, 5.1rem);
   font-weight: 500;
   letter-spacing: -0.058em;
   line-height: 0.95;
@@ -182,7 +140,8 @@
   left: 0.02em;
   height: 0.09em;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--signal), color-mix(in srgb, var(--signal) 30%, transparent));
+  background: var(--signal);
+  opacity: 0.85;
   content: "";
   transform-origin: 0 50%;
 }
@@ -239,7 +198,7 @@
 #content .celorga-hero2-kinetic .celorga-rotator {
   padding-bottom: 0.08em;
   color: var(--link);
-  background: linear-gradient(90deg, var(--link), color-mix(in srgb, var(--link) 0%, transparent)) 0 100% / 100% 2px no-repeat;
+  background: linear-gradient(var(--link), var(--link)) 0 100% / 100% 1.5px no-repeat;
 }
 
 .celorga-motion .celorga-rotator > span {
@@ -278,7 +237,6 @@
 }
 
 /* Staggered entrance for the hero copy (pure CSS; no script required). */
-.celorga-motion #content .celorga-hero2-eyebrow,
 .celorga-motion #content .celorga-hero2-kinetic,
 .celorga-motion #content .celorga-hero2-lead,
 .celorga-motion #content .celorga-hero2 .celorga-hero-actions,
@@ -286,7 +244,6 @@
   animation: home-rise 0.9s var(--home-ease) both;
 }
 
-.celorga-motion #content .celorga-hero2 > .celorga-hero2-eyebrow { animation-delay: 0s; }
 .celorga-motion #content .celorga-hero2 > .celorga-hero2-kinetic { animation-delay: 0.75s; }
 .celorga-motion #content .celorga-hero2 > .celorga-hero2-lead { animation-delay: 0.9s; }
 .celorga-motion #content .celorga-hero2 .celorga-hero-actions { animation-delay: 1.05s; }
@@ -312,8 +269,7 @@
 }
 
 #content main:has(.celorga-hero2) .celorga-hero-action-primary {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--link) 88%, white), var(--link));
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.25) inset, 0 10px 24px -8px color-mix(in srgb, var(--link) 60%, transparent);
+  box-shadow: 0 6px 16px -8px color-mix(in srgb, var(--link) 55%, transparent);
 }
 
 #content main:has(.celorga-hero2) .celorga-hero-action-primary::after {
@@ -365,17 +321,8 @@
   background:
     radial-gradient(40% 50% at 25% 40%, color-mix(in srgb, var(--signal) 45%, transparent), transparent 70%),
     radial-gradient(45% 55% at 78% 55%, color-mix(in srgb, var(--link) 45%, transparent), transparent 70%);
-  filter: blur(60px);
-  opacity: 0.5;
-}
-
-.celorga-motion #content .celorga-hero2-glow {
-  animation: home-glow 8s ease-in-out infinite alternate;
-}
-
-@keyframes home-glow {
-  from { opacity: 0.35; transform: scale(0.96); }
-  to { opacity: 0.6; transform: scale(1.03); }
+  filter: blur(70px);
+  opacity: 0.16;
 }
 
 #content .celorga-hero2-window.celorga-home-hero-shot,
@@ -685,8 +632,8 @@
 
 #content .celorga-bento-card:hover {
   border-color: var(--border-strong);
-  box-shadow: 0 28px 60px -28px rgba(29, 43, 38, 0.35);
-  transform: translateY(-3px);
+  box-shadow: 0 22px 48px -30px rgba(29, 43, 38, 0.3);
+  transform: translateY(-2px);
 }
 
 #content .celorga-bento-card:hover::before {
@@ -701,14 +648,15 @@
   gap: 1.75rem;
 }
 
-#content .celorga-bento-label {
-  margin: 0 0 0.5rem;
-  color: var(--signal);
-  font-family: var(--font-mono);
-  font-size: 0.66rem;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+#content .celorga-bento-label,
+#content main:has(.celorga-hero2) .celorga-home-kicker {
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 0.86rem;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  text-transform: none;
 }
 
 #content .celorga-bento-copy h3 {
@@ -1143,8 +1091,7 @@ html:not(.celorga-motion) #content .celorga-bento [data-off] {
   border: 5px solid var(--fg);
   border-radius: 2rem;
   background:
-    radial-gradient(120% 80% at 20% 0%, color-mix(in srgb, var(--link) 35%, transparent), transparent 60%),
-    radial-gradient(100% 70% at 100% 100%, color-mix(in srgb, var(--signal) 30%, transparent), transparent 60%),
+    radial-gradient(120% 80% at 20% 0%, color-mix(in srgb, var(--link) 14%, transparent), transparent 60%),
     color-mix(in srgb, var(--canvas) 60%, var(--surface-raised));
 }
 
@@ -1477,7 +1424,7 @@ html:not(.celorga-motion) #content .celorga-bento [data-off] {
 }
 
 .celorga-motion #content .celorga-bento-card.celorga-reveal.is-in:hover {
-  transform: translateY(-3px);
+  transform: translateY(-2px);
   transition-delay: 0s;
 }
 
@@ -1549,8 +1496,8 @@ html:not(.celorga-motion) #content .celorga-bento [data-off] {
   opacity: 0.5;
 }
 
-.celorga-cta2-backdrop i:nth-child(1) { top: -30%; left: -5%; background: var(--signal); opacity: 0.35; }
-.celorga-cta2-backdrop i:nth-child(2) { right: -10%; bottom: -40%; background: #3b62e6; }
+.celorga-cta2-backdrop i:nth-child(1) { top: -30%; left: -5%; background: var(--signal); opacity: 0.16; }
+.celorga-cta2-backdrop i:nth-child(2) { right: -10%; bottom: -40%; background: #3b62e6; opacity: 0.22; }
 
 .celorga-motion .celorga-cta2-backdrop i:nth-child(1) { animation: home-drift-a 20s var(--home-ease-io) infinite alternate; }
 .celorga-motion .celorga-cta2-backdrop i:nth-child(2) { animation: home-drift-b 24s var(--home-ease-io) infinite alternate; }
@@ -1562,16 +1509,6 @@ html:not(.celorga-motion) #content .celorga-bento [data-off] {
   background-size: 22px 22px;
   -webkit-mask-image: radial-gradient(ellipse 60% 70% at 50% 50%, #000, transparent 80%);
   mask-image: radial-gradient(ellipse 60% 70% at 50% 50%, #000, transparent 80%);
-}
-
-#content .celorga-cta2-kicker {
-  margin: 0 0 1rem;
-  color: #ff9b80;
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
 }
 
 #content .celorga-cta2 h2 {
@@ -1590,7 +1527,7 @@ html:not(.celorga-motion) #content .celorga-bento [data-off] {
   font-style: normal;
 }
 
-#content .celorga-cta2 > p:not(.celorga-cta2-kicker) {
+#content .celorga-cta2 > p {
   max-width: 36rem;
   margin: 1.2rem auto 0;
   color: var(--cta-muted);
@@ -1657,11 +1594,6 @@ html:not(.celorga-motion) #content .celorga-bento [data-off] {
 }
 
 @media (max-width: 759px) {
-  #content .celorga-hero2 > .celorga-hero2-eyebrow {
-    font-size: 0.6rem;
-    letter-spacing: 0.03em;
-  }
-
   #content .celorga-hero2 {
     padding-top: 2rem;
     text-align: left;
@@ -1695,3 +1627,7 @@ html:not(.celorga-motion) #content .celorga-bento [data-off] {
     transform: none;
   }
 }
+
+/* The two foundation columns keep their accent colors on the plain labels. */
+#content main:has(.celorga-hero2) .celorga-home-both-grid article:first-child .celorga-home-kicker { color: var(--link); }
+#content main:has(.celorga-hero2) .celorga-home-both-grid article:last-child .celorga-home-kicker { color: var(--signal); }
