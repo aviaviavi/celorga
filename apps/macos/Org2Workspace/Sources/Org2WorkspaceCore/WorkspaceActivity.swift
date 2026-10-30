@@ -122,6 +122,98 @@ public struct WorkspaceActivitySnapshot: Equatable, Sendable {
   }
 }
 
+/// One connected agent's current status in Activity's Agents section: what it
+/// is doing right now, what is waiting on you, or when it last worked.
+public struct WorkspaceActivityAgentStatus: Identifiable, Equatable, Sendable {
+  public enum State: Int, Comparable, Sendable {
+    case working
+    case needsYou
+    case idle
+
+    public var label: String {
+      switch self {
+      case .working: "Working"
+      case .needsYou: "Needs you"
+      case .idle: "Idle"
+      }
+    }
+
+    public static func < (lhs: State, rhs: State) -> Bool { lhs.rawValue < rhs.rawValue }
+  }
+
+  /// Most recent chat an idle agent worked in.
+  public struct LastWork: Equatable, Sendable {
+    public let title: String
+    public let date: Date
+    public let threadID: UUID?
+
+    public init(title: String, date: Date, threadID: UUID? = nil) {
+      self.title = title
+      self.date = date
+      self.threadID = threadID
+    }
+  }
+
+  public let name: String
+  public let state: State
+  public let workingCount: Int
+  public let needsYouCount: Int
+  /// The newest work in progress, or the newest item waiting on you.
+  public let current: WorkspaceActivityItem?
+  /// The live step the runtime reports for `current`, such as a tool call.
+  public let currentStep: String?
+  public let lastWork: LastWork?
+  public var id: String { name }
+
+  /// One row per connected agent plus any other agent with live or waiting
+  /// work, busiest first. `steps` maps activity item IDs to live step titles.
+  public static func build(
+    snapshot: WorkspaceActivitySnapshot,
+    connectedAgents: [String],
+    steps: [String: String] = [:],
+    lastWork: [String: LastWork] = [:]
+  ) -> [WorkspaceActivityAgentStatus] {
+    func newestFirst(_ items: [WorkspaceActivityItem]) -> [WorkspaceActivityItem] {
+      items.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+    }
+    var working: [String: [WorkspaceActivityItem]] = [:]
+    var needsYou: [String: [WorkspaceActivityItem]] = [:]
+    for item in snapshot.working { if let agent = item.agent { working[agent, default: []].append(item) } }
+    for item in snapshot.needsYou { if let agent = item.agent { needsYou[agent, default: []].append(item) } }
+
+    var names: [String] = []
+    var seen = Set<String>()
+    for name in connectedAgents + Array(working.keys) + Array(needsYou.keys) {
+      let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
+      names.append(trimmed)
+    }
+
+    let statuses = names.map { name -> WorkspaceActivityAgentStatus in
+      let live = newestFirst(working[name] ?? [])
+      let waiting = newestFirst(needsYou[name] ?? [])
+      let state: State = !live.isEmpty ? .working : (!waiting.isEmpty ? .needsYou : .idle)
+      let current = live.first ?? waiting.first
+      return WorkspaceActivityAgentStatus(
+        name: name,
+        state: state,
+        workingCount: live.count,
+        needsYouCount: waiting.count,
+        current: current,
+        currentStep: current.flatMap { steps[$0.id] },
+        lastWork: lastWork[name]
+      )
+    }
+    return statuses.sorted { lhs, rhs in
+      if lhs.state != rhs.state { return lhs.state < rhs.state }
+      let left = lhs.lastWork?.date ?? .distantPast
+      let right = rhs.lastWork?.date ?? .distantPast
+      if lhs.state == .idle, left != right { return left > right }
+      return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+    }
+  }
+}
+
 /// A folder or file tile on the Activity map at one zoom level.
 public struct WorkspaceActivityArea: Identifiable, Hashable, Sendable {
   /// Corpus-relative path of the folder or file this tile represents.

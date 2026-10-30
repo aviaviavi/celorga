@@ -313,6 +313,40 @@ extension WorkspaceStore {
     }
   }
 
+  /// Each connected agent's current status: the enabled chat destinations
+  /// plus any agent that has live or waiting work in `snapshot`.
+  public func activityAgentStatuses(snapshot: WorkspaceActivitySnapshot) -> [WorkspaceActivityAgentStatus] {
+    let profileNames = Dictionary(
+      agentProfiles.map { ($0.id, $0.name) },
+      uniquingKeysWith: { first, _ in first }
+    )
+    var steps: [String: String] = [:]
+    var lastWork: [String: WorkspaceActivityAgentStatus.LastWork] = [:]
+    for thread in aiChatThreads where !thread.isArchived {
+      let itemID = "thread:\(thread.id.uuidString)"
+      if isAIChatThreadRunning(thread.id) {
+        let local = aiChatRunActivities(for: thread.id).last(where: { $0.status == .running })
+          ?? aiChatRunActivities(for: thread.id).last
+        let remote = aiChatRemoteLiveTurn(for: thread.id)?.turn
+        if let step = local?.title ?? remote?.activities.last?.title ?? remote?.statusText,
+           !step.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          steps[itemID] = step
+        }
+      }
+      let destination = aiChatDestination(id: thread.destinationID)?.title
+      guard let name = thread.agentRef.flatMap({ profileNames[$0] }) ?? destination ?? thread.runtime.title.nilIfEmptyActivity
+      else { continue }
+      if let existing = lastWork[name], existing.date >= thread.updatedAt { continue }
+      lastWork[name] = .init(title: thread.title, date: thread.updatedAt, threadID: thread.id)
+    }
+    return WorkspaceActivityAgentStatus.build(
+      snapshot: snapshot,
+      connectedAgents: enabledAIChatDestinations.map(\.title),
+      steps: steps,
+      lastWork: lastWork
+    )
+  }
+
   nonisolated static func activityDate(_ raw: String) -> Date? {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

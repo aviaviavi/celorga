@@ -100,30 +100,6 @@ struct WorkspaceActivityView: View {
         .labelStyle(.iconOnly)
         .help("Refresh runs, approvals, and automations")
       }
-      let agents = snapshot.activeAgents
-      if !agents.isEmpty {
-        ScrollView(.horizontal, showsIndicators: false) {
-          HStack(spacing: 6) {
-            ForEach(agents, id: \.name) { agent in
-              HStack(spacing: 5) {
-                CoreAnimationActivityDot(animates: true)
-                  .frame(width: 6, height: 6)
-                Text(agent.name)
-                  .font(.caption.weight(.semibold))
-                if agent.count > 1 {
-                  Text("\(agent.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                }
-              }
-              .padding(.horizontal, 8)
-              .padding(.vertical, 3)
-              .background(WorkspaceDesign.subtleFill, in: Capsule())
-              .help("\(agent.name) is working in \(agent.count) place\(agent.count == 1 ? "" : "s")")
-            }
-          }
-        }
-      }
     }
     .padding(.horizontal, 18)
     .padding(.vertical, 14)
@@ -147,6 +123,7 @@ private struct ActivityNowList: View {
   var body: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 18) {
+        agentsSection
         section("Needs you", systemImage: "exclamationmark.circle", items: snapshot.needsYou,
                 empty: "Nothing is waiting on you.")
         section("Working now", systemImage: "bolt.horizontal", items: snapshot.working,
@@ -191,6 +168,26 @@ private struct ActivityNowList: View {
           .buttonStyle(.link)
           .font(.callout)
           .padding(.leading, 10)
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var agentsSection: some View {
+    let agents = store.activityAgentStatuses(snapshot: snapshot)
+    if !agents.isEmpty {
+      VStack(alignment: .leading, spacing: 6) {
+        sectionHeader("Agents", systemImage: "person.2", count: agents.filter { $0.state == .working }.count)
+          .help("Each connected agent and what it is doing now")
+        ForEach(agents) { agent in
+          ActivityAgentStatusRow(agent: agent) {
+            if let item = agent.current {
+              store.openActivityItem(item)
+            } else if let threadID = agent.lastWork?.threadID {
+              store.openHeadingWork(threadID: threadID, runID: nil)
+            }
+          }
         }
       }
     }
@@ -273,6 +270,86 @@ private struct ActivityNowList: View {
           .buttonStyle(.plain)
         }
       }
+    }
+  }
+}
+
+private struct ActivityAgentStatusRow: View {
+  let agent: WorkspaceActivityAgentStatus
+  let open: () -> Void
+
+  var body: some View {
+    Button(action: open) {
+      HStack(alignment: .top, spacing: 10) {
+        indicator
+          .frame(width: 18, height: 18)
+        VStack(alignment: .leading, spacing: 3) {
+          HStack(spacing: 6) {
+            Text(agent.name)
+              .font(.body.weight(.medium))
+              .lineLimit(1)
+            stateBadge
+          }
+          Text(detail)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+        }
+        Spacer(minLength: 8)
+      }
+      .padding(.horizontal, 10)
+      .padding(.vertical, 6)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .disabled(agent.current == nil && agent.lastWork?.threadID == nil)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("\(agent.name), \(agent.state.label): \(detail)")
+  }
+
+  @ViewBuilder
+  private var indicator: some View {
+    switch agent.state {
+    case .working:
+      CoreAnimationActivityDot(animates: true)
+        .frame(width: 7, height: 7)
+    case .needsYou:
+      Image(systemName: "exclamationmark.circle.fill")
+        .foregroundStyle(.orange)
+    case .idle:
+      Image(systemName: "moon.zzz")
+        .foregroundStyle(.tertiary)
+    }
+  }
+
+  private var stateBadge: some View {
+    let tint: Color = switch agent.state {
+    case .working: .accentColor
+    case .needsYou: .orange
+    case .idle: .secondary
+    }
+    var text = agent.state.label
+    if agent.state == .working, agent.workingCount > 1 { text += " · \(agent.workingCount)" }
+    if agent.needsYouCount > 0, agent.state == .working { text += " · \(agent.needsYouCount) need you" }
+    if agent.state == .needsYou, agent.needsYouCount > 1 { text += " · \(agent.needsYouCount)" }
+    return Text(text)
+      .font(.caption2.weight(.semibold))
+      .foregroundStyle(tint)
+      .padding(.horizontal, 7)
+      .padding(.vertical, 2)
+      .background(tint.opacity(0.13), in: Capsule())
+  }
+
+  private var detail: String {
+    switch agent.state {
+    case .working, .needsYou:
+      guard let current = agent.current else { return agent.state.label }
+      return [current.title, agent.currentStep].compactMap { $0 }.joined(separator: " — ")
+    case .idle:
+      guard let last = agent.lastWork else { return "No recent work" }
+      let age = WorkspaceActivityHostPolicy.relative(max(0, Date().timeIntervalSince(last.date)))
+      return "Last worked \(age) on \(last.title)"
     }
   }
 }
