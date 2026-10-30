@@ -2263,7 +2263,7 @@ extension WorkspaceStore {
       } catch {
         recordOrgCryptEncryptionFailure(error, savedPrefix: "Saved, but")
         liveFileEditorStatusText = "Saved"
-        scheduleAgendaRefresh(preserveSelection: true)
+        scheduleAgendaRefreshAfterLiveEditorSave()
         return
       }
 
@@ -2272,10 +2272,10 @@ extension WorkspaceStore {
       if savedStatus.contains("encrypted"), let selectedLocation {
         await loadEntrySource(for: selectedLocation)
       }
-      scheduleAgendaRefresh(preserveSelection: true)
+      scheduleAgendaRefreshAfterLiveEditorSave()
     } else {
       liveFileEditorStatusText = liveFileEditorDraftGeneration == draftGeneration ? "Autosaved" : "Unsaved"
-      scheduleAgendaRefresh(preserveSelection: true)
+      scheduleAgendaRefreshAfterLiveEditorSave()
     }
   }
 

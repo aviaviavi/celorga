@@ -539,7 +539,7 @@ extension WorkspaceStore {
         ?? aiChatPendingUserMessageIDs(for: threadID).first.flatMap { messageID in
           aiChatMessages(for: threadID).first(where: { $0.id == messageID })?.targetDestinationID
         }
-        ?? aiChatThreads.first(where: { $0.id == threadID })?.destinationID
+        ?? aiChatThread(withID: threadID)?.destinationID
     } ?? selectedAIChatDestination.id
     let title = aiChatDestinationTitle(destinationID)
     if aiChatQueuedMessageCount > 1 {
@@ -572,7 +572,7 @@ extension WorkspaceStore {
         activeSharedRoomDestinationByThreadID.removeValue(forKey: threadID)
         persistAIChatTranscript()
       }
-      if let runID = aiChatThreads.first(where: { $0.id == threadID })?.pendingTurn?.runID {
+      if let runID = aiChatThread(withID: threadID)?.pendingTurn?.runID {
         clearAIChatPendingTurn(runID, in: threadID, shouldPersist: true)
       }
       removeAllPendingAIChatUserMessages(in: threadID)

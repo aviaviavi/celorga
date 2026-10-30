@@ -2458,12 +2458,6 @@ private struct SidebarView: View {
 
   private var chatThreads: [AIChatSidebarThreadSummary] { store.sidebarAIChatThreadSummaries }
   private var settledThreads: [AIChatSidebarThreadSummary] { store.sidebarSettledAIChatThreadSummaries }
-  private var runningChatThreads: [AIChatSidebarThreadSummary] {
-    chatThreads.filter { store.isAIChatThreadRunning($0.id) }
-  }
-  private var recentChatThreads: [AIChatSidebarThreadSummary] {
-    chatThreads.filter { !store.isAIChatThreadRunning($0.id) }
-  }
 
   private func isSidebarSectionExpanded(_ section: SidebarSectionID) -> Bool {
     !SidebarSectionCollapseState(storage: collapsedSidebarSectionsStorage).isCollapsed(section)
@@ -2706,6 +2700,10 @@ private struct SidebarView: View {
                   .padding(.vertical, 3)
                   .listRowBackground(Color.clear)
               } else {
+                // Partition once per render; each group is read several times.
+                let threadGroups = store.partitionAIChatThreadSummariesByRunning(chatThreads)
+                let runningChatThreads = threadGroups.running
+                let recentChatThreads = threadGroups.idle
                 if !runningChatThreads.isEmpty {
                   SidebarChatThreadGroupLabel(title: "Running", count: runningChatThreads.count)
                 }
@@ -2720,9 +2718,10 @@ private struct SidebarView: View {
                   SidebarChatThreadGroupLabel(title: "Recent", count: recentChatThreads.count)
                 }
 
-                if store.actionableAutomationAIChatThreadCount > 0 {
+                let actionableAutomationCount = store.actionableAutomationAIChatThreadCount
+                if actionableAutomationCount > 0 {
                   SidebarSettleAutomationThreadsRow(
-                    count: store.actionableAutomationAIChatThreadCount
+                    count: actionableAutomationCount
                   ) {
                     withAnimation(WorkspaceMotion.disclosure) {
                       _ = store.markAllAutomationAIChatThreadsReadAndSettled()

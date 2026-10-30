@@ -288,11 +288,17 @@ final class OrgHTMLLocalResourceSchemeHandler: NSObject, WKURLSchemeHandler, @un
     return components.url
   }
 
+  private nonisolated static let localImageSourceExpression = try? NSRegularExpression(
+    pattern: #"(<img\b[^>]*\bsrc\s*=\s*")([^"]+)(")"#,
+    options: [.caseInsensitive]
+  )
+
   nonisolated static func rewritingLocalImageSources(in html: String) -> String {
-    guard let expression = try? NSRegularExpression(
-      pattern: #"(<img\b[^>]*\bsrc\s*=\s*")([^"]+)(")"#,
-      options: [.caseInsensitive]
-    ) else { return html }
+    // Most rendered documents and chat messages have no images; skip the
+    // regular-expression pass over the whole HTML for them.
+    guard html.range(of: "<img", options: [.caseInsensitive, .literal]) != nil,
+          let expression = localImageSourceExpression
+    else { return html }
 
     let source = html as NSString
     let matches = expression.matches(
@@ -712,7 +718,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     coordinator.themeStylesheet = themeStylesheet
     coordinator.observeThemeChanges()
 
-    let renderID = renderIdentity ?? "\(source.id)|\(html.utf8.count)|\(html.hashValue)"
+    let renderID = renderIdentity ?? coordinator.fallbackRenderID(sourceID: source.id, html: html)
     if coordinator.renderID != renderID {
       coordinator.renderID = renderID
       coordinator.searchQuery = searchQuery
@@ -821,6 +827,29 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     nonisolated static let encryptedPeekMessageHandlerName = "org2EncryptedPeek"
     weak var webView: WKWebView?
     var renderID: String?
+    private var fallbackRenderHTML: String?
+    private var fallbackRenderSourceID: String?
+    private var fallbackRenderToken: String?
+    private var fallbackRenderCounter: UInt64 = 0
+
+    /// Identity for HTML passed without an explicit render identity. Hashing
+    /// the whole document on every SwiftUI update put O(document) work on the
+    /// main thread for each keystroke in the split preview. Comparing with the
+    /// last HTML is O(1) when the caller passes the same string again and
+    /// stops at the first difference otherwise.
+    func fallbackRenderID(sourceID: String, html: String) -> String {
+      if let token = fallbackRenderToken,
+         fallbackRenderSourceID == sourceID,
+         fallbackRenderHTML == html {
+        return token
+      }
+      fallbackRenderCounter &+= 1
+      let token = "\(sourceID)|fallback-\(fallbackRenderCounter)"
+      fallbackRenderHTML = html
+      fallbackRenderSourceID = sourceID
+      fallbackRenderToken = token
+      return token
+    }
     var searchQuery: String?
     var searchOccurrenceIndex: Int?
     var scrollRequestID: Int?

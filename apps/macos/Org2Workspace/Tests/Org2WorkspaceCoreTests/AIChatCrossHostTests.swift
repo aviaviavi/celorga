@@ -1,7 +1,17 @@
 import Foundation
 import CryptoKit
+import Observation
 import XCTest
 @testable import Org2WorkspaceCore
+
+private final class CrossHostObservationFlag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage = false
+  var value: Bool {
+    get { lock.lock(); defer { lock.unlock() }; return storage }
+    set { lock.lock(); storage = newValue; lock.unlock() }
+  }
+}
 
 private actor CrossHostSendCounter {
   private(set) var prompts: [String] = []
@@ -537,6 +547,60 @@ final class AIChatCrossHostTests: XCTestCase {
     )
     await store.refreshAIChatRemoteLiveHosts()
     XCTAssertNil(store.aiChatRemoteLiveTurn(for: thread.id), "Stale presence is ignored")
+  }
+
+  @MainActor
+  func testRemoteStreamingUpdatesDoNotInvalidateRunningState() async throws {
+    let transcriptURL = root.appendingPathComponent("chat.json")
+    let thread = AIChatThread(title: "Remote turn", runtime: .codex, sessionKey: "remote")
+    try AIChatTranscriptStore.shared.flush(
+      AIChatTranscriptSnapshot(threads: [thread], selectedThreadID: thread.id, settlementSettings: settings),
+      legacyURL: transcriptURL
+    )
+    let store = try makeStore(transcriptURL: transcriptURL)
+    await store.waitForAIChatTranscriptLoadForTesting()
+    let studio = AIChatHostIdentity(ref: "studio", name: "Celorga on studio", kind: .server)
+    let startedAt = Date()
+    func writeTurn(_ reply: String) throws {
+      try AIChatLiveHostDirectory.write(
+        AIChatLiveHostRecord(
+          writerID: "studio-writer",
+          host: studio,
+          enabledDestinationIDs: [thread.destinationID],
+          turns: [AIChatLiveTurnRecord(
+            threadID: thread.id, destinationName: "Codex", startedAt: startedAt, streamingReply: reply
+          )]
+        ),
+        transcriptURL: transcriptURL
+      )
+    }
+
+    try writeTurn("First chunk")
+    await store.refreshAIChatRemoteLiveHosts()
+    XCTAssertEqual(store.aiChatRemoteRunningThreadIDs, [thread.id])
+    XCTAssertTrue(store.isAIChatThreadRunning(thread.id))
+
+    // The sidebar and composer only ask whether the thread is running. A
+    // remote host rewriting its streaming tail must not re-render them.
+    let runningStateChanged = CrossHostObservationFlag()
+    withObservationTracking {
+      _ = store.isAIChatThreadRunning(thread.id)
+    } onChange: {
+      runningStateChanged.value = true
+    }
+    try writeTurn("First chunk, second chunk")
+    await store.refreshAIChatRemoteLiveHosts()
+    XCTAssertEqual(store.aiChatRemoteLiveTurn(for: thread.id)?.turn.streamingReply, "First chunk, second chunk")
+    XCTAssertFalse(runningStateChanged.value)
+
+    try AIChatLiveHostDirectory.write(
+      AIChatLiveHostRecord(writerID: "studio-writer", host: studio, enabledDestinationIDs: [thread.destinationID]),
+      transcriptURL: transcriptURL
+    )
+    await store.refreshAIChatRemoteLiveHosts()
+    XCTAssertTrue(runningStateChanged.value)
+    XCTAssertTrue(store.aiChatRemoteRunningThreadIDs.isEmpty)
+    XCTAssertFalse(store.isAIChatThreadRunning(thread.id))
   }
 
   @MainActor

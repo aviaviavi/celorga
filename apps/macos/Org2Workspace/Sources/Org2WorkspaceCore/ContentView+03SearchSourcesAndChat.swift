@@ -3464,11 +3464,7 @@ struct DetailView: View {
       } else if let missingDailyNote = store.missingDailyNote {
         MissingDailyNoteView(note: missingDailyNote)
       } else if let location = store.selectedLocation {
-        DetailHeader(
-          sourceEditorInteraction: store.sourceEditorInteraction,
-          location: location,
-          renderedViewportSourceLine: store.currentDocumentViewportSourceLine
-        )
+        DetailHeader(location: location)
         Divider()
         VStack(spacing: 0) {
           if store.selectedFileIsCanvas {

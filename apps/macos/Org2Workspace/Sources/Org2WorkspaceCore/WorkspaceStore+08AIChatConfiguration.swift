@@ -557,7 +557,7 @@ extension WorkspaceStore {
   /// confirmation, a send from an earlier process, or an agent hand-off.
   private func untrackedAIChatSendIDs(in threadID: UUID) -> Set<UUID> {
     guard isAIChatRuntimeStateVisible(for: threadID),
-          let thread = aiChatThreads.first(where: { $0.id == threadID })
+          let thread = aiChatThread(withID: threadID)
     else { return [] }
     let activeMessageID = activeAIChatUserMessageIDByThreadID[threadID]
     return Set(thread.messages.lazy.filter { message in
@@ -609,7 +609,7 @@ extension WorkspaceStore {
   }
 
   private func stopTrackedAIChatRun(threadID: UUID) async -> Bool {
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else {
+    guard let thread = aiChatThread(withID: threadID) else {
       return false
     }
     if !isAIChatThreadRunningOnCurrentHost(threadID),
@@ -825,7 +825,7 @@ extension WorkspaceStore {
   ) -> UUID? {
     let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty || !attachments.isEmpty,
-          let thread = aiChatThreads.first(where: { $0.id == threadID }),
+          let thread = aiChatThread(withID: threadID),
           !thread.isSettled
     else {
       return nil
@@ -1304,14 +1304,14 @@ extension WorkspaceStore {
     isPinned: Bool?,
     isSettled: Bool?
   ) -> Bool {
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else {
+    guard let thread = aiChatThread(withID: threadID) else {
       return false
     }
     if let isPinned, thread.isPinned != isPinned {
       toggleAIChatThreadPin(threadID)
     }
     if let isSettled {
-      let current = aiChatThreads.first(where: { $0.id == threadID }) ?? thread
+      let current = aiChatThread(withID: threadID) ?? thread
       if isSettled, !current.isSettled {
         settleAIChatThread(threadID)
       } else if !isSettled, current.isSettled {
@@ -2041,7 +2041,7 @@ extension WorkspaceStore {
   }
 
   public func aiChatRemoteModelOptions(for threadID: UUID) async throws -> [AIChatModelOption] {
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else {
+    guard let thread = aiChatThread(withID: threadID) else {
       throw AIChatRemoteConfigurationError.threadNotFound
     }
     return try await remoteModelsForAIChatDestination(thread.destinationID)
@@ -2114,7 +2114,7 @@ extension WorkspaceStore {
   public func aiChatRemoteConfiguration(
     for threadID: UUID
   ) async throws -> AIChatRemoteConfiguration {
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else {
+    guard let thread = aiChatThread(withID: threadID) else {
       throw AIChatRemoteConfigurationError.threadNotFound
     }
     let adapter = aiChatDestination(id: thread.destinationID)?.adapter
@@ -2198,7 +2198,7 @@ extension WorkspaceStore {
     _ model: String?,
     threadID: UUID
   ) async throws -> [AIChatModelOption] {
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else {
+    guard let thread = aiChatThread(withID: threadID) else {
       throw AIChatRemoteConfigurationError.threadNotFound
     }
     guard !isAIChatThreadRunning(threadID) else {
@@ -2258,7 +2258,7 @@ extension WorkspaceStore {
     _ reasoningEffort: String?,
     threadID: UUID
   ) async throws {
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else {
+    guard let thread = aiChatThread(withID: threadID) else {
       throw AIChatRemoteConfigurationError.threadNotFound
     }
     guard !isAIChatThreadRunning(threadID) else {
@@ -2421,7 +2421,7 @@ extension WorkspaceStore {
           isCurrentAIChatCorpusContext(context)
     else { return }
     if command.origin == .openClaw || command.isAgentAssisted {
-      let isSharedRoom = aiChatThreads.first(where: { $0.id == threadID })?.isSharedRoom == true
+      let isSharedRoom = aiChatThread(withID: threadID)?.isSharedRoom == true
       let result = submitAIChatMessage(
         rawText,
         attachments: [],
@@ -2697,7 +2697,7 @@ extension WorkspaceStore {
     // un-mentioned message goes to that agent (not the room's default), and a
     // message naming exactly that agent does too. Anything else is queued.
     repairOrphanedAIChatSends(in: threadID)
-    let steeringThread = aiChatThreads.first(where: { $0.id == threadID })
+    let steeringThread = aiChatThread(withID: threadID)
     let roomSteerTargets = delivery == .steer && steeringThread?.isSharedRoom == true
       ? steeringThread.map { thread in
           let routing = AIChatDestinationRouting(
@@ -2800,7 +2800,7 @@ extension WorkspaceStore {
   /// Whether this thread's runtime can take live guidance at all, regardless of
   /// whether the current turn's session is ready yet.
   private func aiChatThreadSupportsSteering(_ threadID: UUID, destinationID: String? = nil) -> Bool {
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }),
+    guard let thread = aiChatThread(withID: threadID),
           let target = aiChatSteerTarget(for: thread, destinationID: destinationID),
           aiChatDestination(id: target.destinationID)?.adapter.isDirectProvider != true
     else { return false }
@@ -2846,14 +2846,14 @@ extension WorkspaceStore {
     // Its session always arrives while this host drives the turn, so wait for
     // that turn. (`isAIChatThreadRunning` alone would also count the pending
     // steer itself and could wait forever.)
-    let waitsForWholeTurn = aiChatThreads.first(where: { $0.id == threadID })
+    let waitsForWholeTurn = aiChatThread(withID: threadID)
       .flatMap { aiChatSteerTarget(for: $0, destinationID: destinationID) }?
       .runtime == .openCode
     while !canSteerAIChatThread(threadID, destinationID: destinationID) {
       guard isCurrentAIChatCorpusContext(context),
             isAIChatThreadRunning(threadID),
             // A shared room moved on to another agent's turn.
-            aiChatThreads.first(where: { $0.id == threadID })
+            aiChatThread(withID: threadID)
               .flatMap({ aiChatSteerTarget(for: $0, destinationID: destinationID) }) != nil,
             waitsForWholeTurn
               ? drainingAIChatThreadIDs.contains(threadID)
@@ -2866,7 +2866,7 @@ extension WorkspaceStore {
   }
 
   func canSteerAIChatThread(_ threadID: UUID, destinationID: String? = nil) -> Bool {
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }),
+    guard let thread = aiChatThread(withID: threadID),
           let target = aiChatSteerTarget(for: thread, destinationID: destinationID)
     else {
       return false
@@ -2905,7 +2905,7 @@ extension WorkspaceStore {
     defer { aiChatInFlightSteerMessageIDs.remove(message.id) }
     guard isCurrentAIChatCorpusContext(context) else { return }
     guard aiChatThreads.contains(where: { $0.id == threadID }) else { return }
-    let roomDestinationID = aiChatThreads.first(where: { $0.id == threadID })?.isSharedRoom == true
+    let roomDestinationID = aiChatThread(withID: threadID)?.isSharedRoom == true
       ? message.targetDestinationID
       : nil
     guard await waitForAIChatSteerReadiness(
@@ -2931,7 +2931,7 @@ extension WorkspaceStore {
       }
       return
     }
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }),
+    guard let thread = aiChatThread(withID: threadID),
           let target = aiChatSteerTarget(for: thread, destinationID: roomDestinationID)
     else { return }
     do {

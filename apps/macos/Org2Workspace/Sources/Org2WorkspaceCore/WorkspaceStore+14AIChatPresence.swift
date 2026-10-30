@@ -2245,6 +2245,23 @@ extension WorkspaceStore {
 
   /// A turn currently running on another host, as published in its presence
   /// record.
+  /// Recomputes ``aiChatRemoteRunningThreadIDs``, publishing only when the
+  /// set changes. Runs when records change and on the presence tick, so a
+  /// host that goes quiet drops out once its record is no longer fresh.
+  func refreshAIChatRemoteRunningThreadIDs(now: Date = Date()) {
+    var threadIDs = Set<UUID>()
+    for record in aiChatRemoteLiveHosts
+    where record.hostRef != aiChatHostIdentity.ref
+      && record.isFresh(now: now, within: aiChatLiveFreshnessInterval) {
+      for turn in record.turns {
+        threadIDs.insert(turn.threadID)
+      }
+    }
+    if threadIDs != aiChatRemoteRunningThreadIDs {
+      aiChatRemoteRunningThreadIDs = threadIDs
+    }
+  }
+
   public func aiChatRemoteLiveTurn(for threadID: UUID) -> AIChatRemoteLiveTurn? {
     let now = Date()
     for record in aiChatRemoteLiveHosts
@@ -2279,7 +2296,7 @@ extension WorkspaceStore {
     if let harnessHost = aiChatHarnessHostName(for: threadID) { return harnessHost }
     if isAIChatThreadRunningOnCurrentHost(threadID) { return aiChatHostIdentity.name }
     if let remote = aiChatRemoteLiveTurn(for: threadID) { return remote.host.name }
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else { return nil }
+    guard let thread = aiChatThread(withID: threadID) else { return nil }
     return thread.messages.last(where: { $0.provenance?.executionHostName != nil })?
       .provenance?.executionHostName
   }
@@ -2327,6 +2344,7 @@ extension WorkspaceStore {
         while !Task.isCancelled {
           guard let self else { return }
           self.publishAIChatLivePresenceIfNeeded()
+          self.refreshAIChatRemoteRunningThreadIDs()
           if tick % 5 == 0 {
             self.processAIChatHandoffs()
             self.adoptOrphanedOpenCodeTurns()

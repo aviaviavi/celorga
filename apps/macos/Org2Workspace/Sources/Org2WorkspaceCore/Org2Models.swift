@@ -5401,30 +5401,42 @@ public struct OrgRoamLinkResolver: Equatable, Sendable {
 
   public func searchCandidates(matching rawQuery: String, limit: Int = 6) -> [OrgRoamNodeReference] {
     let query = Self.normalizedTitle(rawQuery)
-    guard !query.isEmpty else { return [] }
-    let scored = nodes.compactMap { node -> (OrgRoamNodeReference, Int)? in
-      let labels = [node.title] + node.aliases
-      var bestScore: Int?
-      for label in labels {
-        let normalized = Self.normalizedTitle(label)
-        if normalized == query {
-          bestScore = min(bestScore ?? 0, 0)
-        } else if normalized.hasPrefix(query) {
-          bestScore = min(bestScore ?? 1, 1)
-        } else if normalized.contains(query) {
-          bestScore = min(bestScore ?? 2, 2)
-        }
+    guard !query.isEmpty, limit > 0 else { return [] }
+    // Completion calls this from a view body while the caret is inside
+    // `[[`. Match against the labels normalized once at init instead of
+    // re-normalizing every title and alias, and keep only the best `limit`
+    // rather than sorting every match with localized comparisons.
+    var scores: [OrgRoamNodeReference: Int] = [:]
+    for (normalized, candidates) in nodeCandidatesByTitle {
+      let score: Int
+      if normalized == query {
+        score = 0
+      } else if normalized.hasPrefix(query) {
+        score = 1
+      } else if normalized.contains(query) {
+        score = 2
+      } else {
+        continue
       }
-      return bestScore.map { (node, $0) }
+      for node in candidates {
+        if let existing = scores[node], existing <= score { continue }
+        scores[node] = score
+      }
     }
-    return scored
-      .sorted {
-        if $0.1 != $1.1 { return $0.1 < $1.1 }
-        return Self.compareRankedCandidates($0.0, $1.0)
-      }
-      .map(\.0)
-      .prefix(limit)
-      .map { $0 }
+    func ranksBefore(_ lhs: (OrgRoamNodeReference, Int), _ rhs: (OrgRoamNodeReference, Int)) -> Bool {
+      if lhs.1 != rhs.1 { return lhs.1 < rhs.1 }
+      return Self.compareRankedCandidates(lhs.0, rhs.0)
+    }
+    var best: [(OrgRoamNodeReference, Int)] = []
+    best.reserveCapacity(limit + 1)
+    for entry in scores {
+      let candidate = (entry.key, entry.value)
+      if best.count == limit, let last = best.last, !ranksBefore(candidate, last) { continue }
+      let index = best.firstIndex { ranksBefore(candidate, $0) } ?? best.count
+      best.insert(candidate, at: index)
+      if best.count > limit { best.removeLast() }
+    }
+    return best.map(\.0)
   }
 
   public static func normalizedTitle(_ raw: String) -> String {

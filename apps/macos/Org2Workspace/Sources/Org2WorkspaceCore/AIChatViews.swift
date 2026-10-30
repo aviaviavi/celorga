@@ -346,20 +346,28 @@ struct AIChatMessageBodyExcerpt: Equatable, Sendable {
     }
 
     let resolvedLimit = max(0, utf8ByteLimit)
-    var end = rawText.startIndex
-    var byteCount = 0
-    var truncated = false
-    for character in rawText {
-      let characterByteCount = String(character).utf8.count
-      if byteCount + characterByteCount > resolvedLimit {
-        truncated = true
-        break
-      }
-      byteCount += characterByteCount
-      end = rawText.index(after: end)
+    // The transcript builds an excerpt for every visible message on each
+    // render. Walking characters (and allocating a String per character) to
+    // count bytes cost up to 32 KB of work per message even when the message
+    // fits; check the byte count first and only search for the cut point
+    // when it does not.
+    let utf8 = rawText.utf8
+    guard let limitIndex = utf8.index(
+      utf8.startIndex,
+      offsetBy: resolvedLimit,
+      limitedBy: utf8.endIndex
+    ), limitIndex != utf8.endIndex else {
+      text = rawText
+      isTruncated = false
+      return
     }
-    text = truncated ? String(rawText[..<end]) : rawText
-    isTruncated = truncated
+    // Keep the longest prefix of whole characters that fits in the limit.
+    var end = limitIndex
+    while end > rawText.startIndex, String.Index(end, within: rawText) == nil {
+      end = utf8.index(before: end)
+    }
+    text = String(rawText[..<end])
+    isTruncated = true
   }
 
   nonisolated static func displayedUTF8ByteCount(for rawText: String) -> Int {

@@ -3,11 +3,9 @@ import SwiftUI
 
 struct DetailHeader: View {
   @Environment(WorkspaceStore.self) private var store
-  @ObservedObject var sourceEditorInteraction: SourceEditorInteractionModel
   @FocusState private var isPageSearchFocused: Bool
   @State private var pageSearchDraft = ""
   let location: WorkspaceLocation
-  let renderedViewportSourceLine: Int?
 
   var body: some View {
     @Bindable var store = store
@@ -666,7 +664,9 @@ struct DetailHeader: View {
         .help(hasPendingEditorChanges ? "Save changes and close the editor" : "Close the editor")
       } else {
         Button {
-          store.beginEditingCurrentScope(atSourceLine: renderedViewportSourceLine)
+          // Read the viewport line only when the action runs so scrolling
+          // the document does not re-render the header or the detail pane.
+          store.beginEditingCurrentScope(atSourceLine: store.currentDocumentViewportSourceLine)
         } label: {
           Label("Edit", systemImage: "square.and.pencil")
         }
@@ -1536,10 +1536,10 @@ private struct OrgSourceEditorWithLinkTools: View {
         store.scheduleSourceEditorPreview(immediate: true)
       }
     }
-    .onChange(of: interaction.text) {
-      store.noteSourceEditorLocalTextChanged(interaction.text)
-      store.scheduleSourceEditorPreview(text: interaction.text)
-    }
+    // The editor reports local edits through `onLocalTextChange`, and the
+    // view's own replacements call `noteSourceEditorLocalTextChanged`
+    // directly. Observing `interaction.text` here as well made SwiftUI compare
+    // the whole document on every publish and repeated that work.
     .onChange(of: store.sourceEditorPresentation) { _, presentation in
       scheduleSourcePreviewScroll()
       if presentation == .split {
@@ -2134,6 +2134,7 @@ private struct OrgSourceEditorWithLinkTools: View {
     interaction.text = edit.text
     interaction.selection = edit.selectedRange
     store.noteSourceEditorLocalTextChanged(edit.text)
+    store.scheduleSourceEditorPreview(text: edit.text)
   }
 }
 

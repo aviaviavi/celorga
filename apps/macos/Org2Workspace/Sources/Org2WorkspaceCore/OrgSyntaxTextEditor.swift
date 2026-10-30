@@ -1243,6 +1243,19 @@ final class OrgSyntaxTextView: NSTextView {
   private var crossEditorHighlightedRange: NSRange?
   private var pendingLatencyTokens: [WorkspaceInteractionLatency.Token] = []
 
+  /// Guarantees a draw pass so pending latency tokens finish, without
+  /// repainting the whole visible text. Edits and selection changes already
+  /// invalidate the lines they touch; marking the entire view dirty made
+  /// every keystroke and click redraw every visible line.
+  private func requestLatencyDraw() {
+    let visible = visibleRect
+    guard !visible.isEmpty else {
+      needsDisplay = true
+      return
+    }
+    setNeedsDisplay(NSRect(x: visible.minX, y: visible.minY, width: 1, height: 1))
+  }
+
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
     let tokens = pendingLatencyTokens
@@ -1346,7 +1359,7 @@ final class OrgSyntaxTextView: NSTextView {
     let latencyToken = WorkspaceInteractionLatency.begin(.sourceEditorPointerToDraw)
     defer {
       pendingLatencyTokens.append(latencyToken)
-      needsDisplay = true
+      requestLatencyDraw()
     }
     if event.clickCount == 1,
        OrgSyntaxTextSelectionBridge.beginSelection(in: self, event: event) {
@@ -1360,7 +1373,7 @@ final class OrgSyntaxTextView: NSTextView {
     let latencyToken = WorkspaceInteractionLatency.begin(.sourceEditorDragToDraw)
     if OrgSyntaxTextSelectionBridge.updateSelection(from: self, event: event) {
       pendingLatencyTokens.append(latencyToken)
-      needsDisplay = true
+      requestLatencyDraw()
       return
     }
     WorkspaceInteractionLatency.finish(latencyToken)
@@ -1382,7 +1395,7 @@ final class OrgSyntaxTextView: NSTextView {
     let latencyToken = WorkspaceInteractionLatency.begin(.sourceEditorKeyToDraw)
     defer {
       pendingLatencyTokens.append(latencyToken)
-      needsDisplay = true
+      requestLatencyDraw()
     }
     if vimState != nil, handleVimKeyDown(event) {
       return
@@ -3404,8 +3417,12 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
       }
       // Semantic/gutter coordinates belong to the previous committed
       // revision. Disable their actions immediately; the debounced analyzer
-      // will install a generation-matching replacement.
-      gutterView?.items = []
+      // will install a generation-matching replacement. Clearing an
+      // already-empty gutter still re-measured and redrew it, so skip that
+      // on every keystroke after the first.
+      if let gutterView, !gutterView.items.isEmpty {
+        gutterView.items = []
+      }
     }
 
     func textView(
@@ -4176,7 +4193,12 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
           backgroundRegions: derivedSemantics.backgroundRegions,
           diagnosticsByLine: derivedSemantics.diagnosticsByLine
         )
-        self.parent.diagnostics?.wrappedValue = snapshot.diagnostics
+        if let diagnostics = self.parent.diagnostics,
+           diagnostics.wrappedValue != snapshot.diagnostics {
+          // Unchanged diagnostics are the common case after a pause; writing
+          // them anyway re-rendered the editor view and its split preview.
+          diagnostics.wrappedValue = snapshot.diagnostics
+        }
         self.clearTextCheckingIndicators(in: textView, text: analysisText, snapshot: snapshot)
         self.refreshSemanticPresentation(to: textView)
         self.applyFoldPresentation(to: textView)

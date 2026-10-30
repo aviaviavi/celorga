@@ -212,7 +212,9 @@ enum HeadingWorkStatus {
   /// The task, source, and run named by a Start work prompt in `text`, or nil
   /// when `text` is not one.
   static func startWorkPromptSummary(in text: String) -> StartWorkPromptSummary? {
-    guard text.contains(startWorkPromptLead) else { return nil }
+    // Called for every visible user message on each transcript render; a
+    // byte scan rejects ordinary messages without grapheme comparison.
+    guard text.containsUTF8Bytes(startWorkPromptLead) else { return nil }
     let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map {
       $0.trimmingCharacters(in: .whitespaces)
     }

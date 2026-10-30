@@ -22,7 +22,7 @@ extension WorkspaceStore {
 
     do {
       _ = try aiChatLocalEditCorpus(for: turnID)
-      guard let metadata = aiChatThreads.first(where: { $0.id == threadID }) else {
+      guard let metadata = aiChatThread(withID: threadID) else {
         return codexWorkspaceToolFailure(code: "THREAD_NOT_FOUND", message: "AI chat thread not found.")
       }
       let thread: AIChatThread
@@ -236,7 +236,7 @@ extension WorkspaceStore {
     threadID: UUID
   ) async {
     guard aiChatThreads.contains(where: { $0.id == threadID }) else { return }
-    aiChatLastEventAtByThreadID[threadID] = Date()
+    noteAIChatLiveEvent(for: threadID)
     switch event {
     case .sessionStarted(let sessionID):
       openClawGatewayStateByThreadID[threadID] = .connected
@@ -299,14 +299,14 @@ extension WorkspaceStore {
         sentAt: aiChatDispatchSentAtByThreadID[threadID]
       )
       guard aiChatThreads.contains(where: { $0.id == threadID }) else { return }
-      aiChatLastEventAtByThreadID[threadID] = Date()
+      noteAIChatLiveEvent(for: threadID)
       openClawGatewayStateByThreadID[threadID] = .connected
       if selectedAIChatThreadID == threadID, canPublishAIChatRuntimeState(for: threadID) {
         aiChatStatusText = "OpenCode is starting"
       }
     case .reasoning(let id, let text):
       guard aiChatThreads.contains(where: { $0.id == threadID }) else { return }
-      aiChatLastEventAtByThreadID[threadID] = Date()
+      noteAIChatLiveEvent(for: threadID)
       let activity = AIChatRunActivity(
         id: id,
         runID: aiChatActiveRunIDByThreadID[threadID] ?? "opencode",
@@ -328,7 +328,7 @@ extension WorkspaceStore {
       handleCLIChatTextDelta(delta, threadID: threadID, title: "OpenCode")
     case .replyReplaced(let reply):
       guard aiChatThreads.contains(where: { $0.id == threadID }) else { return }
-      aiChatLastEventAtByThreadID[threadID] = Date()
+      noteAIChatLiveEvent(for: threadID)
       aiChatLiveState.noteEvent(for: threadID, coalesced: true)
       aiChatLiveState.replaceStreamingReply(reply, for: threadID, coalesced: true)
       if selectedAIChatThreadID == threadID, canPublishAIChatRuntimeState(for: threadID) {
@@ -358,7 +358,7 @@ extension WorkspaceStore {
       sentAt: aiChatDispatchSentAtByThreadID.removeValue(forKey: threadID)
     )
     guard aiChatThreads.contains(where: { $0.id == threadID }) else { return }
-    aiChatLastEventAtByThreadID[threadID] = Date()
+    noteAIChatLiveEvent(for: threadID)
     openClawGatewayStateByThreadID[threadID] = .connected
     aiChatActiveRunIDByThreadID[threadID] = sessionID
     if selectedAIChatThreadID == threadID, canPublishAIChatRuntimeState(for: threadID) {
@@ -368,7 +368,7 @@ extension WorkspaceStore {
 
   private func handleCLIChatTextDelta(_ delta: String, threadID: UUID, title: String) {
     guard aiChatThreads.contains(where: { $0.id == threadID }) else { return }
-    aiChatLastEventAtByThreadID[threadID] = Date()
+    noteAIChatLiveEvent(for: threadID)
     aiChatLiveState.noteEvent(for: threadID, coalesced: true)
     aiChatLiveState.appendStreamingDelta(delta, for: threadID)
     if selectedAIChatThreadID == threadID, canPublishAIChatRuntimeState(for: threadID) {
@@ -384,7 +384,7 @@ extension WorkspaceStore {
     runID: String
   ) {
     guard aiChatThreads.contains(where: { $0.id == threadID }) else { return }
-    aiChatLastEventAtByThreadID[threadID] = Date()
+    noteAIChatLiveEvent(for: threadID)
     let activity = AIChatRunActivity(
       id: id,
       runID: aiChatActiveRunIDByThreadID[threadID] ?? runID,
@@ -404,7 +404,7 @@ extension WorkspaceStore {
 
   private func handleCLIChatWarning(_ message: String, threadID: UUID) {
     guard aiChatThreads.contains(where: { $0.id == threadID }) else { return }
-    aiChatLastEventAtByThreadID[threadID] = Date()
+    noteAIChatLiveEvent(for: threadID)
     openClawGatewayDetailByThreadID[threadID] = message
     if selectedAIChatThreadID == threadID, canPublishAIChatRuntimeState(for: threadID) {
       aiChatStatusText = message
@@ -419,7 +419,7 @@ extension WorkspaceStore {
     switch event {
     case .connectionChanged(let isConnected, let detail):
       for threadID in aiChatSendingThreadIDs where
-        aiChatThreads.first(where: { $0.id == threadID }).map({
+        aiChatThread(withID: threadID).map({
           $0.destinationID == destinationID
             || ($0.isSharedRoom && $0.roomDestinationIDs.contains(destinationID))
         }) == true {
@@ -433,7 +433,7 @@ extension WorkspaceStore {
           openClawGatewayStateByThreadID[threadID] = .disconnected
           openClawGatewayDetailByThreadID[threadID] = detail
         }
-        aiChatLastEventAtByThreadID[threadID] = Date()
+        noteAIChatLiveEvent(for: threadID)
       }
     case .accountUpdated(let authMode, let plan):
       guard destinationID == AIChatDestinationConfiguration.localCodexID else { return }
@@ -494,7 +494,7 @@ extension WorkspaceStore {
         }
         return
       }
-      aiChatLastEventAtByThreadID[threadID] = Date()
+      noteAIChatLiveEvent(for: threadID)
       codexActiveTurnsByThreadID[threadID] = (runtimeThreadID, turnID)
       if isManagedRemote, let identity {
         replaceAIChatDeliveryAttempt(
@@ -581,7 +581,7 @@ extension WorkspaceStore {
         forRuntimeThreadID: runtimeThreadID,
         destinationID: destinationID
       ) else { return }
-      aiChatLastEventAtByThreadID[threadID] = Date()
+      noteAIChatLiveEvent(for: threadID)
       let activity = AIChatRunActivity(
         id: itemID,
         runID: turnID,
@@ -614,7 +614,7 @@ extension WorkspaceStore {
            forRuntimeThreadID: runtimeThreadID,
            destinationID: destinationID
          ) {
-        aiChatLastEventAtByThreadID[threadID] = Date()
+        noteAIChatLiveEvent(for: threadID)
         openClawGatewayDetailByThreadID[threadID] = message
         if selectedAIChatThreadID == threadID,
            canPublishAIChatRuntimeState(for: threadID) {
@@ -1084,7 +1084,7 @@ extension WorkspaceStore {
       return
     }
     let resolvedDestinationID = destinationID
-      ?? aiChatThreads.first(where: { $0.id == threadID })?.destinationID
+      ?? aiChatThread(withID: threadID)?.destinationID
       ?? AIChatDestinationConfiguration.openClawID
     let destinationName = aiChatDestinationTitle(resolvedDestinationID)
     let coalescesEventTimestamp: Bool
@@ -1215,7 +1215,7 @@ extension WorkspaceStore {
     openClawGatewayStateByThreadID[threadID] = .connecting
     openClawGatewayDetailByThreadID.removeValue(forKey: threadID)
     clearAIChatCompletedRunPresentation(for: threadID)
-    aiChatLastEventAtByThreadID[threadID] = Date()
+    aiChatLiveState.noteEvent(for: threadID, coalesced: false)
   }
 
   func clearAIChatCompletedRunPresentation(for threadID: UUID) {
@@ -1523,7 +1523,7 @@ extension WorkspaceStore {
       if unloadedAIChatThreadIDs.contains(threadID) {
         hydrateAIChatThread(threadID)
       }
-      return aiChatThreads.first(where: { $0.id == threadID })
+      return aiChatThread(withID: threadID)
     }
     let path = transcriptURL.standardizedFileURL.path
     return inactiveAIChatTranscriptsByPath[path]?.threads.first(where: { $0.id == threadID })
@@ -2237,11 +2237,14 @@ extension WorkspaceStore {
   }
 
   public func canSteerQueuedAIChatMessage(_ messageID: UUID) -> Bool {
-    guard let threadID = aiChatThreadID(containing: messageID),
-          isAIChatMessageQueued(messageID),
+    // The transcript asks this for every visible message on each render.
+    // Check the (usually empty) queue before searching every thread's
+    // messages for the one that contains this message.
+    guard isAIChatMessageQueued(messageID),
+          let threadID = aiChatThreadID(containing: messageID),
           isAIChatThreadRunning(threadID)
     else { return false }
-    guard aiChatThreads.first(where: { $0.id == threadID })?.isSharedRoom == true else {
+    guard aiChatThread(withID: threadID)?.isSharedRoom == true else {
       return canSteerAIChatThread(threadID)
     }
     // A queued room message can steer only the running agent it targets;
@@ -2297,7 +2300,7 @@ extension WorkspaceStore {
     syncSelectedAIChatSendState()
     if selectedAIChatThreadID == threadID {
       let destinationID = message.targetDestinationID
-        ?? aiChatThreads.first(where: { $0.id == threadID })?.destinationID
+        ?? aiChatThread(withID: threadID)?.destinationID
         ?? selectedAIChatDestination.id
       aiChatStatusText = "Steering \(aiChatDestinationTitle(destinationID))…"
     }
@@ -2394,7 +2397,7 @@ extension WorkspaceStore {
     if activeAIChatUserMessageIDByThreadID[threadID] == messageID {
       return true
     }
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }),
+    guard let thread = aiChatThread(withID: threadID),
           let message = thread.messages.first(where: { $0.id == messageID }),
           message.role == .user,
           message.deliveryStatus == .sending
@@ -2542,7 +2545,7 @@ extension WorkspaceStore {
   }
 
   func aiChatStoppedSendFailureText(for threadID: UUID) -> String {
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else {
+    guard let thread = aiChatThread(withID: threadID) else {
       return "The AI request was stopped by you. Retry to start this request again."
     }
     let destinationID = activeSharedRoomDestinationByThreadID[threadID]
@@ -2605,7 +2608,7 @@ extension WorkspaceStore {
     if selectedAIChatThreadID == threadID {
       return aiChatMessages
     }
-    return aiChatThreads.first(where: { $0.id == threadID })?.messages ?? []
+    return aiChatThread(withID: threadID)?.messages ?? []
   }
 
   func aiChatMessages(
@@ -2751,27 +2754,39 @@ extension WorkspaceStore {
   }
 
   func syncSelectedAIChatSendState() {
+    // Called on every presence refresh and delivery event. Swift 6.1's
+    // Observation notifies on every assignment, so write only what changed;
+    // unconditional writes re-rendered the sidebar, composer, and transcript
+    // about once a second while another host streamed a reply.
     let previousSendingThreadIDs = aiChatSendingThreadIDs
-    aiChatSendingThreadIDs = Set(drainingAIChatThreadIDs.filter {
+    let sendingThreadIDs = Set(drainingAIChatThreadIDs.filter {
       isAIChatRuntimeStateVisible(for: $0)
         && !aiChatPendingUserMessageIDs(for: $0).isEmpty
     })
-    noteChatTurnTransitions(from: previousSendingThreadIDs, to: aiChatSendingThreadIDs)
-    guard let selectedAIChatThreadID else {
-      isSendingAIChatMessage = false
-      aiChatQueuedMessageCount = 0
-      aiChatRequestStartedAt = nil
-      return
+    if sendingThreadIDs != previousSendingThreadIDs {
+      aiChatSendingThreadIDs = sendingThreadIDs
     }
-    let exposesRuntimeState = isAIChatRuntimeStateVisible(for: selectedAIChatThreadID)
-    isSendingAIChatMessage = exposesRuntimeState
-      && aiChatSendingThreadIDs.contains(selectedAIChatThreadID)
-    aiChatQueuedMessageCount = exposesRuntimeState
-      ? aiChatPendingUserMessageIDs(for: selectedAIChatThreadID).count
-      : 0
-    aiChatRequestStartedAt = exposesRuntimeState
-      ? aiChatRequestStartedAtByThreadID[selectedAIChatThreadID]
-      : nil
+    noteChatTurnTransitions(from: previousSendingThreadIDs, to: sendingThreadIDs)
+    let isSending: Bool
+    let queuedCount: Int
+    let requestStartedAt: Date?
+    if let selectedAIChatThreadID {
+      let exposesRuntimeState = isAIChatRuntimeStateVisible(for: selectedAIChatThreadID)
+      isSending = exposesRuntimeState && sendingThreadIDs.contains(selectedAIChatThreadID)
+      queuedCount = exposesRuntimeState
+        ? aiChatPendingUserMessageIDs(for: selectedAIChatThreadID).count
+        : 0
+      requestStartedAt = exposesRuntimeState
+        ? aiChatRequestStartedAtByThreadID[selectedAIChatThreadID]
+        : nil
+    } else {
+      isSending = false
+      queuedCount = 0
+      requestStartedAt = nil
+    }
+    if isSendingAIChatMessage != isSending { isSendingAIChatMessage = isSending }
+    if aiChatQueuedMessageCount != queuedCount { aiChatQueuedMessageCount = queuedCount }
+    if aiChatRequestStartedAt != requestStartedAt { aiChatRequestStartedAt = requestStartedAt }
   }
 
   nonisolated static func aiChatSendFailureText(from error: Error) -> String {

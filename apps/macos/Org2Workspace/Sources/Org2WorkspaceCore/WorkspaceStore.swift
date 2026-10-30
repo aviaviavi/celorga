@@ -2293,7 +2293,14 @@ public final class WorkspaceStore {
     writer: AIChatTranscriptStore.shared.writerIdentity
   )
   /// Presence records published by other hosts that share this corpus.
-  public internal(set) var aiChatRemoteLiveHosts: [AIChatLiveHostRecord] = []
+  public internal(set) var aiChatRemoteLiveHosts: [AIChatLiveHostRecord] = [] {
+    didSet { refreshAIChatRemoteRunningThreadIDs() }
+  }
+  /// Threads with a fresh turn on another host. A remote host rewrites its
+  /// record about once a second while it streams; views that only need to
+  /// know whether a thread is running (the sidebar, the composer) read this
+  /// set so they do not re-render on every streamed chunk.
+  public internal(set) var aiChatRemoteRunningThreadIDs: Set<UUID> = []
   @ObservationIgnored var aiChatLivePresenceTask: Task<Void, Never>?
   @ObservationIgnored var lastPublishedAIChatLiveRecord: AIChatLiveHostRecord?
   @ObservationIgnored var lastPublishedAIChatLiveTranscriptURL: URL?
@@ -2806,6 +2813,7 @@ public final class WorkspaceStore {
   }
   public internal(set) var aiChatThreads: [AIChatThread] = [] {
     didSet {
+      aiChatThreadIndexCacheIsValid = false
       guard !isApplyingIncrementalAIChatThreadMutation else { return }
       scheduleOpenAIDotMirrorReconcile()
       rebuildAIChatThreadDisplayCache()
@@ -2816,6 +2824,11 @@ public final class WorkspaceStore {
       }
     }
   }
+  /// Thread ID to array index, rebuilt lazily after `aiChatThreads` changes.
+  /// Views ask about threads by ID many times per render; a linear search
+  /// over the whole history for each question added up.
+  @ObservationIgnored var aiChatThreadIndexCache: [UUID: Int] = [:]
+  @ObservationIgnored var aiChatThreadIndexCacheIsValid = false
   public internal(set) var visibleAIChatThreads: [AIChatThread] = []
   public internal(set) var archivedAIChatThreads: [AIChatThread] = []
   var visibleAIChatThreadSummaries: [AIChatSidebarThreadSummary] = []
@@ -2990,7 +3003,22 @@ public final class WorkspaceStore {
   public internal(set) var openClawLocalEditNodeState: OpenClawLocalEditNodeState = .disabled
   public internal(set) var openClawLocalEditNodeDetail = ""
   public var openClawHasStoredToken = false
-  public var aiChatStatusText = WorkspaceStore.defaultAIChatStatusText()
+  // Streaming handlers set the same status ("… is replying") on every
+  // event. With Swift 6.1's Observation, each assignment re-rendered the
+  // chat even when the text did not change, so skip unchanged writes.
+  @ObservationIgnored private var aiChatStatusTextStorage = WorkspaceStore.defaultAIChatStatusText()
+  public var aiChatStatusText: String {
+    get {
+      access(keyPath: \.aiChatStatusText)
+      return aiChatStatusTextStorage
+    }
+    set {
+      guard newValue != aiChatStatusTextStorage else { return }
+      withMutation(keyPath: \.aiChatStatusText) {
+        aiChatStatusTextStorage = newValue
+      }
+    }
+  }
   public internal(set) var aiChatTranscriptRecoveryNotice: String?
   public internal(set) var codexAccountState: CodexAccountState = .unknown
   public internal(set) var isCodexSigningIn = false
@@ -3054,10 +3082,13 @@ public final class WorkspaceStore {
   }
   var codexStreamingItemIDByThreadID: [UUID: String] = [:]
   public var isAIChatAssistantPresented = false
-  public internal(set) var aiChatScrollPosition: Double?
-  public internal(set) var aiChatAssistantChatScrollPosition: Double?
-  var aiChatScrollPositionsByThreadID: [UUID: Double] = [:]
-  var aiChatAssistantChatScrollPositionsByThreadID: [UUID: Double] = [:]
+  // Scroll positions are written by the transcript page on every scroll
+  // frame. The transcript reads them only to seed a newly mounted page, so
+  // observing them re-rendered the whole transcript on every report.
+  @ObservationIgnored public internal(set) var aiChatScrollPosition: Double?
+  @ObservationIgnored public internal(set) var aiChatAssistantChatScrollPosition: Double?
+  @ObservationIgnored var aiChatScrollPositionsByThreadID: [UUID: Double] = [:]
+  @ObservationIgnored var aiChatAssistantChatScrollPositionsByThreadID: [UUID: Double] = [:]
   public internal(set) var lastCompletedAIChatScrollRestorationThreadID: UUID?
   public var aiChatThreadRecords: [AIChatThreadRecord] = []
   public var selectedAIChatThreadRecordID: String?
@@ -3368,7 +3399,21 @@ public final class WorkspaceStore {
   public internal(set) var liveFileEditorStatusText = ""
   public var isLoadingBacklinks = false
   public var priorityModeActive = false
-  public var statusText = ""
+  // Set from hundreds of call sites, often to the value it already has.
+  // Skip unchanged writes so they do not re-render the views that show it.
+  @ObservationIgnored private var statusTextStorage = ""
+  public var statusText: String {
+    get {
+      access(keyPath: \.statusText)
+      return statusTextStorage
+    }
+    set {
+      guard newValue != statusTextStorage else { return }
+      withMutation(keyPath: \.statusText) {
+        statusTextStorage = newValue
+      }
+    }
+  }
   public var errorText: String?
   public internal(set) var canNavigateBack = false
   public internal(set) var canNavigateForward = false
@@ -3605,7 +3650,7 @@ public final class WorkspaceStore {
     codexLocalThreadIDsByRuntimeThreadID["\(destinationID)\u{0}\(runtimeThreadID)"] = threadID
     openClawGatewayStateByThreadID[threadID] = .connected
     aiChatActiveRunIDByThreadID[threadID] = turnID
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else { return }
+    guard let thread = aiChatThread(withID: threadID) else { return }
     var runtimeThreadIDs = thread.runtimeThreadIDsByDestination
     runtimeThreadIDs[destinationID] = runtimeThreadID
     replaceAIChatThread(
@@ -3784,8 +3829,11 @@ public final class WorkspaceStore {
   var agendaClockRefreshTask: Task<Void, Never>?
   var needsFullCorpusRefreshAfterEvents = false
   var isWorkspaceRealtimeRefreshActive = false
-  public internal(set) var dirtyWorkspaceSurfaces: Set<WorkspaceSurface> = []
-  var workspaceSurfaceDirtyGenerations: [WorkspaceSurface: UInt64] = [:]
+  // Refresh bookkeeping, updated on every corpus file event. No view reads
+  // it, so observing it only invalidated views that happened to call a store
+  // method touching it.
+  @ObservationIgnored public internal(set) var dirtyWorkspaceSurfaces: Set<WorkspaceSurface> = []
+  @ObservationIgnored var workspaceSurfaceDirtyGenerations: [WorkspaceSurface: UInt64] = [:]
   var mobileRemoteWorkspaceRefreshTask: Task<Void, Never>?
   var mobileRemoteWorkspaceLastRefresh: (key: [UInt64], at: Date)?
   /// Bounds staleness from a missed file event and from date-relative agenda rows.

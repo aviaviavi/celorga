@@ -19,7 +19,9 @@ enum LiveEmbedPresentation {
   }
 
   static func containsEmbeds(_ html: String?) -> Bool {
-    html?.contains("data-org2-live-embed=\"true\"") == true
+    // Corpus file events check every cached rendered page; a byte scan keeps
+    // that cheap on the main actor.
+    html?.containsUTF8Bytes("data-org2-live-embed=\"true\"") == true
   }
 }
 

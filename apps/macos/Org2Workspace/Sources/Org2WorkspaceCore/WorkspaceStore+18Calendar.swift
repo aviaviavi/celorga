@@ -285,21 +285,34 @@ public enum WorkspaceCalendarFormat {
   public static func timeLabel(minute: Int, calendar: Calendar = .current, reference: Date = Date()) -> String {
     let day = calendar.startOfDay(for: reference)
     let date = calendar.date(byAdding: .minute, value: minute, to: day) ?? day
-    let formatter = DateFormatter()
-    formatter.calendar = calendar
-    formatter.timeZone = calendar.timeZone
-    formatter.setLocalizedDateFormatFromTemplate("jmm")
-    return formatter.string(from: date)
+    return templateFormatter("jmm", calendar: calendar).string(from: date)
   }
 
   public static func hourLabel(_ hour: Int, calendar: Calendar = .current, reference: Date = Date()) -> String {
     let day = calendar.startOfDay(for: reference)
     let date = calendar.date(byAdding: .hour, value: hour, to: day) ?? day
+    return templateFormatter("j", calendar: calendar).string(from: date)
+  }
+
+  private static let templateFormatterLock = NSLock()
+  nonisolated(unsafe) private static var templateFormatters: [String: DateFormatter] = [:]
+
+  /// The week and day grids label every hour on each render; creating and
+  /// configuring a DateFormatter per label was measurable on the main actor.
+  /// Formatters are cached per template, calendar, time zone, and locale.
+  private static func templateFormatter(_ template: String, calendar: Calendar) -> DateFormatter {
+    let locale = Locale.current
+    let key = "\(template)|\(calendar.identifier)|\(calendar.timeZone.identifier)|\(locale.identifier)"
+    templateFormatterLock.lock()
+    defer { templateFormatterLock.unlock() }
+    if let formatter = templateFormatters[key] { return formatter }
     let formatter = DateFormatter()
     formatter.calendar = calendar
     formatter.timeZone = calendar.timeZone
-    formatter.setLocalizedDateFormatFromTemplate("j")
-    return formatter.string(from: date)
+    formatter.locale = locale
+    formatter.setLocalizedDateFormatFromTemplate(template)
+    templateFormatters[key] = formatter
+    return formatter
   }
 
   /// Header for the visible range: "October 2026", "Oct 26 – Nov 1, 2026", or

@@ -253,17 +253,25 @@ struct AIChatTranscriptDocument: View {
 
   var body: some View {
     let liveInput = liveInput
+    // Each of these walks every visible message; compute them once per
+    // render instead of once per use.
+    let messageSlots = messageSlots
+    let messages = messageSlots.map(\.message)
     let inputs = messages.map { message in
       RenderInput(id: message.id,
         text: message.content,
         formatted: message.role == .assistant,
         expanded: expandedMessageIDs.contains(message.id))
     }
+    // Reasoning presentation parses and normalizes up to 8 KB per message;
+    // derive it once and reuse it for the render key and the trace.
+    var reasoningTextByMessageID: [UUID: String] = [:]
     let reasoningInputs = messages.compactMap { message -> ReasoningInput? in
       guard let trace = message.responseTrace,
-            let reasoning = AIChatProgressPresentation.reasoningText(from: trace.reasoning),
-            !reasoning.isEmpty
+            let reasoning = AIChatProgressPresentation.reasoningText(from: trace.reasoning)
       else { return nil }
+      reasoningTextByMessageID[message.id] = reasoning
+      guard !reasoning.isEmpty else { return nil }
       return ReasoningInput(id: message.id, text: reasoning)
     }
     let entries = zip(messageSlots, inputs).map { slot, input in
@@ -296,12 +304,11 @@ struct AIChatTranscriptDocument: View {
         copied: copiedMessageID == message.id,
         isTruncated: excerpt.isTruncated,
         responseTrace: message.responseTrace.flatMap { trace in
+          let reasoning = reasoningTextByMessageID[message.id]
           let reasoningHTML = renderedReasoning[message.id].flatMap {
-            $0.source == AIChatProgressPresentation.reasoningText(from: trace.reasoning)
-              ? $0.html
-              : nil
+            $0.source == reasoning ? $0.html : nil
           }
-          return AIChatTranscriptHTML.Trace(trace, reasoningHTML: reasoningHTML)
+          return AIChatTranscriptHTML.Trace(trace, reasoningHTML: reasoningHTML, reasoning: reasoning)
         },
         changeSummary: message.changeSummary.map(AIChatTranscriptHTML.ChangeSummary.init),
         startWork: AIChatTranscriptHTML.StartWork(message, corpusRoot: store.corpusRoot)
@@ -716,8 +723,18 @@ enum AIChatTranscriptHTML {
     let context: OpenOrgContextTelemetry?
 
     init?(_ trace: AIChatResponseTrace, reasoningHTML: String? = nil) {
+      self.init(
+        trace,
+        reasoningHTML: reasoningHTML,
+        reasoning: AIChatProgressPresentation.reasoningText(from: trace.reasoning)
+      )
+    }
+
+    /// `reasoning` is `AIChatProgressPresentation.reasoningText(from:)` of
+    /// the trace's reasoning, already computed by the caller.
+    init?(_ trace: AIChatResponseTrace, reasoningHTML: String?, reasoning: String?) {
       guard !trace.isEmpty else { return nil }
-      reasoning = AIChatProgressPresentation.reasoningText(from: trace.reasoning)
+      self.reasoning = reasoning
       self.reasoningHTML = reasoningHTML
       activities = AIChatActivityFeed.items(from: trace.activities).map(Activity.init)
       usage = trace.usage
@@ -1535,15 +1552,27 @@ struct AIChatTranscriptWebView: NSViewRepresentable {
     var restorationThreadAfterDOMUpdate: String?
     var onAction: ((String,String?,String?) -> Void)?
     var onPosition: ((String,Double) -> Void)?
+    private var entryObjects: [String: (entry: AIChatTranscriptHTML.Entry, object: [String: Any])] = [:]
+
     override func update(_ view: WKWebView) {
       guard let payload, let data=try? JSONEncoder().encode(payload) else { return }
       // Rewrite HTML fields before encoding: JSON escaping must remain intact.
       var object=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any] ?? [:]
+      // Status and other small payload changes resend every entry. Reuse the
+      // converted object for entries that did not change instead of
+      // re-encoding, re-decoding, and rescanning each message's HTML.
+      var nextEntryObjects: [String: (entry: AIChatTranscriptHTML.Entry, object: [String: Any])] = [:]
       object["entries"] = payload.entries.map { entry -> [String:Any] in
+        if let cached = entryObjects[entry.id], cached.entry == entry {
+          nextEntryObjects[entry.id] = cached
+          return cached.object
+        }
         var value=(try? JSONSerialization.jsonObject(with:JSONEncoder().encode(entry))) as? [String:Any] ?? [:]
         value["html"]=OrgHTMLLocalResourceSchemeHandler.rewritingLocalImageSources(in:entry.html)
+        nextEntryObjects[entry.id] = (entry, value)
         return value
       }
+      entryObjects = nextEntryObjects
       let restorationThread = restorationThreadAfterDOMUpdate
       restorationThreadAfterDOMUpdate = nil
       view.callAsyncJavaScript(

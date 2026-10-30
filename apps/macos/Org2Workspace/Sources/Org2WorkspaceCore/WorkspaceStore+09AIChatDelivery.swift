@@ -167,7 +167,7 @@ extension WorkspaceStore {
       }
       return .deferred(deferred)
     }
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else {
+    guard let thread = aiChatThread(withID: threadID) else {
       return .rejected
     }
     if let existingOrigin = aiChatSendOriginsByThreadID[threadID],
@@ -493,7 +493,7 @@ extension WorkspaceStore {
           !unloadedAIChatThreadIDs.contains(threadID),
           !isAIChatThreadRunningOnCurrentHost(threadID),
           !hasPendingAIChatRecovery(in: threadID),
-          let storedThread = aiChatThreads.first(where: { $0.id == threadID })
+          let storedThread = aiChatThread(withID: threadID)
     else { return }
     let thread = storedThread.replacingMessages(aiChatMessages(for: threadID))
     let repaired = Self.interruptOrphanedAIChatSends(
@@ -1110,7 +1110,7 @@ extension WorkspaceStore {
   }
 
   private func hasPendingAIChatRecovery(in threadID: UUID) -> Bool {
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }),
+    guard let thread = aiChatThread(withID: threadID),
           let pendingTurn = thread.pendingTurn
     else {
       return false
@@ -1289,7 +1289,7 @@ extension WorkspaceStore {
         )
       } else {
         openClawGatewayStateByThreadID[threadID] = .reconnecting
-        aiChatLastEventAtByThreadID[threadID] = Date()
+        noteAIChatLiveEvent(for: threadID)
         openClawGatewayDetailByThreadID[threadID] =
           "This turn is saved and will reconnect without sending it twice."
         if isActiveAIChatSendOrigin(sendOrigin) {
@@ -1969,7 +1969,7 @@ extension WorkspaceStore {
     destinationName: String
   ) {
     guard !stoppedAIChatThreadIDs.contains(threadID) else { return }
-    aiChatLastEventAtByThreadID[threadID] = Date()
+    noteAIChatLiveEvent(for: threadID)
     aiChatLiveState.noteEvent(for: threadID, coalesced: true)
     aiChatLiveState.appendStreamingDelta(
       message.text.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n",
@@ -1982,7 +1982,7 @@ extension WorkspaceStore {
 
   private func handleBundledAgentEvent(_ event: JSONValue, threadID: UUID) {
     guard !stoppedAIChatThreadIDs.contains(threadID) else { return }
-    aiChatLastEventAtByThreadID[threadID] = Date()
+    noteAIChatLiveEvent(for: threadID)
     if event["type"]?.stringValue == "text", let text = event["text"]?.stringValue {
       aiChatLiveState.noteEvent(for: threadID, coalesced: true)
       aiChatLiveState.appendStreamingDelta(text + "\n\n", for: threadID)

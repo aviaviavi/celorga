@@ -1569,7 +1569,7 @@ extension WorkspaceStore {
     for threadID in current.subtracting(previous) {
       chatTurnStartTimes[threadID] = now
       guard usageLog.isEnabled else { continue }
-      let thread = aiChatThreads.first(where: { $0.id == threadID })
+      let thread = aiChatThread(withID: threadID)
       usageLog.record(.chatTurnStart, [
         "runtime": .string(thread?.runtime.rawValue ?? "unknown"),
         "heading_thread": .bool(thread?.resource != nil),

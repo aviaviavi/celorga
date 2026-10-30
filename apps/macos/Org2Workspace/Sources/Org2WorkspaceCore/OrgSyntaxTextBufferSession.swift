@@ -147,8 +147,15 @@ final class OrgSyntaxTextBufferSession: @unchecked Sendable {
       let source = piece.additionIndex.map { captured.additions[$0] } ?? captured.base
       materialized.append(source.substring(with: piece.range))
     }
-    let text = materialized as String
-    rebase(text: text, ifCurrentRevisionIs: captured.revision)
+    // Keep the piece table on an immutable UTF-16 base, but hand callers a
+    // native UTF-8 String. A lazily bridged NSString makes every later
+    // `utf8.count`, comparison, and hash on the main actor transcode the
+    // whole document; doing it once here keeps that work on the snapshot's
+    // thread (off-main for large documents).
+    let base = materialized.copy() as! NSString
+    var text = String(base)
+    text.makeContiguousUTF8()
+    rebase(base: base, ifCurrentRevisionIs: captured.revision)
     return Snapshot(text: text, revision: captured.revision)
   }
 
@@ -166,8 +173,7 @@ final class OrgSyntaxTextBufferSession: @unchecked Sendable {
     }.value
   }
 
-  private func rebase(text: String, ifCurrentRevisionIs revision: Int) {
-    let base = text as NSString
+  private func rebase(base: NSString, ifCurrentRevisionIs revision: Int) {
     lock.withLock {
       guard state.revision == revision else { return }
       state.base = base

@@ -345,7 +345,7 @@ extension WorkspaceStore {
   /// Whether the selected chat is a dot mirror with older messages in ChatGPT.
   public var selectedAIChatCanLoadEarlierOpenAIDotMessages: Bool {
     guard let threadID = selectedAIChatThreadID,
-          aiChatThreads.first(where: { $0.id == threadID })?.isOpenAIDotMirror == true
+          aiChatThread(withID: threadID)?.isOpenAIDotMirror == true
     else { return false }
     return openAIDotMirrorHistoryStateByThreadID[threadID]?.reachedStart != true
   }

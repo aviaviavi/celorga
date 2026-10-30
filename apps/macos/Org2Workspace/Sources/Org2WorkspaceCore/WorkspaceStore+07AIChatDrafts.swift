@@ -126,14 +126,33 @@ extension WorkspaceStore {
     ].joined(separator: "\u{1F}")
   }
 
-  func scheduleAgendaRefresh(preserveSelection: Bool = true, updatesStatus: Bool = false) {
+  func scheduleAgendaRefresh(
+    preserveSelection: Bool = true,
+    updatesStatus: Bool = false,
+    delayNanoseconds: UInt64 = 150_000_000
+  ) {
     scheduledAgendaRefreshTask?.cancel()
     scheduledAgendaRefreshTask = Task { @MainActor in
-      try? await Task.sleep(nanoseconds: 150_000_000)
+      try? await Task.sleep(nanoseconds: delayNanoseconds)
       guard !Task.isCancelled else { return }
       await refreshAgenda(preserveSelection: preserveSelection, updatesStatus: updatesStatus)
     }
   }
+
+  /// Refreshes the agenda after the live editor saves. Autosave runs on every
+  /// typing pause; launching the agenda CLI and rebuilding its indexes on the
+  /// main actor each time made typing stutter while Agenda was not even on
+  /// screen. Off-screen, wait until editing settles; the refresh still lands
+  /// for Calendar and the phone, just once per burst instead of per pause.
+  func scheduleAgendaRefreshAfterLiveEditorSave() {
+    let agendaIsVisible = selectedSurface == .agenda || selectedSurface == .calendar
+    scheduleAgendaRefresh(
+      preserveSelection: true,
+      delayNanoseconds: agendaIsVisible ? 150_000_000 : Self.offscreenAgendaRefreshAfterSaveDelayNanoseconds
+    )
+  }
+
+  static let offscreenAgendaRefreshAfterSaveDelayNanoseconds: UInt64 = 8_000_000_000
 
   func applyDeferredStableAutosaveForActiveBlock() -> Bool {
     guard let editingBlockID,
@@ -1244,7 +1263,7 @@ extension WorkspaceStore {
 
     ensureAIChatThread()
     guard let threadID = selectedAIChatThreadID,
-          let thread = aiChatThreads.first(where: { $0.id == threadID })
+          let thread = aiChatThread(withID: threadID)
     else {
       aiChatVoiceStatusText = "Open an AI chat before dictating."
       aiChatStatusText = aiChatVoiceStatusText
@@ -1317,7 +1336,7 @@ extension WorkspaceStore {
     duration: TimeInterval,
     threadID: UUID
   ) async {
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else { return }
+    guard let thread = aiChatThread(withID: threadID) else { return }
     let origin = AIChatDictationOrigin(
       threadID: threadID,
       threadTitle: thread.title,
@@ -1744,7 +1763,7 @@ extension WorkspaceStore {
     guard isCurrentAIChatCorpusContext(contextToken) else { return false }
     let dictatedText = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !dictatedText.isEmpty,
-          let thread = aiChatThreads.first(where: { $0.id == threadID }),
+          let thread = aiChatThread(withID: threadID),
           !thread.isSettled
     else { return false }
 
@@ -1810,7 +1829,15 @@ extension WorkspaceStore {
     guard let threadID = selectedAIChatThreadID,
           isAIChatRuntimeStateVisible(for: threadID)
     else { return nil }
-    return aiChatLastEventAtByThreadID[threadID]
+    return aiChatLiveState.lastEventAt(for: threadID)
+  }
+
+  /// Records agent activity for stall detection without publishing a live
+  /// update per event. Assigning through `aiChatLastEventAtByThreadID` sent
+  /// `objectWillChange` immediately, so every token re-rendered the
+  /// transcript instead of the 66 ms coalesced cadence.
+  func noteAIChatLiveEvent(for threadID: UUID) {
+    aiChatLiveState.noteEvent(for: threadID, coalesced: true)
   }
 
   public var aiChatActiveRunID: String? {
@@ -1868,7 +1895,7 @@ extension WorkspaceStore {
        let activeDestinationID = activeSharedRoomDestinationByThreadID[threadID] {
       return activeDestinationID
     }
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else {
+    guard let thread = aiChatThread(withID: threadID) else {
       return nil
     }
     return aiChatActiveDestinationID(for: thread)
@@ -1899,11 +1926,63 @@ extension WorkspaceStore {
   }
 
   public func isAIChatThreadRunning(_ threadID: UUID) -> Bool {
+    isAIChatThreadRunning(threadID, thread: aiChatThread(withID: threadID))
+  }
+
+  /// The thread with `threadID`, found through an index that is rebuilt
+  /// once per change to `aiChatThreads` instead of a linear search per call.
+  func aiChatThread(withID threadID: UUID) -> AIChatThread? {
+    let threads = aiChatThreads
+    if !aiChatThreadIndexCacheIsValid {
+      var index: [UUID: Int] = [:]
+      index.reserveCapacity(threads.count)
+      for (offset, thread) in threads.enumerated() where index[thread.id] == nil {
+        index[thread.id] = offset
+      }
+      aiChatThreadIndexCache = index
+      aiChatThreadIndexCacheIsValid = true
+    }
+    guard let offset = aiChatThreadIndexCache[threadID],
+          threads.indices.contains(offset),
+          threads[offset].id == threadID
+    else {
+      return nil
+    }
+    return threads[offset]
+  }
+
+  /// Splits sidebar summaries into running and idle threads with one pass over
+  /// the thread list. The sidebar used to ask `isAIChatThreadRunning` per
+  /// summary several times per render, each a linear search of every thread.
+  func partitionAIChatThreadSummariesByRunning(
+    _ summaries: [AIChatSidebarThreadSummary]
+  ) -> (running: [AIChatSidebarThreadSummary], idle: [AIChatSidebarThreadSummary]) {
+    guard !summaries.isEmpty else { return ([], []) }
+    let wanted = Set(summaries.map(\.id))
+    var threadsByID: [UUID: AIChatThread] = [:]
+    threadsByID.reserveCapacity(wanted.count)
+    for thread in aiChatThreads where wanted.contains(thread.id) && threadsByID[thread.id] == nil {
+      threadsByID[thread.id] = thread
+    }
+    var running: [AIChatSidebarThreadSummary] = []
+    var idle: [AIChatSidebarThreadSummary] = []
+    idle.reserveCapacity(summaries.count)
+    for summary in summaries {
+      if isAIChatThreadRunning(summary.id, thread: threadsByID[summary.id]) {
+        running.append(summary)
+      } else {
+        idle.append(summary)
+      }
+    }
+    return (running, idle)
+  }
+
+  private func isAIChatThreadRunning(_ threadID: UUID, thread: AIChatThread?) -> Bool {
     (drainingAIChatThreadIDs.contains(threadID)
       && isAIChatRuntimeStateVisible(for: threadID))
       || aiChatSendingThreadIDs.contains(threadID)
-      || aiChatRemoteLiveTurn(for: threadID) != nil
-      || aiChatThreads.first(where: { $0.id == threadID }).map { thread in
+      || aiChatRemoteRunningThreadIDs.contains(threadID)
+      || thread.map { thread in
         thread.pendingTurn.map { pendingTurn in
           thread.messages.contains { message in
             message.id == pendingTurn.userMessageID
@@ -1938,7 +2017,7 @@ extension WorkspaceStore {
   /// message clauses of `isAIChatThreadRunning`. Room dispatch copies are
   /// included: an agent-requested hand-off has no visible bubble of its own.
   func aiChatBlockingSend(in threadID: UUID) -> AIChatMessage? {
-    guard let thread = aiChatThreads.first(where: { $0.id == threadID }) else { return nil }
+    guard let thread = aiChatThread(withID: threadID) else { return nil }
     let preferredIDs = [activeAIChatUserMessageIDByThreadID[threadID], thread.pendingTurn?.userMessageID]
       .compactMap { $0 }
     for id in preferredIDs {
@@ -1965,7 +2044,7 @@ extension WorkspaceStore {
     guard isAIChatThreadRunning(threadID),
           !aiChatSendingThreadIDs.contains(threadID),
           aiChatRemoteLiveTurn(for: threadID) == nil,
-          let thread = aiChatThreads.first(where: { $0.id == threadID })
+          let thread = aiChatThread(withID: threadID)
     else { return nil }
     let blocking = aiChatBlockingSend(in: threadID)
     let destination = aiChatDestinationTitle(
@@ -2717,7 +2796,7 @@ extension WorkspaceStore {
       aiChatStatusText = "Asking \(names.joined(separator: " + "))…"
     }
     guard !drainingAIChatThreadIDs.contains(threadID) else { return }
-    if let ownerID = aiChatThreads.first(where: { $0.id == threadID })?.pendingTurn?.dispatchOwnerID,
+    if let ownerID = aiChatThread(withID: threadID)?.pendingTurn?.dispatchOwnerID,
        ownerID != Self.aiChatDispatchOwnerID {
       return
     }

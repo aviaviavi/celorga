@@ -2891,7 +2891,7 @@ extension WorkspaceStore {
 
   func openHeadingWork(threadID: UUID?, runID: String?) {
     if let threadID, aiChatThreads.contains(where: { $0.id == threadID }) {
-      if aiChatThreads.first(where: { $0.id == threadID })?.isSettled == true {
+      if aiChatThread(withID: threadID)?.isSettled == true {
         reopenAIChatThread(threadID)
       }
       navigateToSurface(.aiChat)

@@ -1218,7 +1218,7 @@ extension WorkspaceStore {
         rawTitle = "/\(skill.name)"
       } else if selectedSurface == .aiChat,
                 let threadID = selectedAIChatThreadID,
-                let thread = aiChatThreads.first(where: { $0.id == threadID }) {
+                let thread = aiChatThread(withID: threadID) {
         rawTitle = thread.title
       } else {
         rawTitle = selectedSurface.title
