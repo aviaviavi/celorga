@@ -1,6 +1,6 @@
 {
   "$schema": "org2:openorg-performance-corpus-shape:v1",
-  "version": 5,
+  "version": 6,
   "description": "Aggregate, privacy-safe union of the root-heavy and zoned OpenOrg corpus layouts. It preserves both workloads without corpus text, file names, IDs, or source paths.",
   "privacy": {
     "containsCorpusContent": false,
@@ -8,22 +8,22 @@
     "containsSourcePaths": false
   },
   "documents": {
-    "activeFileCount": 7534,
+    "activeFileCount": 8874,
     "rootFileCount": 1934,
     "extensionMix": {
       "csv": 360,
       "md": 140,
-      "org": 4634,
+      "org": 5974,
       "org2": 2400
     },
     "zones": [
       {
         "kind": "notes",
-        "fileCount": 1500
+        "fileCount": 1700
       },
       {
         "kind": "daily",
-        "fileCount": 1600
+        "fileCount": 1700
       },
       {
         "kind": "agents",
@@ -31,11 +31,11 @@
       },
       {
         "kind": "meetings",
-        "fileCount": 560
+        "fileCount": 700
       },
       {
         "kind": "views",
-        "fileCount": 1500
+        "fileCount": 2400
       },
       {
         "kind": "other",
@@ -58,8 +58,8 @@
   },
   "chat": {
     "threadCount": 2400,
-    "activeThreadCount": 48,
-    "archivedThreadCount": 2352,
+    "activeThreadCount": 96,
+    "archivedThreadCount": 2304,
     "messageCount": 12000,
     "maxMessagesPerThread": 512,
     "attachmentBytes": 64000000,

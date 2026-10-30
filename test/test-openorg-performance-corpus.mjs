@@ -497,24 +497,24 @@ try {
     new URL("./fixtures/openorg-performance-corpus-shape-v1.json", import.meta.url),
     "utf8"
   ));
-  assert.equal(unionShape.version, 5);
-  assert.equal(unionShape.documents.activeFileCount, 7_534);
+  assert.equal(unionShape.version, 6);
+  assert.equal(unionShape.documents.activeFileCount, 8_874);
   assert.equal(unionShape.documents.rootFileCount, 1_934);
   assert.deepEqual(unionShape.documents.extensionMix, {
     csv: 360,
     md: 140,
-    org: 4_634,
+    org: 5_974,
     org2: 2_400,
   });
   const unionZones = Object.fromEntries(
     unionShape.documents.zones.map((zone) => [zone.kind, zone.fileCount])
   );
   assert.deepEqual(unionZones, {
-    notes: 1_500,
-    daily: 1_600,
+    notes: 1_700,
+    daily: 1_700,
     agents: 100,
-    meetings: 560,
-    views: 1_500,
+    meetings: 700,
+    views: 2_400,
     other: 340,
   });
   assert.equal(
