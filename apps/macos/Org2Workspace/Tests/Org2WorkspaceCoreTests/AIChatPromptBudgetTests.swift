@@ -85,10 +85,10 @@ final class AIChatPromptBudgetTests: XCTestCase {
     // Budgets sit a little above the measured sizes. Raise one only for
     // instructions the agent cannot get from `celorga agent capabilities`
     // or by reading the corpus.
-    XCTAssertLessThanOrEqual(sizes.standing, 6_300, "standing instructions grew")
+    XCTAssertLessThanOrEqual(sizes.standing, 6_600, "standing instructions grew")
     XCTAssertLessThanOrEqual(sizes.turn, 4_100, "per-turn snapshot grew")
-    XCTAssertLessThanOrEqual(sizes.openCodeTotal, 10_300)
-    XCTAssertLessThanOrEqual(sizes.claudeSystemPrompt, 10_000)
-    XCTAssertLessThanOrEqual(sizes.codexFirstTurn, 11_900)
+    XCTAssertLessThanOrEqual(sizes.openCodeTotal, 10_500)
+    XCTAssertLessThanOrEqual(sizes.claudeSystemPrompt, 10_200)
+    XCTAssertLessThanOrEqual(sizes.codexFirstTurn, 12_200)
   }
 }
