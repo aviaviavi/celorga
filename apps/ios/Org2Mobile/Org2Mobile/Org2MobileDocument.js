@@ -2019,7 +2019,10 @@ var Org2MobileDocument = (() => {
         });
       });
 
-      figure.addEventListener("mousemove", (event) => {
+      // Pointer events cover mouse, pen, and touch: a tap or a horizontal
+      // drag on a phone or trackpad-less display inspects the nearest mark.
+      function inspectPointer(event) {
+        if (event.target && event.target.closest && event.target.closest(".org2-chart-legend-item")) return;
         let nearest = null;
         let nearestDistance = Infinity;
         visibleMarks().forEach((mark) => {
@@ -2031,9 +2034,17 @@ var Org2MobileDocument = (() => {
           }
         });
         showMark(nearest);
-      });
-      figure.addEventListener("mouseleave", () => {
+      }
+      figure.addEventListener("pointermove", inspectPointer);
+      figure.addEventListener("pointerdown", inspectPointer);
+      // A lifted finger leaves the tooltip up so it can be read; only a
+      // mouse or pen moving away hides it. Tapping outside the chart hides it.
+      figure.addEventListener("pointerleave", (event) => {
+        if (event.pointerType === "touch") return;
         if (!marks.includes(document.activeElement)) hideMark();
+      });
+      document.addEventListener("pointerdown", (event) => {
+        if (activeMark && !figure.contains(event.target)) hideMark();
       });
     });
   }
@@ -2048,7 +2059,8 @@ var Org2MobileDocument = (() => {
   var CHART_INTERACTION_STYLE = `.org2-chart-legend-item { cursor: pointer; outline: none; }
 .org2-chart-legend-item[aria-pressed="false"] { opacity: 0.38; }
 .org2-chart-legend-item:focus-visible rect { stroke: var(--org2-text); stroke-width: 2; }
-.org2-chart-series-hidden { display: none; }`;
+.org2-chart-series-hidden { display: none; }
+figure.org2-chart[data-org2-chart-interactive="true"] svg.org2-chart-svg { touch-action: pan-y; }`;
 
   // src/colorBinding.ts
   var NAMED_COLORS = {

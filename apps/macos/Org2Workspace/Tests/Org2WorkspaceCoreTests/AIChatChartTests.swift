@@ -30,6 +30,15 @@ final class AIChatChartTests: XCTestCase {
     XCTAssertEqual(AIChatMessageOrgNormalizer.normalized("| a | b |\n| - | - |"), "| a | b |\n| - | - |")
   }
 
+  func testAgentsAreToldNativeChartsHaveTooltipsAndInlineData() {
+    // Agents reached for hand-built HTML charts because the contract did not
+    // say chart blocks already have tooltips and can carry their own rows.
+    let contract = AIChatWorkspaceContext.responseFormattingContract
+    XCTAssertTrue(contract.contains("put the Org table rows inside the chart block"))
+    XCTAssertTrue(contract.contains("hover and tap tooltips"))
+    XCTAssertTrue(contract.contains("use a chart block, not an html block"))
+  }
+
   func testChartInteractionScriptIsExtractedOnlyFromRendererOutput() {
     let script = "(() => { window.__org2InstallCharts = function () {}; })();"
     let html = "<html><head><script id=\"org2-app-document-script\">x</script><script id=\"org2-chart-interaction\">\n\(script)\n</script></head></html>"
