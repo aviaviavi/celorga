@@ -400,6 +400,51 @@ public final class CRMWorkspaceModel {
   }
 }
 
+/// The People and Companies list/detail split.
+enum CRMSplitLayout {
+  static let listWidthKey = "Org2Workspace.crm.listWidth.v1"
+  static let defaultListWidth: Double = 340
+  static let minimumListWidth: CGFloat = 220
+  static let minimumDetailWidth: CGFloat = 360
+
+  static func clampedListWidth(_ proposed: CGFloat, totalWidth: CGFloat) -> CGFloat {
+    let maximum = max(minimumListWidth, totalWidth - minimumDetailWidth)
+    return min(max(proposed, minimumListWidth), maximum)
+  }
+}
+
+/// A one-point divider with a wider drag target. Double-click restores the default width.
+struct CRMSplitDivider: View {
+  let onDrag: (CGFloat) -> Void
+  let onEnd: (CGFloat) -> Void
+  let onReset: () -> Void
+  @State private var isHovering = false
+
+  var body: some View {
+    Divider()
+      .overlay {
+        Color.clear
+          .frame(width: 9)
+          .contentShape(Rectangle())
+          .onHover { hovering in
+            guard hovering != isHovering else { return }
+            isHovering = hovering
+            if hovering { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+          }
+          .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+              .onChanged { onDrag($0.translation.width) }
+              .onEnded { onEnd($0.translation.width) }
+          )
+          .onTapGesture(count: 2, perform: onReset)
+      }
+      .onDisappear { if isHovering { NSCursor.pop(); isHovering = false } }
+      .help("Drag to resize. Double-click to reset.")
+      .accessibilityLabel("Resize list")
+      .accessibilityIdentifier("crm-split-divider")
+  }
+}
+
 enum CRMHistoryFilter: String, CaseIterable, Identifiable {
   case all, contact, mentions
   var id: String { rawValue }
@@ -441,6 +486,9 @@ struct PeopleCompaniesView: View {
   @State private var query = ""
   @State private var stageFilter: String?
   @AppStorage("Org2Workspace.crm.companySourceFilter.v1") private var sourceFilter = CRMCompanySourceFilter.notes.rawValue
+  /// Shared by People and Companies so both panes keep the same split.
+  @AppStorage(CRMSplitLayout.listWidthKey) private var listWidthPreference = CRMSplitLayout.defaultListWidth
+  @State private var listWidthDrag: CGFloat = 0
   @State private var sheet: CRMSheet?
 
   private var model: CRMWorkspaceModel { store.crm }
@@ -493,9 +541,17 @@ struct PeopleCompaniesView: View {
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if proxy.size.width >= 760 {
+          let listWidth = CRMSplitLayout.clampedListWidth(listWidthPreference + listWidthDrag, totalWidth: proxy.size.width)
           HStack(spacing: 0) {
-            list.frame(width: min(380, max(280, proxy.size.width * 0.34)))
-            Divider()
+            list.frame(width: listWidth)
+            CRMSplitDivider(
+              onDrag: { translation in listWidthDrag = translation },
+              onEnd: { translation in
+                listWidthPreference = CRMSplitLayout.clampedListWidth(listWidthPreference + translation, totalWidth: proxy.size.width)
+                listWidthDrag = 0
+              },
+              onReset: { listWidthPreference = CRMSplitLayout.defaultListWidth }
+            )
             detail.frame(maxWidth: .infinity, maxHeight: .infinity)
           }
         } else if selectedKey != nil {

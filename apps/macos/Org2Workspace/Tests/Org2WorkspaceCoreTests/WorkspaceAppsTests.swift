@@ -19,6 +19,13 @@ final class WorkspaceAppsTests: XCTestCase {
     XCTAssertEqual(html.components(separatedBy: "</script>").count, 2, "only our own script element closes")
   }
 
+  func testCRMSplitKeepsBothPanesUsable() {
+    XCTAssertEqual(CRMSplitLayout.clampedListWidth(500, totalWidth: 1200), 500)
+    XCTAssertEqual(CRMSplitLayout.clampedListWidth(100, totalWidth: 1200), CRMSplitLayout.minimumListWidth)
+    XCTAssertEqual(CRMSplitLayout.clampedListWidth(1100, totalWidth: 1200), 1200 - CRMSplitLayout.minimumDetailWidth)
+    XCTAssertEqual(CRMSplitLayout.clampedListWidth(500, totalWidth: 500), CRMSplitLayout.minimumListWidth)
+  }
+
   func testCRMDateLabelsAreRelativeAndKeepTimes() throws {
     let calendar = Calendar.current
     let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 2, hour: 12)))
