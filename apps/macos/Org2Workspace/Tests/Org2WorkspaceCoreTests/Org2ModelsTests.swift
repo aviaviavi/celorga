@@ -13318,6 +13318,16 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertFalse(CommandShortcutReveal.isActive(for: []))
   }
 
+  func testWindowMinimumFitsAHalfScreenSnap() {
+    // Half of a 1920-point display: a window manager's
+    // half-screen snap must not overflow it, even with two panes open.
+    let halfScreenWidth: CGFloat = 1_920 / 2
+    XCTAssertLessThanOrEqual(WorkspaceWindowLayout.minimumWidth, halfScreenWidth)
+    XCTAssertLessThanOrEqual(WorkspaceWindowLayout.twoPaneContentMinimumWidth, halfScreenWidth)
+    // Half of a 1080-point-tall display for a top/bottom snap, less the menu bar.
+    XCTAssertLessThanOrEqual(WorkspaceWindowLayout.minimumHeight, 1_080 / 2)
+  }
+
   func testSidebarStartsAtItsOneQuarterMaximumWidth() {
     XCTAssertEqual(WorkspaceSidebarLayout.maximumWidth(for: 1_400), 350)
     XCTAssertEqual(WorkspaceSidebarLayout.maximumWidth(for: 800), 200)

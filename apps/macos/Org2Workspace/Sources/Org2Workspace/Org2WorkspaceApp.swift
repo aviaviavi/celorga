@@ -35,7 +35,7 @@ struct Org2WorkspaceApp: App {
         .environment(store)
         .workspaceThemed()
         .preferredColorScheme(store.appearanceMode.colorScheme)
-        .frame(minWidth: 1080, minHeight: 680)
+        .frame(minWidth: WorkspaceWindowLayout.minimumWidth, minHeight: WorkspaceWindowLayout.minimumHeight)
         .background(WorkspaceWindowConfigurator())
         .onAppear {
           appDelegate.hasActiveWork = { [store] in store.hasWorkInProgressForTermination }

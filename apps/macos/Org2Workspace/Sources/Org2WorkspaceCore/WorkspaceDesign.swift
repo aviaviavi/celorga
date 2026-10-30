@@ -279,6 +279,22 @@ enum WorkspaceMainSplitLayout {
   static let detailIdealWidth: CGFloat = 680
 }
 
+public enum WorkspaceWindowLayout {
+  // A window manager's half-screen snap must fit, including on a 1920-point
+  // display (960 points per half). The root frame only sets a floor; the
+  // panes' own minimums still govern multi-pane layouts, so this sits below
+  // them rather than adding a stricter constraint of its own.
+  public static let minimumWidth: CGFloat = 720
+  public static let minimumHeight: CGFloat = 520
+
+  /// The narrowest a sidebar plus a two-pane main area can lay out.
+  static var twoPaneContentMinimumWidth: CGFloat {
+    WorkspaceSidebarLayout.minimumWidth
+      + WorkspaceMainSplitLayout.surfaceMinimumWidth
+      + WorkspaceMainSplitLayout.detailMinimumWidth
+  }
+}
+
 struct WorkspaceIconBadge: View {
   let systemImage: String
   var tint: Color = .secondary
