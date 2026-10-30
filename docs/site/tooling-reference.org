@@ -615,12 +615,32 @@ view over ordinary corpus records, not a separate database:
   identify a company.
 
 A person's company is the explicit =COMPANY= property, else their email
-domain, else the single company their note links to. People's meetings and
-follow-ups also appear on their company. A company without a stage that has
-outreach shows the inferred stage =lead=.
+domain, else the single company their note links to. People's follow-ups and
+the meetings they attended also appear on their company. A company without a
+stage that has outreach shows the inferred stage =lead=.
+
+Activity separates contact from mentions:
+
+- *Last touch* (=lastTouchAt=, =lastTouchType=) is direct contact: a meeting
+  they attended, a past calendar event with them, or outreach sent or
+  received. A meeting's attendees are entities linked in its title or named
+  by it (=Meeting: Jane Doe=, =Acme | Example sync=), listed in its
+  =ATTENDEES=, =PARTICIPANTS=, =WITH=, =COMPANY= or similar properties, under
+  an =Attendees= or =Participants= heading, or on a =Participants:= line. A
+  person's attendance also touches their company.
+- *Last mentioned* (=lastMentionAt=, =lastMentionType=) is the latest meeting
+  or note that only brings them up, such as a colleague mentioning a company
+  in someone else's meeting.
+
+Timeline items carry =role= (=attended= or =mentioned=), =meetingCount= counts
+attended meetings and calendar events, and lists sort by last touch, then last
+mention. Your own domains (=crm.selfDomains= plus the domains of your own
+calendar identities) never identify a company.
 
 #+begin_src sh
 celorga crm list --dir CORPUS [--kind people|companies] [--stage customer] [--query acme]
+celorga crm list --details --dir CORPUS
+celorga crm warm --dir CORPUS
 celorga crm show 'Acme Robotics' --dir CORPUS
 celorga crm resolve jane@acme.test --dir CORPUS
 celorga crm set 'Acme Robotics' --field stage --value customer --dir CORPUS --apply
@@ -661,8 +681,16 @@ revision guarded; =set= accepts =--if-revision=.
 Optional =celorga.json= keys: =crm.stages= (pipeline stages; default =lead=,
 =prospect=, =opportunity=, =customer=, =partner=, =former=), =crm.include=
 (extra corpus globs to scan), and =crm.selfDomains= (your team's email
-domains). The index uses a disposable, machine-local compile cache, so repeat
-reads of a large corpus are fast.
+domains).
+
+Reads use a disposable, machine-local snapshot of the computed index and every
+entity's activity. It is reused while no source file or directory, ledger
+account, staged calendar file or =celorga.json= changed, which is checked with
+=stat= calls only, and is rebuilt on the next read otherwise; on a large corpus
+a reused snapshot answers in well under a second. =crm warm= builds it ahead
+of time (=--rebuild= forces a rebuild), and every read reports =cache.hit=.
+=crm list --details= also returns each entity's tasks, timeline and upcoming
+meetings in one response.
 
 * Workspace apps
 

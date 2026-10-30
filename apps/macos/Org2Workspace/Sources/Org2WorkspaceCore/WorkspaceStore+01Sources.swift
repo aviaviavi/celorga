@@ -1462,6 +1462,9 @@ extension WorkspaceStore {
     }
     if requiresFullScan || !classified.contentPaths.isEmpty {
       crm.markStale()
+      if isWorkspaceAppEnabled("crm"), let root = corpusRoot?.standardizedFileURL.path {
+        crm.scheduleRefresh(cli: cli, root: root, visible: [.people, .companies].contains(selectedSurface))
+      }
     }
     if requiresFullScan || classified.hasConfigurationChanges {
       scheduleFullCorpusFileRefreshAfterEvents()

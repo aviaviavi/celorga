@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { configFilePath } from "./brandNames.js";
 import { formatOrgDateTimestamp } from "./calendarDate.js";
-import { loadConfig, resolveFilesFromDir, type Org2Config } from "./config.js";
+import { configPathMatches, loadConfig, type Org2Config } from "./config.js";
 import { compileCorpusIncremental, type CompiledCorpus, type CompiledCorpusNode } from "./corpusCompile.js";
 import { guardedContentRevision, guardedWriteFile, readGuardedFile } from "./guardedFile.js";
 import { org2CorpusIndexDir } from "./indexPaths.js";
@@ -19,7 +19,6 @@ import {
   summarizeWorkLedgerAccount,
   updateWorkLedgerAccount,
   validateWorkLedgerAccount,
-  type WorkLedgerEvent,
 } from "./workLedger.js";
 
 /**
@@ -66,6 +65,8 @@ export interface CrmTimelineItem {
   detail?: string;
   via?: string;
   url?: string;
+  /** For meetings and mentions: whether the entity took part or was only brought up. */
+  role?: "attended" | "mentioned";
 }
 
 export interface CrmLedgerRef {
@@ -103,9 +104,19 @@ export interface CrmEntitySummary {
   ledgerAccounts: CrmLedgerRef[];
   openTaskCount: number;
   nextTask?: CrmTask;
+  /** Meetings and calendar events the person or company took part in. */
   meetingCount: number;
+  /** Meetings and notes that only brought them up. */
+  mentionCount: number;
+  /** Most recent activity of either kind. */
   lastInteractionAt?: string;
   lastInteractionType?: string;
+  /** Most recent direct contact: an attended meeting or calendar event, or sent or received outreach. */
+  lastTouchAt?: string;
+  lastTouchType?: "meeting" | "calendar" | "outreach";
+  /** Most recent time someone else brought them up in a meeting or note. */
+  lastMentionAt?: string;
+  lastMentionType?: "meeting" | "note";
   nextFollowUpAt?: string;
 }
 
@@ -118,6 +129,10 @@ export interface CrmIndexOptions {
 const PERSON_TYPES = new Set(["person", "people", "contact", "individual"]);
 const COMPANY_TYPES = new Set(["company", "organization", "organisation", "org", "business", "customer"]);
 const RELATION_KEYS = ["COMPANY", "ACCOUNT", "ORGANIZATION", "ORGANISATION", "CUSTOMER", "CLIENT", "PERSON", "PEOPLE", "CONTACT", "CONTACTS", "ATTENDEES", "PARTICIPANTS", "WITH", "AFFILIATION", "EMPLOYER"];
+const MEETING_ATTENDEE_KEYS = ["ATTENDEES", "PARTICIPANTS", "WITH", "PERSON", "PEOPLE", "CONTACT", "CONTACTS", "COMPANY", "ACCOUNT", "ORGANIZATION", "ORGANISATION", "CUSTOMER", "CLIENT"];
+const ATTENDEE_SECTION = /^(?:attendees|participants|people|present|who)$/i;
+const ATTENDEE_LINE = /\b(?:participants|attendees|attended by|present)\s*:\s*(.*)$/i;
+const MEETING_WORDS = /\b(?:sync|call|meeting|demo|intro|introduction|follow[- ]?up|check[- ]?in|catch[- ]?up|review|weekly|bi-?weekly|monthly|chat|discussion|1:1|one[- ]on[- ]one)\b/gi;
 const PERSON_COMPANY_KEYS = ["COMPANY", "ORGANIZATION", "ORGANISATION", "AFFILIATION", "EMPLOYER", "ACCOUNT"];
 const FREE_MAIL = new Set([
   "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "hotmail.com", "outlook.com", "live.com", "msn.com",
@@ -158,6 +173,25 @@ export function normalizeDomain(value: string): string | null {
   if (text.includes("@")) text = text.split("@").pop() || "";
   text = text.split(/[/?#:\s]/)[0] || "";
   return /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(text) ? text : null;
+}
+
+/** Names a meeting title may contain, such as "Jane Doe" in "Jane Doe and Avi" or "Acme" in "Acme | Example sync". */
+export function meetingTitleParts(title: string): string[] {
+  const base = String(title || "")
+    .replace(/\[\[[^\]]*\]\[([^\]]*)\]\]/g, "$1")
+    .replace(/^\s*meeting:\s*/i, "")
+    .replace(/^\s*[<[]?\d{4}-\d{2}-\d{2}[^\]>]*[\]>]?\s*/, "")
+    .trim();
+  const parts = new Set<string>();
+  const add = (value: string) => {
+    for (const candidate of [value, value.replace(MEETING_WORDS, " ")]) {
+      const trimmed = candidate.replace(/\s+/g, " ").trim();
+      if (trimmed.length > 1) parts.add(trimmed);
+    }
+  };
+  add(base);
+  for (const piece of base.split(/\s*(?:[@|/,&+:]|<>|\bx\b|\band\b|\bwith\b|\bvs\.?|—|–|\s-\s)\s*/i)) add(piece);
+  return [...parts];
 }
 
 function emailsIn(value: string): string[] {
@@ -224,19 +258,84 @@ function isLedgerAccountPath(relative: string): boolean {
   return /^notes\/[^/]+\/accounts\//.test(relative.replace(/\\/g, "/"));
 }
 
-export function crmSourceFiles(root: string, config: Org2Config): string[] {
+function crmSourcePatterns(config: Org2Config): { patterns: string[]; ignore: string[] } {
   const nodesDir = String(config.roam?.nodesDir || "notes").replace(/^\.\//, "").replace(/\/+$/, "");
-  const patterns = [
-    ...(config.agendaFiles?.length ? config.agendaFiles : ["**/*.org", "**/*.org2"]),
-    ...(nodesDir && !path.isAbsolute(nodesDir) ? [`${nodesDir}/**/*.org`, `${nodesDir}/**/*.org2`] : []),
-    "views/**/*.org",
-    "views/**/*.org2",
-    ...(config.crm?.include ?? []),
-  ];
-  const ignore = ["node_modules", "node_modules/**", "raw/**", ...(config.ignorePatterns ?? [])];
-  return [...new Set(resolveFilesFromDir(root, patterns, ignore, config.recursive !== false))]
-    .filter((file) => !isLedgerAccountPath(path.relative(root, file)))
-    .sort();
+  return {
+    patterns: [
+      ...(config.agendaFiles?.length ? config.agendaFiles : ["**/*.org", "**/*.org2"]),
+      ...(nodesDir && !path.isAbsolute(nodesDir) ? [`${nodesDir}/**/*.org`, `${nodesDir}/**/*.org2`] : []),
+      "views/**/*.org",
+      "views/**/*.org2",
+      ...(config.crm?.include ?? []),
+    ].map((pattern) => pattern.replace(/\\/g, "/").replace(/^\.\//, "")),
+    ignore: ["node_modules", "node_modules/**", "raw/**", ...(config.ignorePatterns ?? [])],
+  };
+}
+
+/** Whether a directory could hold a file matching `pattern` (same rules as config globs). */
+function directoryCouldMatch(relativeDir: string, pattern: string): boolean {
+  const dir = relativeDir.split("/").filter(Boolean);
+  const segments = pattern.split("/").filter(Boolean);
+  if (!pattern.includes("*")) {
+    // A plain pattern names a file or a directory prefix.
+    const joined = segments.join("/");
+    const rel = dir.join("/");
+    return joined === rel || joined.startsWith(rel + "/") || rel.startsWith(joined + "/");
+  }
+  for (let i = 0; i < dir.length; i += 1) {
+    const segment = segments[i];
+    if (segment === undefined || i >= segments.length - 1) return segment === "**";
+    if (segment === "**") return true;
+    if (!configPathMatches(dir[i]!, segment)) return false;
+  }
+  return true;
+}
+
+function ignoredPath(relative: string, ignore: string[]): boolean {
+  const base = path.basename(relative);
+  if (base.startsWith(".syncthing.") || base.includes(".sync-conflict-") || base.endsWith(".tmp")) return true;
+  return ignore.some((pattern) => configPathMatches(relative, pattern));
+}
+
+export interface CrmSourceWalk {
+  files: string[];
+  /** Every directory that could hold a source file, with its mtime; a new or removed file changes it. */
+  dirs: Array<[string, number]>;
+}
+
+/**
+ * Find CRM source files without descending into directories that no pattern
+ * can match (audio, artifacts, raw imports, hidden state).
+ */
+export function walkCrmSources(root: string, config: Org2Config): CrmSourceWalk {
+  const { patterns, ignore } = crmSourcePatterns(config);
+  const recursive = config.recursive !== false;
+  const files: string[] = [];
+  const dirs: Array<[string, number]> = [];
+  const visit = (absolute: string, relative: string) => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(absolute, { withFileTypes: true });
+      dirs.push([relative, fs.statSync(absolute).mtimeMs]);
+    } catch { return; }
+    for (const entry of entries) {
+      const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
+      if (ignoredPath(childRelative, ignore)) continue;
+      if (entry.isDirectory()) {
+        if (!recursive || entry.name.startsWith(".")) continue;
+        if (!patterns.some((pattern) => directoryCouldMatch(childRelative, pattern))) continue;
+        visit(path.join(absolute, entry.name), childRelative);
+      } else if (entry.isFile() && patterns.some((pattern) => configPathMatches(childRelative, pattern))) {
+        if (!isLedgerAccountPath(childRelative)) files.push(path.join(absolute, entry.name));
+      }
+    }
+  };
+  visit(root, "");
+  return { files: [...new Set(files)].sort(), dirs };
+}
+
+export function crmSourceFiles(root: string, config: Org2Config): string[] {
+  return walkCrmSources(root, config).files;
 }
 
 type LedgerSummary = {
@@ -251,9 +350,12 @@ type LedgerSummary = {
   lastEventAt?: string;
   lastContactAt?: string;
   file: string;
+  /** Compact event history for the activity timeline. */
+  events: Array<{ id: string; type: string; at: string; note?: string }>;
 };
 
-type LedgerCache = { schema: "org2:crm-ledger-cache:v1"; files: Record<string, { size: number; mtimeMs: number; summary: LedgerSummary }> };
+const LEDGER_CACHE_SCHEMA = "org2:crm-ledger-cache:v2";
+type LedgerCache = { schema: typeof LEDGER_CACHE_SCHEMA; files: Record<string, { size: number; mtimeMs: number; summary: LedgerSummary }> };
 
 const LEDGER_FIELD_KEEP = ["primary_email", "work_status", "next_followup_at", "stage", "crm_stage", "owner"];
 
@@ -271,15 +373,15 @@ function ledgerAccountFilePaths(root: string): string[] {
 }
 
 function loadLedgerSummaries(root: string, cacheDir: string): LedgerSummary[] {
-  const cacheFile = cacheDir ? path.join(cacheDir, "crm-ledger-v1.json") : null;
-  let cache: LedgerCache = { schema: "org2:crm-ledger-cache:v1", files: {} };
+  const cacheFile = cacheDir ? path.join(cacheDir, "crm-ledger-v2.json") : null;
+  let cache: LedgerCache = { schema: LEDGER_CACHE_SCHEMA, files: {} };
   if (cacheFile && fs.existsSync(cacheFile)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(cacheFile, "utf8")) as LedgerCache;
-      if (parsed.schema === "org2:crm-ledger-cache:v1" && parsed.files) cache = parsed;
+      if (parsed.schema === LEDGER_CACHE_SCHEMA && parsed.files) cache = parsed;
     } catch { /* rebuild */ }
   }
-  const next: LedgerCache = { schema: "org2:crm-ledger-cache:v1", files: {} };
+  const next: LedgerCache = { schema: LEDGER_CACHE_SCHEMA, files: {} };
   const summaries: LedgerSummary[] = [];
   let changed = false;
   for (const file of ledgerAccountFilePaths(root)) {
@@ -310,6 +412,7 @@ function loadLedgerSummaries(root: string, cacheDir: string): LedgerSummary[] {
         ...(summary.lastEventAt ? { lastEventAt: summary.lastEventAt } : {}),
         ...(summary.lastContactAt ? { lastContactAt: summary.lastContactAt } : {}),
         file: relative,
+        events: account.events.map((event) => ({ id: event.id, type: event.type, at: event.at, ...(event.note ? { note: event.note.slice(0, 300) } : {}) })),
       };
       next.files[relative] = { size: stat.size, mtimeMs: stat.mtimeMs, summary: kept };
       summaries.push(kept);
@@ -493,16 +596,24 @@ function stagesFor(config: Org2Config): string[] {
   return configured.length ? [...new Set(configured)] : [...DEFAULT_CRM_STAGES];
 }
 
-export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}): BuiltIndex {
+export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}, walk?: CrmSourceWalk): BuiltIndex {
   const root = fs.realpathSync(path.resolve(rootRaw));
   const config = readConfig(root);
   const now = options.now ?? new Date();
   // Machine-local, disposable caches keep repeated opens fast on large corpora.
   const cacheDir = options.cacheDir || org2CorpusIndexDir(root);
-  const files = crmSourceFiles(root, config);
+  const files = (walk ?? walkCrmSources(root, config)).files;
   const corpus = compileCorpusIncremental(files, { rootDir: root, cacheFile: path.join(cacheDir, "crm-corpus-cache.json") });
   const ledgers = loadLedgerSummaries(root, cacheDir);
   const selfDomains = new Set((config.crm?.selfDomains ?? []).map((domain) => normalizeDomain(domain)).filter((domain): domain is string => Boolean(domain)));
+  // Your own calendar identities reveal your team's domains without configuration.
+  const recentEvents = loadStagedCalendarEvents(root, new Date(now.getTime() - 120 * 86_400_000), now);
+  for (const event of recentEvents) {
+    for (const person of [...event.attendees, ...(event.organizer ? [event.organizer] : [])]) {
+      const domain = person.self && person.email ? emailDomain(person.email) : null;
+      if (domain && !FREE_MAIL.has(domain)) selfDomains.add(domain);
+    }
+  }
 
   const nodesByFile = new Map<string, CompiledCorpusNode[]>();
   for (const node of corpus.nodes) {
@@ -532,7 +643,7 @@ export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}): BuiltI
       emails, domains: kind === "company" ? domains : [],
       role: nodeProperty(node, "ROLE", "JOB_TITLE", "POSITION"),
       owner: nodeProperty(node, "OWNER"),
-      people: [], ledgerAccounts: [], openTaskCount: 0, meetingCount: 0,
+      people: [], ledgerAccounts: [], openTaskCount: 0, meetingCount: 0, mentionCount: 0,
       node, revision: fileRevision.get(node.file), inferredEmails: [],
       timeline: new Map(), tasks: new Map(), mentionFiles: new Set(),
     });
@@ -564,7 +675,7 @@ export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}): BuiltI
   const byDomain = new Map<string, string>();
   const ambiguousDomains = new Set<string>();
   const indexDomain = (domain: string, key: string) => {
-    if (FREE_MAIL.has(domain) || ambiguousDomains.has(domain)) return;
+    if (FREE_MAIL.has(domain) || selfDomains.has(domain) || ambiguousDomains.has(domain)) return;
     const existing = byDomain.get(domain);
     if (existing && existing !== key) { byDomain.delete(domain); ambiguousDomains.add(domain); return; }
     byDomain.set(domain, key);
@@ -619,7 +730,7 @@ export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}): BuiltI
       key: `ledger:${ledger.ledger}/${ledger.id}`, kind: "company", source: "ledger", id: null, title: ledger.title, aliases: ledger.aliases,
       file: ledger.file, line: 1, nodeKind: null, stage: stage || "lead", stageSource: "ledger",
       emails: [...new Set(emails)], domains: [...new Set(ledgerDomains)], role: "", owner: String(ledger.fields.owner || ""),
-      people: [], ledgerAccounts: [{ ...ref, match: "explicit" }], openTaskCount: 0, meetingCount: 0,
+      people: [], ledgerAccounts: [{ ...ref, match: "explicit" }], openTaskCount: 0, meetingCount: 0, mentionCount: 0,
       node: null, inferredEmails: [], timeline: new Map(), tasks: new Map(), mentionFiles: new Set(),
     });
   }
@@ -718,6 +829,60 @@ export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}): BuiltI
     return related;
   };
 
+  // Who took part in a meeting, as opposed to who was only brought up.
+  const fileLines = new Map<string, string[]>();
+  const linesOf = (file: string): string[] => {
+    let lines = fileLines.get(file);
+    if (!lines) {
+      try { lines = fs.readFileSync(path.join(root, file), "utf8").split(/\r?\n/); } catch { lines = []; }
+      fileLines.set(file, lines);
+    }
+    return lines;
+  };
+  const refsInText = (text: string, into: Set<string>) => {
+    for (const id of idLinks(text)) { const target = byId.get(id); if (target) into.add(target); }
+    for (const email of emailsIn(text)) {
+      const person = byEmail.get(email);
+      if (person) { into.add(person); continue; }
+      const domain = emailDomain(email);
+      if (domain && !selfDomains.has(domain) && byDomain.has(domain)) into.add(byDomain.get(domain)!);
+    }
+  };
+  const meetingAttendees = (meeting: CompiledCorpusNode, fileNodes: CompiledCorpusNode[]): Set<string> => {
+    const attendees = new Set<string>();
+    refsInText(meeting.title, attendees);
+    for (const part of meetingTitleParts(meeting.title)) {
+      const target = uniqueName(personNames, part) || uniqueName(companyNames, part);
+      if (target) attendees.add(target);
+    }
+    for (const key of MEETING_ATTENDEE_KEYS) {
+      const value = meeting.properties[key];
+      if (!value) continue;
+      refsInText(value, attendees);
+      for (const part of splitList(value)) {
+        if (part.startsWith("[[") || part.includes("@")) continue;
+        const target = uniqueName(personNames, part) || uniqueName(companyNames, part);
+        if (target) attendees.add(target);
+      }
+    }
+    const lines = linesOf(meeting.file);
+    const start = meeting.sourceRange.startLine, end = Math.min(lines.length, meeting.sourceRange.endLine);
+    for (const child of fileNodes) {
+      if (child.kind !== "heading" || child.sourceRange.startLine <= start || child.sourceRange.startLine > end) continue;
+      if (!ATTENDEE_SECTION.test(child.title.trim())) continue;
+      for (let line = child.sourceRange.startLine; line < Math.min(lines.length, child.sourceRange.endLine); line += 1) refsInText(lines[line] || "", attendees);
+    }
+    for (let line = start; line < end; line += 1) {
+      const match = ATTENDEE_LINE.exec(lines[line] || "");
+      if (match) refsInText(String(match[1]).split(/\.\s/)[0] || "", attendees);
+    }
+    for (const key of [...attendees]) {
+      const person = entities.get(key);
+      if (person?.kind === "person" && person.company) attendees.add(person.company.key);
+    }
+    return attendees;
+  };
+
   const addItem = (entityKey: string, item: CrmTimelineItem) => {
     const entity = entities.get(entityKey);
     if (entity && !entity.timeline.has(item.key)) entity.timeline.set(item.key, item);
@@ -727,6 +892,7 @@ export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}): BuiltI
     if (entity && !entity.tasks.has(task.key)) entity.tasks.set(task.key, task);
   };
 
+  const notedCalendarEvents = new Set<string>();
   for (const [file, nodes] of nodesByFile) {
     const revision = fileRevision.get(file);
     const fileNode = nodes.find((node) => node.kind === "file");
@@ -741,7 +907,7 @@ export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}): BuiltI
           const entity = entities.get(key)!;
           if (entity.mentionFiles.has(file)) continue;
           entity.mentionFiles.add(file);
-          addItem(key, { key: `mention:${file}`, type: "mention", title: node.title, at: crmTimeFrom(node.properties.CREATED) || crmTimeFrom(path.basename(file)), file, line: 1 });
+          addItem(key, { key: `mention:${file}`, type: "mention", title: node.title, at: crmTimeFrom(node.properties.CREATED) || crmTimeFrom(path.basename(file)), file, line: 1, role: "mentioned" });
         }
         continue;
       }
@@ -752,11 +918,15 @@ export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}): BuiltI
       const isEntity = byNodeKey.has(node.key);
       const meetingAncestor = [...stack].reverse().find((ancestor) => meetingRelations.has(ancestor.key));
       if (!isEntity && isMeetingNode(node) && !meetingAncestor) {
+        const attendees = meetingAttendees(node, nodes);
+        for (const key of own) attendees.add(key);
         const related = relationsOf(node, false);
-        for (const key of own) related.add(key);
+        for (const key of attendees) related.add(key);
         meetingRelations.set(node.key, related);
+        const calendarEventId = String(node.properties.CALENDAR_EVENT_ID || "").trim();
+        if (calendarEventId) notedCalendarEvents.add(calendarEventId);
         const at = meetingTime(node);
-        for (const key of related) addItem(key, { key: `meeting:${node.key}`, type: "meeting", title: node.title.replace(/^Meeting:\s*/i, ""), ...(at ? { at } : {}), file, line: node.sourceRange.startLine });
+        for (const key of related) addItem(key, { key: `meeting:${node.key}`, type: "meeting", title: node.title.replace(/^Meeting:\s*/i, ""), ...(at ? { at } : {}), file, line: node.sourceRange.startLine, role: attendees.has(key) ? "attended" : "mentioned" });
       } else if (!isEntity && node.todo) {
         const related = relationsOf(node, true);
         for (const key of own) related.add(key);
@@ -772,7 +942,7 @@ export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}): BuiltI
           if (entity.mentionFiles.has(file)) continue;
           entity.mentionFiles.add(file);
           const at = crmTimeFrom(node.properties.CREATED) || crmTimeFrom(node.title) || crmTimeFrom(path.basename(file));
-          addItem(key, { key: `mention:${file}`, type: "mention", title: fileNode && fileNode.title !== node.title ? `${fileNode.title} › ${node.title}` : node.title, ...(at ? { at } : {}), file, line: node.sourceRange.startLine });
+          addItem(key, { key: `mention:${file}`, type: "mention", title: fileNode && fileNode.title !== node.title ? `${fileNode.title} › ${node.title}` : node.title, ...(at ? { at } : {}), file, line: node.sourceRange.startLine, role: "mentioned" });
         }
       }
       stack.push(node);
@@ -788,11 +958,42 @@ export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}): BuiltI
     } catch { /* ignore */ }
   }
 
-  // Roll people's meetings and tasks up into their company.
+  // Past calendar events are direct contact even without a meeting note.
+  for (const event of recentEvents) {
+    if (event.allDay || event.selfResponse === "declined" || notedCalendarEvents.has(event.eventId)) continue;
+    const eventSelfDomains = new Set(selfDomains);
+    for (const attendee of event.attendees) if (attendee.self && attendee.email) { const domain = emailDomain(attendee.email); if (domain) eventSelfDomains.add(domain); }
+    const touched = new Set<string>();
+    for (const attendee of event.attendees) {
+      if (attendee.self || !attendee.email) continue;
+      const email = attendee.email.toLowerCase();
+      const domain = emailDomain(email);
+      if (domain && eventSelfDomains.has(domain)) continue;
+      const person = byEmail.get(email);
+      if (person) {
+        touched.add(person);
+        const company = entities.get(person)?.company;
+        if (company) touched.add(company.key);
+      } else if (domain && byDomain.has(domain)) touched.add(byDomain.get(domain)!);
+    }
+    const start = Date.parse(event.start);
+    for (const key of touched) {
+      const entity = entities.get(key)!;
+      // A meeting note within a few hours already covers this event.
+      const covered = [...entity.timeline.values()].some((item) => item.type === "meeting" && item.role === "attended" && item.at
+        && Math.abs(Date.parse(item.at.length === 10 ? `${item.at}T12:00:00` : item.at) - start) < 6 * 3_600_000);
+      if (!covered) addItem(key, { key: `calendar:${event.eventId}:${event.start}`, type: "calendar", title: event.title, at: event.start, ...(event.htmlLink ? { url: event.htmlLink } : {}), role: "attended" });
+    }
+  }
+
+  // Roll people's meetings and tasks up into their company. Only meetings a
+  // person attended count as contact with their company.
   for (const person of entities.values()) {
     if (person.kind !== "person" || !person.company) continue;
     const company = entities.get(person.company.key)!;
-    for (const item of person.timeline.values()) if (item.type === "meeting" && !company.timeline.has(item.key)) company.timeline.set(item.key, { ...item, via: person.title });
+    for (const item of person.timeline.values()) {
+      if ((item.type === "meeting" || item.type === "calendar") && item.role === "attended" && !company.timeline.has(item.key)) company.timeline.set(item.key, { ...item, via: person.title });
+    }
     for (const task of person.tasks.values()) if (!company.tasks.has(task.key)) company.tasks.set(task.key, { ...task, via: person.title });
   }
 
@@ -807,15 +1008,22 @@ export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}): BuiltI
     for (const task of open) openTaskKeys.add(task.key);
     entity.openTaskCount = open.length;
     if (open[0]) entity.nextTask = open[0];
-    const meetings = [...entity.timeline.values()].filter((item) => item.type === "meeting");
-    entity.meetingCount = meetings.length;
+    const items = [...entity.timeline.values()];
+    const attended = items.filter((item) => (item.type === "meeting" || item.type === "calendar") && item.role === "attended");
+    const mentioned = items.filter((item) => item.role === "mentioned");
+    entity.meetingCount = attended.length;
+    entity.mentionCount = mentioned.length;
     const past = (value: string | undefined) => value && (value <= nowIso || value <= today) ? value : undefined;
-    const candidates: Array<{ at?: string; type: string }> = [
-      ...meetings.map((item) => ({ at: past(item.at), type: "meeting" })),
-      ...entity.ledgerAccounts.map((ref) => ({ at: past(ref.lastContactAt), type: "outreach" })),
-      ...tasks.map((task) => ({ at: past(task.closed), type: "task" })),
-    ];
-    const last = candidates.filter((item) => item.at).sort((a, b) => a.at!.localeCompare(b.at!)).at(-1);
+    const latest = <T extends string>(candidates: Array<{ at?: string; type: T }>) =>
+      candidates.filter((item) => item.at).sort((a, b) => a.at!.localeCompare(b.at!)).at(-1) as { at: string; type: T } | undefined;
+    const touch = latest<"meeting" | "calendar" | "outreach">([
+      ...attended.map((item) => ({ at: past(item.at), type: item.type === "calendar" ? "calendar" as const : "meeting" as const })),
+      ...entity.ledgerAccounts.map((ref) => ({ at: past(ref.lastContactAt), type: "outreach" as const })),
+    ]);
+    const mention = latest<"meeting" | "note">(mentioned.map((item) => ({ at: past(item.at), type: item.type === "meeting" ? "meeting" as const : "note" as const })));
+    if (touch) { entity.lastTouchAt = touch.at; entity.lastTouchType = touch.type; }
+    if (mention) { entity.lastMentionAt = mention.at; entity.lastMentionType = mention.type; }
+    const last = latest<string>([touch, mention, ...tasks.map((task) => ({ at: past(task.closed), type: "task" }))].filter((item): item is { at: string; type: string } => Boolean(item)));
     if (last) { entity.lastInteractionAt = last.at; entity.lastInteractionType = last.type; }
     entity.nextFollowUpAt = [entity.nextTask ? taskDue(entity.nextTask) : undefined, ...entity.ledgerAccounts.map((ref) => ref.nextFollowUpAt)]
       .filter((value): value is string => Boolean(value)).sort()[0];
@@ -831,11 +1039,15 @@ export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}): BuiltI
     openTaskCount: entity.openTaskCount,
     ...(entity.nextTask ? { nextTask: entity.nextTask } : {}),
     meetingCount: entity.meetingCount,
+    mentionCount: entity.mentionCount,
     ...(entity.lastInteractionAt ? { lastInteractionAt: entity.lastInteractionAt, lastInteractionType: entity.lastInteractionType } : {}),
+    ...(entity.lastTouchAt ? { lastTouchAt: entity.lastTouchAt, lastTouchType: entity.lastTouchType } : {}),
+    ...(entity.lastMentionAt ? { lastMentionAt: entity.lastMentionAt, lastMentionType: entity.lastMentionType } : {}),
     ...(entity.nextFollowUpAt ? { nextFollowUpAt: entity.nextFollowUpAt } : {}),
   });
+  // Direct contact first, then recent mentions.
   const sortEntities = (a: CrmEntitySummary, b: CrmEntitySummary) =>
-    (b.lastInteractionAt || "").localeCompare(a.lastInteractionAt || "") || a.title.localeCompare(b.title);
+    (b.lastTouchAt || "").localeCompare(a.lastTouchAt || "") || (b.lastMentionAt || "").localeCompare(a.lastMentionAt || "") || a.title.localeCompare(b.title);
   const people = [...entities.values()].filter((entity) => entity.kind === "person").map(summary).sort(sortEntities);
   const companies = [...entities.values()].filter((entity) => entity.kind === "company").map(summary).sort(sortEntities);
   return {
@@ -858,8 +1070,242 @@ export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}): BuiltI
   };
 }
 
-export function crmIndex(root: string, options: CrmIndexOptions & { kind?: "people" | "companies"; stage?: string; query?: string; limit?: number } = {}): CrmIndex & { total: { people: number; companies: number } } {
-  const { index } = buildCrm(root, options);
+// MARK: - Snapshot cache
+
+/**
+ * The CRM is derived from thousands of files, so reads go through a
+ * machine-local snapshot of the computed index and every entity's activity.
+ * The snapshot is reused while no source file, directory, ledger account,
+ * staged calendar file or config changed (checked with stat calls only) and
+ * is rebuilt on the next read otherwise. It is disposable: deleting it only
+ * costs one rebuild.
+ */
+export const CRM_SNAPSHOT_SCHEMA = "org2:crm-snapshot:v1" as const;
+/** Bump whenever the computed index or activity changes shape or meaning. */
+const CRM_SNAPSHOT_VERSION = 2;
+const TIMELINE_LIMIT = 250;
+
+export interface CrmEntityDetails {
+  properties: Record<string, string>;
+  tasks: CrmTask[];
+  timeline: CrmTimelineItem[];
+}
+
+type FileStamp = [string, number, number];
+
+interface CrmSnapshotMeta {
+  schema: typeof CRM_SNAPSHOT_SCHEMA;
+  version: number;
+  token: string;
+  root: string;
+  day: string;
+  files: FileStamp[];
+  dirs: Array<[string, number]>;
+  extra: FileStamp[];
+}
+
+interface CrmSnapshot {
+  schema: typeof CRM_SNAPSHOT_SCHEMA;
+  token: string;
+  index: CrmIndex;
+  details: Record<string, CrmEntityDetails>;
+  lookups: { byEmail: Record<string, string>; byDomain: Record<string, string>; selfDomains: string[] };
+}
+
+interface CrmLookup {
+  entities: Map<string, CrmEntitySummary>;
+  byEmail: Map<string, string>;
+  byDomain: Map<string, string>;
+}
+
+interface LoadedSnapshot extends CrmLookup {
+  root: string;
+  now: Date;
+  index: CrmIndex;
+  details: Record<string, CrmEntityDetails>;
+  selfDomains: Set<string>;
+  cached: boolean;
+  buildMs: number;
+}
+
+function stamp(root: string, absolute: string): FileStamp | null {
+  try {
+    const stat = fs.statSync(absolute);
+    return [path.relative(root, absolute).replace(/\\/g, "/"), stat.size, stat.mtimeMs];
+  } catch { return null; }
+}
+
+/** Inputs outside the walked note sources: config, ledger accounts, staged calendar events. */
+function extraInputs(root: string): FileStamp[] {
+  const files = [configFilePath(root), ...ledgerAccountFilePaths(root)];
+  const notes = path.join(root, "notes");
+  if (fs.existsSync(notes)) {
+    for (const entry of fs.readdirSync(notes, { withFileTypes: true })) {
+      const accounts = path.join(notes, entry.name, "accounts");
+      if (entry.isDirectory() && fs.existsSync(accounts)) files.push(accounts);
+    }
+  }
+  const calendar = path.join(root, "raw", "connectors", "google-calendar");
+  if (fs.existsSync(calendar)) {
+    files.push(calendar);
+    for (const profile of fs.readdirSync(calendar, { withFileTypes: true })) {
+      if (!profile.isDirectory()) continue;
+      const directory = path.join(calendar, profile.name);
+      files.push(directory);
+      for (const name of fs.readdirSync(directory)) if (name.endsWith(".json")) files.push(path.join(directory, name));
+    }
+  }
+  return files.map((file) => stamp(root, file)).filter((item): item is FileStamp => Boolean(item));
+}
+
+function sameStamps(left: FileStamp[], right: FileStamp[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    const a = left[i]!, b = right[i]!;
+    if (a[0] !== b[0] || a[1] !== b[1] || a[2] !== b[2]) return false;
+  }
+  return true;
+}
+
+function snapshotIsCurrent(root: string, meta: CrmSnapshotMeta, day: string): boolean {
+  if (meta.schema !== CRM_SNAPSHOT_SCHEMA || meta.version !== CRM_SNAPSHOT_VERSION || meta.root !== root || meta.day !== day) return false;
+  for (const [relative, mtime] of meta.dirs) {
+    try { if (fs.statSync(path.join(root, relative)).mtimeMs !== mtime) return false; } catch { return false; }
+  }
+  for (const [relative, size, mtime] of meta.files) {
+    try {
+      const stat = fs.statSync(path.join(root, relative));
+      if (stat.size !== size || stat.mtimeMs !== mtime) return false;
+    } catch { return false; }
+  }
+  return sameStamps(extraInputs(root), meta.extra);
+}
+
+function outreachTimeline(built: BuiltIndex, entity: EntityRecord): CrmTimelineItem[] {
+  const items: CrmTimelineItem[] = [];
+  for (const ref of entity.ledgerAccounts) {
+    const ledger = built.ledgers.find((item) => item.ledger === ref.ledger && item.id === ref.id);
+    for (const event of ledger?.events ?? []) {
+      const label = event.type.replace(/-/g, " ");
+      items.push({
+        key: `outreach:${ref.ledger}/${ref.id}:${event.id}`,
+        type: "outreach",
+        title: label.charAt(0).toUpperCase() + label.slice(1),
+        at: crmTimeFrom(event.at) || event.at,
+        file: ref.file,
+        ...(event.note ? { detail: event.note } : {}),
+        via: ref.ledger,
+      });
+    }
+  }
+  return items;
+}
+
+function entityDetails(built: BuiltIndex, entity: EntityRecord): CrmEntityDetails {
+  const tasks = [...entity.tasks.values()].sort((a, b) => Number(b.open) - Number(a.open) || compareTasks(a, b));
+  const timeline = [...entity.timeline.values(), ...outreachTimeline(built, entity)];
+  for (const task of tasks) if (!task.open) timeline.push({ key: `task:${task.key}`, type: "task", title: task.title, at: task.closed, file: task.file, line: task.line, detail: task.todo, ...(task.via ? { via: task.via } : {}) });
+  timeline.sort((a, b) => (b.at || "").localeCompare(a.at || "") || a.key.localeCompare(b.key));
+  return { properties: entity.node ? entity.node.properties : {}, tasks, timeline: timeline.slice(0, TIMELINE_LIMIT) };
+}
+
+function writeAtomic(file: string, content: string): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temporary, content);
+  fs.renameSync(temporary, file);
+}
+
+function lookupFrom(index: CrmIndex, lookups: CrmSnapshot["lookups"]): CrmLookup & { selfDomains: Set<string> } {
+  return {
+    entities: new Map([...index.people, ...index.companies].map((item) => [item.key, item])),
+    byEmail: new Map(Object.entries(lookups.byEmail)),
+    byDomain: new Map(Object.entries(lookups.byDomain)),
+    selfDomains: new Set(lookups.selfDomains),
+  };
+}
+
+/** Return a current snapshot, rebuilding it only when an input changed. */
+export function loadCrmSnapshot(rootRaw: string, options: CrmIndexOptions & { rebuild?: boolean } = {}): LoadedSnapshot {
+  const started = Date.now();
+  const root = fs.realpathSync(path.resolve(rootRaw));
+  const now = options.now ?? new Date();
+  const day = localIso(now);
+  const cacheDir = options.cacheDir || org2CorpusIndexDir(root);
+  const metaFile = path.join(cacheDir, "crm-snapshot-meta.json");
+  const dataFile = path.join(cacheDir, "crm-snapshot.json");
+  if (!options.rebuild) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(metaFile, "utf8")) as CrmSnapshotMeta;
+      if (snapshotIsCurrent(root, meta, day)) {
+        const data = JSON.parse(fs.readFileSync(dataFile, "utf8")) as CrmSnapshot;
+        if (data.schema === CRM_SNAPSHOT_SCHEMA && data.token === meta.token) {
+          return { ...lookupFrom(data.index, data.lookups), root, now, index: data.index, details: data.details, cached: true, buildMs: Date.now() - started };
+        }
+      }
+    } catch { /* missing or unreadable: rebuild */ }
+  }
+  const config = readConfig(root);
+  const walk = walkCrmSources(root, config);
+  const extra = extraInputs(root);
+  const built = buildCrm(root, { ...options, now }, walk);
+  const details: Record<string, CrmEntityDetails> = {};
+  for (const entity of built.entities.values()) details[entity.key] = entityDetails(built, entity);
+  const token = crypto.randomUUID();
+  const lookups = { byEmail: Object.fromEntries(built.byEmail), byDomain: Object.fromEntries(built.byDomain), selfDomains: [...built.selfDomains] };
+  const meta: CrmSnapshotMeta = {
+    schema: CRM_SNAPSHOT_SCHEMA, version: CRM_SNAPSHOT_VERSION, token, root, day,
+    files: walk.files.map((file) => stamp(root, file)).filter((item): item is FileStamp => Boolean(item)),
+    dirs: walk.dirs,
+    extra,
+  };
+  try {
+    // Data first, then the meta that vouches for it.
+    writeAtomic(dataFile, JSON.stringify({ schema: CRM_SNAPSHOT_SCHEMA, token, index: built.index, details, lookups } satisfies CrmSnapshot));
+    writeAtomic(metaFile, JSON.stringify(meta));
+  } catch { /* the snapshot is disposable */ }
+  return { ...lookupFrom(built.index, lookups), root, now, index: built.index, details, cached: false, buildMs: Date.now() - started };
+}
+
+/** Build the snapshot ahead of time so the next read is fast. */
+export function crmWarm(root: string, options: CrmIndexOptions & { rebuild?: boolean } = {}) {
+  const snapshot = loadCrmSnapshot(root, options);
+  return {
+    schema: "org2:crm-warm:v1" as const,
+    cached: snapshot.cached,
+    elapsedMs: snapshot.buildMs,
+    people: snapshot.index.people.length,
+    companies: snapshot.index.companies.length,
+  };
+}
+
+// MARK: - Reads
+
+function upcomingByEntity(meetings: CrmUpcomingMeeting[], lookup: CrmLookup): Map<string, CrmUpcomingMeeting[]> {
+  const out = new Map<string, CrmUpcomingMeeting[]>();
+  const add = (key: string, meeting: CrmUpcomingMeeting) => {
+    const list = out.get(key) ?? [];
+    if (!list.includes(meeting)) list.push(meeting);
+    out.set(key, list);
+  };
+  for (const meeting of meetings) {
+    for (const person of meeting.people) {
+      add(person.key, meeting);
+      const company = lookup.entities.get(person.key)?.company;
+      if (company) add(company.key, meeting);
+    }
+    for (const company of meeting.companies) add(company.key, meeting);
+  }
+  return out;
+}
+
+function calendarTimeline(meetings: CrmUpcomingMeeting[]): CrmTimelineItem[] {
+  return meetings.map((item) => ({ key: `calendar:${item.event.eventId}:${item.event.start}`, type: "calendar" as const, title: item.event.title, at: item.event.start, ...(item.event.htmlLink ? { url: item.event.htmlLink } : {}), role: "attended" as const }));
+}
+
+export function crmIndex(root: string, options: CrmIndexOptions & { kind?: "people" | "companies"; stage?: string; query?: string; limit?: number; details?: boolean; days?: number } = {}) {
+  const snapshot = loadCrmSnapshot(root, options);
+  const { index } = snapshot;
   const query = normalizeCrmName(options.query || "");
   const rawQuery = String(options.query || "").trim().toLowerCase();
   const filter = (items: CrmEntitySummary[]) => items.filter((item) => {
@@ -871,50 +1317,70 @@ export function crmIndex(root: string, options: CrmIndexOptions & { kind?: "peop
       || (item.company ? normalizeCrmName(item.company.title).includes(query) : false);
   });
   const limit = options.limit && options.limit > 0 ? options.limit : 5000;
-  const people = options.kind === "companies" ? [] : filter(index.people);
-  const companies = options.kind === "people" ? [] : filter(index.companies);
-  return { ...index, people: people.slice(0, limit), companies: companies.slice(0, limit), total: { people: people.length, companies: companies.length } };
+  const people = (options.kind === "companies" ? [] : filter(index.people)).slice(0, limit);
+  const companies = (options.kind === "people" ? [] : filter(index.companies)).slice(0, limit);
+  const result = {
+    ...index,
+    people,
+    companies,
+    total: { people: options.kind === "companies" ? 0 : filter(index.people).length, companies: options.kind === "people" ? 0 : filter(index.companies).length },
+    cache: { hit: snapshot.cached, elapsedMs: snapshot.buildMs },
+  };
+  if (!options.details) return result;
+  // Everything the People and Companies pages show, in one read.
+  const upcoming = upcomingByEntity(upcomingFrom(snapshot, options.days ?? 30), snapshot);
+  const details: Record<string, CrmEntityDetails & { upcoming: CrmUpcomingMeeting[] }> = {};
+  for (const item of [...people, ...companies]) {
+    const base = snapshot.details[item.key] ?? { properties: {}, tasks: [], timeline: [] };
+    const meetings = upcoming.get(item.key) ?? [];
+    details[item.key] = { ...base, timeline: meetings.length ? [...calendarTimeline(meetings), ...base.timeline] : base.timeline, upcoming: meetings };
+  }
+  return { ...result, details };
 }
 
 // MARK: - Resolve and show
 
 function resolveEntity(built: BuiltIndex, refRaw: string): EntityRecord {
+  return built.entities.get(resolveKey(built, refRaw))!;
+}
+
+function resolveKey(lookup: CrmLookup, refRaw: string): string {
   const ref = String(refRaw || "").trim();
   if (!ref) throw new Error("an entity reference is required (ID, title, email, domain or ledger:LEDGER/ID)");
   const lower = ref.toLowerCase();
-  const direct = built.entities.get(ref) || built.entities.get(`id:${lower.replace(/^id:/, "")}`);
-  if (direct) return direct;
-  const matches = resolveCandidates(built, ref);
-  if (matches.length === 1) return built.entities.get(matches[0]!.key)!;
+  const direct = lookup.entities.get(ref) || lookup.entities.get(`id:${lower.replace(/^id:/, "")}`);
+  if (direct) return direct.key;
+  const matches = resolveCandidates(lookup, ref);
+  if (matches.length === 1) return matches[0]!.key;
   if (!matches.length) throw new Error(`no person or company matches ${ref}`);
   throw new Error(`${ref} is ambiguous: ${matches.slice(0, 6).map((match) => `${match.title} (${match.key})`).join(", ")}`);
 }
 
-function resolveCandidates(built: BuiltIndex, query: string): Array<{ key: string; title: string; kind: CrmEntityKind; match: string }> {
+function resolveCandidates(lookup: CrmLookup, query: string): Array<{ key: string; title: string; kind: CrmEntityKind; match: string }> {
   const lower = query.trim().toLowerCase();
   const out = new Map<string, { key: string; title: string; kind: CrmEntityKind; match: string }>();
   const add = (key: string | undefined, match: string) => {
-    const entity = key ? built.entities.get(key) : undefined;
+    const entity = key ? lookup.entities.get(key) : undefined;
     if (entity && !out.has(entity.key)) out.set(entity.key, { key: entity.key, title: entity.title, kind: entity.kind, match });
   };
   for (const email of emailsIn(lower)) {
     // An exact person match wins; otherwise fall back to the company domain.
-    if (built.byEmail.has(email)) { add(built.byEmail.get(email), "email"); continue; }
+    if (lookup.byEmail.has(email)) { add(lookup.byEmail.get(email), "email"); continue; }
     const domain = emailDomain(email);
-    if (domain) add(built.byDomain.get(domain), "email-domain");
+    if (domain) add(lookup.byDomain.get(domain), "email-domain");
   }
   if (!out.size) {
     const domain = normalizeDomain(lower);
-    if (domain && !lower.includes(" ")) add(built.byDomain.get(domain), "domain");
+    if (domain && !lower.includes(" ")) add(lookup.byDomain.get(domain), "domain");
   }
   if (!out.size) {
     const name = normalizeCrmName(query);
-    for (const entity of built.entities.values()) {
+    for (const entity of lookup.entities.values()) {
       if ([entity.title, ...entity.aliases].some((label) => normalizeCrmName(label) === name)) add(entity.key, "name");
     }
   }
   if (!out.size) {
-    for (const entity of built.entities.values()) {
+    for (const entity of lookup.entities.values()) {
       if (entity.ledgerAccounts.some((ref) => `${ref.ledger}/${ref.id}` === lower || ref.id === lower)) add(entity.key, "ledger");
     }
   }
@@ -922,57 +1388,33 @@ function resolveCandidates(built: BuiltIndex, query: string): Array<{ key: strin
 }
 
 export function crmResolve(root: string, query: string, options: CrmIndexOptions = {}) {
-  const built = buildCrm(root, options);
-  const matches = resolveCandidates(built, query).map((match) => {
-    const entity = built.entities.get(match.key)!;
+  const snapshot = loadCrmSnapshot(root, options);
+  const matches = resolveCandidates(snapshot, query).map((match) => {
+    const entity = snapshot.entities.get(match.key)!;
     return { ...match, source: entity.source, id: entity.id, file: entity.file, stage: entity.stage, ledgerAccounts: entity.ledgerAccounts.map((ref) => ({ ledger: ref.ledger, id: ref.id, state: ref.state, workStatus: ref.workStatus })) };
   });
   return { schema: "org2:crm-resolution:v1" as const, query, found: matches.length > 0, ambiguous: matches.length > 1, matches };
 }
 
-function outreachItems(root: string, entity: EntityRecord): CrmTimelineItem[] {
-  const items: CrmTimelineItem[] = [];
-  for (const ref of entity.ledgerAccounts) {
-    let events: WorkLedgerEvent[] = [];
-    try { events = loadWorkLedgerAccount(root, ref.ledger, ref.id).account.events; } catch { continue; }
-    for (const event of events) {
-      const label = event.type.replace(/-/g, " ");
-      items.push({
-        key: `outreach:${ref.ledger}/${ref.id}:${event.id}`,
-        type: "outreach",
-        title: label.charAt(0).toUpperCase() + label.slice(1),
-        at: crmTimeFrom(event.at) || event.at,
-        file: ref.file,
-        ...(event.note ? { detail: event.note.slice(0, 500) } : {}),
-        via: ref.ledger,
-      });
-    }
-  }
-  return items;
-}
-
 export function crmShow(root: string, ref: string, options: CrmIndexOptions & { days?: number } = {}) {
-  const built = buildCrm(root, options);
-  const entity = resolveEntity(built, ref);
-  const summary = (entity.kind === "person" ? built.index.people : built.index.companies).find((item) => item.key === entity.key)!;
-  const timeline = [...entity.timeline.values(), ...outreachItems(built.root, entity)];
-  const tasks = [...entity.tasks.values()].sort((a, b) => Number(b.open) - Number(a.open) || compareTasks(a, b));
-  for (const task of tasks) if (!task.open) timeline.push({ key: `task:${task.key}`, type: "task", title: task.title, at: task.closed, file: task.file, line: task.line, detail: task.todo, ...(task.via ? { via: task.via } : {}) });
-  const upcoming = crmUpcomingFromBuilt(built, options.days ?? 30).filter((item) =>
-    item.people.some((person) => person.key === entity.key) || item.companies.some((company) => company.key === entity.key)
-    || (entity.kind === "company" && item.people.some((person) => entity.people.some((member) => member.key === person.key))));
-  for (const item of upcoming) timeline.push({ key: `calendar:${item.event.eventId}`, type: "calendar", title: item.event.title, at: item.event.start, ...(item.event.htmlLink ? { url: item.event.htmlLink } : {}) });
-  timeline.sort((a, b) => (b.at || "").localeCompare(a.at || "") || a.key.localeCompare(b.key));
-  const properties = entity.node ? entity.node.properties : {};
+  const snapshot = loadCrmSnapshot(root, options);
+  const key = resolveKey(snapshot, ref);
+  const summary = snapshot.entities.get(key)!;
+  const details = snapshot.details[key] ?? { properties: {}, tasks: [], timeline: [] };
+  const upcoming = upcomingByEntity(upcomingFrom(snapshot, options.days ?? 30), snapshot).get(key) ?? [];
+  let revision: string | null = null;
+  if (summary.file && summary.source === "note") {
+    try { revision = readGuardedFile(path.join(snapshot.root, summary.file)).revision; } catch { revision = null; }
+  }
   return {
     schema: CRM_ENTITY_SCHEMA,
     entity: summary,
-    revision: entity.file && entity.source === "note" ? readGuardedFile(path.join(built.root, entity.file)).revision : null,
-    properties,
-    tasks,
-    timeline: timeline.slice(0, 400),
+    revision,
+    properties: details.properties,
+    tasks: details.tasks,
+    timeline: [...calendarTimeline(upcoming), ...details.timeline],
     upcoming,
-    stages: built.index.stages,
+    stages: snapshot.index.stages,
   };
 }
 
@@ -981,19 +1423,25 @@ export function crmShow(root: string, ref: string, options: CrmIndexOptions & { 
 export interface CrmUpcomingMeeting {
   event: { eventId: string; calendarId: string; title: string; start: string; end: string; allDay: boolean; htmlLink?: string; meetingUrl?: string };
   people: Array<{ key: string; title: string; email: string }>;
-  companies: Array<{ key: string; title: string; stage: string; lastInteractionAt?: string; openTaskCount: number; nextTask?: CrmTask; lastOutreachAt?: string }>;
+  companies: Array<{ key: string; title: string; stage: string; lastInteractionAt?: string; lastTouchAt?: string; openTaskCount: number; nextTask?: CrmTask; lastOutreachAt?: string }>;
   unknownAttendees: string[];
 }
 
-function crmUpcomingFromBuilt(built: BuiltIndex, days: number): CrmUpcomingMeeting[] {
-  const from = built.now;
+interface UpcomingContext extends CrmLookup {
+  root: string;
+  now: Date;
+  selfDomains: Set<string>;
+}
+
+function upcomingFrom(context: UpcomingContext, days: number): CrmUpcomingMeeting[] {
+  const from = context.now;
   const to = new Date(from.getTime() + Math.max(1, days) * 86_400_000);
-  const events = loadStagedCalendarEvents(built.root, from, to);
-  const summaries = new Map([...built.index.people, ...built.index.companies].map((item) => [item.key, item]));
+  const events = loadStagedCalendarEvents(context.root, from, to);
+  const summaries = context.entities;
   const out: CrmUpcomingMeeting[] = [];
   for (const event of events) {
     if (event.selfResponse === "declined") continue;
-    const selfDomains = new Set(built.selfDomains);
+    const selfDomains = new Set(context.selfDomains);
     for (const attendee of event.attendees) if (attendee.self && attendee.email) { const domain = emailDomain(attendee.email); if (domain) selfDomains.add(domain); }
     if (event.organizer?.self && event.organizer.email) { const domain = emailDomain(event.organizer.email); if (domain) selfDomains.add(domain); }
     const people = new Map<string, { key: string; title: string; email: string }>();
@@ -1005,6 +1453,7 @@ function crmUpcomingFromBuilt(built: BuiltIndex, days: number): CrmUpcomingMeeti
       companies.set(key, {
         key, title: company.title, stage: company.stage, openTaskCount: company.openTaskCount,
         ...(company.lastInteractionAt ? { lastInteractionAt: company.lastInteractionAt } : {}),
+        ...(company.lastTouchAt ? { lastTouchAt: company.lastTouchAt } : {}),
         ...(company.nextTask ? { nextTask: company.nextTask } : {}),
         ...(maxTime(company.ledgerAccounts.map((ref) => ref.lastContactAt)) ? { lastOutreachAt: maxTime(company.ledgerAccounts.map((ref) => ref.lastContactAt)) } : {}),
       });
@@ -1016,14 +1465,14 @@ function crmUpcomingFromBuilt(built: BuiltIndex, days: number): CrmUpcomingMeeti
       const domain = emailDomain(email);
       if (domain && selfDomains.has(domain)) continue;
       external = true;
-      const personKey = built.byEmail.get(email);
-      if (personKey) {
+      const personKey = context.byEmail.get(email);
+      if (personKey && summaries.has(personKey)) {
         const person = summaries.get(personKey)!;
         people.set(personKey, { key: personKey, title: person.title, email });
         if (person.company) addCompany(person.company.key);
         continue;
       }
-      const companyKey = domain ? built.byDomain.get(domain) : undefined;
+      const companyKey = domain ? context.byDomain.get(domain) : undefined;
       if (companyKey) addCompany(companyKey);
       unknown.push(email);
     }
@@ -1039,8 +1488,8 @@ function crmUpcomingFromBuilt(built: BuiltIndex, days: number): CrmUpcomingMeeti
 }
 
 export function crmUpcoming(root: string, options: CrmIndexOptions & { days?: number } = {}) {
-  const built = buildCrm(root, options);
-  return { schema: "org2:crm-upcoming:v1" as const, generatedAt: built.now.toISOString(), days: options.days ?? 7, meetings: crmUpcomingFromBuilt(built, options.days ?? 7) };
+  const snapshot = loadCrmSnapshot(root, options);
+  return { schema: "org2:crm-upcoming:v1" as const, generatedAt: snapshot.now.toISOString(), days: options.days ?? 7, meetings: upcomingFrom(snapshot, options.days ?? 7) };
 }
 
 // MARK: - Writes

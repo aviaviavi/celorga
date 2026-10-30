@@ -177,7 +177,7 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
       {
         id: "people-and-companies",
         purpose: "Run a lightweight CRM over ordinary entity notes: list and resolve people and companies with stage, contact details, linked work-ledger outreach, meetings, TODO follow-ups and upcoming calendar meetings; set fields, add follow-ups, promote ledger-only accounts into company notes, accept inferred link proposals, and propose free calendar slots for due follow-ups.",
-        commands: ["celorga crm list", "celorga crm show", "celorga crm resolve", "celorga crm set", "celorga crm follow-up", "celorga crm create", "celorga crm link", "celorga crm upcoming", "celorga crm schedule"],
+        commands: ["celorga crm list", "celorga crm warm", "celorga crm show", "celorga crm resolve", "celorga crm set", "celorga crm follow-up", "celorga crm create", "celorga crm link", "celorga crm upcoming", "celorga crm schedule"],
         writes: "preview-by-default",
       },
       {

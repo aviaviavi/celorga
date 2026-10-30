@@ -137,6 +137,11 @@ extension WorkspaceStore {
       workspaceAppsError = error.localizedDescription
       return
     }
+    // Load People & Companies ahead of time so opening it is instant.
+    if isWorkspaceAppEnabled("crm"), crm.index == nil, !crm.isLoading {
+      let cli = self.cli
+      Task { @MainActor [weak self] in await self?.crm.load(cli: cli, root: root) }
+    }
     // Leave a surface whose app was turned off (possibly on another Mac).
     if let appID = selectedSurface.workspaceAppID, !isWorkspaceAppEnabled(appID) {
       makeSurfacePrimary(.home)

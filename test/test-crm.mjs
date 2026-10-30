@@ -55,6 +55,8 @@ try {
   write("notes/bob-stone.org", `:PROPERTIES:\n:ID: ${BOB}\n:ORG2_ENTITY_TYPE: person\n:END:\n#+title: Bob Stone\n\nWorks at [[id:${GLOBEX}][Globex]]. Reach him at bob@globex.test.\n`);
   write("notes/carol-king.org", `:PROPERTIES:\n:ID: ${CAROL}\n:ORG2_ENTITY_TYPE: person\n:EMAIL: carol@acme.test\n:COMPANY: [[id:${ACME}][Acme Robotics]]\n:END:\n#+title: Carol King\n`);
   write("meetings/2026-02-20-acme-demo.org", `#+ORG2_KIND: meeting\n* Meeting: Acme demo\n:PROPERTIES:\n:kind: meeting\n:recorded_at: 2026-02-20T17:00:00Z\n:END:\n** Attendees\n- [[id:${JANE}][Jane Doe]]\n** TODOs\n*** TODO Share security docs\nDEADLINE: <2026-03-04 Wed>\n`);
+  write("meetings/2026-02-19-jane.org", `#+ORG2_KIND: meeting\n* Meeting: Jane Doe\n:PROPERTIES:\n:kind: meeting\n:recorded_at: 2026-02-19T17:00:00Z\n:END:\n** Notes\nTalked roadmap.\n`);
+  write("meetings/2026-02-27-globex-sync.org", `#+ORG2_KIND: meeting\n* Meeting: Quarterly sync\n:PROPERTIES:\n:kind: meeting\n:recorded_at: 2026-02-27T17:00:00Z\n:END:\n** Notes\nParticipants: [[id:${BOB}][Bob Stone]] and Pat.\n** Summary\n- Bob said [[id:${ACME}][Acme Robotics]] is a good reference.\n`);
   write("daily/2026-02-25.org", `#+title: 2026-02-25\n* Notes\nCall with [[id:${GLOBEX}][Globex]] went well.\n* TODO Check Globex contract\nSCHEDULED: <2026-03-02 Mon>\n:PROPERTIES:\n:ACCOUNT: Globex\n:END:\n`);
 
   const ledgerAccount = (id, title, keys, events = []) => {
@@ -72,6 +74,13 @@ try {
       { rawPayload: { schema: "org2:calendar-event:v1", calendarId: "primary", eventId: "busy-1", title: "Team standup", start: "2026-03-02T15:00:00.000Z", end: "2026-03-02T16:00:00.000Z", allDay: false, status: "confirmed", attendees: [{ email: "me@example.org", self: true }, { email: "pat@example.org" }] } },
       { rawPayload: { schema: "org2:calendar-event:v1", calendarId: "primary", eventId: "acme-call", title: "Acme follow-up", start: "2026-03-03T16:00:00.000Z", end: "2026-03-03T16:30:00.000Z", allDay: false, status: "confirmed", htmlLink: "https://calendar.example/acme", attendees: [{ email: "me@example.org", self: true }, { email: "jane@acme.test" }, { email: "new@initech.test" }] } },
       { rawPayload: { schema: "org2:calendar-event:v1", calendarId: "primary", eventId: "gone", title: "Cancelled sync", start: "2026-03-03T18:00:00.000Z", end: "2026-03-03T18:30:00.000Z", allDay: false, status: "cancelled", attendees: [{ email: "jane@acme.test" }] } },
+    ],
+  }, null, 2)}\n`);
+
+  write("raw/connectors/google-calendar/Work/primary--2026-02.json", `${JSON.stringify({
+    schema: "org2:source-import:v1",
+    records: [
+      { rawPayload: { schema: "org2:calendar-event:v1", calendarId: "primary", eventId: "carol-coffee", title: "Coffee", start: "2026-02-18T17:00:00.000Z", end: "2026-02-18T17:30:00.000Z", allDay: false, status: "confirmed", attendees: [{ email: "me@example.org", self: true }, { email: "carol@acme.test" }] } },
     ],
   }, null, 2)}\n`);
 
@@ -93,8 +102,19 @@ try {
   assert.equal(person("Bob Stone").company.match, "note-link");
   assert.equal(company("Acme Robotics").openTaskCount, 2, "own TODO plus the meeting TODO via Jane");
   assert.equal(company("Acme Robotics").nextTask.title, "Send pricing to Acme");
-  assert.equal(company("Acme Robotics").meetingCount, 1);
-  assert.equal(company("Acme Robotics").lastInteractionAt, "2026-02-20T17:00:00.000Z");
+  // Last touch is direct contact; a mention by someone else is tracked separately.
+  assert.equal(company("Acme Robotics").meetingCount, 3, "the demo, Jane's meeting and Carol's calendar event");
+  assert.equal(company("Acme Robotics").lastTouchAt, "2026-02-20T17:00:00.000Z");
+  assert.equal(company("Acme Robotics").lastTouchType, "meeting");
+  assert.equal(company("Acme Robotics").lastMentionAt, "2026-02-27T17:00:00.000Z");
+  assert.equal(company("Acme Robotics").lastMentionType, "meeting");
+  assert.equal(company("Acme Robotics").lastInteractionAt, "2026-02-27T17:00:00.000Z");
+  assert.equal(person("Jane Doe").meetingCount, 2, "a meeting titled with her name counts as attended");
+  assert.equal(person("Carol King").lastTouchType, "calendar");
+  assert.equal(person("Bob Stone").lastTouchAt, "2026-02-27T17:00:00.000Z", "a Participants: line lists attendees");
+  assert.equal(company("Globex").lastTouchAt, "2026-02-27T17:00:00.000Z", "Bob's attendance touches his company");
+  assert.equal(company("Globex").lastMentionType, "note");
+  assert.equal(index.companies[0].title, "Globex", "lists sort by last touch");
   assert.equal(company("Globex").openTaskCount, 1, "a TODO's ACCOUNT property relates it by name");
   assert.equal(index.stats.ledgerAccounts, 3);
   assert.equal(index.stats.linkedLedgerAccounts, 2);
@@ -107,13 +127,31 @@ try {
   assert.ok(acme.revision.startsWith("sha256:"));
   const types = new Set(acme.timeline.map((item) => item.type));
   for (const type of ["meeting", "outreach", "calendar"]) assert.ok(types.has(type), `timeline includes ${type}`);
-  assert.equal(acme.timeline.find((item) => item.type === "meeting").via, "Jane Doe");
+  const roles = Object.fromEntries(acme.timeline.filter((item) => item.type === "meeting").map((item) => [item.title, item.role]));
+  assert.deepEqual(roles, { "Acme demo": "attended", "Jane Doe": "attended", "Quarterly sync": "mentioned" });
+  assert.equal(acme.timeline.find((item) => item.key.startsWith("calendar:carol-coffee")).role, "attended");
   assert.equal(acme.tasks.filter((task) => task.open).length, 2);
   assert.equal(acme.upcoming.length, 1);
   assert.equal(crm(["show", "jane@acme.test"]).entity.title, "Jane Doe");
   assert.equal(crm(["show", "ledger:outreach/initech"]).entity.title, "Initech");
   const ambiguous = crm(["show", "nobody@nowhere.test"], { allowFailure: true });
   assert.notEqual(ambiguous.status, 0);
+
+  // Reads reuse a snapshot until an input changes.
+  assert.equal(crm(["warm"]).cached, true);
+  assert.equal(crm(["list"]).cache.hit, true);
+  const detailed = crm(["list", "--details"]);
+  assert.equal(detailed.details[acme.entity.key].upcoming.length, 1);
+  assert.ok(detailed.details[acme.entity.key].timeline.some((item) => item.type === "outreach"));
+  write("notes/umbrella.org", `:PROPERTIES:\n:ID: 66666666-6666-4666-8666-666666666666\n:ORG2_ENTITY_TYPE: company\n:END:\n#+title: Umbrella\n`);
+  const afterNew = crm(["list"]);
+  assert.equal(afterNew.cache.hit, false, "a new note invalidates the snapshot");
+  assert.ok(afterNew.companies.some((item) => item.title === "Umbrella"));
+  assert.equal(crm(["list"]).cache.hit, true);
+  fs.appendFileSync(path.join(corpus, "notes/umbrella.org"), "\nUmbrella makes [[id:${JANE}][Jane]] happy.\n".replace("${JANE}", JANE));
+  assert.equal(crm(["list"]).cache.hit, false, "an edited note invalidates the snapshot");
+  fs.rmSync(path.join(corpus, "notes/umbrella.org"));
+  assert.ok(!crm(["list"]).companies.some((item) => item.title === "Umbrella"), "a removed note disappears");
 
   const resolved = crm(["resolve", "new@initech.test"]);
   assert.equal(resolved.matches[0].title, "Initech");

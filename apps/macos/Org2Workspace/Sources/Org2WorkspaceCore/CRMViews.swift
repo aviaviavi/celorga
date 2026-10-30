@@ -69,8 +69,15 @@ struct CRMEntity: Decodable, Identifiable, Hashable, Sendable {
   let openTaskCount: Int
   let nextTask: CRMTask?
   let meetingCount: Int
+  let mentionCount: Int?
   let lastInteractionAt: String?
   let lastInteractionType: String?
+  /// Direct contact: an attended meeting or calendar event, or outreach.
+  let lastTouchAt: String?
+  let lastTouchType: String?
+  /// Someone else brought them up in a meeting or note.
+  let lastMentionAt: String?
+  let lastMentionType: String?
   let nextFollowUpAt: String?
 
   var id: String { key }
@@ -78,7 +85,8 @@ struct CRMEntity: Decodable, Identifiable, Hashable, Sendable {
 
   enum CodingKeys: String, CodingKey {
     case key, kind, source, title, aliases, file, line, stage, stageSource, emails, domains, role, owner
-    case company, people, ledgerAccounts, openTaskCount, nextTask, meetingCount, lastInteractionAt, lastInteractionType, nextFollowUpAt
+    case company, people, ledgerAccounts, openTaskCount, nextTask, meetingCount, mentionCount, lastInteractionAt, lastInteractionType
+    case lastTouchAt, lastTouchType, lastMentionAt, lastMentionType, nextFollowUpAt
     case noteID = "id"
   }
 
@@ -103,6 +111,14 @@ struct CRMIndexPayload: Decodable, Sendable {
   let people: [CRMEntity]
   let companies: [CRMEntity]
   let stats: Stats
+  /// Present with `crm list --details`: everything the detail pane shows.
+  let details: [String: CRMEntityDetails]?
+}
+
+struct CRMEntityDetails: Decodable, Sendable {
+  let tasks: [CRMTask]
+  let timeline: [CRMTimelineItem]
+  let upcoming: [CRMUpcomingMeeting]
 }
 
 struct CRMTimelineItem: Decodable, Identifiable, Hashable, Sendable {
@@ -115,10 +131,15 @@ struct CRMTimelineItem: Decodable, Identifiable, Hashable, Sendable {
   let detail: String?
   let via: String?
   let url: String?
+  /// "attended" or "mentioned" for meetings and mentions.
+  let role: String?
   var id: String { key }
 
+  var isMention: Bool { role == "mentioned" }
+
   var systemImage: String {
-    switch type {
+    if isMention { return "text.bubble" }
+    return switch type {
     case "meeting": "mic"
     case "task": "checkmark.circle"
     case "outreach": "paperplane"
@@ -147,6 +168,7 @@ struct CRMUpcomingMeeting: Decodable, Identifiable, Hashable, Sendable {
     let title: String
     let stage: String
     let lastInteractionAt: String?
+    let lastTouchAt: String?
     let openTaskCount: Int
     let nextTask: CRMTask?
     let lastOutreachAt: String?
@@ -215,6 +237,18 @@ struct CRMCreatePayload: Decodable, Sendable {
 
 // MARK: - Dates
 
+enum CRMActivityLabel {
+  static func touch(_ type: String) -> String {
+    switch type {
+    case "calendar": "calendar event"
+    case "outreach": "outreach"
+    default: "meeting"
+    }
+  }
+
+  static func mention(_ type: String) -> String { type == "note" ? "in a note" : "in a meeting" }
+}
+
 enum CRMDate {
   static func parse(_ value: String?) -> Date? {
     guard let value, !value.isEmpty else { return nil }
@@ -270,7 +304,7 @@ public final class CRMWorkspaceModel {
   var isStale = true
   var selectedPersonKey: String?
   var selectedCompanyKey: String?
-  var details: [String: CRMDetailPayload] = [:]
+  var details: [String: CRMEntityDetails] = [:]
   var detailErrors: [String: String] = [:]
   var loadingDetailKey: String?
   @ObservationIgnored private var loadGeneration = 0
@@ -289,29 +323,65 @@ public final class CRMWorkspaceModel {
     loadGeneration += 1
   }
 
+  /// Keep showing the current data; the next load replaces it in one step.
   func markStale() {
     isStale = true
-    details = [:]
   }
 
+  /// Loads the index and every entity's activity in one read from the
+  /// runtime's snapshot, so selecting a row never waits on the CLI.
   func load(cli: Org2CLI, root: String, force: Bool = false) async {
     if !force, !isStale, indexRoot == root, index != nil { return }
-    guard !isLoading else { return }
+    if let running = currentLoad {
+      // A forced load (after a write) must not reuse a read that started earlier.
+      await running.value
+      if !force, !isStale, indexRoot == root, index != nil { return }
+      if let newer = currentLoad, newer != running { await newer.value; return }
+    }
+    let task = Task<Void, Never> { @MainActor [weak self] in await self?.performLoad(cli: cli, root: root) }
+    currentLoad = task
+    await task.value
+    if currentLoad == task { currentLoad = nil }
+  }
+
+  @ObservationIgnored private var currentLoad: Task<Void, Never>?
+
+  private func performLoad(cli: Org2CLI, root: String) async {
     isLoading = true
     loadGeneration += 1
     let generation = loadGeneration
     defer { if generation == loadGeneration { isLoading = false } }
     do {
-      let payload: CRMIndexPayload = try await cli.runJSON(["crm", "list", "--dir", root])
+      let payload: CRMIndexPayload = try await cli.runJSON(["crm", "list", "--details", "--dir", root])
       guard generation == loadGeneration else { return }
       index = payload
       indexRoot = root
       isStale = false
       error = nil
-      details = [:]
+      details = payload.details ?? [:]
+      detailErrors = [:]
     } catch {
       guard generation == loadGeneration else { return }
       self.error = error.localizedDescription
+    }
+  }
+
+  /// Rebuilds the runtime snapshot ahead of time without decoding it here.
+  func warm(cli: Org2CLI, root: String) async {
+    guard currentLoad == nil else { return }
+    _ = try? await cli.run(["crm", "warm", "--dir", root])
+  }
+
+  @ObservationIgnored private var refreshTask: Task<Void, Never>?
+
+  /// Debounced refresh after corpus changes: reload now if a page is on
+  /// screen, otherwise just rebuild the snapshot so the next open is fast.
+  func scheduleRefresh(cli: Org2CLI, root: String, visible: Bool) {
+    refreshTask?.cancel()
+    refreshTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: .seconds(visible ? 2 : 20))
+      guard !Task.isCancelled, let self else { return }
+      if visible { await self.load(cli: cli, root: root, force: true) } else { await self.warm(cli: cli, root: root) }
     }
   }
 
@@ -322,10 +392,22 @@ public final class CRMWorkspaceModel {
     do {
       let payload: CRMDetailPayload = try await cli.runJSON(["crm", "show", key, "--dir", root, "--days", "30"])
       guard indexRoot == nil || indexRoot == root else { return }
-      details[key] = payload
+      details[key] = CRMEntityDetails(tasks: payload.tasks, timeline: payload.timeline, upcoming: payload.upcoming)
       detailErrors[key] = nil
     } catch {
       detailErrors[key] = error.localizedDescription
+    }
+  }
+}
+
+enum CRMHistoryFilter: String, CaseIterable, Identifiable {
+  case all, contact, mentions
+  var id: String { rawValue }
+  var title: String {
+    switch self {
+    case .all: "All"
+    case .contact: "Contact"
+    case .mentions: "Mentions"
     }
   }
 }
@@ -560,7 +642,6 @@ struct PeopleCompaniesView: View {
   private func afterWrite() async {
     model.markStale()
     await reload(force: true)
-    if let key = selectedKey, let root { await model.loadDetail(cli: store.cli, root: root, key: key, force: true) }
   }
 }
 
@@ -590,8 +671,13 @@ private struct CRMEntityRow: View {
             .foregroundStyle(CRMDate.isPast(next) ? Color.red : Color.accentColor)
             .help("Next follow-up")
         }
-        if let last = CRMDate.label(entity.lastInteractionAt) {
-          Text(last).font(.caption2).foregroundStyle(.tertiary).help("Last interaction")
+        if let touch = CRMDate.label(entity.lastTouchAt) {
+          Text(touch).font(.caption2).foregroundStyle(.tertiary).help("Last touch: direct contact")
+        } else if let mention = CRMDate.label(entity.lastMentionAt) {
+          Label(mention, systemImage: "text.bubble")
+            .labelStyle(.titleAndIcon)
+            .font(.caption2).foregroundStyle(.quaternary)
+            .help("Mentioned, no direct contact yet")
         }
       }
     }
@@ -646,10 +732,11 @@ private struct CRMEntityDetailView: View {
   let afterWrite: () async -> Void
   @State private var actionError: String?
   @State private var isWorking = false
+  @State private var historyFilter = CRMHistoryFilter.all
 
   private var model: CRMWorkspaceModel { store.crm }
   private var root: String? { store.corpusRoot?.standardizedFileURL.path }
-  private var detail: CRMDetailPayload? { model.details[entity.key] }
+  private var detail: CRMEntityDetails? { model.details[entity.key] }
   private var canWrite: Bool { !store.hasActiveEdit && !store.liveFileEditorHasUnsavedChanges && !isWorking }
 
   var body: some View {
@@ -717,7 +804,7 @@ private struct CRMEntityDetailView: View {
       CRMStageBadge(stage: entity.stage, inferred: true)
     } else {
       Menu {
-        ForEach(detail?.stages ?? model.index?.stages ?? [], id: \.self) { stage in
+        ForEach(model.index?.stages ?? [], id: \.self) { stage in
           Button(stage.capitalized) { Task { await set(field: "stage", value: stage) } }
         }
         Divider()
@@ -759,7 +846,13 @@ private struct CRMEntityDetailView: View {
       fact("Owner", entity.owner, field: "owner")
       GridRow {
         Text("Last touch").foregroundStyle(.secondary)
-        Text([CRMDate.label(entity.lastInteractionAt), entity.lastInteractionType].compactMap { $0 }.joined(separator: " · ").nonEmpty ?? "—")
+        Text([CRMDate.label(entity.lastTouchAt), entity.lastTouchType.map(CRMActivityLabel.touch)].compactMap { $0 }.joined(separator: " · ").nonEmpty ?? "No direct contact yet")
+          .help("The last meeting or calendar event they took part in, or outreach sent or received")
+      }
+      GridRow {
+        Text("Last mentioned").foregroundStyle(.secondary)
+        Text([CRMDate.label(entity.lastMentionAt), entity.lastMentionType.map(CRMActivityLabel.mention)].compactMap { $0 }.joined(separator: " · ").nonEmpty ?? "—")
+          .help("The last time someone brought them up in a meeting or note they were not part of")
       }
       GridRow {
         Text("Next").foregroundStyle(.secondary)
@@ -873,9 +966,22 @@ private struct CRMEntityDetailView: View {
     }
   }
 
-  private func timeline(_ items: [CRMTimelineItem]) -> some View {
-    section("History", systemImage: "clock") {
-      if items.isEmpty { Text("No meetings, mentions, or outreach yet.").foregroundStyle(.secondary).font(.callout) }
+  private func timeline(_ allItems: [CRMTimelineItem]) -> some View {
+    let items = allItems.filter { item in
+      switch historyFilter {
+      case .all: true
+      case .contact: !item.isMention && item.type != "task"
+      case .mentions: item.isMention
+      }
+    }
+    return section("History", systemImage: "clock") {
+      Picker("Show", selection: $historyFilter) {
+        ForEach(CRMHistoryFilter.allCases) { filter in Text(filter.title).tag(filter) }
+      }
+      .pickerStyle(.segmented)
+      .labelsHidden()
+      .frame(maxWidth: 320)
+      if items.isEmpty { Text(historyFilter == .mentions ? "No mentions yet." : "No meetings, mentions, or outreach yet.").foregroundStyle(.secondary).font(.callout) }
       ForEach(items.prefix(120)) { item in
         Button {
           if let urlString = item.url, let url = URL(string: urlString) { NSWorkspace.shared.open(url) }
@@ -885,7 +991,7 @@ private struct CRMEntityDetailView: View {
             Image(systemName: item.systemImage).foregroundStyle(Color.accentColor).frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
               OrgInlineText(item.title, font: .callout, managesTextSelection: false).lineLimit(2)
-              if let detail = item.detail ?? item.via.map({ "via \($0)" }) {
+              if let detail = [item.isMention ? (item.type == "meeting" ? "Mentioned in a meeting" : "Mentioned") : nil, item.detail ?? item.via.map({ "via \($0)" })].compactMap({ $0 }).joined(separator: " · ").nonEmpty {
                 Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
               }
             }
@@ -1195,7 +1301,7 @@ private struct CRMSheetView: View {
           Text(company.title).font(.caption.weight(.medium))
           CRMStageBadge(stage: company.stage)
           Text([
-            company.lastInteractionAt.flatMap { CRMDate.label($0) }.map { "last touch \($0)" },
+            company.lastTouchAt.flatMap { CRMDate.label($0) }.map { "last touch \($0)" },
             company.lastOutreachAt.flatMap { CRMDate.label($0) }.map { "outreach \($0)" },
             company.openTaskCount > 0 ? "\(company.openTaskCount) open" : nil,
             company.nextTask.map { "next: \($0.title)" },

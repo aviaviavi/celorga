@@ -637,10 +637,33 @@ identify a company.</p>
 </li>
 </ul>
 <p>A person's company is the explicit <code>COMPANY</code> property, else their email
-domain, else the single company their note links to. People's meetings and
-follow-ups also appear on their company. A company without a stage that has
-outreach shows the inferred stage <code>lead</code>.</p>
+domain, else the single company their note links to. People's follow-ups and
+the meetings they attended also appear on their company. A company without a
+stage that has outreach shows the inferred stage <code>lead</code>.</p>
+<p>Activity separates contact from mentions:</p>
+<ul>
+<li>
+<p><strong>Last touch</strong> (<code>lastTouchAt</code>, <code>lastTouchType</code>) is direct contact: a meeting</p>
+<p>they attended, a past calendar event with them, or outreach sent or
+received. A meeting's attendees are entities linked in its title or named
+by it (<code>Meeting: Jane Doe</code>, <code>Acme | Example sync</code>), listed in its
+<code>ATTENDEES</code>, <code>PARTICIPANTS</code>, <code>WITH</code>, <code>COMPANY</code> or similar properties, under
+an <code>Attendees</code> or <code>Participants</code> heading, or on a <code>Participants:</code> line. A
+person's attendance also touches their company.</p>
+</li>
+<li>
+<p><strong>Last mentioned</strong> (<code>lastMentionAt</code>, <code>lastMentionType</code>) is the latest meeting</p>
+<p>or note that only brings them up, such as a colleague mentioning a company
+in someone else's meeting.</p>
+</li>
+</ul>
+<p>Timeline items carry <code>role</code> (<code>attended</code> or <code>mentioned</code>), <code>meetingCount</code> counts
+attended meetings and calendar events, and lists sort by last touch, then last
+mention. Your own domains (<code>crm.selfDomains</code> plus the domains of your own
+calendar identities) never identify a company.</p>
 <pre class="org2-src language-sh" style="padding: 0.9rem 1rem; border: 1px solid rgba(127,127,127,0.28); border-radius: 0.6rem; background: rgba(127,127,127,0.11); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 0.92rem; line-height: 1.28;"><code class="language-sh">celorga crm list --dir CORPUS [--kind people|companies] [--stage customer] [--query acme]
+celorga crm list --details --dir CORPUS
+celorga crm warm --dir CORPUS
 celorga crm show 'Acme Robotics' --dir CORPUS
 celorga crm resolve jane@acme.test --dir CORPUS
 celorga crm set 'Acme Robotics' --field stage --value customer --dir CORPUS --apply
@@ -691,8 +714,15 @@ Applying rewrites only each TODO's <code>SCHEDULED</code> line, for example to
 <p>Optional <code>celorga.json</code> keys: <code>crm.stages</code> (pipeline stages; default <code>lead</code>,
 <code>prospect</code>, <code>opportunity</code>, <code>customer</code>, <code>partner</code>, <code>former</code>), <code>crm.include</code>
 (extra corpus globs to scan), and <code>crm.selfDomains</code> (your team's email
-domains). The index uses a disposable, machine-local compile cache, so repeat
-reads of a large corpus are fast.</p>
+domains).</p>
+<p>Reads use a disposable, machine-local snapshot of the computed index and every
+entity's activity. It is reused while no source file or directory, ledger
+account, staged calendar file or <code>celorga.json</code> changed, which is checked with
+<code>stat</code> calls only, and is rebuilt on the next read otherwise; on a large corpus
+a reused snapshot answers in well under a second. <code>crm warm</code> builds it ahead
+of time (<code>--rebuild</code> forces a rebuild), and every read reports <code>cache.hit</code>.
+<code>crm list --details</code> also returns each entity's tasks, timeline and upcoming
+meetings in one response.</p>
 </section>
 <section class="org2-headline level-1">
 <h1 id="workspace-apps">Workspace apps</h1>

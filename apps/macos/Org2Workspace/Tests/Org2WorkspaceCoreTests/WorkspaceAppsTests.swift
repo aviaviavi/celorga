@@ -88,11 +88,20 @@ final class WorkspaceAppsTests: XCTestCase {
     XCTAssertEqual(acme.nextTask?.title, "Send pricing")
     XCTAssertEqual(index.people.first?.company?.title, "Acme")
 
+    // One list read carries every entity's activity, so selecting a row needs no CLI call.
+    let preloaded = try XCTUnwrap(store.crm.details[acme.key])
+    XCTAssertEqual(preloaded.tasks.map(\.title), ["Send pricing"])
+    XCTAssertEqual(store.crm.details.count, index.people.count + index.companies.count)
+    XCTAssertTrue(index.stages.contains("customer"))
+    XCTAssertNil(acme.lastTouchAt)
+
+    // Marking stale keeps the current data visible until the next read replaces it.
+    store.crm.markStale()
+    XCTAssertNotNil(store.crm.details[acme.key])
+    store.crm.details = [:]
     await store.crm.loadDetail(cli: store.cli, root: path, key: acme.key)
     XCTAssertNil(store.crm.detailErrors[acme.key])
-    let detail = try XCTUnwrap(store.crm.details[acme.key])
-    XCTAssertEqual(detail.tasks.map(\.title), ["Send pricing"])
-    XCTAssertTrue(detail.stages.contains("customer"))
+    XCTAssertEqual(store.crm.details[acme.key]?.tasks.map(\.title), ["Send pricing"])
 
     store.makeSurfacePrimary(.companies)
     XCTAssertEqual(store.selectedSurface, .companies)
