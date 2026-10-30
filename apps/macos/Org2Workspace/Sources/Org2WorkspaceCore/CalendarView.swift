@@ -1167,7 +1167,7 @@ private struct CalendarEventInspector: View {
       if let details = event.details, !details.isEmpty {
         Divider()
         ScrollView {
-          Text(details)
+          Text(CalendarEventDetailsText.attributed(details))
             .font(.caption)
             .foregroundStyle(.secondary)
             .textSelection(.enabled)

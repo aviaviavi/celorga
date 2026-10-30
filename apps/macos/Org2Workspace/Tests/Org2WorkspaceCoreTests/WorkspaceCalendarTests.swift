@@ -420,4 +420,30 @@ final class WorkspaceCalendarTests: XCTestCase {
     XCTAssertEqual(contexts.last?.reference.hasSuffix("meetings/review.org:5"), true, contexts.last?.reference ?? "")
     XCTAssertEqual(store.selectedAIChatThread?.title, "Event: Design Review")
   }
+
+  func testEventDetailsMakeBareWebURLsClickable() throws {
+    let details = """
+    Where:
+    https://us06web.zoom.us/j/829?pwd=abc.1
+    Notes: https://docs.google.com/document/d/1CPX, then avi@scarf.sh
+    """
+    let links = CalendarEventDetailsText.links(in: details)
+    XCTAssertEqual(links.map(\.url.absoluteString), [
+      "https://us06web.zoom.us/j/829?pwd=abc.1",
+      "https://docs.google.com/document/d/1CPX",
+    ])
+
+    let attributed = CalendarEventDetailsText.attributed(details)
+    XCTAssertEqual(String(attributed.characters), details)
+    let linkedRuns = attributed.runs.compactMap { run -> (String, URL)? in
+      guard let url = run.link else { return nil }
+      return (String(attributed[run.range].characters), url)
+    }
+    XCTAssertEqual(linkedRuns.map(\.0), [
+      "https://us06web.zoom.us/j/829?pwd=abc.1",
+      "https://docs.google.com/document/d/1CPX",
+    ])
+    XCTAssertEqual(linkedRuns.map(\.1.absoluteString), linkedRuns.map(\.0))
+    XCTAssertTrue(CalendarEventDetailsText.links(in: "No links here.").isEmpty)
+  }
 }

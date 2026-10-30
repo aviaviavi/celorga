@@ -251,6 +251,46 @@ public enum CalendarMeetingEventLoader {
   }
 }
 
+// MARK: - Event details
+
+/// Plain-text event descriptions with their bare web URLs made clickable.
+public enum CalendarEventDetailsText {
+  /// The http(s) URLs found in `text`, with their ranges, in order.
+  public static func links(in text: String) -> [(range: Range<String.Index>, url: URL)] {
+    guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+      return []
+    }
+    let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+    return detector.matches(in: text, options: [], range: nsRange).compactMap { match in
+      guard let url = match.url,
+            let scheme = url.scheme?.lowercased(),
+            scheme == "http" || scheme == "https",
+            let range = Range(match.range, in: text)
+      else { return nil }
+      return (range, url)
+    }
+  }
+
+  /// `text` as an attributed string whose http(s) URLs carry `.link`.
+  public static func attributed(_ text: String) -> AttributedString {
+    var result = AttributedString()
+    var cursor = text.startIndex
+    for link in links(in: text) {
+      if cursor < link.range.lowerBound {
+        result += AttributedString(String(text[cursor..<link.range.lowerBound]))
+      }
+      var linked = AttributedString(String(text[link.range]))
+      linked.link = link.url
+      result += linked
+      cursor = link.range.upperBound
+    }
+    if cursor < text.endIndex {
+      result += AttributedString(String(text[cursor...]))
+    }
+    return result
+  }
+}
+
 // MARK: - Recording prompts
 
 public enum CalendarRecordingPromptPolicy {
