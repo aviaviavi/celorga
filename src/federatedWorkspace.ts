@@ -64,7 +64,7 @@ function readErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function resolveCorpora(mounts: string[]): { corpora: WorkspaceCorpusRef[]; issues: WorkspaceReadIssue[] } {
+export function resolveFederatedCorpora(mounts: string[]): { corpora: WorkspaceCorpusRef[]; issues: WorkspaceReadIssue[] } {
   const corpora: WorkspaceCorpusRef[] = [];
   const issues: WorkspaceReadIssue[] = [];
   const seenRoots = new Set<string>();
@@ -93,7 +93,7 @@ async function collectFederatedPayloads<T>(
   mounts: string[],
   load: (corpus: WorkspaceCorpusRef) => Promise<T>,
 ): Promise<{ corpora: WorkspaceCorpusRef[]; issues: WorkspaceReadIssue[]; payloads: FederatedPayload<T>[] }> {
-  const { corpora, issues } = resolveCorpora(mounts);
+  const { corpora, issues } = resolveFederatedCorpora(mounts);
   const outcomes: FederatedOutcome<T>[] = await Promise.all(corpora.map(async (corpus) => {
     try { return { corpus, payload: await load(corpus) }; }
     catch (error) { return { corpus, error }; }
@@ -157,15 +157,13 @@ export async function federatedAgenda(options: FederatedCommandOptions): Promise
   };
 }
 
-export async function federatedSearch(query: string, options: FederatedCommandOptions): Promise<Record<string, unknown>> {
-  const { corpora, issues, payloads } = await collectFederatedPayloads(
-    options.mounts,
-    (corpus) => runCorpusJSON<SearchPayload>("search", corpus.root, [query, ...options.forwardedArgs]),
-  );
-  const first = payloads[0]?.payload;
-  const qualifiedResults = payloads.map(({ corpus, payload }) => payload.results.map((item) => addCorpus(item, corpus)));
+/** Takes each corpus's best result in turn, attaching its corpus identity. */
+export function interleaveFederatedResults(
+  perCorpus: Array<{ corpus: WorkspaceCorpusRef; results: Array<Record<string, unknown>> }>,
+  limit: number,
+): Array<Record<string, unknown>> {
+  const qualifiedResults = perCorpus.map(({ corpus, results }) => results.map((item) => addCorpus(item, corpus)));
   const results: Array<Record<string, unknown>> = [];
-  const limit = options.limit ?? 50;
   for (let index = 0; results.length < limit; index += 1) {
     let added = false;
     for (const corpusResults of qualifiedResults) {
@@ -177,6 +175,19 @@ export async function federatedSearch(query: string, options: FederatedCommandOp
     }
     if (!added) break;
   }
+  return results;
+}
+
+export async function federatedSearch(query: string, options: FederatedCommandOptions): Promise<Record<string, unknown>> {
+  const { corpora, issues, payloads } = await collectFederatedPayloads(
+    options.mounts,
+    (corpus) => runCorpusJSON<SearchPayload>("search", corpus.root, [query, ...options.forwardedArgs]),
+  );
+  const first = payloads[0]?.payload;
+  const results = interleaveFederatedResults(
+    payloads.map(({ corpus, payload }) => ({ corpus, results: payload.results })),
+    options.limit ?? 50,
+  );
   return {
     $schema: "org2:workspace-search:v1",
     query,

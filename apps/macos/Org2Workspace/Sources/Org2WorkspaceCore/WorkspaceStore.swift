@@ -2105,6 +2105,7 @@ struct WorkspaceSearchRequestContext: Equatable, Sendable {
   let corpusSessionGeneration: UInt64
   let query: String
   let readScope: WorkspaceReadScope
+  var filter: WorkspaceSearchFilter = .all
   let transcriptPath: String
   let transcriptLoadGeneration: UInt64
 }
@@ -2664,6 +2665,16 @@ public final class WorkspaceStore {
       invalidateWorkspaceSearchRequest()
     }
   }
+  /// Text search: every kind of result, or only one.
+  public var searchFilter: WorkspaceSearchFilter = .all {
+    didSet {
+      guard oldValue != searchFilter else { return }
+      invalidateWorkspaceSearchRequest()
+      rebuildWorkspaceTextSearchDisplayCache()
+    }
+  }
+  /// Set while a search stores its results, so the merged list is ranked once.
+  var isStoringWorkspaceSearchResults = false
   public var searchQuery = "" {
     didSet {
       guard oldValue != searchQuery else { return }
@@ -2674,19 +2685,19 @@ public final class WorkspaceStore {
   }
   public var searchFocusToken = 0
   public var searchResults: [SearchResult] = [] {
-    didSet { rebuildWorkspaceTextSearchDisplayCache() }
+    didSet { if !isStoringWorkspaceSearchResults { rebuildWorkspaceTextSearchDisplayCache() } }
   }
   public var aiChatSearchResults: [AIChatSearchResult] = [] {
-    didSet { rebuildWorkspaceTextSearchDisplayCache() }
+    didSet { if !isStoringWorkspaceSearchResults { rebuildWorkspaceTextSearchDisplayCache() } }
   }
   public var workspaceFileSearchResults: [CorpusFile] = [] {
-    didSet { rebuildWorkspaceTextSearchDisplayCache() }
+    didSet { if !isStoringWorkspaceSearchResults { rebuildWorkspaceTextSearchDisplayCache() } }
   }
   public var workspacePageSearchResults: [OrgRoamNodeReference] = [] {
-    didSet { rebuildWorkspaceTextSearchDisplayCache() }
+    didSet { if !isStoringWorkspaceSearchResults { rebuildWorkspaceTextSearchDisplayCache() } }
   }
   public var workspaceAgentWorkSearchResults: [WorkspaceAgentWorkSearchResult] = [] {
-    didSet { rebuildWorkspaceTextSearchDisplayCache() }
+    didSet { if !isStoringWorkspaceSearchResults { rebuildWorkspaceTextSearchDisplayCache() } }
   }
   /// Every kind of workspace search result in one list, best first.
   public internal(set) var workspaceTextSearchItems: [WorkspaceTextSearchItem] = []
@@ -4731,6 +4742,92 @@ public enum WorkspaceSurface: String, CaseIterable, Identifiable, Sendable {
     case .people: "⌥⌘U"
     case .companies: "⌥⌘O"
     case .pluginApp: ""
+    }
+  }
+}
+
+/// Narrows Text search to one kind of result. Corpus filters are applied by
+/// the search worker, so a filtered search returns a full page of that kind
+/// instead of whatever survived the mixed candidate list.
+public enum WorkspaceSearchFilter: String, CaseIterable, Identifiable, Sendable {
+  case all
+  case headings
+  case todos
+  case text
+  case chats
+  case pages
+  case files
+  case agentWork
+
+  public var id: String { rawValue }
+
+  public var title: String {
+    switch self {
+    case .all: "All"
+    case .headings: "Headings"
+    case .todos: "TODOs"
+    case .text: "Text"
+    case .chats: "Chats"
+    case .pages: "Pages"
+    case .files: "Files"
+    case .agentWork: "Agent Work"
+    }
+  }
+
+  public var help: String {
+    switch self {
+    case .all: "Everything in the workspace"
+    case .headings: "Matches in heading titles"
+    case .todos: "Matches inside open TODOs"
+    case .text: "Matches in note text, not headings"
+    case .chats: "AI chat thread titles and messages"
+    case .pages: "Note titles and aliases"
+    case .files: "Corpus file names and paths"
+    case .agentWork: "Runs, approvals, automations, goals, and agents"
+    }
+  }
+
+  /// The search worker's `matchKind` for corpus text, if this filter has one.
+  var corpusMatchKind: String? {
+    switch self {
+    case .headings: "heading"
+    case .todos: "todo"
+    case .text: "text"
+    default: nil
+    }
+  }
+
+  var searchesCorpusText: Bool { self == .all || corpusMatchKind != nil }
+  var searchesChats: Bool { self == .all || self == .chats }
+  var searchesPages: Bool { self == .all || self == .pages }
+  var searchesFiles: Bool { self == .all || self == .files }
+  var searchesAgentWork: Bool { self == .all || self == .agentWork }
+
+  /// Results per source: a single-kind search shows a longer list of it.
+  var perSourceLimit: Int { self == .all ? 25 : 100 }
+
+  func includes(_ item: WorkspaceTextSearchItem) -> Bool {
+    switch item {
+    case .activeTodo(let result):
+      return self == .all || self == .todos || matchesCorpusKind(result)
+    case .entry(let result), .corpusText(let result):
+      return self == .all || matchesCorpusKind(result)
+    case .chatThread, .chatMessage: return searchesChats
+    case .page: return searchesPages
+    case .file: return searchesFiles
+    case .agentWork: return searchesAgentWork
+    }
+  }
+
+  /// Checks a corpus result against a heading, TODO, or text filter, so a
+  /// list from before the filter changed can be narrowed at once.
+  private func matchesCorpusKind(_ result: SearchResult) -> Bool {
+    let isHeadingLine = result.headingLine != nil && result.headingLine == result.line
+    switch self {
+    case .headings: return isHeadingLine
+    case .todos: return result.isActiveTodo
+    case .text: return !isHeadingLine
+    default: return false
     }
   }
 }

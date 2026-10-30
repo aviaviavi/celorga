@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { initializeCorpusIdentity } from "../dist/corpusIdentity.js";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "celorga-search-service-"));
 const indexHome = fs.mkdtempSync(path.join(os.tmpdir(), "celorga-search-service-index-"));
@@ -59,6 +60,65 @@ try {
   const missing = await ask({ id: "q4", query: "x" });
   assert.equal(missing.id, "q4");
   assert.match(missing.error, /rootDir/);
+
+  // Filters and line shortening answer exactly like `celorga search --match`.
+  const longLine = `${"x".repeat(2000)} beacon ${"y".repeat(2000)}`;
+  fs.writeFileSync(path.join(tmp, "work.org"), `#+title: Work
+
+* TODO Beacon launch
+Beacon body under an open task.
+* DONE Beacon retro
+Beacon body under a finished task.
+* Notes
+Plain beacon mention. Éclair BEACON accents.
+${longLine}
+`, "utf8");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  cli("index", "--dir", tmp, "--recursive", "--format", "json");
+  for (const sort of ["best", "relevance", "scan"]) {
+    const all = await ask({ id: `all-${sort}`, query: "beacon", ...query, sort });
+    const expectedAll = JSON.parse(cli("search", "beacon", "--dir", tmp, "--recursive", "--limit", "50", "--context", "1", "--index", "current", "--sort", sort, "--format", "json"));
+    // The worker refreshes its in-memory index from the files instead of
+    // rereading the rewritten index, so only its build time may differ.
+    assert.deepEqual({ ...all.payload, index: undefined }, { ...expectedAll, index: undefined }, `service matches the CLI for --sort ${sort}`);
+    for (const matchKind of ["heading", "todo", "text"]) {
+      const served = await ask({ id: `${matchKind}-${sort}`, query: "beacon", ...query, sort, matchKind });
+      const expected = JSON.parse(cli("search", "beacon", "--dir", tmp, "--recursive", "--limit", "50", "--context", "1", "--index", "current", "--sort", sort, "--match", matchKind, "--format", "json"));
+      assert.deepEqual({ ...served.payload, index: undefined }, { ...expected, index: undefined }, `--match ${matchKind} --sort ${sort}`);
+    }
+  }
+  const headings = await ask({ id: "h", query: "beacon", ...query, matchKind: "heading" });
+  assert.deepEqual(headings.payload.results.map((hit) => hit.heading).sort(), ["Beacon launch", "Beacon retro"]);
+  const todos = await ask({ id: "t", query: "beacon", ...query, matchKind: "todo" });
+  assert.deepEqual(todos.payload.results.map((hit) => hit.line).sort((a, b) => a - b), [3, 4]);
+  const text = await ask({ id: "x", query: "beacon", ...query, matchKind: "text" });
+  assert.ok(text.payload.results.every((hit) => hit.line !== hit.headingLine));
+  const short = await ask({ id: "s", query: "beacon", ...query, maxLineLength: 120 });
+  const longHit = short.payload.results.find((hit) => hit.snippet.includes("x".repeat(10)));
+  assert.ok(longHit.snippet.length <= 122 && longHit.snippet.includes("beacon"), "a long line is shortened around the match");
+  assert.ok(longHit.context.lines.every((line) => line.length <= 122));
+
+  // Several corpora at once: like `celorga workspace search`, with the
+  // mounted corpus's index kept current by the worker.
+  const mounted = fs.mkdtempSync(path.join(os.tmpdir(), "celorga-search-service-mounted-"));
+  try {
+    initializeCorpusIdentity(tmp, { id: "home-notes", name: "Home Notes", kind: "personal" }, { apply: true });
+    initializeCorpusIdentity(mounted, { id: "team-notes", name: "Team Notes", kind: "shared" }, { apply: true });
+    fs.writeFileSync(path.join(mounted, "team.org"), "* Beacon team plan\n", "utf8");
+    const mounts = [tmp, mounted];
+    const federated = await ask({ id: "f1", query: "beacon", ...query, mounts });
+    const expectedFederated = JSON.parse(cli("workspace", "search", "beacon", "--mount", tmp, "--mount", mounted, "--recursive", "--limit", "50", "--context", "1", "--index", "auto", "--sort", "best", "--format", "json"));
+    assert.deepEqual(federated.payload.results, expectedFederated.results);
+    assert.deepEqual(federated.payload.corpora.map((corpus) => corpus.id), ["home-notes", "team-notes"]);
+    assert.ok(federated.payload.results.some((hit) => hit.corpus.id === "team-notes"));
+    // A new file in the mounted corpus shows up without anyone running `celorga index`.
+    fs.writeFileSync(path.join(mounted, "later.org"), "* Lighthousekeeper notes\n", "utf8");
+    await new Promise((resolve) => setTimeout(resolve, 5_200));
+    const later = await ask({ id: "f2", query: "lighthousekeeper", ...query, mounts });
+    assert.deepEqual(later.payload.results.map((hit) => hit.corpus.id), ["team-notes"]);
+  } finally {
+    fs.rmSync(mounted, { recursive: true, force: true });
+  }
 } finally {
   worker.stdin.end();
   fs.rmSync(tmp, { recursive: true, force: true });

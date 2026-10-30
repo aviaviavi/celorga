@@ -13,6 +13,12 @@ struct Org2SearchServiceRequest: Encodable, Sendable {
   let sort: String?
   let recursive: Bool
   var files: MacFileSearchServiceRequest? = nil
+  /// `heading`, `todo`, or `text`: only that kind of corpus match.
+  var matchKind: String? = nil
+  /// Shorten long snippet and context lines so a huge line is not sent whole.
+  var maxLineLength: Int? = nil
+  /// Search these corpora together; `rootDir` is the one the app indexes.
+  var mounts: [String]? = nil
 }
 
 /// The `files` part of a worker request. Omitting `query` only loads (or
@@ -59,6 +65,9 @@ actor Org2SearchServicePool {
     limit: Int,
     context: Int,
     sort: String,
+    matchKind: String?,
+    maxLineLength: Int?,
+    mounts: [String]?,
     repoRoot: URL,
     nodePath: String?,
     timeout: TimeInterval
@@ -71,7 +80,10 @@ actor Org2SearchServicePool {
         limit: limit,
         context: context,
         sort: sort,
-        recursive: true
+        recursive: true,
+        matchKind: matchKind,
+        maxLineLength: maxLineLength,
+        mounts: mounts
       ),
       timeout: timeout
     )
@@ -106,7 +118,7 @@ actor Org2SearchServicePool {
     return payload
   }
 
-  func warm(corpusRoot: URL, repoRoot: URL, nodePath: String?, timeout: TimeInterval) async throws {
+  func warm(corpusRoot: URL, mounts: [String]?, repoRoot: URL, nodePath: String?, timeout: TimeInterval) async throws {
     _ = try await worker(repoRoot: repoRoot, nodePath: nodePath).send(
       Org2SearchServiceRequest(
         id: UUID().uuidString.lowercased(),
@@ -115,7 +127,8 @@ actor Org2SearchServicePool {
         limit: nil,
         context: nil,
         sort: nil,
-        recursive: true
+        recursive: true,
+        mounts: mounts
       ),
       timeout: timeout
     )
@@ -315,13 +328,17 @@ private final class Org2SearchServiceWorker: @unchecked Sendable {
 }
 
 extension Org2CLI {
-  /// Searches the active corpus through the warm search worker.
+  /// Searches the active corpus (or, with `mounts`, every mounted corpus)
+  /// through the warm search worker.
   public func searchIndexedCorpus(
     _ query: String,
     corpusRoot: URL,
     limit: Int,
     context: Int,
     sort: String = "best",
+    matchKind: String? = nil,
+    maxLineLength: Int? = nil,
+    mounts: [String]? = nil,
     timeout: TimeInterval = 20
   ) async throws -> SearchPayload {
     try await Org2SearchServicePool.shared.search(
@@ -330,16 +347,21 @@ extension Org2CLI {
       limit: limit,
       context: context,
       sort: sort,
+      matchKind: matchKind,
+      maxLineLength: maxLineLength,
+      mounts: mounts,
       repoRoot: repoRoot,
       nodePath: runtimeNodePath,
       timeout: timeout
     )
   }
 
-  /// Loads the corpus search index into the warm worker ahead of the first query.
-  public func prewarmSearchService(corpusRoot: URL) async {
+  /// Loads the corpus search index (and any mounted corpora's) into the warm
+  /// worker ahead of the first query.
+  public func prewarmSearchService(corpusRoot: URL, mounts: [String]? = nil) async {
     try? await Org2SearchServicePool.shared.warm(
       corpusRoot: corpusRoot,
+      mounts: mounts,
       repoRoot: repoRoot,
       nodePath: runtimeNodePath,
       timeout: 60

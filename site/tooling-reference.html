@@ -1168,6 +1168,7 @@ celorga query actions --object 'id:PERSON-ID' --dir ~/notes --recursive --recent
 <li><p><code>--subtree</code> deduplicates matches to cited heading/subtree sections with <code>sourceRange</code>, <code>headingAncestry</code>, <code>matchedLines</code>, and full subtree context.</p></li>
 <li><p><code>--answer-context</code> adds a plain subtree text block for downstream local LLM prompts.</p></li>
 <li><p><code>--date-from</code> / <code>--date-to</code> and <code>--file-zone</code> narrow results by local corpus zones and source dates.</p></li>
+<li><p><code>--match heading|todo|text</code> keeps only matches on heading lines, matches inside an entry with an open TODO, or body-text matches (not heading lines).</p></li>
 <li><p><code>--format json</code> returns machine-readable file, line, heading, snippet, source range, and context fields.</p></li>
 </ul>
 <p><code>celorga query actions</code> is the bounded, deterministic action-item projection for a person or other node. It resolves the target by stable ID or unique title, returns active TODOs directly linked or assigned to that node, and also inherits TODOs from a containing meeting that links to the node. Recently completed items require a completion or meeting date inside <code>--recent-days</code>. <code>--open-limit</code> and <code>--completed-limit</code> bound the displayed arrays while <code>counts</code> retains the complete totals. The command uses the incremental corpus cache and performs no model call or brief generation.</p>

@@ -1310,6 +1310,7 @@ Useful flags:
 - =--subtree= deduplicates matches to cited heading/subtree sections with =sourceRange=, =headingAncestry=, =matchedLines=, and full subtree context.
 - =--answer-context= adds a plain subtree text block for downstream local LLM prompts.
 - =--date-from= / =--date-to= and =--file-zone= narrow results by local corpus zones and source dates.
+- =--match heading|todo|text= keeps only matches on heading lines, matches inside an entry with an open TODO, or body-text matches (not heading lines).
 - =--format json= returns machine-readable file, line, heading, snippet, source range, and context fields.
 
 =celorga query actions= is the bounded, deterministic action-item projection for a person or other node. It resolves the target by stable ID or unique title, returns active TODOs directly linked or assigned to that node, and also inherits TODOs from a containing meeting that links to the node. Recently completed items require a completion or meeting date inside =--recent-days=. =--open-limit= and =--completed-limit= bound the displayed arrays while =counts= retains the complete totals. The command uses the incremental corpus cache and performs no model call or brief generation.

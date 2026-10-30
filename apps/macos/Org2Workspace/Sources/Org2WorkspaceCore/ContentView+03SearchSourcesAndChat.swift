@@ -68,6 +68,13 @@ struct SearchView: View {
     .onChange(of: store.searchReadScope) {
       runTextSearchIfNeeded()
     }
+    .onChange(of: store.searchFilter) {
+      selectedResultID = nil
+      if pendingSearchUpdate != nil {
+        applySearchImmediately()
+      }
+      runTextSearchIfNeeded()
+    }
     .onChange(of: visibleResultIDs) { _, ids in
       if let selectedResultID, !ids.contains(selectedResultID) {
         self.selectedResultID = nil
@@ -122,6 +129,10 @@ struct SearchView: View {
         }
       }
       .controlSize(.small)
+
+      if store.searchMode == .text {
+        SearchFilterBar(selection: $store.searchFilter)
+      }
     }
     .padding(.horizontal, WorkspaceDesign.contentInset)
     .padding(.top, 12)
@@ -197,9 +208,17 @@ struct SearchView: View {
         } else {
           SearchPlaceholderView(
             systemImage: "text.magnifyingglass",
-            title: "No Results for “\(trimmedDraft)”",
+            title: store.searchFilter == .all
+              ? "No Results for “\(trimmedDraft)”"
+              : "No \(store.searchFilter.title) Match “\(trimmedDraft)”",
             detail: noResultsDetail
           ) {
+            if store.searchFilter != .all {
+              Button("Search Everything") {
+                store.searchFilter = .all
+              }
+              .buttonStyle(WorkspaceActionButtonStyle())
+            }
             if store.searchReadScope == .activeCorpus, !store.mountedCorpora.isEmpty {
               Button("Search All Corpora") {
                 store.searchReadScope = .allCorpora
@@ -635,6 +654,49 @@ struct SearchView: View {
     case .page(let node):
       Org2Display.cleanInline(node.title)
     }
+  }
+}
+
+/// One-tap filters for Text search: everything, or only headings, TODOs,
+/// note text, chats, pages, files, or agent work.
+private struct SearchFilterBar: View {
+  @Binding var selection: WorkspaceSearchFilter
+
+  var body: some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: 6) {
+        ForEach(WorkspaceSearchFilter.allCases) { filter in
+          let isSelected = filter == selection
+          Button {
+            selection = filter
+          } label: {
+            Text(filter.title)
+              .font(.caption.weight(isSelected ? .semibold : .regular))
+              .foregroundStyle(isSelected ? WorkspaceDesign.primaryText : .secondary)
+              .padding(.horizontal, 9)
+              .padding(.vertical, 3)
+              .background(
+                Capsule().fill(isSelected ? WorkspaceDesign.selectedFill : WorkspaceDesign.subtleFill)
+              )
+              .overlay(
+                Capsule().strokeBorder(
+                  isSelected ? WorkspaceDesign.structuralAccent.opacity(0.45) : Color.clear,
+                  lineWidth: 0.75
+                )
+              )
+              .contentShape(Capsule())
+          }
+          .buttonStyle(.plain)
+          .help(filter.help)
+          .accessibilityLabel("Show \(filter.title)")
+          .accessibilityAddTraits(isSelected ? .isSelected : [])
+        }
+      }
+      // Room for the selected chip's outline inside the scroll view's clip.
+      .padding(1)
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel("Search filter")
   }
 }
 

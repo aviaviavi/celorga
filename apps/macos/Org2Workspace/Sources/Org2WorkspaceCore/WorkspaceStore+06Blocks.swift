@@ -1849,16 +1849,17 @@ extension WorkspaceStore {
         modifiedAtByPath[file.path] = file.modifiedAt
       }
     }
+    let filter = searchFilter
     workspaceTextSearchItems = Self.rankedWorkspaceSearchItems(
-      corpusResults: searchResults,
-      files: workspaceFileSearchResults,
-      chats: aiChatSearchResults,
-      agentWork: workspaceAgentWorkSearchResults,
-      pages: workspacePageSearchResults,
+      corpusResults: filter.searchesCorpusText ? searchResults : [],
+      files: filter.searchesFiles ? workspaceFileSearchResults : [],
+      chats: filter.searchesChats ? aiChatSearchResults : [],
+      agentWork: filter.searchesAgentWork ? workspaceAgentWorkSearchResults : [],
+      pages: filter.searchesPages ? workspacePageSearchResults : [],
       query: query,
       modifiedAtByPath: modifiedAtByPath,
       now: Date()
-    )
+    ).filter(filter.includes)
     corpusSearchResultGroups = Self.groupedSearchResultsForDisplay(searchResults)
   }
 

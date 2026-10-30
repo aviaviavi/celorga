@@ -74,6 +74,7 @@ import {
   loadFreshSearchIndex,
   searchFilesByScan,
   searchIndexedCorpus,
+  parseSearchMatchKind,
   searchPayload,
   updateSearchIndex,
   writeSearchIndex,
@@ -7710,6 +7711,7 @@ async function main(): Promise<void> {
   let searchTagFiltersRaw: string[] = [];
   let searchFileZoneFiltersRaw: string[] = [];
   let searchHeadingFilter = "";
+  let searchMatchKindRaw = "";
   let searchSort = "scan";
   let searchDateFrom = "";
   let searchDateTo = "";
@@ -8408,6 +8410,8 @@ async function main(): Promise<void> {
       if (i < args.length) {
         if (command === "agenda") {
           agendaMatchFiltersRaw.push(args[i]!);
+        } else if (command === "search" || command === "query") {
+          searchMatchKindRaw = args[i]!;
         }
         i++;
       }
@@ -9798,6 +9802,7 @@ Flags:
   --files FILE       One or more target files
   --todo TODO        Require nearest heading TODO keyword
   --tag TAG          Require nearest heading tag
+  --match KIND       Only heading-line matches (heading), matches inside open TODOs (todo), or body text (text)
   --heading TEXT     Require nearest heading title text
   --limit N          Maximum matches (default 50)
   --context N        Context lines around each match (default 1)
@@ -12969,6 +12974,11 @@ Flags:
     const tagFilters = new Set(searchTagFiltersRaw.map((t) => t.replace(/^:/, "").replace(/:$/, "").toLowerCase()));
     const fileZoneFilters = searchFileZoneFiltersRaw.map((t) => t.toLowerCase()).filter(Boolean);
     const headingNeedle = searchHeadingFilter.toLowerCase();
+    const matchKind = parseSearchMatchKind(searchMatchKindRaw);
+    if (searchMatchKindRaw && !matchKind) {
+      console.error(`Error: invalid --match value '${searchMatchKindRaw}' (expected heading, todo, or text)`);
+      process.exit(1);
+    }
     const normalizeSearchDate = (raw: string): string => {
       const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(raw || "").trim());
       return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
@@ -12998,6 +13008,7 @@ Flags:
       dateTo,
       subtree: querySubtree,
       answerContext: queryAnswerContext,
+      ...(matchKind ? { matchKind } : {}),
     };
 
     let skippedFileCount = 0;

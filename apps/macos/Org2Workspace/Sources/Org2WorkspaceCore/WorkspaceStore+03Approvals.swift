@@ -1513,11 +1513,7 @@ extension WorkspaceStore {
     let request = captureWorkspaceSearchRequest(query: query)
     guard !query.isEmpty else {
       isSearching = false
-      searchResults = []
-      aiChatSearchResults = []
-      workspaceFileSearchResults = []
-      workspacePageSearchResults = []
-      workspaceAgentWorkSearchResults = []
+      storeWorkspaceSearchResults(query: nil, corpus: [], chats: [], files: [], pages: [], agentWork: [])
       markWorkspaceSurfaceCleanIfUnchanged(.search, generation: dirtyGeneration)
       return
     }
@@ -1531,21 +1527,21 @@ extension WorkspaceStore {
     }
 
     let started = Date()
+    let filter = request.filter
+    let perSourceLimit = filter.perSourceLimit
     let requestedCorpusRoot = corpusRoot?.standardizedFileURL
-    // Every source runs concurrently; chat search reuses cached transcript
-    // text and reads only threads that changed since the last search.
-    let chatSearchTask = aiChatWorkspaceSearchTask(query: query)
+    // Every source runs concurrently, and a filter skips the sources it
+    // hides. Chat search reuses cached transcript text and reads only threads
+    // that changed since the last search.
+    let chatSearchTask = filter.searchesChats
+      ? aiChatWorkspaceSearchTask(query: query, limit: perSourceLimit)
+      : Task<[AIChatSearchResult], Never> { [] }
     guard let corpusRoot = requestedCorpusRoot else {
       let chatResults = await chatSearchTask.value
       guard !Task.isCancelled,
             isCurrentWorkspaceSearchRequest(request)
       else { return }
-      workspaceSearchRankingQuery = query
-      searchResults = []
-      aiChatSearchResults = chatResults
-      workspaceFileSearchResults = []
-      workspacePageSearchResults = []
-      workspaceAgentWorkSearchResults = []
+      storeWorkspaceSearchResults(query: query, corpus: [], chats: chatResults, files: [], pages: [], agentWork: [])
       let elapsed = Date().timeIntervalSince(started)
       statusText = chatResults.isEmpty
         ? "No corpus selected"
@@ -1554,11 +1550,11 @@ extension WorkspaceStore {
       return
     }
 
-    let runs = agentRuns
-    let approvals = approvalItems
-    let workflows = agentWorkflows
-    let goals = agentGoals
-    let profiles = agentProfiles
+    let runs = filter.searchesAgentWork ? agentRuns : []
+    let approvals = filter.searchesAgentWork ? approvalItems : []
+    let workflows = filter.searchesAgentWork ? agentWorkflows : []
+    let goals = filter.searchesAgentWork ? agentGoals : []
+    let profiles = filter.searchesAgentWork ? agentProfiles : []
     let agentWorkSearchTask = Task.detached(priority: .userInitiated) {
       Self.searchAgentWorkForWorkspace(
         runs: runs,
@@ -1567,92 +1563,65 @@ extension WorkspaceStore {
         goals: goals,
         profiles: profiles,
         query: query,
-        limitPerCategory: 25
+        limitPerCategory: perSourceLimit
       )
     }
 
     do {
       let files = request.readScope == .activeCorpus ? corpusFiles : []
-      let pageNodes = request.readScope == .activeCorpus ? orgRoamLinkResolver.nodes.filter(\.isPageNode) : []
+      let searchedFiles = filter.searchesFiles ? files : []
+      let pageNodes = request.readScope == .activeCorpus && filter.searchesPages
+        ? orgRoamLinkResolver.nodes.filter(\.isPageNode)
+        : []
+      let pageSourceFiles = filter.searchesPages ? files : []
       async let supplementalResults = Task.detached(priority: .userInitiated) {
         let resolvedPageNodes = pageNodes.isEmpty
-          ? files.compactMap(Self.scanRoamFileNode)
+          ? pageSourceFiles.compactMap(Self.scanRoamFileNode)
           : pageNodes
         return (
-          Self.searchCorpusFilesForWorkspace(files, query: query, limit: 25),
-          Self.searchPageNodesForWorkspace(resolvedPageNodes, query: query, limit: 25)
+          Self.searchCorpusFilesForWorkspace(searchedFiles, query: query, limit: perSourceLimit),
+          Self.searchPageNodesForWorkspace(resolvedPageNodes, query: query, limit: perSourceLimit)
         )
       }.value
-      let federates = request.readScope == .allCorpora && workspaceMountPaths().count > 1
-      var arguments = federates
-        ? ["workspace", "search", query] + workspaceMountArguments()
-        : ["search", query, "--dir", corpusRoot.path]
-      arguments += [
-        "--recursive",
-        "--limit", String(Self.workspaceSearchCandidateLimit),
-        "--context", "1",
-        "--index", federates ? "auto" : "current",
-        "--sort", "best",
-        "--format", "json"
-      ]
-      let payload: SearchPayload
-      if let workspaceSearchLoaderForTesting {
-        payload = try await workspaceSearchLoaderForTesting(query, arguments)
-      } else if !federates, cli.hasSearchService {
-        // The warm worker answers in well under a second; a one-shot CLI
-        // process spends seconds starting Node and reading the index.
-        do {
-          payload = try await cli.searchIndexedCorpus(
-            query,
-            corpusRoot: corpusRoot,
-            limit: Self.workspaceSearchCandidateLimit,
-            context: 1
-          )
-        } catch is CancellationError {
-          throw CancellationError()
-        } catch {
-          payload = try await cli.runJSON(arguments)
-        }
-      } else {
-        payload = try await cli.runJSON(arguments)
-      }
+      let payload: SearchPayload? = filter.searchesCorpusText
+        ? try await corpusTextSearchPayload(query: query, corpusRoot: corpusRoot, request: request)
+        : nil
       guard !Task.isCancelled,
             isCurrentWorkspaceSearchRequest(request)
       else { return }
       let (fileResults, pageResults) = await supplementalResults
-      guard !Task.isCancelled,
-            isCurrentWorkspaceSearchRequest(request)
-      else { return }
       let agentWorkResults = await agentWorkSearchTask.value
       let chatResults = await chatSearchTask.value
       guard !Task.isCancelled,
             isCurrentWorkspaceSearchRequest(request)
       else { return }
-      let resultPaths = Set(payload.results.map(\.file))
+      let corpusResults = payload?.results ?? []
+      let resultPaths = Set(corpusResults.map(\.file))
       var modifiedAtByPath: [String: Date] = [:]
-      for file in files where resultPaths.contains(file.path) {
-        modifiedAtByPath[file.path] = file.modifiedAt
+      if !resultPaths.isEmpty {
+        for file in files where resultPaths.contains(file.path) {
+          modifiedAtByPath[file.path] = file.modifiedAt
+        }
       }
       let prioritizedResults = Self.prioritizedSearchResultsForDisplay(
-        payload.results,
+        corpusResults,
         query: query,
-        limit: Self.workspaceSearchDisplayLimit,
+        limit: filter == .all ? Self.workspaceSearchDisplayLimit : Self.workspaceSearchMergedDisplayLimit,
         modifiedAtByPath: modifiedAtByPath
       )
-      let totalCount = prioritizedResults.count
-        + chatResults.count
-        + fileResults.count
-        + pageResults.count
-        + agentWorkResults.count
-      workspaceSearchRankingQuery = query
-      searchResults = prioritizedResults
-      aiChatSearchResults = chatResults
-      workspaceFileSearchResults = fileResults
-      workspacePageSearchResults = pageResults
-      workspaceAgentWorkSearchResults = agentWorkResults
+      storeWorkspaceSearchResults(
+        query: query,
+        corpus: prioritizedResults,
+        chats: chatResults,
+        files: fileResults,
+        pages: pageResults,
+        agentWork: agentWorkResults
+      )
+      let totalCount = workspaceTextSearchItems.count
       let elapsed = Date().timeIntervalSince(started)
-      let issueSuffix = payload.issues?.isEmpty == false ? ", \(payload.issues!.count) corpus issue\(payload.issues!.count == 1 ? "" : "s")" : ""
-      statusText = "\(totalCount) search result\(totalCount == 1 ? "" : "s") in \(String(format: "%.1f", elapsed))s\(issueSuffix)"
+      let issues = payload?.issues ?? []
+      let issueSuffix = issues.isEmpty ? "" : ", \(issues.count) corpus issue\(issues.count == 1 ? "" : "s")"
+      statusText = "\(totalCount) search result\(totalCount == 1 ? "" : "s") in \(String(format: "%.2f", elapsed))s\(issueSuffix)"
       markWorkspaceSurfaceCleanIfUnchanged(.search, generation: dirtyGeneration)
     } catch {
       let agentWorkResults = await agentWorkSearchTask.value
@@ -1660,20 +1629,95 @@ extension WorkspaceStore {
       guard !Task.isCancelled,
             isCurrentWorkspaceSearchRequest(request)
       else { return }
+      isStoringWorkspaceSearchResults = true
       workspaceSearchRankingQuery = query
       aiChatSearchResults = chatResults
       workspaceAgentWorkSearchResults = agentWorkResults
+      isStoringWorkspaceSearchResults = false
+      rebuildWorkspaceTextSearchDisplayCache()
       errorText = error.localizedDescription
       statusText = "Search failed"
     }
   }
 
-  private func aiChatWorkspaceSearchTask(query: String) -> Task<[AIChatSearchResult], Never> {
+  /// Stores every source's results together and ranks the merged list once,
+  /// instead of once per source.
+  private func storeWorkspaceSearchResults(
+    query: String?,
+    corpus: [SearchResult],
+    chats: [AIChatSearchResult],
+    files: [CorpusFile],
+    pages: [OrgRoamNodeReference],
+    agentWork: [WorkspaceAgentWorkSearchResult]
+  ) {
+    isStoringWorkspaceSearchResults = true
+    if let query { workspaceSearchRankingQuery = query }
+    searchResults = corpus
+    aiChatSearchResults = chats
+    workspaceFileSearchResults = files
+    workspacePageSearchResults = pages
+    workspaceAgentWorkSearchResults = agentWork
+    isStoringWorkspaceSearchResults = false
+    rebuildWorkspaceTextSearchDisplayCache()
+  }
+
+  /// Longest snippet or context line the search worker sends back; the row
+  /// shows two lines, and a megabyte-long line would only slow decoding.
+  nonisolated static let workspaceSearchMaxLineLength = 400
+
+  /// Corpus text matches from the warm search worker, or from a one-shot CLI
+  /// process when the worker is unavailable.
+  private func corpusTextSearchPayload(
+    query: String,
+    corpusRoot: URL,
+    request: WorkspaceSearchRequestContext
+  ) async throws -> SearchPayload {
+    let mounts = workspaceMountPaths()
+    let federates = request.readScope == .allCorpora && mounts.count > 1
+    let matchKind = request.filter.corpusMatchKind
+    var arguments = federates
+      ? ["workspace", "search", query] + workspaceMountArguments()
+      : ["search", query, "--dir", corpusRoot.path]
+    arguments += [
+      "--recursive",
+      "--limit", String(Self.workspaceSearchCandidateLimit),
+      "--context", "1",
+      "--index", federates ? "auto" : "current",
+      "--sort", "best",
+      "--format", "json"
+    ]
+    if let matchKind { arguments += ["--match", matchKind] }
+    if let workspaceSearchLoaderForTesting {
+      return try await workspaceSearchLoaderForTesting(query, arguments)
+    }
+    guard cli.hasSearchService else { return try await cli.runJSON(arguments) }
+    // The warm worker answers in milliseconds; a one-shot CLI process spends
+    // a second or more starting Node and reading every index. Mounted
+    // corpora are searched by the same worker, which keeps their indexes
+    // current itself.
+    do {
+      return try await cli.searchIndexedCorpus(
+        query,
+        corpusRoot: corpusRoot,
+        limit: Self.workspaceSearchCandidateLimit,
+        context: 1,
+        matchKind: matchKind,
+        maxLineLength: Self.workspaceSearchMaxLineLength,
+        mounts: federates ? mounts : nil
+      )
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      return try await cli.runJSON(arguments)
+    }
+  }
+
+  private func aiChatWorkspaceSearchTask(query: String, limit: Int = 25) -> Task<[AIChatSearchResult], Never> {
     let metadata = aiChatThreads
     let transcriptURL = aiChatTranscriptURL
     return Task.detached(priority: .userInitiated) {
       let documents = Self.aiChatSearchDocuments(metadata: metadata, transcriptURL: transcriptURL)
-      return Self.searchAIChatDocuments(documents, query: query, limit: 25)
+      return Self.searchAIChatDocuments(documents, query: query, limit: limit)
     }
   }
 

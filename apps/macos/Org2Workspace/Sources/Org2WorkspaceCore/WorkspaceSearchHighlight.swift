@@ -82,8 +82,10 @@ enum WorkspaceSearchInput {
   /// Text search runs as the user types once the query has this many
   /// characters; Return searches a shorter query immediately.
   static let liveSearchMinimumLength = 2
-  /// Pause before a typed text query runs; text search reads the whole corpus.
-  static let liveTextSearchDelay: UInt64 = 250_000_000
+  /// Pause before a typed text query runs. The warm search worker answers
+  /// most queries in tens of milliseconds, so this mostly skips keystrokes
+  /// made in quick succession.
+  static let liveTextSearchDelay: UInt64 = 150_000_000
   /// Node search filters an in-memory index, so it can follow typing closely.
   static let liveNodeSearchDelay: UInt64 = 120_000_000
   /// File search answers from the worker's in-memory index in milliseconds.

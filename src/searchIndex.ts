@@ -136,6 +136,31 @@ export type Org2SearchOptions = {
   dateTo: string;
   subtree: boolean;
   answerContext: boolean;
+  /**
+   * Keep only matches of one kind: `heading` (the match is on a heading
+   * line), `todo` (inside an entry with an open TODO), or `text` (a body
+   * line, not a heading).
+   */
+  matchKind?: Org2SearchMatchKind;
+  /** Shorten snippet and context lines longer than this, keeping the match in view. */
+  maxLineLength?: number;
+};
+
+export type Org2SearchMatchKind = "heading" | "todo" | "text";
+
+export function parseSearchMatchKind(value: unknown): Org2SearchMatchKind | undefined {
+  return value === "heading" || value === "todo" || value === "text" ? value : undefined;
+}
+
+/** Optional accelerators a long-lived caller can supply from its own caches. */
+export type Org2IndexedSearchAccelerators = {
+  /** False when the file cannot contain the lower-cased needle at all. */
+  mayContain?: (file: Org2SearchIndexFile, needle: string) => boolean;
+  /**
+   * Zero-based numbers of the lines that contain the lower-cased needle, in
+   * ascending order. Must agree with a per-line case-insensitive match.
+   */
+  matchingLines?: (file: Org2SearchIndexFile, needle: string) => Iterable<number>;
 };
 
 type SearchHeading = { line: number; level: number; title: string; todo?: string; todoTerminal?: boolean; tags: string[]; id?: string };
@@ -313,6 +338,52 @@ export function updateSearchIndex(options: {
   return result;
 }
 
+/**
+ * Brings an in-memory index up to date with the files on disk: rereads files
+ * whose size or modification time changed, adds new files, and drops removed
+ * ones. Returns null when nothing changed.
+ */
+export function refreshSearchIndexFiles(index: Org2SearchIndex, files: string[]): Org2SearchIndex | null {
+  const rootDir = path.resolve(index.rootDir);
+  const wanted = new Set(files.map((file) => path.resolve(file)));
+  const kept: Org2SearchIndexFile[] = [];
+  let changed = false;
+  for (const file of index.files) {
+    const absolutePath = path.resolve(file.path);
+    if (!wanted.has(absolutePath)) {
+      changed = true;
+      continue;
+    }
+    wanted.delete(absolutePath);
+    try {
+      const stat = fs.statSync(absolutePath);
+      if (Math.trunc(stat.mtimeMs) === file.modifiedMs && stat.size === file.byteCount) {
+        kept.push(file);
+        continue;
+      }
+      const raw = fs.readFileSync(absolutePath, "utf8").replace(/\r\n/g, "\n");
+      kept.push(indexSearchFile(rootDir, absolutePath, stat, raw.split("\n")));
+    } catch {
+      // Unreadable now: drop it rather than serve stale text.
+    }
+    changed = true;
+  }
+  for (const absolutePath of wanted) {
+    try {
+      const stat = fs.statSync(absolutePath);
+      if (!stat.isFile()) continue;
+      const raw = fs.readFileSync(absolutePath, "utf8").replace(/\r\n/g, "\n");
+      kept.push(indexSearchFile(rootDir, absolutePath, stat, raw.split("\n")));
+      changed = true;
+    } catch {
+      // Vanished between listing and reading.
+    }
+  }
+  if (!changed) return null;
+  kept.sort((a, b) => a.path.localeCompare(b.path));
+  return { ...index, builtAt: new Date().toISOString(), files: kept };
+}
+
 export function writeSearchIndex(result: Org2SearchIndexBuildResult): void {
   fs.mkdirSync(path.dirname(result.path), { recursive: true });
   const binaryPath = binarySearchIndexPath(result.path);
@@ -389,26 +460,211 @@ export function loadCompatibleSearchIndex(options: {
 export function searchIndexedCorpus(
   index: Org2SearchIndex,
   options: Org2SearchOptions,
-  mayContain?: (file: Org2SearchIndexFile, needle: string) => boolean,
+  accelerators?: Org2IndexedSearchAccelerators | ((file: Org2SearchIndexFile, needle: string) => boolean),
 ): Org2SearchHit[] {
+  const { mayContain, matchingLines } = typeof accelerators === "function" ? { mayContain: accelerators, matchingLines: undefined } : (accelerators ?? {});
   const hits: Org2SearchHit[] = [];
   const matcher = literalCaseInsensitiveMatcher(options.query);
   const fileZoneFilters = options.fileZoneFilters.map((zone) => zone.toLowerCase()).filter(Boolean);
+  // Files in one folder share their TODO configuration; reading celorga.json
+  // once per folder instead of once per file keeps common words fast.
+  const configurationByDirectory = new Map<string, string>();
+  const configurationKey = (filePath: string): string => {
+    const directory = path.dirname(filePath);
+    let key = configurationByDirectory.get(directory);
+    if (key === undefined) {
+      key = todoConfigurationKey(filePath);
+      configurationByDirectory.set(directory, key);
+    }
+    return key;
+  };
+  // `best` ranking needs only a few heading fields per match, so matches are
+  // scored first and only the results that make the cut are built in full.
+  const ranked = normalizedSort(options.sort) === "best" && !options.subtree ? new BestCandidates(options) : null;
 
   for (const file of index.files) {
     const normalizedFile = file.path.toLowerCase();
     if (fileZoneFilters.length && !fileZoneFilters.some((zone) => normalizedFile.includes(zone))) continue;
     if (mayContain && !mayContain(file, matcher.needle)) continue;
-    if (file.headings && index.todoWorkflowVersion === 1 && file.todoConfiguration === todoConfigurationKey(file.path)) {
-      collectSearchHitsForIndexedFile(file, matcher, options, hits);
+    if (file.headings && index.todoWorkflowVersion === 1 && file.todoConfiguration === configurationKey(file.path)) {
+      const lines = matchingLines ? matchingLines(file, matcher.needle) : undefined;
+      if (ranked) ranked.collect(file, matcher, lines);
+      else collectSearchHitsForIndexedFile(file, matcher, options, hits, lines);
     } else {
+      const before = hits.length;
       collectSearchHitsForLines(file.path, file.lines, matcher, options, hits);
+      if (options.matchKind) filterHitsByMatchKind(hits, before, options.matchKind);
+      if (ranked) ranked.addHits(hits.splice(before));
     }
     if (hits.length >= options.limit && normalizedSort(options.sort) === "scan") break;
   }
 
   const modifiedMsByFile = new Map(index.files.map((file) => [file.path, file.modifiedMs]));
-  return sortAndLimitSearchHits(hits, options.sort, options.limit, options.query, modifiedMsByFile);
+  const results = ranked
+    ? ranked.top(options.limit, modifiedMsByFile)
+    : sortAndLimitSearchHits(hits, options.sort, options.limit, options.query, modifiedMsByFile);
+  return options.maxLineLength ? results.map((hit) => shortenSearchHit(hit, options.maxLineLength!, matcher.needle)) : results;
+}
+
+function matchKindAccepts(kind: Org2SearchMatchKind, isHeadingLine: boolean, todo: string | undefined, todoTerminal: boolean | undefined): boolean {
+  if (kind === "heading") return isHeadingLine;
+  if (kind === "text") return !isHeadingLine;
+  if (!todo) return false;
+  return !(todoTerminal ?? !isActiveTodoKeyword(todo.trim().toUpperCase()));
+}
+
+function filterHitsByMatchKind(hits: Org2SearchHit[], from: number, kind: Org2SearchMatchKind): void {
+  let write = from;
+  for (let read = from; read < hits.length; read += 1) {
+    const hit = hits[read]!;
+    if (matchKindAccepts(kind, hit.headingLine !== undefined && hit.headingLine === hit.line, hit.todo, hit.todoTerminal)) hits[write++] = hit;
+  }
+  hits.length = write;
+}
+
+function shortenLine(line: string, max: number, needle: string): string {
+  if (line.length <= max) return line;
+  const at = needle ? line.toLowerCase().indexOf(needle) : -1;
+  const start = at < 0 ? 0 : Math.max(0, Math.min(at - Math.floor(max / 3), line.length - max));
+  return `${start > 0 ? "…" : ""}${line.slice(start, start + max)}${start + max < line.length ? "…" : ""}`;
+}
+
+function shortenSearchHit(hit: Org2SearchHit, max: number, needle: string): Org2SearchHit {
+  const long = (text: string | undefined) => (text?.length ?? 0) > max;
+  if (!long(hit.snippet) && !hit.context?.lines.some(long) && !hit.matchedLines.some((match) => long(match.snippet))) return hit;
+  return {
+    ...hit,
+    snippet: shortenLine(hit.snippet, max, needle),
+    matchedLines: hit.matchedLines.map((match) => ({ ...match, snippet: shortenLine(match.snippet, max, needle) })),
+    ...(hit.context ? { context: { ...hit.context, lines: hit.context.lines.map((line) => shortenLine(line, max, needle)) } } : {}),
+  };
+}
+
+/**
+ * Collects `best`-ranked matches without building a full hit for each one.
+ * Scores, order, and tie-breaking are identical to sorting full hits with
+ * `sortAndLimitSearchHits`.
+ */
+class BestCandidates {
+  private readonly needle: string;
+  private readonly now = Date.now();
+  private readonly fileDate = new Map<string, string>();
+  private readonly qualityByHeading = new Map<Org2SearchIndexHeading, [number, number]>();
+  private readonly timestampByDate = new Map<string, number | undefined>();
+  private readonly candidates: Array<{ file: Org2SearchIndexFile | null; line: number; headingIndex: number; quality: number; date: string | undefined; hit?: Org2SearchHit }> = [];
+
+  constructor(private readonly options: Org2SearchOptions) {
+    this.needle = options.query.trim().toLowerCase();
+  }
+
+  private headingQuality(heading: Org2SearchIndexHeading | undefined, isHeadingLine: boolean): number {
+    if (!heading) return 10;
+    let cached = this.qualityByHeading.get(heading);
+    if (!cached) {
+      const probe = (line: number) => bestSearchQuality({ heading: heading.title, headingLine: heading.line + 1, line, todo: heading.todo, todoTerminal: heading.todoTerminal } as Org2SearchHit, this.needle);
+      // The heading line itself, and any body line under it.
+      cached = [probe(heading.line + 1), probe(heading.line + 2)];
+      this.qualityByHeading.set(heading, cached);
+    }
+    return isHeadingLine ? cached[0] : cached[1];
+  }
+
+  collect(file: Org2SearchIndexFile, matcher: LiteralCaseInsensitiveMatcher, matchingLines?: Iterable<number>): void {
+    const headings = file.headings || [];
+    let fileDate = this.fileDate.get(file.path);
+    if (fileDate === undefined) {
+      fileDate = dateKeyFromFile(file.path);
+      this.fileDate.set(file.path, fileDate);
+    }
+    const kind = this.options.matchKind;
+    let headingIndex = -1;
+    const visit = (j: number): void => {
+      while (headingIndex + 1 < headings.length && headings[headingIndex + 1]!.line <= j) headingIndex += 1;
+      const current = headingIndex >= 0 ? headings[headingIndex] : undefined;
+      if (this.options.todoFilters.size && (!current?.todo || !this.options.todoFilters.has(current.todo.toUpperCase()))) return;
+      if (
+        this.options.tagFilters.size &&
+        !Array.from(this.options.tagFilters).every((tag) => current?.tags.some((candidate) => candidate.toLowerCase() === tag))
+      ) return;
+      if (this.options.headingNeedle && !(current?.title || "").toLowerCase().includes(this.options.headingNeedle)) return;
+      const isHeadingLine = current !== undefined && current.line === j;
+      if (kind && !matchKindAccepts(kind, isHeadingLine, current?.todo, current?.todoTerminal)) return;
+      const sortDate = current?.date || fileDate;
+      if (!inDateWindow(sortDate, this.options.dateFrom, this.options.dateTo)) return;
+      this.candidates.push({ file, line: j, headingIndex, quality: this.headingQuality(current, isHeadingLine), date: sortDate || undefined });
+    };
+    if (matchingLines) {
+      for (const j of matchingLines) visit(j);
+    } else {
+      for (let j = 0; j < file.lines.length; j += 1) {
+        if (matchesCaseInsensitiveLiteral(file.lines[j] || "", matcher)) visit(j);
+      }
+    }
+  }
+
+  addHits(hits: Org2SearchHit[]): void {
+    for (const hit of hits) {
+      this.candidates.push({ file: null, line: hit.line - 1, headingIndex: -1, quality: bestSearchQuality(hit, this.needle), date: hit.sortDate || hit.date, hit });
+    }
+  }
+
+  private timestamp(date: string | undefined): number | undefined {
+    if (!date) return undefined;
+    if (this.timestampByDate.has(date)) return this.timestampByDate.get(date);
+    const value = bestSearchWrittenTimestamp({ sortDate: date } as Org2SearchHit);
+    this.timestampByDate.set(date, value);
+    return value;
+  }
+
+  top(limit: number, modifiedMsByFile: ReadonlyMap<string, number>): Org2SearchHit[] {
+    const boostByDate = new Map<string, number>();
+    const scored = this.candidates.map((candidate, index) => {
+      const filePath = candidate.file?.path ?? candidate.hit!.file;
+      let recency = candidate.date === undefined ? undefined : boostByDate.get(candidate.date);
+      if (recency === undefined) {
+        const written = this.timestamp(candidate.date);
+        recency = written !== undefined
+          ? bestRecencyBoost(written, this.now)
+          : bestRecencyBoost(modifiedMsByFile.get(filePath), this.now) * BEST_MODIFIED_TIME_RECENCY_FACTOR;
+        if (written !== undefined) boostByDate.set(candidate.date!, recency);
+      }
+      return { index, score: candidate.quality + recency };
+    });
+    scored.sort((a, b) => b.score - a.score || a.index - b.index);
+    return scored.slice(0, limit).map(({ index }) => {
+      const candidate = this.candidates[index]!;
+      return candidate.hit ?? buildIndexedSearchHit(candidate.file!, candidate.line, candidate.headingIndex, candidate.date, this.options);
+    });
+  }
+}
+
+function buildIndexedSearchHit(file: Org2SearchIndexFile, j: number, headingIndex: number, sortDate: string | undefined, options: Org2SearchOptions): Org2SearchHit {
+  const headings = file.headings || [];
+  const current = headingIndex >= 0 ? headings[headingIndex] : undefined;
+  const line = file.lines[j] || "";
+  const start = Math.max(0, j - options.context);
+  const end = Math.min(file.lines.length - 1, j + options.context);
+  const match = { line: j + 1, snippet: line.trim() };
+  return {
+    file: file.path,
+    line: j + 1,
+    lineEnd: j + 1,
+    heading: current?.title,
+    headingLine: current ? current.line + 1 : undefined,
+    headingLevel: current?.level,
+    headingAncestry: searchHeadingAncestry(headings, headingIndex),
+    id: current?.idLine !== undefined && current.idLine <= j ? current.id : undefined,
+    todo: current?.todo,
+    ...(current?.todoTerminal !== undefined ? { todoTerminal: current.todoTerminal } : {}),
+    tags: current?.tags || [],
+    snippet: line.trim(),
+    context: { startLine: start + 1, endLine: end + 1, lines: file.lines.slice(start, end + 1) },
+    sourceRange: { startLine: j + 1, endLine: j + 1 },
+    matchedLines: [match],
+    date: sortDate || undefined,
+    sortDate: sortDate || undefined,
+    ...(options.answerContext ? { answerContext: file.lines.slice(start, end + 1).join("\n") } : {}),
+  };
 }
 
 export function searchFilesByScan(files: string[], options: Org2SearchOptions): { hits: Org2SearchHit[]; skippedFileCount: number } {
@@ -428,6 +684,7 @@ export function searchFilesByScan(files: string[], options: Org2SearchOptions): 
       const fileHits: Org2SearchHit[] = [];
       const subtreeCount = subtreeHits.size;
       collectSearchHitsForLines(filePath, raw.split("\n"), matcher, options, fileHits, subtreeHits);
+      if (options.matchKind) filterHitsByMatchKind(fileHits, 0, options.matchKind);
       if (ranksByRecency && (fileHits.length > 0 || subtreeHits.size > subtreeCount)) {
         modifiedMsByFile.set(filePath, fs.statSync(filePath).mtimeMs);
       }
@@ -562,18 +819,20 @@ function collectSearchHitsForIndexedFile(
   matcher: LiteralCaseInsensitiveMatcher,
   options: Org2SearchOptions,
   hits: Org2SearchHit[],
+  matchingLines?: Iterable<number>,
 ): void {
   const headings = file.headings || [];
   const subtreeHits = new Map<string, Org2SearchHit>();
   const fileDate = dateKeyFromFile(file.path);
   const normalized = normalizedSort(options.sort);
   let headingIndex = -1;
+  const candidateLines = matchingLines ?? allLineNumbers(file.lines.length);
 
-  for (let j = 0; j < file.lines.length; j += 1) {
+  for (const j of candidateLines) {
     while (headingIndex + 1 < headings.length && headings[headingIndex + 1]!.line <= j) headingIndex += 1;
 
     const line = file.lines[j] || "";
-    if (!matchesCaseInsensitiveLiteral(line, matcher)) continue;
+    if (!matchingLines && !matchesCaseInsensitiveLiteral(line, matcher)) continue;
 
     const currentIndex = headingIndex;
     const current = currentIndex >= 0 ? headings[currentIndex] : undefined;
@@ -583,6 +842,7 @@ function collectSearchHitsForIndexedFile(
       !Array.from(options.tagFilters).every((tag) => current?.tags.some((candidate) => candidate.toLowerCase() === tag))
     ) continue;
     if (options.headingNeedle && !(current?.title || "").toLowerCase().includes(options.headingNeedle)) continue;
+    if (options.matchKind && !matchKindAccepts(options.matchKind, current !== undefined && current.line === j, current?.todo, current?.todoTerminal)) continue;
 
     const sortDate = current?.date || fileDate;
     if (!inDateWindow(sortDate, options.dateFrom, options.dateTo)) continue;
@@ -629,6 +889,10 @@ function collectSearchHitsForIndexedFile(
     hits.push(hit);
     if (!options.subtree && normalized === "scan" && hits.length >= options.limit) return;
   }
+}
+
+function* allLineNumbers(count: number): Iterable<number> {
+  for (let j = 0; j < count; j += 1) yield j;
 }
 
 function searchHeadingAncestry(headings: Org2SearchIndexHeading[], headingIndex: number): SearchHeadingRef[] {

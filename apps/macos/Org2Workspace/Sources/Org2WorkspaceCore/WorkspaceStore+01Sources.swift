@@ -731,6 +731,7 @@ extension WorkspaceStore {
       corpusSessionGeneration: corpusSessionGeneration,
       query: query,
       readScope: searchReadScope,
+      filter: searchFilter,
       transcriptPath: aiChatTranscriptURL.standardizedFileURL.path,
       transcriptLoadGeneration: aiChatTranscriptLoadGeneration
     )
@@ -742,6 +743,7 @@ extension WorkspaceStore {
       && corpusRoot?.standardizedFileURL.path == context.corpusRootPath
       && searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == context.query
       && searchReadScope == context.readScope
+      && searchFilter == context.filter
       && aiChatTranscriptURL.standardizedFileURL.path == context.transcriptPath
       && aiChatTranscriptLoadGeneration == context.transcriptLoadGeneration
   }
