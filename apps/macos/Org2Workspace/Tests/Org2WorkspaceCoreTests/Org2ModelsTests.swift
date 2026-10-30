@@ -19642,6 +19642,79 @@ final class Org2ModelsTests: XCTestCase {
   }
 
   @MainActor
+  func testSelectedFileDataNotebookDetectionRecognizesOrgSQLResults() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-workspace-org-data-notebook-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let notebook = root.appendingPathComponent("dashboard.org2")
+    try """
+    :PROPERTIES:
+    :ORG2_ARTIFACT_ROLE: view
+    :END:
+    #+title: Example dashboard
+
+    * Executive dashboard
+    #+begin_src html
+    <p>Example dashboard</p>
+    #+end_src
+
+    * Source tables
+    #+begin_src sql results=summary freshness=24h
+    SELECT 1 AS total
+    #+end_src
+    """.write(to: notebook, atomically: true, encoding: .utf8)
+
+    let store = try WorkspaceStore(cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()))
+    store.selectedLocation = .aiChatThreadRecord(AIChatThreadRecord(
+      title: "Example dashboard",
+      file: notebook.path,
+      line: 6,
+      zone: "test",
+      modifiedAt: nil
+    ))
+    await store.selectedFileDataNotebookTask?.value
+
+    XCTAssertTrue(store.selectedFileIsDataNotebook, "Org SQL results must expose Refresh Data")
+    XCTAssertTrue(store.canRefreshSelectedDataNotebook)
+  }
+
+  @MainActor
+  func testSelectedFileDataNotebookDetectionUsesOrgSourceTextMetadata() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-workspace-org-data-draft-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let notebook = root.appendingPathComponent("dashboard.org")
+    try "* Plain saved note\n".write(to: notebook, atomically: true, encoding: .utf8)
+
+    let store = try WorkspaceStore(cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()))
+    store.selectedLocation = .aiChatThreadRecord(AIChatThreadRecord(
+      title: "Example dashboard",
+      file: notebook.path,
+      line: 1,
+      zone: "test",
+      modifiedAt: nil
+    ))
+    await store.selectedFileDataNotebookTask?.value
+    XCTAssertFalse(store.selectedFileIsDataNotebook)
+
+    let cases: [(String, Bool)] = [
+      ("#+begin_src sql results=summary\nSELECT 1\n#+end_src", true),
+      ("  #+BEGIN_SRC SQL :results=summary\r\nSELECT 1\r\n#+END_SRC", true),
+      ("#+begin_sql results=summary\nSELECT 1\n#+end_sql", true),
+      ("#+begin_src sql view=summary\nSELECT 1\n#+end_src", false),
+      ("#+begin_src sql\n-- results=summary\nSELECT 1\n#+end_src", false),
+      ("This note mentions ```sql results=summary in prose.", false),
+    ]
+    for (sourceText, expected) in cases {
+      store.updateSelectedFileDataNotebookState(for: notebook.path, sourceText: sourceText)
+      await store.selectedFileDataNotebookTask?.value
+      XCTAssertEqual(store.selectedFileIsDataNotebook, expected, sourceText)
+    }
+  }
+
+  @MainActor
   func testSelectedFileDataNotebookDetectionDoesNotReadFromDiskOnEveryAccess() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-workspace-data-notebook-detection-\(UUID().uuidString)", isDirectory: true)

@@ -2042,7 +2042,7 @@ extension WorkspaceStore {
 
   nonisolated private static func isDataNotebookText(_ text: String) -> Bool {
     text.range(
-      of: #"```sql[^\n]*\bresults\s*="#,
+      of: #"(?m)^[ \t]*(?:```sql\b|#\+begin_src[ \t]+sql\b|#\+begin_sql\b)[^\r\n]*\bresults[ \t]*="#,
       options: [.regularExpression, .caseInsensitive]
     ) != nil
   }
