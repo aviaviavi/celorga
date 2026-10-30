@@ -640,7 +640,7 @@ public struct AIChatWorkspaceContext: Sendable {
   nonisolated static let localAgentWorkingRules = """
     Celorga working rules
 
-    Celorga is a plain-text Org workspace; .org files are canonical. Headings use leading stars and carry TODO state, priority, and tags; planning uses SCHEDULED, DEADLINE, and CLOSED lines; stable IDs live in :PROPERTIES: as :ID:; links look like [[id:<uuid>][label]]. Make the smallest useful edit, preserve Org syntax and IDs, and cite file paths with line numbers for concrete claims. Backlinks are computed views; never write Backlinks sections into notes.
+    Celorga is a plain-text Org workspace; .org files are canonical. Name every new file .org; .org2 is legacy: edit existing .org2 files in place but never create one, even when older files use .org2. Headings use leading stars and carry TODO state, priority, and tags; planning uses SCHEDULED, DEADLINE, and CLOSED lines; stable IDs live in :PROPERTIES: as :ID:; links look like [[id:<uuid>][label]]. Make the smallest useful edit, preserve Org syntax and IDs, and cite file paths with line numbers for concrete claims. Backlinks are computed views; never write Backlinks sections into notes.
     """
 
   public func localAgentSystemPrompt(

@@ -360,6 +360,8 @@ final class OpenCodeClientTests: XCTestCase {
     let standing = AIChatWorkspaceContext.localAgentStandingInstructions
     XCTAssertTrue(standing.contains("Celorga working rules"))
     XCTAssertTrue(standing.contains("Celorga response formatting contract"))
+    // Agents must not copy stale .org2 names from older procedures or neighbors.
+    XCTAssertTrue(standing.contains("Name every new file .org; .org2 is legacy"))
     XCTAssertFalse(standing.contains("Current surface"))
     // Static identity rules ride with the standing instructions, not each turn.
     XCTAssertTrue(standing.contains("Never use =openclaw="))

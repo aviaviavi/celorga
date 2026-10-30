@@ -361,6 +361,7 @@ final class CodexAppServerClientTests: XCTestCase {
       AIChatWorkspaceContext.localAgentStandingInstructions,
     ] {
       XCTAssertTrue(prompt.contains("Celorga response formatting contract"))
+      XCTAssertTrue(prompt.contains("Name every new file .org; .org2 is legacy"))
       XCTAssertTrue(prompt.contains("[[file:images/qr.png][QR code]]"))
       XCTAssertTrue(prompt.contains("Celorga renders image links inline"))
       XCTAssertTrue(prompt.contains("opening Preview does not embed it"))
