@@ -246,7 +246,8 @@ const HELP = `Agentic workspace commands:
   celorga agent-profile create ID --name TEXT [--default-runtime openclaw|codex|claude] [--binding RUNTIME:AGENT_ID] [--goal-ref ID] [--primary-goal-ref ID] [--responsibility TEXT] [--capability ID] [--skill ID]
   celorga agent-profile update ID [--default-runtime openclaw|codex|claude|none]
   celorga agent-profile resolve --runtime openclaw|codex --runtime-agent-id ID [--json]
-  celorga run create [--title TEXT] --goal TEXT [--goal-ref ID] [--agent-ref ID] [--accept TEXT] [--risk CLASS] [--owner NAME] [--capability ID] [--dir CORPUS]
+  celorga run create [--title TEXT] --goal TEXT [--goal-ref ID] [--agent-ref ID] [--thread AI_CHAT_THREAD_ID] [--destination-ref ID] [--accept TEXT] [--risk CLASS] [--owner NAME] [--capability ID] [--dir CORPUS]
+    --thread links the run to the AI chat that created it (use ORG2_AI_CHAT_THREAD_ID); resuming the run returns to that chat's agent.
   celorga run show ID --with-revision --json
   celorga run wait ID --until approval|blocked|needs-you|running|completed|failed|terminal|status:STATUS [--timeout SECONDS] [--json]
   celorga run list|show|wait|validate|start|resume|retry|cancel|complete|complete-external|reopen-external|fail|block|fork|normalize|reconcile-source|artifact-review
@@ -1363,8 +1364,18 @@ async function runCommand(parsed: ParsedArgs): Promise<void> {
     const risk = choice(flag(parsed, "risk", "local-draft"), AGENT_RUN_RISK_CLASSES, "risk class");
     const tokenLimit = flag(parsed, "token-limit"); const costLimit = flag(parsed, "cost-limit-usd"); const timeLimit = flag(parsed, "time-limit-seconds");
     const plan = flags(parsed, "step").map((raw, index) => { const colon = raw.indexOf(":"); const kind = colon > 0 ? raw.slice(0, colon) : "agent"; const title = colon > 0 ? raw.slice(colon + 1) : raw; if (!title.trim()) throw new Error(`--step ${index + 1} must be [${AGENT_RUN_STEP_KINDS.join("|")}]:TITLE`); return { id: `step-${index + 1}`, kind: choice(kind, AGENT_RUN_STEP_KINDS, `--step ${index + 1} kind`), title: title.trim() }; });
-    const run = createAgentRun({ id: flag(parsed, "id"), title: flag(parsed, "title"), goal: required(flag(parsed, "goal"), "--goal is required"), goalRef: flag(parsed, "goal-ref"), agentRef: flag(parsed, "agent-ref"), acceptanceCriteria: flags(parsed, "accept"), riskClass: risk, owner: flag(parsed, "owner"), assignee: flag(parsed, "assignee"), providerPolicy: flag(parsed, "policy"), provider: flag(parsed, "provider"), model: flag(parsed, "model"), capabilities: flags(parsed, "capability"), context: flags(parsed, "context").map((ref) => ({ ref })), plan, logicalWorkId: flag(parsed, "logical-work-id"), ...((tokenLimit || costLimit || timeLimit) ? { budget: { ...(tokenLimit ? { tokenLimit: Number(tokenLimit) } : {}), ...(costLimit ? { costLimitUsd: Number(costLimit) } : {}), ...(timeLimit ? { timeLimitSeconds: Number(timeLimit) } : {}) } } : {}) });
-    const file = saveAgentRun(corpus, run, { expectedRevision: null }); output(parsed, { run, file }, `created ${run.id}\n${file}`); return;
+    const run = createAgentRun({ id: flag(parsed, "id"), title: flag(parsed, "title"), goal: required(flag(parsed, "goal"), "--goal is required"), goalRef: flag(parsed, "goal-ref"), agentRef: flag(parsed, "agent-ref"), acceptanceCriteria: flags(parsed, "accept"), riskClass: risk, owner: flag(parsed, "owner"), assignee: flag(parsed, "assignee"), providerPolicy: flag(parsed, "policy"), provider: flag(parsed, "provider"), model: flag(parsed, "model"), capabilities: flags(parsed, "capability"), context: flags(parsed, "context").map((ref) => ({ ref })), plan, logicalWorkId: flag(parsed, "logical-work-id"), destinationRef: flag(parsed, "destination-ref")?.trim() || undefined, ...((tokenLimit || costLimit || timeLimit) ? { budget: { ...(tokenLimit ? { tokenLimit: Number(tokenLimit) } : {}), ...(costLimit ? { costLimitUsd: Number(costLimit) } : {}), ...(timeLimit ? { timeLimitSeconds: Number(timeLimit) } : {}) } } : {}) });
+    // The chat that created the run is where resuming it returns, so the run
+    // goes back to the same agent rather than to a default destination.
+    const thread = flag(parsed, "thread")?.trim();
+    if (thread !== undefined && !/^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/u.test(thread)) throw new Error("--thread must be an AI chat thread UUID");
+    const linked = thread
+      ? addAgentRunComment(run, flag(parsed, "owner") || "celorga", [
+        ...(run.destinationRef ? [`AI destination: ${run.destinationRef}`] : []),
+        `AI chat thread: ${thread.toLowerCase()}`,
+      ].join("\n"))
+      : run;
+    const file = saveAgentRun(corpus, linked, { expectedRevision: null }); output(parsed, { run: linked, file }, `created ${linked.id}\n${file}`); return;
   }
   if (action === "list") {
     const status = flag(parsed, "status");

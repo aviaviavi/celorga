@@ -598,6 +598,9 @@ public struct AgentRunItem: Identifiable, Decodable, Hashable, Sendable {
   public static let approvalBoundaryBlockReason = "One or more approvals were not approved"
   /// The block reason recorded when a requested revision could not be handed to an agent.
   public static let revisionDispatchFailureReason =
+    "Changes were requested, but the revision could not be handed to an agent. After restoring the agent's connection, choose Send Requested Changes on this run; do not request changes again."
+  /// The same block reason as recorded by earlier versions, still recognized.
+  static let legacyRevisionDispatchFailureReason =
     "Changes were requested, but the revision could not be handed to an agent. After restoring the OpenClaw connection, choose Send Requested Changes on this run; do not request changes again."
   /// A revised approval whose note still has to reach an agent: the run is blocked only
   /// because of that revision (or a failed hand-off of it), not for a separate clarification.
@@ -607,6 +610,7 @@ public struct AgentRunItem: Identifiable, Decodable, Hashable, Sendable {
     guard reason.isEmpty
             || reason == Self.approvalBoundaryBlockReason
             || reason == Self.revisionDispatchFailureReason
+            || reason == Self.legacyRevisionDispatchFailureReason
     else { return nil }
     return revision
   }
@@ -665,6 +669,29 @@ public struct AgentRunItem: Identifiable, Decodable, Hashable, Sendable {
       return String(id).lowercased()
     }
     return nil
+  }
+  /// The AI destination that last carried this run's work, from the latest
+  /// `AI destination: ID` comment line written when a run is handed to a chat.
+  public var recordedAIDestinationRef: String? {
+    for comment in comments.reversed() {
+      for line in comment.body.split(whereSeparator: \.isNewline).reversed() {
+        let rawLine = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard rawLine.lowercased().hasPrefix("ai destination:") else { continue }
+        let value = rawLine.dropFirst("AI destination:".count)
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !value.isEmpty { return value }
+      }
+    }
+    return nil
+  }
+  /// Whether the OpenClaw lifecycle adapter created or correlated this run, so
+  /// it belongs to an OpenClaw agent and its continuations go back there.
+  public var isOpenClawCorrelated: Bool {
+    openClawSessionKey != nil || comments.contains { comment in
+      comment.body.split(whereSeparator: \.isNewline).contains {
+        String($0).trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("OPENCLAW_KEY:")
+      }
+    }
   }
   public var hasOpenClawApprovalContinuation: Bool {
     workflowId != nil

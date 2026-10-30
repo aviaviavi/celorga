@@ -2447,7 +2447,7 @@ extension WorkspaceStore {
     persistAIChatTranscript()
   }
 
-  private func preferredAIChatDestination(for runtime: AIChatRuntime) -> AIChatDestinationConfiguration? {
+  func preferredAIChatDestination(for runtime: AIChatRuntime) -> AIChatDestinationConfiguration? {
     let defaultID = AIChatDestinationConfiguration.defaultID(for: runtime)
     return enabledAIChatDestinations.first(where: { $0.id == defaultID })
       ?? enabledAIChatDestinations.first(where: { $0.runtime == runtime })

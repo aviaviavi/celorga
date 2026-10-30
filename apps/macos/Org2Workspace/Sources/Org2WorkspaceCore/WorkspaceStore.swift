@@ -2330,6 +2330,21 @@ public final class WorkspaceStore {
     }
   }
   nonisolated static let aiChatPreferredExecutionHostKey = "Org2Workspace.aiChat.preferredExecutionHostRef.v1"
+  /// The AI destination that runs new agent work (Start Work, automations
+  /// without a destination) and continues runs that do not record their own
+  /// agent. Nil uses the first enabled destination. No runtime is a built-in
+  /// default. Machine-local preference.
+  public var defaultRunDestinationID: String? {
+    didSet {
+      guard oldValue != defaultRunDestinationID else { return }
+      if let id = defaultRunDestinationID, !id.isEmpty {
+        defaults.set(id, forKey: Self.defaultRunDestinationKey)
+      } else {
+        defaults.removeObject(forKey: Self.defaultRunDestinationKey)
+      }
+    }
+  }
+  nonisolated static let defaultRunDestinationKey = "Org2Workspace.agentWork.defaultRunDestinationID.v1"
   nonisolated public static let meetingCaptureSourceSummary = "Captures microphone and system/call audio. System audio uses macOS ScreenCaptureKit permission; Celorga records audio only."
   nonisolated public static let defaultAgentHandoffAssignee = "OpenClaw"
   nonisolated public static let agendaOpenStatusFilter = "__open__"
@@ -4207,6 +4222,7 @@ public final class WorkspaceStore {
       )
     }
     aiChatPreferredExecutionHostRef = defaults.string(forKey: Self.aiChatPreferredExecutionHostKey)
+    defaultRunDestinationID = defaults.string(forKey: Self.defaultRunDestinationKey)
     openOrgServer = OpenOrgServerConnection(
       defaults: defaults,
       credentials: NSClassFromString("XCTestCase") == nil

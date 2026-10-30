@@ -52,7 +52,7 @@ Celorga supplies its core operating guidance ambiently to every AI chat, so the 
 
 * From a TODO to agent work
 
-Every open TODO heading in the rendered document shows *▶ Start work…* on hover, and *Start Work with AI…* is in the heading's right-click menu and in Agenda's row menu. A small dialog first asks where to start: the thread (the heading's own thread, a new thread, or the AI chat thread you have open), the agent profile, the harness, the model, and the reasoning effort. A heading's own =:AGENT_REF:= takes precedence, an existing thread keeps its harness, and new-thread choices are remembered for next time. Starting work then:
+Every open TODO heading in the rendered document shows *▶ Start work…* on hover, and *Start Work with AI…* is in the heading's right-click menu and in Agenda's row menu. A small dialog first asks where to start: the thread (the heading's own thread, a new thread, or the AI chat thread you have open), the agent profile, the harness, the model, and the reasoning effort. A heading's own =:AGENT_REF:= takes precedence, an existing thread keeps its harness, and a new thread starts on the destination chosen in *Settings → AI Chat → Agent Work → Run new agent work with* (or, without one, your last Start Work choice). No runtime is a built-in default. Starting work then:
 
 1. creates and starts a durable =celorga run= that cites the heading,
 2. adds =:CELORGA_RUN_ID:= to the heading (and an =:ID:= if it has none) and moves a =TODO= to in progress,

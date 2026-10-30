@@ -2914,7 +2914,7 @@ extension WorkspaceStore {
   /// The heading then shows the run's live state (Working, Your turn, Done…).
   /// If the heading already has an open run with a thread, that thread opens.
   /// `options` and `threadTarget` come from the Start Work dialog; nil uses
-  /// the current chat's destination and the heading's own thread.
+  /// the default run destination and the heading's own thread.
   public func startWork(
     on location: WorkspaceLocation,
     origin: String = "agenda",
@@ -2973,9 +2973,9 @@ extension WorkspaceStore {
     }
     let preferredDestinationID = currentThread?.destinationID
       ?? options?.destinationID
-      ?? selectedAIChatDestination.id
+      ?? defaultRunDestination?.id
     guard let destination = enabledAIChatDestinations.first(where: { $0.id == preferredDestinationID })
-      ?? enabledAIChatDestinations.first
+      ?? defaultRunDestination
     else {
       errorText = "Turn on an AI destination in Settings › AI Chat to start work from a TODO."
       statusText = "No AI destination"

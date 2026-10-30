@@ -90,6 +90,28 @@ struct AIChatSettingsView: View {
       }
 
       Section {
+        Picker("Run new agent work with", selection: Binding(
+          get: { store.defaultRunDestinationID ?? "" },
+          set: { store.defaultRunDestinationID = $0.isEmpty ? nil : $0 }
+        )) {
+          Text(store.enabledAIChatDestinations.first.map { "First enabled destination (\($0.title))" }
+            ?? "First enabled destination").tag("")
+          ForEach(store.enabledAIChatDestinations) { destination in
+            Text(destination.title).tag(destination.id)
+          }
+          if let id = store.defaultRunDestinationID,
+             !store.enabledAIChatDestinations.contains(where: { $0.id == id }) {
+            Text("\(store.aiChatDestinationTitle(id)) (unavailable)").tag(id)
+          }
+        }
+        Text("Start Work and automations without their own destination run here. Resuming a run, answering its question, or approving its work returns it to the agent that created it or last worked on it; this agent is used only when the run records none.")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+      } header: {
+        Label("Agent Work", systemImage: "checklist")
+      }
+
+      Section {
         Picker("Filesystem access", selection: $store.codexSandboxAccess) {
           ForEach(CodexSandboxAccess.allCases) { access in
             Text(access.title).tag(access)

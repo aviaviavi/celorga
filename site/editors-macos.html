@@ -104,7 +104,7 @@ a { text-decoration-thickness: 0.08em; text-underline-offset: 0.15em; }
 </section>
 <section class="org2-headline level-1">
 <h1 id="from-a-todo-to-agent-work">From a TODO to agent work</h1>
-<p>Every open TODO heading in the rendered document shows <strong>▶ Start work…</strong> on hover, and <strong>Start Work with AI…</strong> is in the heading's right-click menu and in Agenda's row menu. A small dialog first asks where to start: the thread (the heading's own thread, a new thread, or the AI chat thread you have open), the agent profile, the harness, the model, and the reasoning effort. A heading's own <code>:AGENT_REF:</code> takes precedence, an existing thread keeps its harness, and new-thread choices are remembered for next time. Starting work then:</p>
+<p>Every open TODO heading in the rendered document shows <strong>▶ Start work…</strong> on hover, and <strong>Start Work with AI…</strong> is in the heading's right-click menu and in Agenda's row menu. A small dialog first asks where to start: the thread (the heading's own thread, a new thread, or the AI chat thread you have open), the agent profile, the harness, the model, and the reasoning effort. A heading's own <code>:AGENT_REF:</code> takes precedence, an existing thread keeps its harness, and a new thread starts on the destination chosen in <strong>Settings → AI Chat → Agent Work → Run new agent work with</strong> (or, without one, your last Start Work choice). No runtime is a built-in default. Starting work then:</p>
 <ol>
 <li><p>creates and starts a durable <code>celorga run</code> that cites the heading,</p></li>
 <li><p>adds <code>:CELORGA_RUN_ID:</code> to the heading (and an <code>:ID:</code> if it has none) and moves a <code>TODO</code> to in progress,</p></li>

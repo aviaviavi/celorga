@@ -2200,10 +2200,12 @@ final class AgentRunModelsTests: XCTestCase {
       .appendingPathComponent("org2-clarification-handoff-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
+    // An OpenClaw agent carries this run, so it resumes there.
     let blocked = try makeRun(
       id: "blocked-run",
       status: "blocked",
-      blockedReason: "Which reporting period should this cover?"
+      blockedReason: "Which reporting period should this cover?",
+      comments: ["AI destination: \(AIChatDestinationConfiguration.openClawID)"]
     )
     let resumed = try makeRun(
       id: "blocked-run",

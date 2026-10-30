@@ -212,12 +212,18 @@ struct StartWorkOptionsView: View {
     let enabled = store.enabledAIChatDestinations
     switch threadTarget {
     case .newThread:
+      // A configured run destination is the user's standing choice; without
+      // one, the last Start Work choice is the default.
       let last = store.startWorkLastOptions
-      let candidate = last.destinationID ?? store.selectedAIChatDestination.id
+      let configured = store.defaultRunDestinationID.flatMap { id in
+        enabled.contains(where: { $0.id == id }) ? id : nil
+      }
+      let candidate = configured ?? last.destinationID ?? store.defaultRunDestination?.id ?? ""
       if enabled.contains(where: { $0.id == candidate }) {
         destinationID = candidate
-        model = last.model ?? ""
-        reasoningEffort = last.reasoningEffort ?? ""
+        let keepsLastSettings = candidate == last.destinationID
+        model = keepsLastSettings ? last.model ?? "" : ""
+        reasoningEffort = keepsLastSettings ? last.reasoningEffort ?? "" : ""
       } else {
         destinationID = enabled.first?.id ?? ""
         model = ""

@@ -369,8 +369,9 @@ final class WorkspaceActivityNavigationTests: XCTestCase {
       legacyDefaultsDomains: []
     )
     store.setCorpusRoot(root, persistsDefault: false)
-    // The send handler stands in for the OpenClaw Gateway destination.
-    store.createAIChatThread(destinationID: AIChatDestinationConfiguration.openClawID)
+    // The send handler stands in for the OpenClaw Gateway destination, which
+    // this user chose as the default for new agent work.
+    store.defaultRunDestinationID = AIChatDestinationConfiguration.openClawID
     let location = WorkspaceLocation.aiChatThreadRecord(AIChatThreadRecord(
       title: "Draft the launch email",
       file: file.path,

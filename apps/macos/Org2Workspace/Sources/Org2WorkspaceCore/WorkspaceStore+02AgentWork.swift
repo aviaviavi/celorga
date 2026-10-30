@@ -1674,20 +1674,66 @@ extension WorkspaceStore {
     ])
   }
 
-  /// Destination for a run continuation that the OpenClaw lifecycle adapter
-  /// handed back with a Gateway session. The run's own destination wins; the
-  /// fallback is an OpenClaw Gateway destination, never a direct provider or
-  /// Dot that merely shares the OpenClaw runtime family.
-  func openClawRunContinuationDestination(for run: AgentRunItem) -> AIChatDestinationConfiguration {
-    if let ref = run.destinationRef?.trimmingCharacters(in: .whitespacesAndNewlines),
-       !ref.isEmpty,
-       let destination = enabledAIChatDestinations.first(where: { $0.id == ref }) {
+  /// The destination that runs new agent work when nothing more specific was
+  /// chosen: the user's configured run destination when it is enabled, then the
+  /// first enabled destination. No runtime is privileged as a fallback.
+  public var defaultRunDestination: AIChatDestinationConfiguration? {
+    if let id = defaultRunDestinationID?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !id.isEmpty,
+       let destination = enabledAIChatDestinations.first(where: { $0.id == id }) {
       return destination
     }
-    return enabledAIChatDestinations.first(where: { $0.id == AIChatDestinationConfiguration.openClawID })
-      ?? enabledAIChatDestinations.first(where: { $0.adapter == .openClaw })
-      ?? aiChatDestination(id: AIChatDestinationConfiguration.openClawID)
-      ?? AIChatDestinationConfiguration.defaults.first(where: { $0.adapter == .openClaw })!
+    return enabledAIChatDestinations.first
+  }
+
+  /// The destination that continues a run (Resume, Reply & Resume, approved
+  /// work, a requested revision): the agent that already carries the run, so a
+  /// run goes back to whoever created or last worked on it. In order, the run's
+  /// own destination, the destination of the latest chat it was handed to, an
+  /// OpenClaw destination for runs the OpenClaw adapter created, the run's
+  /// agent profile's preferred runtime, and finally the default run destination.
+  /// Nil means no destination is enabled.
+  func runContinuationDestination(for run: AgentRunItem) -> AIChatDestinationConfiguration? {
+    let enabled = enabledAIChatDestinations
+    func enabledDestination(_ id: String?) -> AIChatDestinationConfiguration? {
+      guard let id = id?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty else { return nil }
+      return enabled.first(where: { $0.id == id })
+    }
+    if let destination = enabledDestination(run.destinationRef) { return destination }
+    if let destination = enabledDestination(run.recordedAIDestinationRef) { return destination }
+    if let threadID = run.linkedAIChatThreadID,
+       let thread = aiChatThreads.first(where: { $0.id.uuidString.lowercased() == threadID }),
+       !thread.isSharedRoom,
+       let destination = enabledDestination(thread.destinationID) {
+      return destination
+    }
+    if run.isOpenClawCorrelated {
+      if let destination = enabledDestination(AIChatDestinationConfiguration.openClawID)
+          ?? enabled.first(where: { $0.adapter == .openClaw }) {
+        return destination
+      }
+    }
+    if let agentRef = run.agentRef,
+       let runtime = agentProfiles.first(where: { $0.id == agentRef })?.preferredChatRuntime,
+       let destination = preferredAIChatDestination(for: runtime) {
+      return destination
+    }
+    return defaultRunDestination
+  }
+
+  /// A continuation goes through the OpenClaw Gateway's run methods only when
+  /// the run's agent is an OpenClaw Gateway destination.
+  func runContinuationUsesOpenClawGateway(_ run: AgentRunItem) -> Bool {
+    runContinuationDestination(for: run)?.adapter == .openClaw
+  }
+
+  func requireRunContinuationDestination(for run: AgentRunItem) throws -> AIChatDestinationConfiguration {
+    guard let destination = runContinuationDestination(for: run) else {
+      throw CocoaError(.featureUnsupported, userInfo: [
+        NSLocalizedDescriptionKey: "Turn on an AI destination in Settings › AI Chat to continue this run."
+      ])
+    }
+    return destination
   }
 
   private func resolvedAutomationDestination(_ destinationRef: String?) -> AIChatDestinationConfiguration? {
@@ -1695,7 +1741,7 @@ extension WorkspaceStore {
        !destinationRef.isEmpty {
       return enabledAIChatDestinations.first(where: { $0.id == destinationRef })
     }
-    return enabledAIChatDestinations.first
+    return defaultRunDestination
   }
 
   nonisolated static func automationDestinationSupportsReasoning(
@@ -1946,6 +1992,16 @@ extension WorkspaceStore {
     if let agentRunApprovalContinuationForTesting {
       return try await agentRunApprovalContinuationForTesting(run)
     }
+    // A run whose agent is not an OpenClaw Gateway destination continues
+    // through that agent's chat; the Gateway's run methods do not apply.
+    guard runContinuationUsesOpenClawGateway(run) else {
+      return OpenClawApprovedRunContinuation(
+        runID: run.id,
+        sessionKey: nil,
+        prompt: Self.agentRunApprovalContinuationPrompt(run: run),
+        kind: run.workflowId != nil ? "workflow" : "run"
+      )
+    }
     let gateway = OpenClawGatewayClient(settings: currentOpenClawSettings(allowKeychainRead: true))
     do {
       return try await gateway.resumeApprovedRun(
@@ -2026,7 +2082,7 @@ extension WorkspaceStore {
         hasSessionKey: continuation.sessionKey != nil,
         hasApprovedAction: !run.approvedCurrentApprovalBoundary.isEmpty
       )
-      let destination = openClawRunContinuationDestination(for: run)
+      let destination = try requireRunContinuationDestination(for: run)
       thread = createAIChatThread(
         title: "\(titlePrefix): \(run.goal)",
         statusText: continuationStatus,
@@ -2145,7 +2201,7 @@ extension WorkspaceStore {
       if existing.isSettled { reopenAIChatThread(existing.id) }
       thread = aiChatThreads.first(where: { $0.id == existing.id }) ?? existing
     } else {
-      let destination = openClawRunContinuationDestination(for: run)
+      let destination = try requireRunContinuationDestination(for: run)
       thread = createAIChatThread(
         title: "Workflow: \(run.goal)",
         statusText: "Continuing requested revision",
@@ -2241,7 +2297,10 @@ extension WorkspaceStore {
         }
       }
     }
-    guard run.workflowId != nil else {
+    // Workflow revisions use the OpenClaw Gateway's workflow method only when
+    // the run's agent is an OpenClaw Gateway destination; every other agent
+    // receives the requested changes through its own chat.
+    guard run.workflowId != nil, runContinuationUsesOpenClawGateway(run) else {
       guard let revision = run.revisionAwaitingHandoff else { return nil }
       return await continueAgentRunAfterRevision(run, approval: revision)
     }
@@ -2255,7 +2314,7 @@ extension WorkspaceStore {
       return .revisionContinuing
     } catch {
       errorText = error.localizedDescription
-      statusText = "Changes recorded; OpenClaw continuation pending"
+      statusText = "Changes recorded; agent continuation pending"
       return .continuationFailed
     }
   }
@@ -2342,7 +2401,7 @@ extension WorkspaceStore {
       if existing.isSettled { reopenAIChatThread(existing.id) }
       thread = aiChatThreads.first(where: { $0.id == existing.id }) ?? existing
     } else {
-      let destination = openClawRunContinuationDestination(for: run)
+      let destination = try requireRunContinuationDestination(for: run)
       thread = createAIChatThread(
         title: "Revision: \(run.goal)",
         statusText: "Revising after requested changes",
@@ -2445,11 +2504,16 @@ extension WorkspaceStore {
       agentRunClarificationPhases[run.id] = nil
     }
     do {
+      // The run goes back to the agent that carries it. Only an OpenClaw
+      // Gateway agent records the reply through the Gateway; every other agent
+      // gets it recorded here and continues in its own chat.
+      let destination = try requireRunContinuationDestination(for: run)
+      let usesGateway = destination.adapter == .openClaw
       let continuation: OpenClawRunContinuation
       do {
         if let agentRunClarificationReplyForTesting {
           continuation = try await agentRunClarificationReplyForTesting(run, response)
-        } else {
+        } else if usesGateway {
           let gateway = OpenClawGatewayClient(settings: currentOpenClawSettings(allowKeychainRead: true))
           continuation = try await gateway.replyAndResumeRun(
             runID: run.id,
@@ -2457,9 +2521,13 @@ extension WorkspaceStore {
             corpusID: activeCorpusIdentity?.id,
             expectedUpdatedAt: run.updatedAt
           )
+        } else {
+          throw LocalRunContinuationRequired()
         }
       } catch {
-        guard Self.shouldUseLocalClarificationResumeFallback(for: error) else { throw error }
+        guard error is LocalRunContinuationRequired
+          || Self.shouldUseLocalClarificationResumeFallback(for: error)
+        else { throw error }
         let commented: AgentRunItem = try await cli.runJSON([
           "run", "comment", run.id,
           "--author", "Workspace user",
@@ -2476,7 +2544,7 @@ extension WorkspaceStore {
         ])
         continuation = OpenClawRunContinuation(
           runID: resumed.id,
-          sessionKey: run.openClawSessionKey,
+          sessionKey: usesGateway ? run.openClawSessionKey : nil,
           prompt: Self.agentRunClarificationContinuationPrompt(
             run: commented,
             response: response
@@ -2500,7 +2568,6 @@ extension WorkspaceStore {
         if existing.isSettled { reopenAIChatThread(existing.id) }
         thread = aiChatThreads.first(where: { $0.id == existing.id }) ?? existing
       } else {
-        let destination = openClawRunContinuationDestination(for: run)
         thread = createAIChatThread(
           title: "Resume: \(run.goal)",
           statusText: continuation.sessionKey == nil
@@ -2544,7 +2611,7 @@ extension WorkspaceStore {
         throw AIChatEnqueueFailure.rejected
       }
       statusText = continuation.sessionKey == nil
-        ? "Response recorded; continuing \(run.goal) in a new OpenClaw session"
+        ? "Response recorded; continuing \(run.goal) in a new \(destination.title) session"
         : "Response recorded and sent; continuing \(run.goal)"
       return true
     } catch {
@@ -2553,6 +2620,10 @@ extension WorkspaceStore {
       return false
     }
   }
+
+  /// The run's agent is not an OpenClaw Gateway destination, so its
+  /// continuation is recorded locally instead of through the Gateway.
+  private struct LocalRunContinuationRequired: Error {}
 
   private func applyResumedAgentRun(_ resumed: AgentRunItem) {
     guard let index = agentRuns.firstIndex(where: { $0.id == resumed.id }) else { return }
@@ -2664,7 +2735,7 @@ extension WorkspaceStore {
     AgentRunItem.revisionDispatchFailureReason
 
   nonisolated static let agentRunApprovalContinuationFailureReason =
-    "Approved actions are recorded, but OpenClaw did not accept the continuation. After restoring the OpenClaw connection, choose Resume and then Continue approved work; do not repeat the approval or create a replacement run."
+    "Approved actions are recorded, but the run's agent did not accept the continuation. After restoring the agent's connection, choose Resume and then Continue approved work; do not repeat the approval or create a replacement run."
 
   /// Title prefix and status for the chat thread that continues a run after its
   /// approval boundary is decided. A boundary with no approved item (every item
@@ -2685,11 +2756,11 @@ extension WorkspaceStore {
       guard hasApprovedAction else {
         return ("Declined run", hasSessionKey
           ? "Recording the declined approval"
-          : "Recording the declined approval in a new OpenClaw session")
+          : "Recording the declined approval in a new session")
       }
       return ("Approved run", hasSessionKey
         ? "Continuing approved run"
-        : "Continuing approved run in a new OpenClaw session")
+        : "Continuing approved run in a new session")
     }
   }
 
