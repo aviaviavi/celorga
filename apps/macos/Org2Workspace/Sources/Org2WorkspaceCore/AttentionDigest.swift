@@ -209,6 +209,7 @@ public final class AttentionDigestMonitor: NSObject, ObservableObject, UNUserNot
   private weak var store: WorkspaceStore?
   private var tickTask: Task<Void, Never>?
   private var schedule = AttentionSchedule.default
+  private var scheduleRoot: URL?
   private var window: NSWindow?
 
   public init(defaults: UserDefaults = .standard) {
@@ -224,6 +225,7 @@ public final class AttentionDigestMonitor: NSObject, ObservableObject, UNUserNot
 
   public func attach(to store: WorkspaceStore) {
     self.store = store
+    scheduleRoot = nil
     if Self.canUseUserNotifications {
       UNUserNotificationCenter.current().delegate = self
     }
@@ -234,6 +236,7 @@ public final class AttentionDigestMonitor: NSObject, ObservableObject, UNUserNot
     isEnabled = enabled
     defaults.set(enabled, forKey: Self.enabledKey)
     if enabled {
+      scheduleRoot = nil
       if Self.canUseUserNotifications {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
       }
@@ -283,6 +286,26 @@ public final class AttentionDigestMonitor: NSObject, ObservableObject, UNUserNot
 
   func tick(now: Date = Date()) async {
     guard isEnabled, !isRunning, let store, let root = store.corpusRoot else { return }
+    // A read-only digest supplies validated corpus preferences before any
+    // scheduling state is consumed. Reload after launch, enabling, or switching
+    // corpora; ordinary digest runs refresh the schedule thereafter.
+    if scheduleRoot != root {
+      isRunning = true
+      do {
+        let payload: AttentionDigestPayload = try await store.cli.runJSON(
+          AttentionDigestCommand.digestArguments(corpusRoot: root.path, mode: .check)
+        )
+        isRunning = false
+        guard isEnabled, self.store === store, store.corpusRoot == root else { return }
+        schedule = AttentionSchedule(preferences: payload.preferences)
+        scheduleRoot = root
+        errorText = nil
+      } catch {
+        isRunning = false
+        errorText = error.localizedDescription
+        return
+      }
+    }
     let state = loadState(root)
     let decision = AttentionScheduler.decide(now: now, schedule: schedule, state: state)
     guard decision != .wait else { return }
@@ -292,6 +315,7 @@ public final class AttentionDigestMonitor: NSObject, ObservableObject, UNUserNot
 
   /// Runs the digest now. `notify` posts and records delivery when the CLI says to interrupt.
   public func run(_ decision: AttentionScheduleDecision = .check, notify: Bool) async {
+    guard !isRunning else { return }
     guard let store, let root = store.corpusRoot else {
       errorText = "Choose a corpus first"
       return
@@ -303,8 +327,10 @@ public final class AttentionDigestMonitor: NSObject, ObservableObject, UNUserNot
       let payload: AttentionDigestPayload = try await cli.runJSON(
         AttentionDigestCommand.digestArguments(corpusRoot: root.path, mode: decision)
       )
+      guard self.store === store, store.corpusRoot == root else { return }
       digest = payload
       schedule = AttentionSchedule(preferences: payload.preferences)
+      scheduleRoot = root
       lastRunAt = Date()
       errorText = nil
       statusText = payload.interruptReason

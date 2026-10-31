@@ -60,6 +60,87 @@ final class AttentionDigestSchedulerTests: XCTestCase {
     XCTAssertEqual(AttentionScheduler.decide(now: at("2026-10-26T20:00:00Z"), schedule: briefOnly, state: briefed, calendar: calendar), .wait)
   }
 
+  @MainActor
+  func testMonitorLoadsPreferencesBeforeFirstDecisionAndAfterCorpusSwitch() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("dist"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let suite = "AttentionMonitorTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set(true, forKey: AttentionDigestMonitor.enabledKey)
+    let script = root.appendingPathComponent("fake-node")
+    let log = root.appendingPathComponent("calls")
+    let response = root.appendingPathComponent("response.json")
+    try """
+    #!/bin/sh
+    printf '%s\\n' "$*" >> '\(log.path)'
+    cat '\(response.path)'
+    """.write(to: script, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+    try "".write(to: root.appendingPathComponent("dist/cli.js"), atomically: true, encoding: .utf8)
+    let store = WorkspaceStore(cli: Org2CLI(repoRoot: root, nodePath: script.path), defaults: defaults,
+                               aiChatTranscriptURL: root.appendingPathComponent("chat.json"), legacyDefaultsDomains: [])
+    store.setCorpusRoot(root, persistsDefault: false)
+    let monitor = AttentionDigestMonitor(defaults: defaults)
+    monitor.attach(to: store)
+    defer { monitor.setEnabled(false) }
+
+    func payload(brief: String?, interval: Int, quiet: Bool = false) throws {
+      let preferences: [String: Any] = ["morningBrief": brief as Any? ?? NSNull(), "checkIntervalMinutes": interval,
+        "quietHours": quiet ? ["start": "22:00", "end": "07:00"] : NSNull()]
+      let json: [String: Any] = ["schema": "org2:attention-digest:v1", "generatedAt": "2026-10-26T10:00:00Z",
+        "mode": "check", "items": [], "interrupt": false, "interruptReason": "Nothing needs you",
+        "preferences": preferences, "delivery": ["applied": false, "marked": []]]
+      try JSONSerialization.data(withJSONObject: json).write(to: response)
+    }
+    func local(_ hour: Int, _ minute: Int = 0) -> Date {
+      Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 26, hour: hour, minute: minute))!
+    }
+    func calls() throws -> [String] {
+      try String(contentsOf: log, encoding: .utf8).split(separator: "\n").map(String.init)
+    }
+    func state() throws -> AttentionScheduleState? {
+      let key = "Org2Workspace.attention.state.v1:" + store.corpusRoot!.standardizedFileURL.path
+      return try defaults.data(forKey: key).map { try JSONDecoder().decode(AttentionScheduleState.self, from: $0) }
+    }
+
+    // Disabled briefs and checks: only the preference read, no cadence consumed.
+    try payload(brief: nil, interval: 0)
+    await monitor.tick(now: local(10))
+    XCTAssertEqual(try calls().count, 1)
+    XCTAssertNil(try state())
+    XCTAssertNil(monitor.lastRunAt)
+
+    // Enabling again must reload, and 08:15 must not consume a 09:30 brief.
+    monitor.setEnabled(false)
+    monitor.setEnabled(true)
+    try payload(brief: "09:30", interval: 0)
+    await monitor.tick(now: local(8, 15))
+    XCTAssertEqual(try calls().count, 2)
+    XCTAssertNil(try state())
+    await monitor.tick(now: local(9, 30))
+    XCTAssertTrue(try calls().last!.contains("--mode brief"))
+    XCTAssertEqual(try state()?.lastBriefDay, AttentionScheduler.dayKey(local(9, 30), calendar: .current))
+
+    // A second corpus has its own preferences, including quiet hours on its first tick.
+    store.setCorpusRoot(root.appendingPathComponent("other"), persistsDefault: false)
+    try payload(brief: nil, interval: 60, quiet: true)
+    let before = try calls().count
+    await monitor.tick(now: local(23, 30))
+    XCTAssertEqual(try calls().count, before + 1)
+    XCTAssertTrue(try calls().last!.contains("--mode check"))
+    XCTAssertNil(try state())
+
+    // A failed read must not fall back to the default schedule or consume state.
+    monitor.setEnabled(false)
+    monitor.setEnabled(true)
+    try "invalid JSON".write(to: response, atomically: true, encoding: .utf8)
+    await monitor.tick(now: local(10))
+    XCTAssertNotNil(monitor.errorText)
+    XCTAssertNil(try state())
+  }
+
   func testClockTimeParsingRejectsMalformedValues() {
     XCTAssertEqual(AttentionClockTime("07:05")?.minutesOfDay, 425)
     XCTAssertNil(AttentionClockTime("24:00"))
