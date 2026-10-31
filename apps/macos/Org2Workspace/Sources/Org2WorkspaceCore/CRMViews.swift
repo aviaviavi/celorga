@@ -305,6 +305,12 @@ public final class CRMWorkspaceModel {
   var selectedPersonKey: String?
   var selectedCompanyKey: String?
   var details: [String: CRMEntityDetails] = [:]
+  /// People and companies for Quick Open and workspace Search.
+  public internal(set) var searchEntities: [WorkspaceCRMSearchEntity] = [] {
+    didSet { onSearchEntitiesChanged?() }
+  }
+  /// Lets open search results pick up people and companies once they load.
+  @ObservationIgnored var onSearchEntitiesChanged: (@MainActor () -> Void)?
   var detailErrors: [String: String] = [:]
   var loadingDetailKey: String?
   @ObservationIgnored private var loadGeneration = 0
@@ -314,6 +320,7 @@ public final class CRMWorkspaceModel {
   func reset() {
     index = nil
     indexRoot = nil
+    searchEntities = []
     error = nil
     isStale = true
     selectedPersonKey = nil
@@ -356,6 +363,7 @@ public final class CRMWorkspaceModel {
       guard generation == loadGeneration else { return }
       index = payload
       indexRoot = root
+      searchEntities = (payload.people + payload.companies).map { WorkspaceCRMSearchEntity($0, corpusRoot: root) }
       isStale = false
       error = nil
       details = payload.details ?? [:]

@@ -142,6 +142,7 @@ extension WorkspaceStore {
       let cli = self.cli
       Task { @MainActor [weak self] in await self?.crm.load(cli: cli, root: root) }
     }
+    if !isWorkspaceAppEnabled("crm"), searchFilter == .people { searchFilter = .all }
     // Leave a surface whose app was turned off (possibly on another Mac).
     if let appID = selectedSurface.workspaceAppID, !isWorkspaceAppEnabled(appID) {
       makeSurfacePrimary(.home)

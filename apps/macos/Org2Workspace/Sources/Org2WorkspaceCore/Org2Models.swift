@@ -2000,11 +2000,13 @@ public enum WorkspaceTextSearchCategory: Int, CaseIterable, Identifiable, Hashab
   case entries
   case chatMessages
   case corpusText
+  case people
 
   public var id: Int { rawValue }
 
   public var title: String {
     switch self {
+    case .people: "People & Companies"
     case .activeTodos: "Active TODOs"
     case .files: "Files"
     case .chatThreads: "Chat Threads"
@@ -2092,6 +2094,7 @@ public enum WorkspaceTextSearchItem: Identifiable, Hashable, Sendable {
   case entry(SearchResult)
   case chatMessage(AIChatSearchResult)
   case corpusText(SearchResult)
+  case crmEntity(WorkspaceCRMSearchEntity)
 
   public var id: String {
     switch self {
@@ -2103,6 +2106,7 @@ public enum WorkspaceTextSearchItem: Identifiable, Hashable, Sendable {
     case .entry(let result): "entry:\(result.id)"
     case .chatMessage(let result): "chat-message:\(result.id)"
     case .corpusText(let result): "corpus-text:\(result.id)"
+    case .crmEntity(let entity): "crm:\(entity.key)"
     }
   }
 
@@ -2116,6 +2120,7 @@ public enum WorkspaceTextSearchItem: Identifiable, Hashable, Sendable {
     case .entry: .entries
     case .chatMessage: .chatMessages
     case .corpusText: .corpusText
+    case .crmEntity: .people
     }
   }
 }

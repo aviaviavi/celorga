@@ -985,6 +985,10 @@ extension WorkspaceStore {
     workspaceAppsError = nil
     selectedPluginSurface = nil
     crm.reset()
+    crm.onSearchEntitiesChanged = { [weak self] in
+      guard let self, !self.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+      self.rebuildWorkspaceTextSearchDisplayCache()
+    }
     activeCorpusIdentity = cachedWorkspace?.identity
     upsertCorpusMount(path: standardized.path, identity: nil)
     openClawRemoteCorpusPath = restoreOpenClawRemoteCorpusPath(for: standardized)

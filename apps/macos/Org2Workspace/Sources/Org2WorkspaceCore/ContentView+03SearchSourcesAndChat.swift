@@ -131,7 +131,10 @@ struct SearchView: View {
       .controlSize(.small)
 
       if store.searchMode == .text {
-        SearchFilterBar(selection: $store.searchFilter)
+        SearchFilterBar(
+          selection: $store.searchFilter,
+          filters: WorkspaceSearchFilter.available(crmEnabled: store.isWorkspaceAppEnabled("crm"))
+        )
       }
     }
     .padding(.horizontal, WorkspaceDesign.contentInset)
@@ -561,6 +564,15 @@ struct SearchView: View {
         ChatSearchRow(result: result, query: query, isSelected: isSelected)
       case .agentWork(let result):
         AgentWorkSearchRow(result: result, query: query, isSelected: isSelected)
+      case .crmEntity(let entity):
+        SearchResultRowLayout(
+          systemImage: entity.systemImage,
+          title: entity.title,
+          snippet: nil,
+          query: query,
+          metadata: [entity.kindLabel, entity.subtitle].filter { !$0.isEmpty }.joined(separator: " · "),
+          isSelected: isSelected
+        )
       case .page(let node):
         NodeSearchRow(
           node: node,
@@ -636,6 +648,8 @@ struct SearchView: View {
       store.selectAIChatSearchResult(result)
     case .agentWork(let result):
       store.selectAgentWorkSearchResult(result)
+    case .crmEntity(let entity):
+      store.openCRMEntity(entity)
     case .page(let node):
       store.selectSearchNode(node)
     }
@@ -651,6 +665,8 @@ struct SearchView: View {
       result.title
     case .agentWork(let result):
       result.title
+    case .crmEntity(let entity):
+      "\(entity.kindLabel): \(entity.title)"
     case .page(let node):
       Org2Display.cleanInline(node.title)
     }
@@ -661,11 +677,12 @@ struct SearchView: View {
 /// note text, chats, pages, files, or agent work.
 private struct SearchFilterBar: View {
   @Binding var selection: WorkspaceSearchFilter
+  var filters: [WorkspaceSearchFilter] = WorkspaceSearchFilter.allCases
 
   var body: some View {
     ScrollView(.horizontal, showsIndicators: false) {
       HStack(spacing: 6) {
-        ForEach(WorkspaceSearchFilter.allCases) { filter in
+        ForEach(filters) { filter in
           let isSelected = filter == selection
           Button {
             selection = filter

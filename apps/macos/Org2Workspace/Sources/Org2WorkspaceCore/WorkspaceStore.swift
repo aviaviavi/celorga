@@ -1452,6 +1452,7 @@ public enum WorkspaceQuickOpenItem: Identifiable, Hashable, Sendable {
   case file(CorpusFile)
   case chatThread(AIChatThread)
   case approval(ApprovalItem)
+  case crmEntity(WorkspaceCRMSearchEntity)
 
   public var id: String {
     switch self {
@@ -1461,6 +1462,8 @@ public enum WorkspaceQuickOpenItem: Identifiable, Hashable, Sendable {
       "chat:\(thread.id.uuidString)"
     case .approval(let approval):
       "approval:\(approval.id)"
+    case .crmEntity(let entity):
+      "crm:\(entity.key)"
     }
   }
 }
@@ -1498,6 +1501,7 @@ enum QuickOpenSearchMatch: Sendable {
   case file(CorpusFile)
   case chatThread(UUID)
   case approval(ApprovalItem)
+  case crmEntity(WorkspaceCRMSearchEntity)
 }
 
 /// A pending approval as Quick Open matches it: by title, then by what it
@@ -4806,6 +4810,8 @@ public enum WorkspaceSearchFilter: String, CaseIterable, Identifiable, Sendable 
   case pages
   case files
   case agentWork
+  /// People & Companies, shown only while that app is on.
+  case people
 
   public var id: String { rawValue }
 
@@ -4819,6 +4825,7 @@ public enum WorkspaceSearchFilter: String, CaseIterable, Identifiable, Sendable 
     case .pages: "Pages"
     case .files: "Files"
     case .agentWork: "Agent Work"
+    case .people: "People & Companies"
     }
   }
 
@@ -4832,6 +4839,7 @@ public enum WorkspaceSearchFilter: String, CaseIterable, Identifiable, Sendable 
     case .pages: "Note titles and aliases"
     case .files: "Corpus file names and paths"
     case .agentWork: "Runs, approvals, automations, goals, and agents"
+    case .people: "People and companies by name, alias, email, or domain"
     }
   }
 
@@ -4850,6 +4858,12 @@ public enum WorkspaceSearchFilter: String, CaseIterable, Identifiable, Sendable 
   var searchesPages: Bool { self == .all || self == .pages }
   var searchesFiles: Bool { self == .all || self == .files }
   var searchesAgentWork: Bool { self == .all || self == .agentWork }
+  var searchesCRM: Bool { self == .all || self == .people }
+
+  /// Filters to offer: People & Companies only while that app is on.
+  static func available(crmEnabled: Bool) -> [WorkspaceSearchFilter] {
+    allCases.filter { $0 != .people || crmEnabled }
+  }
 
   /// Results per source: a single-kind search shows a longer list of it.
   var perSourceLimit: Int { self == .all ? 25 : 100 }
@@ -4864,6 +4878,7 @@ public enum WorkspaceSearchFilter: String, CaseIterable, Identifiable, Sendable 
     case .page: return searchesPages
     case .file: return searchesFiles
     case .agentWork: return searchesAgentWork
+    case .crmEntity: return searchesCRM
     }
   }
 

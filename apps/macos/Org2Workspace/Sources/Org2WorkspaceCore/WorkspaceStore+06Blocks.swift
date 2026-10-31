@@ -1850,12 +1850,18 @@ extension WorkspaceStore {
       }
     }
     let filter = searchFilter
+    // People & Companies is small and already in memory; match it per rebuild
+    // so it reflects the latest CRM load.
+    let crmResults = filter.searchesCRM
+      ? Self.searchCRMEntitiesForWorkspace(crmSearchEntities, query: query, limit: filter.perSourceLimit)
+      : []
     workspaceTextSearchItems = Self.rankedWorkspaceSearchItems(
       corpusResults: filter.searchesCorpusText ? searchResults : [],
       files: filter.searchesFiles ? workspaceFileSearchResults : [],
       chats: filter.searchesChats ? aiChatSearchResults : [],
       agentWork: filter.searchesAgentWork ? workspaceAgentWorkSearchResults : [],
       pages: filter.searchesPages ? workspacePageSearchResults : [],
+      crm: crmResults,
       query: query,
       modifiedAtByPath: modifiedAtByPath,
       now: Date()
@@ -1875,6 +1881,7 @@ extension WorkspaceStore {
     chats: [AIChatSearchResult],
     agentWork: [WorkspaceAgentWorkSearchResult],
     pages: [OrgRoamNodeReference],
+    crm: [WorkspaceCRMSearchEntity] = [],
     query rawQuery: String,
     modifiedAtByPath: [String: Date] = [:],
     now: Date = Date(),
@@ -1935,7 +1942,23 @@ extension WorkspaceStore {
       ))
     }
 
-    for node in pages {
+    // A person or company replaces the plain page row for its own note.
+    let entityNotePaths = Set(crm.compactMap(\.notePath))
+    for entity in crm {
+      guard let quality = query.flatMap(entity.searchQuality) else { continue }
+      let modifiedAt = entity.notePath.flatMap { modifiedAtByPath[$0] }
+      ranked.append((
+        .crmEntity(entity),
+        quality + 1 + WorkspaceSearchRanking.recencyBoost(
+          modifiedAt,
+          now: now,
+          factor: WorkspaceSearchRanking.modifiedTimeRecencyFactor
+        ),
+        modifiedAt
+      ))
+    }
+
+    for node in pages where !entityNotePaths.contains(URL(fileURLWithPath: node.file).standardizedFileURL.path) {
       let quality = query.flatMap { WorkspaceSearchRanking.pageQuality(node, query: $0) }
         ?? WorkspaceSearchRanking.substringTitleQuality
       let modifiedAt = modifiedAtByPath[node.file]
@@ -2371,6 +2394,13 @@ extension WorkspaceStore {
         "query_length": .int(quickOpenQuery.count),
       ])
       openApprovalInReview(approval)
+    case .crmEntity(let entity):
+      usageLog.record(.quickOpenSelect, [
+        "kind": .string(entity.kind.rawValue),
+        "rank": .int(quickOpenItems.firstIndex(of: item) ?? -1),
+        "query_length": .int(quickOpenQuery.count),
+      ])
+      openCRMEntity(entity)
     }
   }
 
@@ -2790,11 +2820,12 @@ extension WorkspaceStore {
     let indexedChatThreads = quickOpenIndexedChatThreads
     // The review queue is small; index it per search so it is never stale.
     let indexedApprovals = approvalItems.map(QuickOpenIndexedApproval.init)
+    let crmEntities = crmSearchEntities
     let frecencyScores = currentFileFrecency().scores(now: Date())
     if !isFilteringQuickOpenFiles {
       isFilteringQuickOpenFiles = true
     }
-    quickOpenSearchTask = Task { [indexedFiles, indexedChatThreads, indexedApprovals, frecencyScores, query, generation, debounce] in
+    quickOpenSearchTask = Task { [indexedFiles, indexedChatThreads, indexedApprovals, crmEntities, frecencyScores, query, generation, debounce] in
       if debounce {
         try? await Task.sleep(nanoseconds: 80_000_000)
       }
@@ -2805,6 +2836,7 @@ extension WorkspaceStore {
           files: indexedFiles,
           chatThreads: indexedChatThreads,
           approvals: indexedApprovals,
+          crmEntities: crmEntities,
           query: query,
           limit: 80,
           frecencyScores: frecencyScores
@@ -2826,6 +2858,8 @@ extension WorkspaceStore {
             return .chatThread(self.aiChatThreads[index])
           case .approval(let approval):
             return .approval(approval)
+          case .crmEntity(let entity):
+            return .crmEntity(entity)
           }
         }
         self.quickOpenItems = items
@@ -2871,10 +2905,11 @@ extension WorkspaceStore {
       .map(\.0.file)
   }
 
-  nonisolated private static func filterQuickOpenItems(
+  nonisolated static func filterQuickOpenItems(
     files: [QuickOpenIndexedFile],
     chatThreads: [QuickOpenIndexedChatThread],
     approvals: [QuickOpenIndexedApproval] = [],
+    crmEntities: [WorkspaceCRMSearchEntity] = [],
     query rawQuery: String,
     limit: Int,
     frecencyScores: [String: Double] = [:]
@@ -2917,7 +2952,20 @@ extension WorkspaceStore {
       return (.approval(approval.item), score, approval.item.title)
     }
 
-    return (fileMatches + chatMatches + approvalMatches)
+    let crmMatches = crmEntities.compactMap { entity -> (QuickOpenSearchMatch, Int, String)? in
+      entity.quickOpenScore(normalizedQuery: normalizedQuery).map { (.crmEntity(entity), $0, entity.title) }
+    }
+    // A matched person or company replaces its own note in the list.
+    let entityNotePaths = Set(crmMatches.compactMap { match -> String? in
+      guard case .crmEntity(let entity) = match.0 else { return nil }
+      return entity.notePath
+    })
+    let visibleFileMatches = entityNotePaths.isEmpty ? fileMatches : fileMatches.filter { match in
+      guard case .file(let file) = match.0 else { return true }
+      return !entityNotePaths.contains(URL(fileURLWithPath: file.path).standardizedFileURL.path)
+    }
+
+    return (visibleFileMatches + chatMatches + approvalMatches + crmMatches)
       .sorted { lhs, rhs in
         if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
         return lhs.2.localizedStandardCompare(rhs.2) == .orderedAscending

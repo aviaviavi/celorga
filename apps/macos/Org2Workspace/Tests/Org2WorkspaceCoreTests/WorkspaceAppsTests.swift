@@ -19,6 +19,54 @@ final class WorkspaceAppsTests: XCTestCase {
     XCTAssertEqual(html.components(separatedBy: "</script>").count, 2, "only our own script element closes")
   }
 
+  private func crmEntity(_ json: String) throws -> CRMEntity {
+    try JSONDecoder().decode(CRMEntity.self, from: Data(json.utf8))
+  }
+
+  private func crmEntityJSON(key: String, kind: String, source: String = "note", title: String, file: String?, emails: [String] = [], domains: [String] = [], aliases: [String] = [], company: String? = nil) -> String {
+    let fileJSON = file.map { "\"\($0)\"" } ?? "null"
+    let companyJSON = company.map { #"{"key":"id:c","title":"\#($0)","match":"explicit"}"# } ?? "null"
+    return """
+    {"key":"\(key)","kind":"\(kind)","source":"\(source)","id":null,"title":"\(title)","aliases":\(aliases),"file":\(fileJSON),"line":1,
+     "stage":"prospect","stageSource":"property","emails":\(emails),"domains":\(domains),"role":"CTO","owner":"","company":\(companyJSON),
+     "people":[],"ledgerAccounts":[],"openTaskCount":0,"meetingCount":0}
+    """
+  }
+
+  func testPeopleAndCompaniesAreQuickOpenResultsThatReplaceTheirNotes() throws {
+    let root = "/corpus"
+    let acme = WorkspaceCRMSearchEntity(try crmEntity(crmEntityJSON(key: "id:acme", kind: "company", title: "Acme Robotics", file: "notes/acme-robotics.org", domains: ["acme.test"])), corpusRoot: root)
+    let jane = WorkspaceCRMSearchEntity(try crmEntity(crmEntityJSON(key: "id:jane", kind: "person", title: "Jane Doe", file: "notes/jane-doe.org", emails: ["jane@acme.test"], company: "Acme Robotics")), corpusRoot: root)
+    let outreach = WorkspaceCRMSearchEntity(try crmEntity(crmEntityJSON(key: "ledger:outreach/acme-labs", kind: "company", source: "ledger", title: "Acme Labs", file: "notes/outreach/accounts/acme-labs.org")), corpusRoot: root)
+    XCTAssertEqual(jane.subtitle, "Acme Robotics · CTO · jane@acme.test")
+    XCTAssertEqual(acme.kindLabel, "Company")
+    XCTAssertEqual(outreach.kindLabel, "Company (outreach only)")
+    XCTAssertNil(outreach.notePath)
+
+    let noteFile = CorpusFile(path: "/corpus/notes/acme-robotics.org", relativePath: "notes/acme-robotics.org", modifiedAt: nil, byteCount: nil)
+    let otherFile = CorpusFile(path: "/corpus/notes/acme-pricing.org", relativePath: "notes/acme-pricing.org", modifiedAt: nil, byteCount: nil)
+    let files = [noteFile, otherFile].map { QuickOpenIndexedFile(file: $0, normalizedRelativePath: WorkspaceStore.normalizedQuickOpenCandidate($0.relativePath)) }
+    let matches = WorkspaceStore.filterQuickOpenItemsForTesting(files: files, crmEntities: [acme, jane, outreach], query: "acme")
+    XCTAssertEqual(matches.first, "crm:id:acme", "the company outranks files")
+    XCTAssertTrue(matches.contains("crm:ledger:outreach/acme-labs"))
+    XCTAssertTrue(matches.contains("file:\(otherFile.id)"))
+    XCTAssertFalse(matches.contains("file:\(noteFile.id)"), "the company replaces its own note")
+    XCTAssertLessThan(matches.firstIndex(of: "crm:id:acme")!, matches.firstIndex(of: "crm:ledger:outreach/acme-labs")!)
+    XCTAssertEqual(WorkspaceStore.filterQuickOpenItemsForTesting(files: [], crmEntities: [acme, jane], query: "jane@acme"), ["crm:id:jane"])
+    XCTAssertEqual(WorkspaceStore.filterQuickOpenItemsForTesting(files: [], crmEntities: [acme, jane], query: "jdoe"), [], "no scattered-letter matches for names")
+
+    // Workspace Search: a person row replaces the page row for their note.
+    let page = OrgRoamNodeReference(idValue: "jane", title: "Jane Doe", file: "/corpus/notes/jane-doe.org", line: 1, isPageNode: true)
+    let items = WorkspaceStore.rankedWorkspaceSearchItems(corpusResults: [], files: [], chats: [], agentWork: [], pages: [page], crm: WorkspaceStore.searchCRMEntitiesForWorkspace([acme, jane], query: "jane", limit: 25), query: "jane")
+    XCTAssertEqual(items.map(\.id), ["crm:id:jane"])
+    XCTAssertEqual(items.first?.category, .people)
+    XCTAssertTrue(WorkspaceSearchFilter.people.includes(items[0]))
+    XCTAssertFalse(WorkspaceSearchFilter.pages.includes(items[0]))
+    XCTAssertFalse(WorkspaceSearchFilter.available(crmEnabled: false).contains(.people))
+    XCTAssertTrue(WorkspaceSearchFilter.available(crmEnabled: true).contains(.people))
+    XCTAssertEqual(WorkspaceStore.searchCRMEntitiesForWorkspace([acme, jane], query: "acme.test", limit: 25).map(\.key).sorted(), ["id:acme", "id:jane"])
+  }
+
   func testCRMSplitKeepsBothPanesUsable() {
     XCTAssertEqual(CRMSplitLayout.clampedListWidth(500, totalWidth: 1200), 500)
     XCTAssertEqual(CRMSplitLayout.clampedListWidth(100, totalWidth: 1200), CRMSplitLayout.minimumListWidth)
@@ -110,9 +158,19 @@ final class WorkspaceAppsTests: XCTestCase {
     XCTAssertNil(store.crm.detailErrors[acme.key])
     XCTAssertEqual(store.crm.details[acme.key]?.tasks.map(\.title), ["Send pricing"])
 
+    // People and companies are Quick Open results once the app is on.
+    XCTAssertEqual(store.crmSearchEntities.count, index.people.count + index.companies.count)
+    let entity = try XCTUnwrap(store.crmSearchEntities.first { $0.key == acme.key })
+    store.openCRMEntity(entity)
+    XCTAssertEqual(store.selectedSurface, .companies)
+    XCTAssertEqual(store.crm.selectedCompanyKey, acme.key)
+    store.searchFilter = .people
+
     store.makeSurfacePrimary(.companies)
     XCTAssertEqual(store.selectedSurface, .companies)
     await store.setWorkspaceApp("crm", enabled: false)
     XCTAssertEqual(store.selectedSurface, .home, "turning an app off leaves its page")
+    XCTAssertTrue(store.crmSearchEntities.isEmpty, "people and companies leave Quick Open with the app")
+    XCTAssertEqual(store.searchFilter, .all)
   }
 }

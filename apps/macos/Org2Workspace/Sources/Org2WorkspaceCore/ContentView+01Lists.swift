@@ -1193,7 +1193,7 @@ struct QuickOpenView: View {
       HStack(spacing: 8) {
         Image(systemName: "magnifyingglass")
           .foregroundStyle(.secondary)
-        TextField("Quick open files and AI chats", text: $query)
+        TextField(store.isWorkspaceAppEnabled("crm") ? "Quick open files, people, companies, and AI chats" : "Quick open files and AI chats", text: $query)
           .textFieldStyle(.plain)
           .font(.title3)
           .focused($queryFocused)
@@ -1253,6 +1253,14 @@ struct QuickOpenView: View {
                 .listRowBackground(Color.clear)
             case .approval(let approval):
               QuickOpenApprovalRow(approval: approval)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                  open(item)
+                }
+                .modifier(ReadableListSelectionModifier(isSelected: store.selectedQuickOpenFileID == item.id))
+                .listRowBackground(Color.clear)
+            case .crmEntity(let entity):
+              QuickOpenCRMEntityRow(entity: entity)
                 .contentShape(Rectangle())
                 .onTapGesture {
                   open(item)
@@ -1402,6 +1410,31 @@ private struct QuickOpenChatThreadRow: View {
         .font(.caption)
         .foregroundStyle(.secondary)
         .lineLimit(1)
+      }
+      Spacer(minLength: 0)
+    }
+    .padding(.vertical, WorkspaceDesign.rowVerticalPadding)
+  }
+}
+
+private struct QuickOpenCRMEntityRow: View {
+  let entity: WorkspaceCRMSearchEntity
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 8) {
+      WorkspaceIconBadge(
+        systemImage: entity.systemImage,
+        tint: .teal,
+        fill: Color.teal.opacity(0.10)
+      )
+      VStack(alignment: .leading, spacing: 3) {
+        Text(entity.title)
+          .font(.body.weight(.medium))
+          .lineLimit(1)
+        Text([entity.kindLabel, entity.subtitle].filter { !$0.isEmpty }.joined(separator: " · "))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
       }
       Spacer(minLength: 0)
     }
