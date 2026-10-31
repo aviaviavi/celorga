@@ -29,6 +29,7 @@ export const SWIFT_TIMING_CASES = [
   "CorpusFileCatalogTests/testProjectionPreparationHasLinearMultiSizeSlopeBudget",
   "Org2ModelsTests/testApprovalFallbackScanDoesNotBlockMainActor",
   "Org2ModelsTests/testLocalCorpusApprovalsRefreshWhenConfigured",
+  "Org2ModelsTests/testRelaunchRecoveryDoesNotBlockBootstrapOrOtherThreads",
   "Org2ModelsTests/testOrg2CLIAppHTMLRendererRecoversAfterCancellationBurst",
   "Org2ModelsTests/testOrg2CLIDoesNotWaitForeverWhenDescendantKeepsOutputPipeOpen",
   "Org2ModelsTests/testOrg2CLIReusesWarmAppHTMLRendererWithinInteractiveBudget",

@@ -23,6 +23,9 @@ final class OrgSourceLineIndex: @unchecked Sendable {
   }
 
   private var root: Node?
+  // Reset already scans these offsets to build the treap. Retain that compact
+  // snapshot for read-only navigation; edits switch queries to the lazy tree.
+  private var resetNewlineOffsets: [Int]?
   private var priorityState: UInt64 = 0x9e3779b97f4a7c15
 
   private(set) var documentUTF16Length = 0
@@ -40,7 +43,9 @@ final class OrgSourceLineIndex: @unchecked Sendable {
     priorityState = 0x9e3779b97f4a7c15
     documentUTF16Length = text.length
     var stack: [Node] = []
-    for offset in Self.newlineOffsets(in: text) {
+    let offsets = Self.newlineOffsets(in: text)
+    resetNewlineOffsets = offsets
+    for offset in offsets {
       let node = Node(position: offset, priority: nextPriority())
       var leftSubtree: Node?
       while let previous = stack.last, previous.priority < node.priority {
@@ -56,6 +61,7 @@ final class OrgSourceLineIndex: @unchecked Sendable {
 
   /// Applies a replacement expressed in the pre-edit coordinate space.
   func replaceCharacters(in requestedRange: NSRange, with replacement: String) {
+    resetNewlineOffsets = nil
     let range = Self.clampedRange(requestedRange, utf16Length: documentUTF16Length)
     let end = NSMaxRange(range)
     let replacementLength = (replacement as NSString).length
@@ -83,6 +89,19 @@ final class OrgSourceLineIndex: @unchecked Sendable {
 
   func lineNumber(atUTF16Offset requestedOffset: Int) -> Int {
     let offset = min(max(0, requestedOffset), documentUTF16Length)
+    if let offsets = resetNewlineOffsets {
+      var lower = 0
+      var upper = offsets.count
+      while lower < upper {
+        let middle = lower + (upper - lower) / 2
+        if offsets[middle] < offset {
+          lower = middle + 1
+        } else {
+          upper = middle
+        }
+      }
+      return lower + 1
+    }
     return count(of: root, before: offset) + 1
   }
 

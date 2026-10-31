@@ -29,6 +29,21 @@ final class OrgSourceLineIndexTests: XCTestCase {
     )
   }
 
+  func testRanksAtEveryUTF16BoundarySurviveEditsAndResets() {
+    let index = OrgSourceLineIndex()
+    for source in ["α\n\n😀\nend\n", "", "one\n", "no newline"] {
+      let text = NSMutableString(string: source)
+      index.reset(with: text)
+      for offset in -2...(text.length + 2) {
+        XCTAssertEqual(index.lineNumber(atUTF16Offset: offset), naiveLineNumber(in: text, offset: offset))
+      }
+      apply(NSRange(location: 0, length: 0), replacement: "prefix\n😀\n", to: text, index: index)
+      for offset in -2...(text.length + 2) {
+        XCTAssertEqual(index.lineNumber(atUTF16Offset: offset), naiveLineNumber(in: text, offset: offset))
+      }
+    }
+  }
+
   func testLineIndexMatchesNaiveLookupDuringManyEdits() {
     let text = NSMutableString(string: String(repeating: "one two three\n", count: 2_000))
     let index = OrgSourceLineIndex(text: text)

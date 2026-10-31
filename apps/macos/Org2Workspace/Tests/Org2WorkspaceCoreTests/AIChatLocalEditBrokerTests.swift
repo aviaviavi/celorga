@@ -406,7 +406,10 @@ final class AIChatLocalEditBrokerTests: XCTestCase {
 
     store.performUndoCommand()
     try await waitForCondition {
+      // File removal precedes the asynchronous catalog refresh and redo
+      // registration. Wait for the command to finish before issuing redo.
       !FileManager.default.fileExists(atPath: created.path)
+        && store.workspaceRedoStack.count == 1
     }
 
     store.performRedoCommand()

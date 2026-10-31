@@ -28,6 +28,7 @@ assert.ok([correctness, timing].every((args) => args.includes("--skip-build")), 
 const selection = new RegExp(SWIFT_TIMING_TESTS);
 for (const id of [
   "Org2WorkspaceCoreTests.WorkspacePerformanceRegressionTests/testWarmRefresh",
+  "Org2WorkspaceCoreTests.Org2ModelsTests/testRelaunchRecoveryDoesNotBlockBootstrapOrOtherThreads",
   "Org2WorkspaceCoreTests.OrgEditorInteractionTests/testKeyboardReturnAtEndOfExistingParagraphCreatesParagraphAfterCurrentText",
   "Org2WorkspaceCoreTests.CorpusFileCatalogTests/testProjectionPreparationHasLinearMultiSizeSlopeBudget",
   "Org2WorkspaceCoreTests.OrgSyntaxTextBufferSessionTests/testTenThousandUninterruptedCharactersStayExactAndLateEditsRemainBounded",
