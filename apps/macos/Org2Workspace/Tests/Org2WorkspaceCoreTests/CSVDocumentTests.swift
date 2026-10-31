@@ -15,10 +15,21 @@ final class CSVDocumentTests: XCTestCase {
     XCTAssertEqual(document.value(row: 1, column: 1), #"hello, "team""#)
     XCTAssertEqual(document.value(row: 2, column: 1), "line one\nline two")
     XCTAssertTrue(document.hasTrailingNewline)
-    XCTAssertEqual(
-      document.serialized(),
-      "name,note\nAvi,\"hello, \"\"team\"\"\"\nJane,\"line one\nline two\"\n"
-    )
+    XCTAssertEqual(document.serialized(), source)
+  }
+
+  func testCellEditPreservesRecordEndingsAndQuotedLineBreaks() throws {
+    for ending in ["\n", "\r\n", "\r"] {
+      for trailing in [false, true] {
+        for cell in ["first\r\nsecond", "first\nsecond", "first\rsecond", "first\r\nsecond\nthird\rfourth"] {
+          let source = "name,note" + ending + "old,\"" + cell + "\"" + (trailing ? ending : "")
+          var document = try CSVDocument(parsing: source)
+          XCTAssertEqual(document.value(row: 1, column: 1), cell)
+          document.setValue("new", row: 1, column: 0)
+          XCTAssertEqual(document.serialized(), source.replacingOccurrences(of: "old,", with: "new,"))
+        }
+      }
+    }
   }
 
   func testPreservesTrailingEmptyFieldsAndFinalNewline() throws {

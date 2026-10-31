@@ -16,6 +16,7 @@ enum CSVDocumentError: LocalizedError, Equatable {
 struct CSVDocument: Equatable, Sendable {
   private(set) var rows: [[String]]
   var hasTrailingNewline: Bool
+  private var recordEnding = "\n"
   private var cachedColumnCount: Int
 
   init(rows: [[String]] = [], hasTrailingNewline: Bool = false) {
@@ -30,15 +31,13 @@ struct CSVDocument: Equatable, Sendable {
       return
     }
 
-    let normalizedText = text
-      .replacingOccurrences(of: "\r\n", with: "\n")
-      .replacingOccurrences(of: "\r", with: "\n")
+    var recordEnding: String?
     var parsedRows: [[String]] = []
     var row: [String] = []
     var field = ""
     var isInsideQuotes = false
     var justEndedRow = false
-    var index = normalizedText.startIndex
+    var index = text.startIndex
 
     func finishField() {
       row.append(field)
@@ -52,15 +51,15 @@ struct CSVDocument: Equatable, Sendable {
       justEndedRow = true
     }
 
-    while index < normalizedText.endIndex {
-      let character = normalizedText[index]
-      let nextIndex = normalizedText.index(after: index)
+    while index < text.endIndex {
+      let character = text[index]
+      let nextIndex = text.index(after: index)
 
       if character == "\"" {
         if isInsideQuotes {
-          if nextIndex < normalizedText.endIndex, normalizedText[nextIndex] == "\"" {
+          if nextIndex < text.endIndex, text[nextIndex] == "\"" {
             field.append("\"")
-            index = normalizedText.index(after: nextIndex)
+            index = text.index(after: nextIndex)
             justEndedRow = false
             continue
           }
@@ -82,7 +81,8 @@ struct CSVDocument: Equatable, Sendable {
           index = nextIndex
           continue
         }
-        if character == "\n" {
+        if character == "\n" || character == "\r\n" || character == "\r" {
+          if recordEnding == nil { recordEnding = String(character) }
           finishRow()
           index = nextIndex
           continue
@@ -104,6 +104,7 @@ struct CSVDocument: Equatable, Sendable {
     }
 
     self.init(rows: parsedRows, hasTrailingNewline: justEndedRow)
+    self.recordEnding = recordEnding ?? "\n"
   }
 
   var rowCount: Int {
@@ -174,9 +175,9 @@ struct CSVDocument: Equatable, Sendable {
   func serialized() -> String {
     var text = rows
       .map { row in row.map(Self.serializeField).joined(separator: ",") }
-      .joined(separator: "\n")
+      .joined(separator: recordEnding)
     if hasTrailingNewline, !rows.isEmpty {
-      text.append("\n")
+      text.append(recordEnding)
     }
     return text
   }
@@ -184,6 +185,7 @@ struct CSVDocument: Equatable, Sendable {
   private static func serializeField(_ field: String) -> String {
     guard field.contains(",")
             || field.contains("\"")
+            || field.contains("\r\n")
             || field.contains("\n")
             || field.contains("\r")
     else {
