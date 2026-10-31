@@ -3059,7 +3059,8 @@ extension WorkspaceStore {
       case .invalidResponse(let message):
         return message.localizedCaseInsensitiveContains("turn/steer")
       case .executableNotFound, .launchFailed, .disconnected, .notAuthenticated,
-           .requestTimedOut, .turnStartUnknown, .turnFailed, .turnInterrupted:
+           .requestTimedOut, .turnStartUnknown, .turnFailed, .turnInterrupted,
+           .unsupportedAttachment:
         return false
       }
     case .openClaw:
@@ -3100,7 +3101,7 @@ extension WorkspaceStore {
     case .requestTimedOut(let method):
       return method == "thread/resume"
     case .executableNotFound, .launchFailed, .notAuthenticated, .turnStartUnknown,
-         .turnFailed, .turnInterrupted:
+         .turnFailed, .turnInterrupted, .unsupportedAttachment:
       return false
     }
   }

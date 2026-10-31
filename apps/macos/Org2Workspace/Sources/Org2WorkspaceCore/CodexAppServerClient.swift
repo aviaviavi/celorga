@@ -271,6 +271,7 @@ public enum CodexAppServerError: LocalizedError, Sendable {
   case notAuthenticated
   case turnFailed(String)
   case turnInterrupted
+  case unsupportedAttachment(String)
 
   public var errorDescription: String? {
     switch self {
@@ -298,6 +299,8 @@ public enum CodexAppServerError: LocalizedError, Sendable {
       "Codex turn failed: \(detail)"
     case .turnInterrupted:
       "Codex turn was stopped."
+    case .unsupportedAttachment(let fileName):
+      "This remote Codex destination accepts images and text files only (\(fileName) is neither). Send it to a local Codex, Claude Code, or OpenCode destination, or export it as CSV or text."
     }
   }
 }
@@ -1525,7 +1528,8 @@ while True:
     case .invalidResponse(let detail):
       detail.localizedCaseInsensitiveContains("thread/resume returned a different thread")
     case .executableNotFound, .launchFailed, .notAuthenticated,
-         .requestTimedOut, .turnStartUnknown, .turnFailed, .turnInterrupted:
+         .requestTimedOut, .turnStartUnknown, .turnFailed, .turnInterrupted,
+         .unsupportedAttachment:
       false
     }
   }
@@ -1574,12 +1578,13 @@ while True:
     sandboxAccess: CodexSandboxAccess = .workspaceWrite
   ) async throws -> CodexTurnResult {
     try await connect()
+    let attachmentInput = try Self.attachmentInput(attachments, transport: transport)
     var input: [JSONValue] = [
       .object([
         "type": .string("text"),
         "text": .string(
           Self.wrappedUserMessage(
-            message,
+            Self.message(message, attachmentNote: attachmentInput.note),
             localTurnID: localTurnID,
             workspaceContext: workspaceContext,
             corpusAccess: corpusAccess
@@ -1587,12 +1592,7 @@ while True:
         )
       ])
     ]
-    input.append(contentsOf: try attachments.map {
-      .object([
-        "type": .string("image"),
-        "url": .string(try $0.loadedDataURLString())
-      ])
-    })
+    input.append(contentsOf: attachmentInput.items)
     var params: [String: JSONValue] = [
       "threadId": .string(threadID),
       "input": .array(input),
@@ -1828,18 +1828,14 @@ while True:
     attachments: [AIChatAttachment] = []
   ) async throws {
     try await connect()
+    let attachmentInput = try Self.attachmentInput(attachments, transport: transport)
     var input: [JSONValue] = [
       .object([
         "type": .string("text"),
-        "text": .string(message)
+        "text": .string(Self.message(message, attachmentNote: attachmentInput.note))
       ])
     ]
-    input.append(contentsOf: try attachments.map {
-      .object([
-        "type": .string("image"),
-        "url": .string(try $0.loadedDataURLString())
-      ])
-    })
+    input.append(contentsOf: attachmentInput.items)
     let result = try await requestRaw(
       method: "turn/steer",
       params: .object([
@@ -2947,6 +2943,72 @@ while True:
     case .number(let number): Int(exactly: number)
     default: nil
     }
+  }
+
+  /// Codex's user input accepts only text and images. Text-like files are
+  /// already inlined by `AIChatTextAttachments`; any other file (PDF,
+  /// spreadsheet, archive) must not be sent as an "image", which the model
+  /// reports as unreadable. A local Codex gets a private on-disk copy it can
+  /// open; a remote host cannot see this Mac's files, so the send fails clearly.
+  nonisolated static func attachmentInput(
+    _ attachments: [AIChatAttachment],
+    transport: CodexAppServerTransport,
+    temporaryRoot: URL = FileManager.default.temporaryDirectory
+  ) throws -> (items: [JSONValue], note: String?) {
+    var items: [JSONValue] = []
+    var files: [AIChatAttachment] = []
+    for attachment in attachments {
+      if attachment.mimeType.lowercased().hasPrefix("image/") {
+        items.append(.object([
+          "type": .string("image"),
+          "url": .string(try attachment.loadedDataURLString())
+        ]))
+      } else {
+        files.append(attachment)
+      }
+    }
+    guard !files.isEmpty else { return (items, nil) }
+    guard transport == .local else {
+      throw CodexAppServerError.unsupportedAttachment(files[0].fileName)
+    }
+    let directory = temporaryRoot
+      .appendingPathComponent("celorga-codex-attachments", isDirectory: true)
+      .appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    var usedNames = Set<String>()
+    var paths: [String] = []
+    for (index, attachment) in files.enumerated() {
+      let rawName = attachment.fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+      let safeName = URL(fileURLWithPath: rawName.isEmpty ? "attachment-\(index + 1)" : rawName)
+        .lastPathComponent
+      var uniqueName = safeName
+      var suffix = 2
+      while usedNames.contains(uniqueName.lowercased()) {
+        let base = (safeName as NSString).deletingPathExtension
+        let ext = (safeName as NSString).pathExtension
+        uniqueName = ext.isEmpty ? "\(base)-\(suffix)" : "\(base)-\(suffix).\(ext)"
+        suffix += 1
+      }
+      usedNames.insert(uniqueName.lowercased())
+      let url = directory.appendingPathComponent(uniqueName)
+      try attachment.loadData().write(to: url, options: .atomic)
+      paths.append("- \(url.path) (\(attachment.mimeType))")
+    }
+    let note = """
+    Celorga attached local copies of these files for this turn:
+    \(paths.joined(separator: "\n"))
+    Open them from those paths when relevant. Do not modify these copies.
+    """
+    return (items, note)
+  }
+
+  nonisolated private static func message(_ message: String, attachmentNote: String?) -> String {
+    guard let attachmentNote else { return message }
+    return message.isEmpty ? attachmentNote : "\(message)\n\n\(attachmentNote)"
   }
 
   nonisolated private static func wrappedUserMessage(

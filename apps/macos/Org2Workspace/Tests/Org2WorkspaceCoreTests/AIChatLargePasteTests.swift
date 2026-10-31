@@ -77,6 +77,65 @@ final class AIChatLargePasteTests: XCTestCase {
     XCTAssertThrowsError(try AIChatTextAttachments.expanding(message))
   }
 
+  func testCSVAndOtherTextFilesAreInlinedWhileBinaryFilesStayAttached() throws {
+    // 2026-10-30: a CSV bank export reached Codex as an unreadable "image".
+    let csv = "Posting Date,Description,Amount\n01/02/2025,MERCURY TECHNOLOGIES,100000.00\n"
+    let csvAttachment = AIChatAttachment(
+      fileName: "Chase5316_Activity_20261030.csv", mimeType: "text/csv", data: Data(csv.utf8)
+    )
+    let json = AIChatAttachment(fileName: "data.json", mimeType: "application/json", data: Data("{}".utf8))
+    let org = AIChatAttachment(
+      fileName: "note.org", mimeType: "application/octet-stream", data: Data("* Heading\n".utf8)
+    )
+    let pdf = AIChatAttachment(fileName: "report.pdf", mimeType: "application/pdf", data: Data("%PDF-1.7".utf8))
+    let xlsx = AIChatAttachment(
+      fileName: "book.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      data: Data([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00])
+    )
+    let latin1CSV = AIChatAttachment(fileName: "latin1.csv", mimeType: "text/csv", data: Data([0x41, 0xe9, 0x00]))
+    let image = AIChatAttachment(fileName: "image.png", mimeType: "image/png", data: Data([1, 2]))
+    let message = AIChatMessage(
+      role: .user, content: "Total the sponsors",
+      attachments: [csvAttachment, json, org, pdf, xlsx, latin1CSV, image]
+    )
+    let outbound = try AIChatTextAttachments.expanding(message)
+    XCTAssertTrue(outbound.content.hasPrefix("Total the sponsors"))
+    XCTAssertTrue(outbound.content.contains(
+      "[Attached text: Chase5316_Activity_20261030.csv]\n\(csv)\n[End attached text]"
+    ))
+    XCTAssertTrue(outbound.content.contains("[Attached text: data.json]\n{}"))
+    XCTAssertTrue(outbound.content.contains("[Attached text: note.org]\n* Heading"))
+    XCTAssertEqual(outbound.attachments, [pdf, xlsx, latin1CSV, image])
+  }
+
+  func testCodexSendsOnlyImagesAsImagesAndGivesLocalCodexFileCopies() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("codex-attach-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let image = AIChatAttachment(fileName: "shot.png", mimeType: "image/png", data: Data([1, 2]))
+    let pdfBytes = Data("%PDF-1.7 statement".utf8)
+    let pdf = AIChatAttachment(fileName: "statement.pdf", mimeType: "application/pdf", data: pdfBytes)
+    let local = try CodexAppServerClient.attachmentInput([image, pdf], transport: .local, temporaryRoot: root)
+    XCTAssertEqual(local.items.count, 1)
+    guard case .object(let item) = local.items[0] else { return XCTFail("expected an image item") }
+    XCTAssertEqual(item["type"], .string("image"))
+    XCTAssertEqual(item["url"], .string("data:image/png;base64,AQI="))
+    let note = try XCTUnwrap(local.note)
+    let pathLine = try XCTUnwrap(note.split(separator: "\n").first { $0.contains("statement.pdf") })
+    let path = String(pathLine.dropFirst(2).prefix { $0 != " " })
+    XCTAssertTrue(path.hasPrefix(root.path), path)
+    XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), pdfBytes)
+
+    let imagesOnly = try CodexAppServerClient.attachmentInput([image], transport: .managedRemote(sshHost: "host"))
+    XCTAssertEqual(imagesOnly.items.count, 1)
+    XCTAssertNil(imagesOnly.note)
+    XCTAssertThrowsError(
+      try CodexAppServerClient.attachmentInput([pdf], transport: .managedRemote(sshHost: "host"))
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("statement.pdf"), error.localizedDescription)
+    }
+  }
+
   func testSendingAttachmentDeliversFullTextAndKeepsTranscriptCompact() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("paste-send-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
