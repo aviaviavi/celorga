@@ -169,7 +169,7 @@ interactive: true
 `;
   const chartPublication = preparePublishedDocument({ sourceText: chartSource });
   assert.match(chartPublication.html, /<figure class="org2-chart org2-chart-medium celorga-chart"/);
-  assert.match(chartPublication.html, /class="org2-chart-svg"/);
+  assert.match(chartPublication.html, /<svg\b[^>]*class="org2-chart-svg"/);
   assert.match(chartPublication.html, /Monthly growth/);
   assert.match(chartPublication.html, /--org2-chart-title: #24262a/);
   assert.match(chartPublication.html, /--org2-chart-title: #e9eaed/);
@@ -189,7 +189,7 @@ y: rolling_7d
 \`\`\`
 `;
   const sanitizedChartPublication = preparePublishedDocument({ sourceText: sanitizedChartSource });
-  assert.match(sanitizedChartPublication.html, /org2-chart-svg/);
+  assert.match(sanitizedChartPublication.html, /<svg\b[^>]*class="org2-chart-svg"/);
   assert.match(sanitizedChartPublication.html, /Public total/);
   assert.doesNotMatch(sanitizedChartPublication.html, /private\/customer-list/);
 
@@ -207,7 +207,9 @@ y: value
 \`\`\`
 `;
   const commentedChartPublication = preparePublishedDocument({ sourceText: commentedChartSource });
-  assert.doesNotMatch(commentedChartPublication.html, /org2-chart-svg|98765/);
+  // Shared styles name the SVG class even when no chart is rendered. Check
+  // rendered elements and private data, not the presence of a CSS selector.
+  assert.doesNotMatch(commentedChartPublication.html, /<svg\b[^>]*class="org2-chart-svg"|98765/);
   assert.match(commentedChartPublication.warnings.join("\n"), /No table found for chart source "commented_series"/);
 
   const scopedChartSource = `#+name: private_series
@@ -224,7 +226,7 @@ y: value
 `;
   const scopedChartLine = scopedChartSource.slice(0, scopedChartSource.indexOf("* Shared chart")).split("\n").length;
   const scopedChartPublication = preparePublishedDocument({ sourceText: scopedChartSource, line: scopedChartLine });
-  assert.doesNotMatch(scopedChartPublication.html, /org2-chart-svg|98765/);
+  assert.doesNotMatch(scopedChartPublication.html, /<svg\b[^>]*class="org2-chart-svg"|98765/);
   assert.match(scopedChartPublication.warnings.join("\n"), /No table found for chart source "private_series"/);
 
   const repeat = runCli(["--to", "web", "--out-dir", webOut, "--replace-existing", "--apply", "--format", "json"]);
