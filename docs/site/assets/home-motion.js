@@ -1,5 +1,6 @@
 // Homepage motion: rotating words, the tilted product window, the agents
-// marquee, looping feature scenes, and scroll reveals. Everything is
+// marquee, and looping feature scenes. Sections below the hero do not fade in
+// on scroll; they are simply there. Everything is
 // progressive: the markup already shows each scene's finished state, and this
 // script only animates when the reader has not asked for reduced motion
 // (index.org adds .celorga-motion to <html> before first paint).
@@ -194,43 +195,6 @@
       const rect = card.getBoundingClientRect();
       card.style.setProperty("--mx", `${event.clientX - rect.left}px`);
       card.style.setProperty("--my", `${event.clientY - rect.top}px`);
-    });
-  }
-
-  // Scroll reveals below the hero. Siblings in a grid arrive in a short stagger.
-  const groups = [
-    [".celorga-harness2 .celorga-home-harnesses-copy", ".celorga-harness2 .celorga-marquee", ".celorga-harness2 .celorga-home-harness-mcp"],
-    [".celorga-bento-head"],
-    [".celorga-bento-card", 3],
-    [".celorga-home-story-copy"],
-    [".celorga-home-story-media"],
-    ["main > .celorga-home-anywhere .celorga-sample-intro, .celorga-home-both .celorga-sample-intro, .celorga-home-uses .celorga-sample-intro, .celorga-home-own .celorga-sample-intro, .celorga-home-platforms .celorga-sample-intro, .celorga-sample .celorga-sample-intro, .celorga-home-start .celorga-sample-intro"],
-    [".celorga-topology"],
-    [".celorga-home-both-grid article", 2],
-    [".celorga-home-uses-grid article", 3],
-    [".celorga-home-own .celorga-feature-card-grid article", 3],
-    [".celorga-home-platform-grid a", 3],
-    [".celorga-lineage-note"],
-    [".celorga-sample-layout"],
-    [".celorga-cta2"],
-    [".celorga-home-start-links a", 4],
-  ];
-  const revealer = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      entry.target.classList.add("is-in");
-      revealer.unobserve(entry.target);
-    }
-  }, { threshold: 0.12, rootMargin: "0px 0px -6% 0px" });
-  for (const group of groups) {
-    const selectors = group.filter((s) => typeof s === "string");
-    const columns = group.find((s) => typeof s === "number") || 0;
-    const nodes = selectors.flatMap((s) => [...document.querySelectorAll(`#content ${s.split(",").join(", #content ")}`)]);
-    nodes.forEach((node, i) => {
-      if (node.closest(".celorga-hero2")) return;
-      node.classList.add("celorga-reveal");
-      if (columns) node.style.setProperty("--reveal-i", String(i % columns));
-      revealer.observe(node);
     });
   }
 })();

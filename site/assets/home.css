@@ -1407,36 +1407,6 @@ html:not(.celorga-motion) #content .celorga-bento [data-off] {
   }
 }
 
-/* ───────────────────────── Scroll reveal ───────────────────────── */
-
-.celorga-motion #content .celorga-reveal {
-  opacity: 0;
-  transform: translateY(28px);
-  filter: blur(6px);
-  transition: opacity 0.9s var(--home-ease), transform 1s var(--home-ease), filter 0.9s var(--home-ease);
-  transition-delay: calc(var(--reveal-i, 0) * 90ms);
-}
-
-.celorga-motion #content .celorga-reveal.is-in {
-  opacity: 1;
-  transform: none;
-  filter: none;
-}
-
-.celorga-motion #content .celorga-bento-card.celorga-reveal.is-in:hover {
-  transform: translateY(-2px);
-  transition-delay: 0s;
-}
-
-/* Story screenshots get a subtle lift as they arrive. */
-.celorga-motion #content .celorga-home-story-media.celorga-reveal {
-  transform: translateY(40px) scale(0.97);
-}
-
-.celorga-motion #content .celorga-home-story-media.celorga-reveal.is-in {
-  transform: none;
-}
-
 #content main:has(.celorga-hero2) .celorga-home-story-media img {
   transition: transform 0.6s var(--home-ease);
 }
