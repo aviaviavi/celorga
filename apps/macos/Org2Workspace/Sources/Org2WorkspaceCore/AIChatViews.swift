@@ -3263,6 +3263,51 @@ private struct AIChatChangeDeltaView: View {
   }
 }
 
+/// The one-time GitHub star nudge shown above the composer after a few prompts.
+struct AIChatGitHubStarPromptView: View {
+  @Environment(WorkspaceStore.self) private var store
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "star.fill")
+        .foregroundStyle(.yellow)
+        .accessibilityHidden(true)
+      Text("Enjoying Celorga? A star on GitHub helps other people find it.")
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .lineLimit(2)
+        .fixedSize(horizontal: false, vertical: true)
+      Spacer(minLength: 4)
+      Button("Star on GitHub") {
+        withAnimation(.easeOut(duration: 0.15)) { store.starCelorgaOnGitHub() }
+      }
+      .buttonStyle(.borderedProminent)
+      .controlSize(.small)
+      Button {
+        withAnimation(.easeOut(duration: 0.15)) { store.dismissGitHubStarPrompt() }
+      } label: {
+        Image(systemName: "xmark")
+          .font(.caption.weight(.semibold))
+      }
+      .buttonStyle(.borderless)
+      .foregroundStyle(.secondary)
+      .help("Dismiss")
+      .accessibilityLabel("Dismiss")
+    }
+    .padding(.horizontal, AIChatComposerLayout.contentInset)
+    .padding(.vertical, 7)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(
+      WorkspaceDesign.surfaceBackground,
+      in: RoundedRectangle(cornerRadius: AIChatComposerLayout.cornerRadius, style: .continuous)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: AIChatComposerLayout.cornerRadius, style: .continuous)
+        .stroke(WorkspaceDesign.hairline)
+    )
+  }
+}
+
 struct AIChatComposerView: View {
   @Environment(WorkspaceStore.self) private var store
   @State private var showsModelConfiguration = false
@@ -3278,6 +3323,10 @@ struct AIChatComposerView: View {
   var body: some View {
     let presentation = AIChatContextPresentation(localDraft)
     VStack(alignment: .trailing, spacing: AIChatComposerLayout.externalSpacing) {
+      if store.isGitHubStarPromptPresented {
+        AIChatGitHubStarPromptView()
+          .transition(.opacity.combined(with: .move(edge: .bottom)))
+      }
       let composerHeight = AIChatComposerSizing.height(for: presentation.userText, compact: compact)
       VStack(alignment: .leading, spacing: 0) {
         if !presentation.contexts.isEmpty {

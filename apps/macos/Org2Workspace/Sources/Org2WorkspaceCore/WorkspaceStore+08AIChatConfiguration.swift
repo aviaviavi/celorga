@@ -2471,7 +2471,7 @@ extension WorkspaceStore {
       }
       guard isCurrentAIChatCorpusContext(context) else { return }
       appendLocalAIChatCommand(rawText, result: result, in: threadID)
-      clearAcceptedAIChatComposerSubmission(submission)
+      clearAcceptedAIChatComposerSubmission(submission, countsAsPrompt: false)
     } catch {
       guard isCurrentAIChatCorpusContext(context) else { return }
       appendLocalAIChatCommand(
@@ -2479,7 +2479,7 @@ extension WorkspaceStore {
         result: "Could not run /\(command.name): \(error.localizedDescription)",
         in: threadID
       )
-      clearAcceptedAIChatComposerSubmission(submission)
+      clearAcceptedAIChatComposerSubmission(submission, countsAsPrompt: false)
     }
   }
 

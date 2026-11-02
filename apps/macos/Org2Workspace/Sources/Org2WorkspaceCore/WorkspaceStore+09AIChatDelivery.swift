@@ -363,8 +363,12 @@ extension WorkspaceStore {
   }
 
   func clearAcceptedAIChatComposerSubmission(
-    _ submission: AIChatComposerSubmission
+    _ submission: AIChatComposerSubmission,
+    countsAsPrompt: Bool = true
   ) {
+    if countsAsPrompt {
+      noteAIChatPromptSentForGitHubStarPrompt()
+    }
     let key = aiChatComposerKey(for: submission.threadID, context: submission.context)
     if aiChatDraftsByComposerKey[key] == submission.draft {
       aiChatDraftsByComposerKey.removeValue(forKey: key)

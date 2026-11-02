@@ -2630,6 +2630,8 @@ public final class WorkspaceStore {
   public var newCorpusFileError: String?
   public var dailyNotePickerDate = Date()
   public var isLaunchGuidePresented = false
+  /// The one-time "star Celorga on GitHub" nudge above the AI chat composer.
+  public var isGitHubStarPromptPresented = false
   public var captureDraft = WorkspaceCaptureDraft()
   public var isSimilarTodoAssignmentPresented = false
   public var similarTodoCandidates: [SimilarTodoCandidate] = []
@@ -3474,6 +3476,8 @@ public final class WorkspaceStore {
   let automaticDailyNoteCreationDisabledByCorpusKey =
     "Org2Workspace.dailyNotes.automaticCreationDisabledByCorpus.v1"
   let launchGuideCompletedKey = "Org2Workspace.openOrgLaunchGuideCompleted.v1"
+  let gitHubStarPromptSentPromptCountKey = "Org2Workspace.gitHubStarPrompt.sentPromptCount.v1"
+  let gitHubStarPromptShownKey = "Org2Workspace.gitHubStarPrompt.shown.v1"
   let aiChatBriefsStartNewThreadKey = "Org2Workspace.aiChatBriefsStartNewThread"
   private let nodeBriefConfigurationKey = "Org2Workspace.nodeBriefConfiguration"
   private let startWorkLastOptionsKey = "Org2Workspace.startWorkLastOptions"
