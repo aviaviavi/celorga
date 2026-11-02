@@ -87,31 +87,23 @@ final class ShareViewController: UIViewController {
     }
   }
 
+  /// Queues the item in the app group. Celorga sends the queue to the
+  /// paired host the next time it runs; the phone holds no corpus to write to.
   private func save(title: String, body: String, scheduledDate: Date?) {
     do {
-      guard let rootURL = try MobileCaptureWriter.resolveSharedCorpusRoot() else {
-        embed(
-          title: title,
-          body: body,
-          isLoading: false,
-          errorMessage: "Open Celorga and select a corpus folder before using the share extension."
-        )
-        return
-      }
-
-      _ = try MobileCaptureWriter.appendMobileNote(
-        rootURL: rootURL,
+      let capture = MobileCaptureWriter.noteCapture(
         title: title,
         body: body,
         scheduledDate: scheduledDate
       )
+      try MobileCaptureOutbox.enqueue(capture)
       extensionContext?.completeRequest(returningItems: nil)
     } catch {
       embed(
         title: title,
         body: body,
         isLoading: false,
-        errorMessage: "Could not capture this item. Re-select the corpus folder in Celorga and try again."
+        errorMessage: "Could not save this item for Celorga. Try again."
       )
     }
   }

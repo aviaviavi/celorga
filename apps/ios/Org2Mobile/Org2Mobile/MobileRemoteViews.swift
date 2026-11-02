@@ -391,13 +391,28 @@ struct MobileSettingsView: View {
   var body: some View {
     Form {
       AudioApprovalSettingsSection()
-      Section("Corpus") {
-        LabeledContent("Current corpus", value: store.rootURL == nil ? "Not selected" : store.corpusName)
-        Button {
-          store.isDocumentPickerPresented = true
-        } label: {
-          Label(store.rootURL == nil ? "Select Corpus" : "Change Corpus", systemImage: "folder")
+      Section {
+        LabeledContent("Downloaded files", value: "\(store.downloads.count)")
+        if !store.downloads.isEmpty {
+          LabeledContent(
+            "Space used",
+            value: ByteCountFormatter.string(fromByteCount: store.downloadedByteCount, countStyle: .file)
+          )
+          Button("Remove All Downloads", role: .destructive) {
+            store.removeAllDownloads()
+          }
         }
+        if !store.pendingCaptures.isEmpty {
+          LabeledContent("Notes waiting to send", value: "\(store.pendingCaptures.count)")
+          Button("Send Now") {
+            Task { await store.sendPendingCaptures() }
+          }
+          .disabled(store.isSendingCaptures || !remote.isPaired)
+        }
+      } header: {
+        Text("On This iPhone")
+      } footer: {
+        Text("Your corpus stays on your host. This phone keeps only the files you download for reading offline, and notes until the host receives them.")
       }
 
       Section("Host Connection") {
@@ -2825,22 +2840,22 @@ private struct MobileRemoteFileCitation: Identifiable, Hashable {
 
 struct CorpusFileBrowserView: View {
   @EnvironmentObject private var store: CorpusStore
+  @EnvironmentObject private var remote: MobileRemoteStore
   @State private var query = ""
   @State private var results: [MobileSearchEntry] = []
   @State private var resultsQuery = ""
-  @State private var resultsIndexID: UUID?
-  private var hasCurrentResults: Bool { resultsQuery == query && resultsIndexID == store.searchIndex.id }
+  @State private var isSearching = false
+  private var hasCurrentResults: Bool { resultsQuery == query }
   private var hasQuery: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
   var body: some View {
     List {
-      Section(store.corpusName) {
-        if hasQuery {
+      if hasQuery {
+        Section(remote.isPaired ? store.corpusName : "Downloaded Files") {
           ForEach(hasCurrentResults ? results : []) { entry in
             NavigationLink {
               CorpusFileDocumentView(
                 citation: MobileRemoteFileCitation(path: entry.path, line: entry.line > 0 ? entry.line : nil, label: entry.title),
-                allowsRemoteFallback: false,
                 entry: entry.line > 0 ? entry : nil,
                 prefersRendered: true
               )
@@ -2856,102 +2871,161 @@ struct CorpusFileBrowserView: View {
               }.padding(.vertical, 3)
             }
           }
-        } else {
-          ForEach(store.corpusFiles) { file in
-            NavigationLink {
-              CorpusFileDocumentView(
-                citation: MobileRemoteFileCitation(
+        }
+      } else {
+        if !store.downloadedFiles.isEmpty {
+          Section {
+            ForEach(store.downloadedFiles) { file in
+              NavigationLink {
+                documentView(path: file.path, label: file.name)
+              } label: {
+                fileRow(
+                  name: file.name,
+                  path: file.path,
+                  detail: file.isMissingOnHost
+                    ? "No longer on the host"
+                    : ByteCountFormatter.string(fromByteCount: file.byteCount, countStyle: .file),
+                  isDownloaded: true
+                )
+              }
+              .swipeActions {
+                Button("Remove", role: .destructive) { store.removeDownload(path: file.path) }
+              }
+            }
+          } header: {
+            Text("On This iPhone")
+          }
+        }
+        if remote.isPaired {
+          Section {
+            ForEach(store.corpusFiles) { file in
+              NavigationLink {
+                documentView(path: file.relativePath, label: file.name)
+              } label: {
+                fileRow(
+                  name: file.name,
                   path: file.relativePath,
-                  line: nil,
-                  label: file.name
-                ),
-                allowsRemoteFallback: false,
-                prefersRendered: true
-              )
-            } label: {
-              fileRow(file)
+                  detail: fileDetail(file),
+                  isDownloaded: store.isDownloaded(file.relativePath)
+                )
+              }
+            }
+          } header: {
+            Text(store.corpusName)
+          } footer: {
+            if let updated = store.catalogUpdatedAt {
+              Text("Read from \(remote.serverName). Updated \(updated.formatted(date: .omitted, time: .shortened)).")
             }
           }
         }
       }
     }
     .overlay {
-      if (store.isPreparingCorpus || store.isLoading) && store.corpusFiles.isEmpty {
-        ProgressView("Loading corpus files…")
-      } else if hasQuery && !hasCurrentResults {
+      if !remote.isPaired && store.downloadedFiles.isEmpty && !hasQuery {
+        ConnectHostView(message: "Browse and search the notes on your Mac or Celorga server. Download a file to keep it on this phone for reading offline.")
+      } else if hasQuery && (!hasCurrentResults || isSearching) && results.isEmpty {
         ProgressView("Searching…")
       } else if hasQuery && results.isEmpty {
         ContentUnavailableView.search(text: query)
+      } else if !hasQuery, remote.isPaired, store.corpusFiles.isEmpty {
+        if store.isLoading || store.catalogUpdatedAt == nil && store.connectionError == nil {
+          ProgressView("Loading files…")
+        } else if let error = store.connectionError {
+          ContentUnavailableView(
+            "Files Unavailable",
+            systemImage: "desktopcomputer.trianglebadge.exclamationmark",
+            description: Text(error)
+          )
+        }
       }
     }
     .navigationTitle("Files")
     .navigationBarTitleDisplayMode(.large)
-    .searchable(text: $query, prompt: "Search notes, headings, and text")
+    .searchable(text: $query, prompt: remote.isPaired ? "Search notes, headings, and text" : "Search downloaded files")
     .toolbar {
       ToolbarItem(placement: .topBarLeading) {
         MobileSidebarToolbarButton()
       }
-      ToolbarItem(placement: .topBarTrailing) {
-        Button {
-          Task { await store.refresh() }
-        } label: {
-          if store.isPreparingCorpus || store.isLoading {
-            ProgressView()
-          } else {
-            Image(systemName: "arrow.clockwise")
+      if remote.isPaired {
+        ToolbarItem(placement: .topBarTrailing) {
+          Button {
+            Task { await store.refresh() }
+          } label: {
+            if store.isLoading {
+              ProgressView()
+            } else {
+              Image(systemName: "arrow.clockwise")
+            }
           }
+          .disabled(store.isLoading)
         }
-        .disabled(store.isPreparingCorpus || store.isLoading)
       }
     }
     .refreshable {
       await store.refresh()
     }
-    .task(id: "\(store.searchIndex.id)|\(query)") {
+    .task(id: query) {
       let query = query
-      let index = store.searchIndex
-      do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
-      let task = Task.detached(priority: .userInitiated) { index.search(query) }
-      let found = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+      guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        results = []
+        resultsQuery = query
+        return
+      }
+      // Wait for a pause in typing before asking the host.
+      do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+      isSearching = true
+      let found = await store.search(query)
       guard !Task.isCancelled else { return }
       results = found
       resultsQuery = query
-      resultsIndexID = index.id
+      isSearching = false
     }
     .task {
-      store.prepareCorpusViews()
-      if store.corpusFiles.isEmpty, !store.isLoading {
-        await store.refresh(showsLoading: false)
+      if store.corpusFiles.isEmpty || (store.catalogUpdatedAt.map { Date().timeIntervalSince($0) > 30 } ?? true) {
+        await store.refresh(showsLoading: store.corpusFiles.isEmpty)
       }
     }
   }
 
-  private func fileRow(_ file: CorpusFile) -> some View {
+  private func documentView(path: String, label: String) -> some View {
+    CorpusFileDocumentView(
+      citation: MobileRemoteFileCitation(path: path, line: nil, label: label),
+      prefersRendered: true
+    )
+  }
+
+  private func fileRow(name: String, path: String, detail: String?, isDownloaded: Bool) -> some View {
     HStack(spacing: 12) {
-      Image(systemName: fileIcon(file))
+      Image(systemName: fileIcon(path))
         .foregroundStyle(.blue)
         .frame(width: 22)
       VStack(alignment: .leading, spacing: 3) {
-        Text(file.name)
+        Text(name)
           .font(.body.weight(.medium))
           .lineLimit(1)
-        Text(file.relativePath)
+        Text(path)
           .font(.caption.monospaced())
           .foregroundStyle(.secondary)
           .lineLimit(1)
           .truncationMode(.middle)
-        if let detail = fileDetail(file) {
+        if let detail {
           Text(detail)
             .font(.caption2)
             .foregroundStyle(.tertiary)
         }
       }
+      if isDownloaded {
+        Spacer(minLength: 4)
+        Image(systemName: "arrow.down.circle.fill")
+          .foregroundStyle(.secondary)
+          .accessibilityLabel("Downloaded")
+      }
     }
     .padding(.vertical, 2)
   }
 
-  private func fileIcon(_ file: CorpusFile) -> String {
-    switch URL(fileURLWithPath: file.relativePath).pathExtension.lowercased() {
+  private func fileIcon(_ path: String) -> String {
+    switch URL(fileURLWithPath: path).pathExtension.lowercased() {
     case "csv": "tablecells"
     case "md": "text.document"
     default: "doc.text"
@@ -2968,7 +3042,6 @@ struct CorpusFileBrowserView: View {
     }
     return parts.isEmpty ? nil : parts.joined(separator: " · ")
   }
-
 }
 
 private enum MobileRemoteMessageMarkup {
@@ -3637,9 +3710,6 @@ private struct MobileRemoteInlineImage: View {
       data = try? await URLSession.shared.data(from: url).0
     } else if let path = reference.path {
       data = try? await store.imageData(path: path)
-      if data == nil, remote.isPaired {
-        data = try? await remote.imageData(path: path)
-      }
     }
     guard !Task.isCancelled else { return }
     guard let data, let loaded = UIImage(data: data) else {
@@ -3736,7 +3806,6 @@ private struct MobileRemoteThreadOutputsSheet: View {
       .navigationDestination(item: $openedFile) { file in
         CorpusFileDocumentView(
           citation: MobileRemoteFileCitation(path: file.path, line: nil, label: file.displayPath),
-          allowsRemoteFallback: true,
           prefersRendered: ["org", "org2"].contains(file.fileExtension)
         )
       }
@@ -3816,11 +3885,10 @@ private struct MobileRemoteThreadOutputsSheet: View {
     .padding(.vertical, 2)
   }
 
-  /// Text formats use the corpus reader, which falls back to the Mac. Binary
-  /// formats need the locally synced copy for Quick Look.
+  /// Text formats open in the corpus reader; other formats download from
+  /// the host for Quick Look.
   private func canOpen(_ file: MobileRemoteThreadOutputFile) -> Bool {
-    guard file.exists, file.isInCorpus else { return false }
-    return file.opensInReader || store.rootURL != nil
+    file.exists && file.isInCorpus
   }
 
   private func open(_ file: MobileRemoteThreadOutputFile) {
@@ -3832,7 +3900,7 @@ private struct MobileRemoteThreadOutputsSheet: View {
       do {
         quickLookURL = try await store.quickLookCopy(path: file.path)
       } catch {
-        errorMessage = "\(file.displayPath) isn't in the synced corpus on this phone yet. Let the corpus sync, then try again."
+        errorMessage = "Could not open \(file.displayPath): \(error.localizedDescription)"
       }
     }
   }
@@ -3844,7 +3912,7 @@ private struct MobileRemoteFilePreviewSheet: View {
 
   var body: some View {
     NavigationStack {
-      CorpusFileDocumentView(citation: citation, allowsRemoteFallback: true, prefersRendered: citation.documentLink != nil)
+      CorpusFileDocumentView(citation: citation, prefersRendered: citation.documentLink != nil)
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
           Button("Done") { dismiss() }
@@ -3858,7 +3926,6 @@ private struct CorpusFileDocumentView: View {
   @EnvironmentObject private var store: CorpusStore
   @EnvironmentObject private var remote: MobileRemoteStore
   let citation: MobileRemoteFileCitation
-  let allowsRemoteFallback: Bool
   var entry: MobileSearchEntry? = nil
   var prefersRendered = false
   @State private var showsSource = false
@@ -3869,6 +3936,7 @@ private struct CorpusFileDocumentView: View {
   private var selectedEntry: MobileSearchEntry? { linkedEntry ?? entry }
   @State private var preview: CorpusFilePreview?
   @State private var errorMessage: String?
+  @State private var isDownloading = false
 
   var body: some View {
     Group {
@@ -3887,7 +3955,7 @@ private struct CorpusFileDocumentView: View {
     }
     .navigationTitle(rendered?.title ?? selectedEntry?.title ?? preview?.title ?? citation.label)
     .navigationDestination(item: $nextCitation) { next in
-      CorpusFileDocumentView(citation: next, allowsRemoteFallback: allowsRemoteFallback, prefersRendered: true)
+      CorpusFileDocumentView(citation: next, prefersRendered: true)
     }
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
@@ -3896,8 +3964,13 @@ private struct CorpusFileDocumentView: View {
           Button(showsSource ? "Rendered" : "Source") { showsSource.toggle() }
         }
       }
+      if let preview {
+        ToolbarItem(placement: .topBarTrailing) {
+          downloadButton(path: preview.relativePath)
+        }
+      }
     }
-    .task(id: "\(store.rootURL?.path ?? "")|\(citation.id)") {
+    .task(id: citation.id) {
       preview = nil
       rendered = nil
       renderError = nil
@@ -3914,25 +3987,10 @@ private struct CorpusFileDocumentView: View {
         let loaded = try await store.filePreview(path: path, line: citation.line)
         guard !Task.isCancelled else { return }
         preview = loaded
-      } catch let localError {
+      } catch {
         guard !Task.isCancelled else { return }
-        guard allowsRemoteFallback, remote.isPaired else {
-          errorMessage = localError.localizedDescription
-          return
-        }
-        do {
-          let fetched = try await remote.filePreview(path: path, line: citation.line)
-          guard !Task.isCancelled else { return }
-          preview = CorpusFilePreview(
-            title: fetched.title,
-            relativePath: fetched.relativePath,
-            startLine: fetched.startLine,
-            highlightedLine: fetched.highlightedLine,
-            content: fetched.content
-          )
-        } catch {
-          errorMessage = error.localizedDescription
-        }
+        errorMessage = error.localizedDescription
+        return
       }
       guard !Task.isCancelled else { return }
       if canRender, let preview {
@@ -3950,6 +4008,36 @@ private struct CorpusFileDocumentView: View {
           renderError = error.localizedDescription
         }
       }
+    }
+  }
+
+  /// Keeps the file on this phone for reading without the host, or removes
+  /// the downloaded copy.
+  @ViewBuilder
+  private func downloadButton(path: String) -> some View {
+    if store.isDownloaded(path) {
+      Button {
+        store.removeDownload(path: path)
+      } label: {
+        Label("Remove Download", systemImage: "arrow.down.circle.fill")
+      }
+      .accessibilityLabel("Remove from this iPhone")
+    } else {
+      Button {
+        Task {
+          isDownloading = true
+          await store.download(path: path)
+          isDownloading = false
+        }
+      } label: {
+        if isDownloading {
+          ProgressView()
+        } else {
+          Label("Download", systemImage: "arrow.down.circle")
+        }
+      }
+      .disabled(isDownloading || !remote.isPaired)
+      .accessibilityLabel("Keep on this iPhone")
     }
   }
 
@@ -3976,7 +4064,7 @@ private struct CorpusFileDocumentView: View {
         NavigationLink("Open full note") {
           CorpusFileDocumentView(
             citation: MobileRemoteFileCitation(path: preview.relativePath, line: nil, label: preview.title),
-            allowsRemoteFallback: allowsRemoteFallback, prefersRendered: true
+            prefersRendered: true
           )
         }.padding(.horizontal).padding(.vertical, 8)
       }

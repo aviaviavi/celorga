@@ -46,6 +46,8 @@ struct MobileRemoteServerStatus: Codable, Hashable {
   let supportsThreadOutputs: Bool?
   /// The host can move a new, empty chat to another agent.
   let supportsThreadDestinationChange: Bool?
+  /// The host serves the corpus to this phone, which keeps no copy of it.
+  let supportsCorpusAccess: Bool?
 }
 
 struct MobileRemotePushRegistrationRequest: Codable {
@@ -168,6 +170,74 @@ struct MobileRemoteFilePreview: Codable, Hashable {
   let startLine: Int
   let highlightedLine: Int?
   let content: String
+}
+
+// MARK: Host corpus access
+
+struct MobileRemoteCorpusFile: Codable, Hashable, Sendable {
+  let path: String
+  let byteCount: Int64?
+  let modifiedAt: Date?
+}
+
+struct MobileRemoteCorpusCatalog: Codable, Hashable, Sendable {
+  let corpusName: String
+  let todoSequences: [String]
+  let files: [MobileRemoteCorpusFile]
+}
+
+struct MobileRemoteCorpusSearchRequest: Codable, Hashable {
+  let query: String
+  let limit: Int?
+}
+
+struct MobileRemoteCorpusSearchResult: Codable, Hashable, Sendable {
+  let path: String
+  let line: Int
+  let title: String
+  let parent: String
+  let nodeID: String
+  let snippet: String
+}
+
+struct MobileRemoteCorpusSearchResponse: Codable, Hashable {
+  let results: [MobileRemoteCorpusSearchResult]
+}
+
+struct MobileRemoteResolveIDRequest: Codable, Hashable {
+  let id: String
+}
+
+struct MobileRemoteResolvedLocation: Codable, Hashable {
+  let path: String
+  let line: Int
+}
+
+struct MobileRemoteFileDownloadRequest: Codable, Hashable {
+  let path: String
+}
+
+struct MobileRemoteFileDownload: Codable, Hashable {
+  let relativePath: String
+  let modifiedAt: Date?
+  let data: Data
+}
+
+struct MobileRemoteCaptureRequest: Codable, Hashable {
+  let entryID: String
+  let content: String
+}
+
+struct MobileRemoteCaptureAttachmentRequest: Codable, Hashable {
+  let entryID: String
+  let filename: String
+  let data: Data
+}
+
+struct MobileRemoteCaptureResponse: Codable, Hashable {
+  let accepted: Bool
+  let path: String
+  let duplicate: Bool
 }
 
 /// The files a thread edited or linked, mirroring the Mac's Outputs chip.

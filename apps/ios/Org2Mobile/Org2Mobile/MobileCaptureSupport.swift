@@ -57,144 +57,77 @@ struct NoteAttachment: Identifiable, Hashable {
   let data: Data
 }
 
+/// Builds the Org entry for a phone capture. The entry is queued on the
+/// phone and sent to the paired host, which appends it to the corpus mobile
+/// inbox; the phone itself holds no corpus.
 enum MobileCaptureWriter {
   static let appGroupID = "group.org.org2.mobile"
-  static let bookmarkKey = "org2.mobile.corpusBookmark"
-  static let cachedRootPathKey = "org2.mobile.cachedRootPath"
   static let mobileInboxFilename = "mobile-inbox.org"
-  static let legacyMobileInboxFilename = "mobile-inbox.org2"
   static let mobileInboxAssetsDirectory = "mobile-inbox-assets"
 
   static var sharedDefaults: UserDefaults {
     UserDefaults(suiteName: appGroupID) ?? .standard
   }
 
-  static func mobileInboxURL(baseURL: URL, fileManager: FileManager = .default) -> URL {
-    let preferred = baseURL.appendingPathComponent(mobileInboxFilename)
-    if fileManager.fileExists(atPath: preferred.path) {
-      return preferred
-    }
-    let legacy = baseURL.appendingPathComponent(legacyMobileInboxFilename)
-    return fileManager.fileExists(atPath: legacy.path) ? legacy : preferred
-  }
-
-  static func saveSharedCorpusAccess(bookmark: Data, rootURL: URL) {
-    sharedDefaults.set(bookmark, forKey: bookmarkKey)
-    sharedDefaults.set(cacheRootPath(for: rootURL), forKey: cachedRootPathKey)
-    sharedDefaults.synchronize()
-  }
-
-  static func resolveSharedCorpusRoot() throws -> URL? {
-    guard let data = sharedDefaults.data(forKey: bookmarkKey) else { return nil }
-    var stale = false
-    do {
-      return try URL(
-        resolvingBookmarkData: data,
-        options: [.withoutUI],
-        relativeTo: nil,
-        bookmarkDataIsStale: &stale
-      )
-    } catch {
-      stale = true
-      return try URL(
-        resolvingBookmarkData: data,
-        options: [],
-        relativeTo: nil,
-        bookmarkDataIsStale: &stale
-      )
-    }
-  }
-
-  static func appendMobileNote(
-    rootURL: URL,
-    title: String,
-    body: String,
-    attachments: [NoteAttachment] = [],
-    scheduledDate: Date? = nil
-  ) throws -> URL {
-    let hasSecurityAccess = rootURL.startAccessingSecurityScopedResource()
-    defer {
-      if hasSecurityAccess {
-        rootURL.stopAccessingSecurityScopedResource()
-      }
-    }
-
-    let baseURL = try preferredCorpusBaseURL(for: rootURL)
-    let createdAt = ISO8601DateFormatter().string(from: Date())
-    let fileStamp = createdAt
+  static func newEntryID(kind: String, now: Date = Date()) -> String {
+    let fileStamp = ISO8601DateFormatter().string(from: now)
       .replacingOccurrences(of: ":", with: "")
       .replacingOccurrences(of: "-", with: "")
       .replacingOccurrences(of: ".", with: "")
-    let entryID = "\(fileStamp)-note-\(UUID().uuidString.prefix(8))"
+    return "\(fileStamp)-\(kind)-\(UUID().uuidString.prefix(8))"
+  }
+
+  /// A note, or a scheduled TODO when `scheduledDate` is set.
+  static func noteCapture(
+    title: String,
+    body: String,
+    attachments: [NoteAttachment] = [],
+    scheduledDate: Date? = nil,
+    now: Date = Date()
+  ) -> MobileCaptureOutbox.Item {
+    let entryID = newEntryID(kind: "note", now: now)
+    let createdAt = ISO8601DateFormatter().string(from: now)
     let sanitizedTitle = sanitizeProperty(title)
     let noteTitle = sanitizedTitle.isEmpty ? "Phone note" : sanitizedTitle
-    let bodyText = body.trimmingCharacters(in: .whitespacesAndNewlines)
-    let attachmentLinks = attachments
-      .map { "- [[file:\(mobileInboxAssetsDirectory)/\(entryID)/\($0.filename)][\($0.filename)]]" }
-      .joined(separator: "\n")
+    let bodyText = escapeHeadingLines(body.trimmingCharacters(in: .whitespacesAndNewlines))
     let planningLine = scheduledDate.map { "SCHEDULED: \(orgDayTimestamp($0))\n" } ?? ""
     let headingPrefix = scheduledDate == nil ? "*" : "* TODO"
-    let bodySection = bodyText.isEmpty ? "" : """
-
-    \(bodyText)
-    """
-    let attachmentsSection = attachmentLinks.isEmpty ? "" : """
-
-    Attachments:
-    \(attachmentLinks)
-    """
-
+    let bodySection = bodyText.isEmpty ? "" : "\n\(bodyText)\n"
     let content = """
-
     \(headingPrefix) \(noteTitle)
     \(planningLine):PROPERTIES:
     :ID: mobile-\(entryID)
     :KIND: mobile-note
     :STATUS: pending
-    :DAILY_DATE: \(orgDayString(Date()))
+    :DAILY_DATE: \(orgDayString(now))
     :CREATED_AT: \(createdAt)
     :SOURCE: org2-mobile
     :END:
-    \(bodySection)\(attachmentsSection)
+    \(bodySection)\(attachmentsSection(attachments, entryID: entryID))
     """
-
-    return try appendMobileInbox(content, attachments: attachments, entryID: entryID, baseURL: baseURL)
+    return MobileCaptureOutbox.Item(
+      entryID: entryID,
+      title: noteTitle,
+      content: content,
+      attachments: attachments.map { .init(filename: $0.filename, data: $0.data) },
+      createdAt: now
+    )
   }
 
-  static func appendMobileInbox(
-    _ content: String,
-    attachments: [NoteAttachment],
-    entryID: String,
-    baseURL: URL
-  ) throws -> URL {
-    let inboxURL = mobileInboxURL(baseURL: baseURL)
-    if !attachments.isEmpty {
-      let assetsURL = baseURL
-        .appendingPathComponent(mobileInboxAssetsDirectory, isDirectory: true)
-        .appendingPathComponent(entryID, isDirectory: true)
-      try FileManager.default.createDirectory(at: assetsURL, withIntermediateDirectories: true)
-      for attachment in attachments {
-        try attachment.data.write(to: assetsURL.appendingPathComponent(attachment.filename), options: .atomic)
-      }
-    }
+  private static func attachmentsSection(_ attachments: [NoteAttachment], entryID: String) -> String {
+    guard !attachments.isEmpty else { return "" }
+    let links = attachments
+      .map { "- [[file:\(mobileInboxAssetsDirectory)/\(entryID)/\($0.filename)][\($0.filename)]]" }
+      .joined(separator: "\n")
+    return "\nAttachments:\n\(links)\n"
+  }
 
-    if !FileManager.default.fileExists(atPath: inboxURL.path) {
-      let header = """
-      #+TITLE: Celorga Mobile Inbox
-
-      """
-      try header.write(to: inboxURL, atomically: true, encoding: .utf8)
-    }
-
-    let handle = try FileHandle(forWritingTo: inboxURL)
-    defer {
-      try? handle.close()
-    }
-    try handle.seekToEnd()
-    if let data = content.data(using: .utf8) {
-      try handle.write(contentsOf: data)
-    }
-    return inboxURL
+  /// Body text that starts a line with `*` would become a sibling heading in
+  /// the inbox; a leading comma keeps it literal, as in Org source blocks.
+  static func escapeHeadingLines(_ text: String) -> String {
+    text.split(separator: "\n", omittingEmptySubsequences: false)
+      .map { line in line.first == "*" ? ",\(line)" : String(line) }
+      .joined(separator: "\n")
   }
 
   static func orgDayString(_ date: Date) -> String {
@@ -205,20 +138,7 @@ enum MobileCaptureWriter {
     "<\(orgPlanningDayFormatter.string(from: date))>"
   }
 
-  private static func preferredCorpusBaseURL(for rootURL: URL) throws -> URL {
-    try isRegularFile(rootURL) ? rootURL.deletingLastPathComponent() : rootURL
-  }
-
-  private static func isRegularFile(_ url: URL) throws -> Bool {
-    let values = try url.resourceValues(forKeys: [.isRegularFileKey])
-    return values.isRegularFile == true
-  }
-
-  private static func cacheRootPath(for rootURL: URL) -> String {
-    rootURL.standardizedFileURL.path
-  }
-
-  private static func sanitizeProperty(_ value: String) -> String {
+  static func sanitizeProperty(_ value: String) -> String {
     value
       .replacingOccurrences(of: "\n", with: " ")
       .replacingOccurrences(of: "\r", with: " ")
@@ -242,4 +162,48 @@ enum MobileCaptureWriter {
     formatter.dateFormat = "yyyy-MM-dd EEE"
     return formatter
   }()
+}
+
+/// Captures waiting to reach the host. The app and the share extension both
+/// queue here (in the shared app group); the app sends the queue whenever it
+/// can reach the host, and an entry leaves the queue only after the host has
+/// stored it.
+enum MobileCaptureOutbox {
+  struct Attachment: Codable, Hashable, Sendable {
+    let filename: String
+    let data: Data
+  }
+
+  struct Item: Codable, Hashable, Identifiable, Sendable {
+    let entryID: String
+    let title: String
+    let content: String
+    let attachments: [Attachment]
+    let createdAt: Date
+    var id: String { entryID }
+  }
+
+  static var directory: URL {
+    let base = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: MobileCaptureWriter.appGroupID)
+      ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    return base.appendingPathComponent("CaptureOutbox", isDirectory: true)
+  }
+
+  static func enqueue(_ item: Item, in directory: URL = directory) throws {
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let data = try JSONEncoder().encode(item)
+    try data.write(to: directory.appendingPathComponent("\(item.entryID).json"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+  }
+
+  static func pending(in directory: URL = directory) -> [Item] {
+    let urls = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+    return urls
+      .filter { $0.pathExtension == "json" }
+      .compactMap { try? JSONDecoder().decode(Item.self, from: Data(contentsOf: $0)) }
+      .sorted { $0.createdAt < $1.createdAt }
+  }
+
+  static func remove(entryID: String, in directory: URL = directory) {
+    try? FileManager.default.removeItem(at: directory.appendingPathComponent("\(entryID).json"))
+  }
 }

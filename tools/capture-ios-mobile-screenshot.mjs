@@ -65,6 +65,14 @@ function main() {
   if (!existsSync(demoCorpus)) {
     throw new Error(`Demo corpus not found: ${demoCorpus}`);
   }
+  // The iOS app no longer reads a corpus folder on the phone; Approvals come
+  // from a paired host. Until a host fixture exists for the simulator, this
+  // screenshot has to be captured from a simulator paired with a demo host.
+  throw new Error(
+    "The iOS app reads Approvals from a paired host, not a local corpus. " +
+    "Pair a simulator with a host serving examples/macos-workspace-demo and capture " +
+    "docs/site/assets/screenshots/ios-mobile-approvals.png with `xcrun simctl io booted screenshot`."
+  );
 
   const device = screenshotIPhone();
   if (device.state !== "Booted") {

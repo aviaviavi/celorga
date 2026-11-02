@@ -158,27 +158,6 @@ struct DocumentRegression {
     check(!oversized.hasCachedDocument, "Oversized notes must not occupy the render cache")
     renderer.releaseResources()
 
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let destination = directory.appendingPathComponent("cache.json")
-    let writer = MobileCorpusCacheWriter()
-    await writer.save(OffMainCacheValue(value: "new"), to: destination, generation: 2)
-    await writer.save(["value": "old"], to: destination, generation: 1)
-    let saved = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: destination))
-    check(saved["value"] == "new", "A delayed save overwrote a newer cache")
-    await writer.save(["value": "failed"], to: destination.appendingPathComponent("unwritable"), generation: 3)
-    await writer.save(["value": "recovered"], to: destination, generation: 4)
-    let savedAgain = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: destination))
-    check(savedAgain["value"] == "recovered", "Cache saving did not recover after an I/O error")
-    print("Mobile renderer reuse, invalidation, cancellation, memory bounds, idle release, and ordered cache persistence passed")
-  }
-}
-
-private struct OffMainCacheValue: Encodable, Sendable {
-  let value: String
-  func encode(to encoder: Encoder) throws {
-    precondition(!Thread.isMainThread, "Corpus-cache encoding must leave the UI thread")
-    var container = encoder.singleValueContainer()
-    try container.encode(["value": value])
+    print("Mobile renderer reuse, invalidation, cancellation, memory bounds, and idle release passed")
   }
 }

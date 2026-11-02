@@ -659,7 +659,7 @@ public enum MobileRemoteFilePreviewError: LocalizedError, Equatable, Sendable {
     case .invalidPath:
       "That citation is outside the Celorga corpora available to this workspace."
     case .unsupportedFile:
-      "Mobile preview is available for Org, Markdown, and CSV files."
+      "Mobile preview is available for Org, Markdown, and other plain-text files."
     case .unavailable:
       "That cited file is no longer available on the Mac."
     }

@@ -58,7 +58,7 @@ It is the Org experience for the times and people that Emacs doesn't reach: your
 
 ** Your Org files on your phone
 
-The iPhone app reads the same synced folder. Capture a note, check the agenda, search everything, read rendered entries, and approve agent work from anywhere. Sync with iCloud, Git, Syncthing, or anything else that syncs a folder.
+The iPhone app reads your notes from your Mac or Celorga server over Tailscale, so there is no folder to sync to the phone. Capture a note, check the agenda, search everything, read rendered entries, and approve agent work from anywhere. Download the files you want for reading offline.
 
 ** Agents that work on your Org files
 

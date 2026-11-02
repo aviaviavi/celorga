@@ -678,6 +678,10 @@ public final class MobileRemoteCoordinator: ObservableObject {
       }
     }
 
+    if let response = await handleCorpusAccess(request, path: path, store: store) {
+      return response
+    }
+
     if request.method == "POST", path == "/v1/files/image" {
       guard let payload = try? request.decode(MobileRemoteImageRequest.self) else {
         return .error("The image reference could not be read.", statusCode: 400)
@@ -1800,4 +1804,76 @@ struct AudioApprovalPromptTarget: Hashable, Sendable {
   let fingerprint: String
 
   var key: String { "\(runID)|\(approvalID)|\(fingerprint)" }
+}
+
+
+extension MobileRemoteCoordinator {
+  /// Corpus reads and captures for a phone that keeps no copy of the corpus.
+  @MainActor
+  func handleCorpusAccess(
+    _ request: MobileRemoteHTTPRequest,
+    path: String,
+    store: WorkspaceStore
+  ) async -> MobileRemoteHTTPResponse? {
+    switch (request.method, path) {
+    case ("GET", "/v1/corpus/files"):
+      do {
+        return await backgroundWork.jsonResponse(try await store.mobileRemoteCorpusCatalog())
+      } catch {
+        return .error(error.localizedDescription, statusCode: 503)
+      }
+    case ("POST", "/v1/corpus/search"):
+      guard let payload = try? request.decode(MobileRemoteCorpusSearchRequest.self) else {
+        return .error("The search could not be read.", statusCode: 400)
+      }
+      do {
+        return await backgroundWork.jsonResponse(
+          try await store.mobileRemoteCorpusSearch(query: payload.query, limit: payload.limit)
+        )
+      } catch {
+        return .error(error.localizedDescription, statusCode: 503)
+      }
+    case ("POST", "/v1/corpus/resolve-id"):
+      guard let payload = try? request.decode(MobileRemoteResolveIDRequest.self) else {
+        return .error("The entry ID could not be read.", statusCode: 400)
+      }
+      do {
+        return .json(try await store.mobileRemoteResolveID(payload.id))
+      } catch {
+        return .error("This entry ID is not in the host corpus.", statusCode: 404)
+      }
+    case ("POST", "/v1/files/download"):
+      guard let payload = try? request.decode(MobileRemoteFileDownloadRequest.self) else {
+        return .error("The file reference could not be read.", statusCode: 400)
+      }
+      do {
+        return await backgroundWork.jsonResponse(try await store.mobileRemoteFileDownload(path: payload.path))
+      } catch {
+        return .error(error.localizedDescription, statusCode: 404)
+      }
+    case ("POST", "/v1/capture/attachment"):
+      guard let payload = try? request.decode(MobileRemoteCaptureAttachmentRequest.self) else {
+        return .error("The note attachment could not be read.", statusCode: 400)
+      }
+      do {
+        return .json(try await store.mobileRemoteCaptureAttachment(payload), statusCode: 201)
+      } catch {
+        return .error(error.localizedDescription, statusCode: 422)
+      }
+    case ("POST", "/v1/capture"):
+      guard let payload = try? request.decode(MobileRemoteCaptureRequest.self) else {
+        return .error("The captured note could not be read.", statusCode: 400)
+      }
+      do {
+        let response = try await store.mobileRemoteCapture(payload)
+        return .json(response, statusCode: response.duplicate ? 200 : 201)
+      } catch let error as MobileCaptureError {
+        return .error(error.localizedDescription, statusCode: 422)
+      } catch {
+        return .error(error.localizedDescription, statusCode: 503)
+      }
+    default:
+      return nil
+    }
+  }
 }

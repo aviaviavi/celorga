@@ -4,6 +4,7 @@ import SwiftUI
 
 extension Notification.Name {
   static let org2OpenMobileSidebar = Notification.Name("org2.openMobileSidebar")
+  static let org2OpenMobileSettings = Notification.Name("org2.openMobileSettings")
   static let org2NotificationDestinationPending = Notification.Name("org2.notificationDestinationPending")
   static let org2OpenRemoteThread = Notification.Name("org2.openRemoteThread")
   static let org2RemotePushTokenUpdated = Notification.Name("org2.remotePushTokenUpdated")
@@ -29,6 +30,8 @@ final class Org2MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifi
       Self.scheduleReplyRefresh()
       let operation = Task { @MainActor in
         let store = MobileRemoteStore()
+        // Notes and shared items queued on the phone reach the host here too.
+        await CorpusStore.sendPendingCaptures(remote: store)
         let succeeded = await store.refreshReplyNotificationsInBackground()
         refreshTask.setTaskCompleted(success: succeeded)
       }
@@ -132,7 +135,7 @@ final class Org2MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifi
 @main
 struct Org2MobileApp: App {
   @UIApplicationDelegateAdaptor(Org2MobileAppDelegate.self) private var appDelegate
-  @StateObject private var store = CorpusStore()
+  @StateObject private var store: CorpusStore
   @StateObject private var mobileRemote: MobileRemoteStore
   @StateObject private var audioApprovals: AudioApprovalController
 
@@ -144,6 +147,7 @@ struct Org2MobileApp: App {
     let audioApprovals = AudioApprovalController()
     audioApprovals.attach(remote: mobileRemote)
     _mobileRemote = StateObject(wrappedValue: mobileRemote)
+    _store = StateObject(wrappedValue: CorpusStore(remote: mobileRemote))
     _audioApprovals = StateObject(wrappedValue: audioApprovals)
   }
 
@@ -177,7 +181,7 @@ private struct StartupHostView: View {
       hasStartedRestore = true
 
       DispatchQueue.main.async {
-        store.startRestoringCorpus()
+        store.start()
         mobileRemote.setAppActive(scenePhase == .active)
         isReady = true
       }
@@ -185,6 +189,8 @@ private struct StartupHostView: View {
     .onChange(of: scenePhase) { _, phase in
       if phase == .active {
         store.clearNotificationBadge()
+        // The share extension queues captures while Celorga is closed.
+        Task { await store.sendPendingCaptures() }
       }
       mobileRemote.setAppActive(phase == .active)
     }

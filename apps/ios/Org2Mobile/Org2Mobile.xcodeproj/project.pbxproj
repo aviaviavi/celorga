@@ -20,7 +20,6 @@
 
 
 /* Begin PBXBuildFile section */
-		0B2001042C20000000000001 /* MobileCorpusCacheWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B2002042C20000000000001 /* MobileCorpusCacheWriter.swift */; };
 		0B2001032C20000000000001 /* Org2MobileDocument.js in Resources */ = {isa = PBXBuildFile; fileRef = 0B2002032C20000000000001 /* Org2MobileDocument.js */; };
 		0B2001022C20000000000001 /* MobileDocumentRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B2002022C20000000000001 /* MobileDocumentRuntime.swift */; };
 		0B2001012C20000000000001 /* MobileCorpusSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B2002012C20000000000001 /* MobileCorpusSearch.swift */; };
@@ -28,7 +27,6 @@
 		0A1001022C20000000000001 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002022C20000000000001 /* ContentView.swift */; };
 		0A1001032C20000000000001 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002032C20000000000001 /* Models.swift */; };
 		CE10A0012C20000000000001 /* CelorgaNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE10A0022C20000000000001 /* CelorgaNames.swift */; };
-		0A1001042C20000000000001 /* OrgParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002042C20000000000001 /* OrgParser.swift */; };
 		0A1001052C20000000000001 /* CorpusStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002052C20000000000001 /* CorpusStore.swift */; };
 		0A1001062C20000000000001 /* DocumentPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002062C20000000000001 /* DocumentPicker.swift */; };
 		0A1001072C20000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0A1002072C20000000000001 /* Assets.xcassets */; };
@@ -76,7 +74,6 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		0B2002042C20000000000001 /* MobileCorpusCacheWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileCorpusCacheWriter.swift; sourceTree = "<group>"; };
 		0B2002032C20000000000001 /* Org2MobileDocument.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Org2MobileDocument.js; sourceTree = "<group>"; };
 		0B2002022C20000000000001 /* MobileDocumentRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileDocumentRuntime.swift; sourceTree = "<group>"; };
 		0B2002012C20000000000001 /* MobileCorpusSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileCorpusSearch.swift; sourceTree = "<group>"; };
@@ -85,7 +82,6 @@
 		0A1002022C20000000000001 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		0A1002032C20000000000001 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		CE10A0022C20000000000001 /* CelorgaNames.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CelorgaNames.swift; sourceTree = "<group>"; };
-		0A1002042C20000000000001 /* OrgParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrgParser.swift; sourceTree = "<group>"; };
 		0A1002052C20000000000001 /* CorpusStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorpusStore.swift; sourceTree = "<group>"; };
 		0A1002062C20000000000001 /* DocumentPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentPicker.swift; sourceTree = "<group>"; };
 		0A1002072C20000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -154,7 +150,6 @@
 			children = (
 				0B2002012C20000000000001 /* MobileCorpusSearch.swift */,
 				0B2002022C20000000000001 /* MobileDocumentRuntime.swift */,
-				0B2002042C20000000000001 /* MobileCorpusCacheWriter.swift */,
 				0B2002032C20000000000001 /* Org2MobileDocument.js */,
 				0A1002012C20000000000001 /* Org2MobileApp.swift */,
 				0A1002022C20000000000001 /* ContentView.swift */,
@@ -173,7 +168,6 @@
 				0A1002122C20000000000001 /* MobileRemoteViews.swift */,
 				0A1002132C20000000000001 /* MobileVoiceTranscriber.swift */,
 				0A1002142C20000000000001 /* MobileCallTranscriptImport.swift */,
-				0A1002042C20000000000001 /* OrgParser.swift */,
 				0A1002052C20000000000001 /* CorpusStore.swift */,
 				0A1002062C20000000000001 /* DocumentPicker.swift */,
 				0A1002082C20000000000001 /* LaunchScreen.storyboard */,
@@ -298,7 +292,6 @@
 			files = (
 				0B2001012C20000000000001 /* MobileCorpusSearch.swift in Sources */,
 				0B2001022C20000000000001 /* MobileDocumentRuntime.swift in Sources */,
-				0B2001042C20000000000001 /* MobileCorpusCacheWriter.swift in Sources */,
 				0A1001012C20000000000001 /* Org2MobileApp.swift in Sources */,
 				0A1001022C20000000000001 /* ContentView.swift in Sources */,
 				0A1001032C20000000000001 /* Models.swift in Sources */,
@@ -316,7 +309,6 @@
 				0A1001102C20000000000001 /* MobileRemoteViews.swift in Sources */,
 				0A1001112C20000000000001 /* MobileVoiceTranscriber.swift in Sources */,
 				0A1001122C20000000000001 /* MobileCallTranscriptImport.swift in Sources */,
-				0A1001042C20000000000001 /* OrgParser.swift in Sources */,
 				0A1001052C20000000000001 /* CorpusStore.swift in Sources */,
 				0A1001062C20000000000001 /* DocumentPicker.swift in Sources */,
 			);

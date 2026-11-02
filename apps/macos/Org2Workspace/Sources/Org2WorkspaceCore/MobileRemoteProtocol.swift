@@ -43,6 +43,10 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
   /// `POST /v1/threads/ID/configuration` accepts `setting: "destination"`,
   /// which moves a new, empty chat to another agent.
   public let supportsThreadDestinationChange: Bool?
+  /// The host serves the corpus to a phone that keeps no copy of it:
+  /// `GET /v1/corpus/files`, `POST /v1/corpus/search`, `POST /v1/corpus/resolve-id`,
+  /// `POST /v1/files/download`, and `POST /v1/capture` (+ `/v1/capture/attachment`).
+  public let supportsCorpusAccess: Bool?
 
   public init(
     protocolVersion: Int = MobileRemoteProtocol.version,
@@ -59,8 +63,10 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
     supportsThreadSharing: Bool? = true,
     supportsThreadOutputs: Bool? = true,
     supportsSourceCredentials: Bool? = true,
-    supportsThreadDestinationChange: Bool? = true
+    supportsThreadDestinationChange: Bool? = true,
+    supportsCorpusAccess: Bool? = true
   ) {
+    self.supportsCorpusAccess = supportsCorpusAccess
     self.supportsThreadDestinationChange = supportsThreadDestinationChange
     self.supportsSourceCredentials = supportsSourceCredentials
     self.supportsThreadOutputs = supportsThreadOutputs
@@ -1236,4 +1242,153 @@ public struct MobileRemoteAudioApprovalProbeRequest: Codable, Sendable {
   public let approvalID: String
   public let fingerprint: String
   public let deviceID: UUID?
+}
+
+
+// MARK: Corpus access for a phone without a local corpus
+
+/// One readable file in the host corpus, listed for the phone's Files tab.
+public struct MobileRemoteCorpusFile: Codable, Hashable, Sendable {
+  public let path: String
+  public let byteCount: Int64?
+  public let modifiedAt: Date?
+
+  public init(path: String, byteCount: Int64?, modifiedAt: Date?) {
+    self.path = path
+    self.byteCount = byteCount
+    self.modifiedAt = modifiedAt
+  }
+}
+
+public struct MobileRemoteCorpusCatalog: Codable, Hashable, Sendable {
+  public let corpusName: String
+  /// TODO keyword sequences from the corpus configuration, so the phone's
+  /// bundled renderer shows the same states as the host.
+  public let todoSequences: [String]
+  public let files: [MobileRemoteCorpusFile]
+
+  public init(corpusName: String, todoSequences: [String], files: [MobileRemoteCorpusFile]) {
+    self.corpusName = corpusName
+    self.todoSequences = todoSequences
+    self.files = files
+  }
+}
+
+public struct MobileRemoteCorpusSearchRequest: Codable, Hashable, Sendable {
+  public let query: String
+  public let limit: Int?
+
+  public init(query: String, limit: Int? = nil) {
+    self.query = query
+    self.limit = limit
+  }
+}
+
+/// A search hit shaped like the phone's own entry model: the enclosing
+/// heading (or the file when the match is above every heading).
+public struct MobileRemoteCorpusSearchResult: Codable, Hashable, Sendable {
+  public let path: String
+  /// The enclosing heading's line, or 0 for a whole-file match.
+  public let line: Int
+  public let title: String
+  public let parent: String
+  public let nodeID: String
+  public let snippet: String
+
+  public init(path: String, line: Int, title: String, parent: String, nodeID: String, snippet: String) {
+    self.path = path
+    self.line = line
+    self.title = title
+    self.parent = parent
+    self.nodeID = nodeID
+    self.snippet = snippet
+  }
+}
+
+public struct MobileRemoteCorpusSearchResponse: Codable, Hashable, Sendable {
+  public let results: [MobileRemoteCorpusSearchResult]
+
+  public init(results: [MobileRemoteCorpusSearchResult]) {
+    self.results = results
+  }
+}
+
+public struct MobileRemoteResolveIDRequest: Codable, Hashable, Sendable {
+  public let id: String
+
+  public init(id: String) {
+    self.id = id
+  }
+}
+
+public struct MobileRemoteResolvedLocation: Codable, Hashable, Sendable {
+  public let path: String
+  public let line: Int
+
+  public init(path: String, line: Int) {
+    self.path = path
+    self.line = line
+  }
+}
+
+public struct MobileRemoteFileDownloadRequest: Codable, Hashable, Sendable {
+  public let path: String
+
+  public init(path: String) {
+    self.path = path
+  }
+}
+
+/// File bytes travel base64-encoded through JSON's default `Data` strategy.
+public struct MobileRemoteFileDownload: Codable, Hashable, Sendable {
+  public let relativePath: String
+  public let modifiedAt: Date?
+  public let data: Data
+
+  public init(relativePath: String, modifiedAt: Date?, data: Data) {
+    self.relativePath = relativePath
+    self.modifiedAt = modifiedAt
+    self.data = data
+  }
+}
+
+/// One Org entry captured on the phone. The phone writes the entry text
+/// (heading, planning line, and a `:ID: mobile-ENTRY_ID` property) and the
+/// host appends it to the corpus mobile inbox once, however often it is sent.
+public struct MobileRemoteCaptureRequest: Codable, Hashable, Sendable {
+  public let entryID: String
+  public let content: String
+
+  public init(entryID: String, content: String) {
+    self.entryID = entryID
+    self.content = content
+  }
+}
+
+/// A file attached to a captured entry, stored under
+/// `mobile-inbox-assets/ENTRY_ID/FILENAME`. Sent before its entry.
+public struct MobileRemoteCaptureAttachmentRequest: Codable, Hashable, Sendable {
+  public let entryID: String
+  public let filename: String
+  public let data: Data
+
+  public init(entryID: String, filename: String, data: Data) {
+    self.entryID = entryID
+    self.filename = filename
+    self.data = data
+  }
+}
+
+public struct MobileRemoteCaptureResponse: Codable, Hashable, Sendable {
+  public let accepted: Bool
+  /// Corpus-relative path of the file that holds the entry.
+  public let path: String
+  /// The entry was already in the inbox, so nothing was appended.
+  public let duplicate: Bool
+
+  public init(accepted: Bool, path: String, duplicate: Bool) {
+    self.accepted = accepted
+    self.path = path
+    self.duplicate = duplicate
+  }
 }

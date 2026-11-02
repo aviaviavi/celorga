@@ -28,6 +28,14 @@ const mobileCallTranscriptImport = readFileSync(
   resolve("apps/ios/Org2Mobile/Org2Mobile/MobileCallTranscriptImport.swift"),
   "utf8",
 );
+const shareExtension = readFileSync(
+  resolve("apps/ios/Org2Mobile/Org2ShareExtension/ShareViewController.swift"),
+  "utf8",
+);
+const appSource = readFileSync(
+  resolve("apps/ios/Org2Mobile/Org2Mobile/Org2MobileApp.swift"),
+  "utf8",
+);
 const remoteCoordinator = readFileSync(
   resolve("apps/macos/Org2Workspace/Sources/Org2WorkspaceCore/MobileRemoteCoordinator.swift"),
   "utf8",
@@ -243,18 +251,28 @@ assert.doesNotMatch(remoteCoordinator, /title: "Org2 reply notifications"/);
 assert.match(remoteStore, /serverName = "Celorga on Mac"/);
 assert.match(remoteStore, /storedServerName == "Org2 on Mac" \|\| storedServerName == "OpenOrg on Mac"/);
 assert.match(mobileCaptureSupport, /mobileInboxFilename = "mobile-inbox\.org"/);
-assert.match(mobileCaptureSupport, /legacyMobileInboxFilename = "mobile-inbox\.org2"/);
-assert.match(
-  mobileCaptureSupport,
-  /fileManager\.fileExists\(atPath: legacy\.path\) \? legacy : preferred/,
-  "iOS capture should keep appending to an existing legacy mobile-inbox.org2 file",
-);
-assert.match(contentView, /Saved to mobile-inbox\.org for safe desktop sync\./);
+assert.match(contentView, /Notes go to mobile-inbox\.org on your host\./);
+
+// The phone keeps no corpus: no folder picker, no local parser, and captures
+// wait in the app-group outbox until the host stores them.
+assert.doesNotMatch(contentView, /CorpusFolderPicker|isDocumentPickerPresented/);
+assert.doesNotMatch(corpusStore, /startAccessingSecurityScopedResource|OrgParser|corpusBookmark"\)?\s*\?\?/);
+assert.match(corpusStore, /removeLegacyLocalCorpusState/, "Old corpus bookmarks must be forgotten");
+assert.match(corpusStore, /MobileCaptureOutbox\.enqueue\(item\)/);
+assert.match(corpusStore, /MobileCaptureOutbox\.remove\(entryID: item\.entryID\)/);
+assert.match(corpusStore, /return \(sent, error\.localizedDescription\)/, "A failed send keeps later notes queued in order");
+assert.match(mobileCaptureSupport, /containerURL\(forSecurityApplicationGroupIdentifier: MobileCaptureWriter\.appGroupID\)/);
+assert.match(shareExtension, /MobileCaptureOutbox\.enqueue\(capture\)/);
+assert.doesNotMatch(shareExtension, /resolveSharedCorpusRoot|appendMobileNote\(/);
+assert.match(remoteStore, /"\/v1\/capture\/attachment"/);
+assert.match(remoteStore, /"\/v1\/corpus\/files"/);
+assert.match(remoteStore, /"\/v1\/corpus\/search"/);
+assert.match(remoteCoordinator, /case \("POST", "\/v1\/capture"\)/);
+assert.match(appSource, /CorpusStore\.sendPendingCaptures\(remote: store\)/, "Background refresh sends queued captures");
 
 console.log("iOS mobile navigation tests passed");
 
-assert.match(remoteViews, /resultsIndexID == store.searchIndex.id/, "Results must belong to the current corpus index before they can be opened");
-assert.match(remoteViews, /ForEach\(hasCurrentResults \? results : \[\]\)/);
+assert.match(remoteViews, /ForEach\(hasCurrentResults \? results : \[\]\)/, "Results must belong to the current query before they can be opened");
 
 // The thread outputs chip mirrors the Mac AI chat header chip.
 const threadView = remoteViews.slice(
@@ -267,5 +285,5 @@ assert.match(threadView, /MobileRemoteTranscriptPage\.reveal\(messageID, in: mes
 assert.match(remoteStore, /guard status\?\.supportsThreadOutputs == true else \{ return nil \}/, "Older hosts without outputs must not be queried");
 assert.match(remoteStore, /"\/v1\/threads\/\\\(threadID\.uuidString\)\/outputs"/);
 assert.match(remoteCoordinator, /components\[3\] == "outputs"/);
-assert.match(remoteViews, /\.quickLookPreview\(\$quickLookURL\)/, "Published PDFs open from the synced copy");
+assert.match(remoteViews, /\.quickLookPreview\(\$quickLookURL\)/, "Published PDFs open in Quick Look after downloading from the host");
 console.log("iOS thread outputs tests passed");

@@ -1337,6 +1337,78 @@ final class MobileRemoteStore: ObservableObject {
     )
   }
 
+  // MARK: Host corpus
+
+  /// The host serves the corpus to this phone. Older hosts only preview
+  /// cited files and images.
+  var supportsCorpusAccess: Bool {
+    status?.supportsCorpusAccess == true
+  }
+
+  func corpusCatalog() async throws -> MobileRemoteCorpusCatalog {
+    try await pairedClient().get("/v1/corpus/files", timeout: 45, as: MobileRemoteCorpusCatalog.self)
+  }
+
+  func searchCorpus(_ query: String, limit: Int = 60) async throws -> [MobileRemoteCorpusSearchResult] {
+    try await pairedClient().post(
+      "/v1/corpus/search",
+      payload: MobileRemoteCorpusSearchRequest(query: query, limit: limit),
+      timeout: 30,
+      as: MobileRemoteCorpusSearchResponse.self
+    ).results
+  }
+
+  func resolveEntryID(_ id: String) async throws -> MobileRemoteResolvedLocation {
+    try await pairedClient().post(
+      "/v1/corpus/resolve-id",
+      payload: MobileRemoteResolveIDRequest(id: id),
+      timeout: 30,
+      as: MobileRemoteResolvedLocation.self
+    )
+  }
+
+  func downloadFile(path: String) async throws -> MobileRemoteFileDownload {
+    try await pairedClient().post(
+      "/v1/files/download",
+      payload: MobileRemoteFileDownloadRequest(path: path),
+      timeout: 90,
+      as: MobileRemoteFileDownload.self
+    )
+  }
+
+  func filePreview(path: String, line: Int?, timeout: TimeInterval) async throws -> MobileRemoteFilePreview {
+    try await pairedClient().post(
+      "/v1/files/preview",
+      payload: MobileRemoteFilePreviewRequest(path: path, line: line),
+      timeout: timeout,
+      as: MobileRemoteFilePreview.self
+    )
+  }
+
+  /// Sends one queued capture: its attachments first, then the entry. Both
+  /// are idempotent on the host, so a retry after a dropped reply is safe.
+  func uploadCapture(_ capture: MobileCaptureOutbox.Item) async throws -> MobileRemoteCaptureResponse {
+    let client = try pairedClient()
+    for attachment in capture.attachments {
+      _ = try await client.post(
+        "/v1/capture/attachment",
+        payload: MobileRemoteCaptureAttachmentRequest(
+          entryID: capture.entryID,
+          filename: attachment.filename,
+          data: attachment.data
+        ),
+        timeout: 90,
+        as: MobileRemoteCaptureResponse.self
+      )
+    }
+    return try await client.post(
+      "/v1/capture",
+      payload: MobileRemoteCaptureRequest(entryID: capture.entryID, content: capture.content),
+      timeout: 45,
+      as: MobileRemoteCaptureResponse.self
+    )
+  }
+
   func imageData(path: String) async throws -> Data {
     try await pairedClient().post(
       "/v1/files/image",

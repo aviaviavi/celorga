@@ -1930,7 +1930,7 @@ extension WorkspaceStore {
       for: rawPath,
       mountedRootPaths: authorization.mountedRootPaths
     )
-    guard ["org2", "org", "md", "csv"].contains(target.url.pathExtension.lowercased()) else {
+    guard mobileRemoteTextExtensions.contains(target.url.pathExtension.lowercased()) else {
       throw MobileRemoteFilePreviewError.unsupportedFile
     }
     didRead?(Thread.isMainThread)
@@ -1976,7 +1976,7 @@ extension WorkspaceStore {
     )
   }
 
-  nonisolated private static func mobileRemotePreviewTarget(
+  nonisolated static func mobileRemotePreviewTarget(
     for rawPath: String,
     mountedRootPaths: [String]
   ) throws -> MobileRemoteFilePreviewTarget {

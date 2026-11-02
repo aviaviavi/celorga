@@ -30,16 +30,6 @@ enum OrgTodoStatus: String, CaseIterable {
   }
 }
 
-struct OrgDocument: Identifiable, Hashable {
-  let id: String
-  let url: URL
-  let relativePath: String
-  let title: String
-  let properties: [String: String]
-  let body: String
-  let nodes: [OrgNode]
-}
-
 struct CorpusFile: Identifiable, Hashable, Codable, Sendable {
   let relativePath: String
   let modifiedAt: Date?
@@ -55,26 +45,6 @@ struct CorpusFilePreview: Hashable, Sendable {
   let startLine: Int
   let highlightedLine: Int?
   let content: String
-}
-
-struct OrgNode: Identifiable, Hashable {
-  let id: String
-  let title: String
-  let todo: String?
-  let level: Int
-  let line: Int
-  let tags: [String]
-  let properties: [String: String]
-  let planning: [OrgPlanningDate]
-  let body: String
-  let documentPath: String
-}
-
-struct OrgPlanningDate: Identifiable, Hashable {
-  let kind: OrgPlanningKind
-  let date: String
-
-  var id: String { "\(kind.rawValue):\(date)" }
 }
 
 enum OrgPlanningKind: String, Hashable, Codable {

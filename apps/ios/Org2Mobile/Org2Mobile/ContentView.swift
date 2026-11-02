@@ -7,11 +7,6 @@ struct ContentView: View {
 
   var body: some View {
     WorkspaceTabs()
-    .sheet(isPresented: $store.isDocumentPickerPresented) {
-      CorpusFolderPicker { url in
-        Task { await store.selectCorpus(url) }
-      }
-    }
     .alert("Celorga", isPresented: Binding(
       get: { store.errorMessage != nil || remote.errorMessage != nil },
       set: { _ in
@@ -37,41 +32,24 @@ struct MobileSidebarToolbarButton: View {
   }
 }
 
-private struct EmptyCorpusView: View {
-  @EnvironmentObject private var store: CorpusStore
+/// Shown where the host's files or agenda belong while no host is paired.
+/// The phone keeps no corpus of its own.
+struct ConnectHostView: View {
+  var title = "Connect a Host"
+  var message = "Celorga reads your notes from your Mac or Celorga server. Nothing is stored on this phone unless you download it."
 
   var body: some View {
-    NavigationStack {
-      VStack(spacing: 24) {
-        Image(systemName: "tray.full")
-          .font(.system(size: 56))
-          .foregroundStyle(.secondary)
-
-        VStack(spacing: 8) {
-          Text("Celorga")
-            .font(.largeTitle.weight(.semibold))
-          Text("Select a synced corpus folder from Files.")
-            .font(.body)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-        }
-
-        Button {
-          store.isDocumentPickerPresented = true
-        } label: {
-          Label("Select Corpus", systemImage: "folder")
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
+    ContentUnavailableView {
+      Label(title, systemImage: "desktopcomputer.and.iphone")
+    } description: {
+      Text(message)
+    } actions: {
+      Button {
+        NotificationCenter.default.post(name: .org2OpenMobileSettings, object: nil)
+      } label: {
+        Text("Connect a Host")
       }
-      .padding(24)
-      .navigationTitle("Celorga")
-      .toolbar {
-        ToolbarItem(placement: .topBarLeading) {
-          MobileSidebarToolbarButton()
-        }
-      }
+      .buttonStyle(.borderedProminent)
     }
   }
 }
@@ -157,6 +135,13 @@ private struct WorkspaceTabs: View {
     .onReceive(NotificationCenter.default.publisher(for: .org2OpenMobileSidebar)) { _ in
       isSidebarPresented = true
     }
+    .onReceive(NotificationCenter.default.publisher(for: .org2OpenMobileSettings)) { _ in
+      route = .settings
+      closeSidebar()
+    }
+    .onChange(of: remote.workspaceAgenda) { _, agenda in
+      store.scheduleDueTodayNotification(from: agenda)
+    }
     .onReceive(NotificationCenter.default.publisher(for: .org2OpenRemoteThread)) { notification in
       guard let rawThreadID = notification.userInfo?["threadID"] as? String,
             let threadID = UUID(uuidString: rawThreadID)
@@ -223,7 +208,6 @@ private struct WorkspaceTabs: View {
     let inbox = MobileNotificationInbox(defaults: .standard)
     guard let pending = inbox.pending() else { return }
     closeSidebar()
-    store.isDocumentPickerPresented = false
     switch pending.destination {
     case .thread(let threadID):
       // Keep the tap while pairing is unavailable. Thread loading itself owns
@@ -266,27 +250,17 @@ private enum MobileWorkspaceRoute: Equatable {
 }
 
 private struct NewNoteTabView: View {
-  @EnvironmentObject private var store: CorpusStore
-
   var body: some View {
-    if store.rootURL == nil {
-      EmptyCorpusView()
-    } else {
-      NewNoteView()
-    }
+    // Notes queue on the phone until a host stores them, so capture works
+    // before pairing and without a connection.
+    NewNoteView()
   }
 }
 
 private struct FilesTabView: View {
-  @EnvironmentObject private var store: CorpusStore
-
   var body: some View {
-    if store.rootURL == nil {
-      EmptyCorpusView()
-    } else {
-      NavigationStack {
-        CorpusFileBrowserView()
-      }
+    NavigationStack {
+      CorpusFileBrowserView()
     }
   }
 }
@@ -320,7 +294,7 @@ private struct AgendaView: View {
   @EnvironmentObject private var remote: MobileRemoteStore
 
   private var entries: [AgendaEntry] {
-    remote.isPaired ? remote.workspaceAgenda : store.agenda
+    remote.isPaired ? remote.workspaceAgenda : []
   }
 
   private var overdue: [AgendaEntry] {
@@ -343,7 +317,9 @@ private struct AgendaView: View {
         AgendaSection(title: "Upcoming", entries: upcoming)
       }
       .overlay {
-        if entries.isEmpty && isLoading {
+        if !remote.isPaired {
+          ConnectHostView(message: "Your agenda comes from the TODOs in your host's corpus.")
+        } else if entries.isEmpty && isLoading {
           LoadingCorpusView()
         } else if entries.isEmpty, let connectionError = remoteWorkspaceError {
           ContentUnavailableView(
@@ -379,31 +355,24 @@ private struct AgendaView: View {
       .task {
         if remote.isPaired {
           await remote.refreshWorkspace(reportsErrors: false)
-        } else {
-          store.prepareCorpusViews()
         }
       }
     }
   }
 
   private var isLoading: Bool {
-    remote.isPaired
-      ? remote.isRefreshingWorkspace
-      : (store.isPreparingCorpus || store.isLoading)
+    remote.isPaired && remote.isRefreshingWorkspace
   }
 
   private var remoteWorkspaceError: String? {
     guard remote.isPaired, remote.workspaceUpdatedAt == nil else { return nil }
     return remote.workspaceConnectionError
-      ?? "Connect to the paired Mac to load the canonical agenda."
+      ?? "Connect to your host to load the agenda."
   }
 
   private func refresh() async {
-    if remote.isPaired {
-      await remote.refreshWorkspace()
-    } else {
-      await store.refresh()
-    }
+    guard remote.isPaired else { return }
+    await remote.refreshWorkspace()
   }
 }
 
@@ -447,11 +416,7 @@ private struct AgendaSection: View {
   }
 
   private func setStatus(_ status: OrgTodoStatus, for entry: AgendaEntry) async {
-    if remote.isPaired {
-      await remote.setAgendaStatus(status, for: entry)
-    } else {
-      await store.setTodoStatus(status, for: entry)
-    }
+    await remote.setAgendaStatus(status, for: entry)
   }
 }
 
@@ -466,13 +431,7 @@ private struct AgendaRow: View {
         Menu {
           ForEach(statusChoices, id: \.rawValue) { status in
             Button {
-              Task {
-                if remote.isPaired {
-                  await remote.setAgendaStatus(status, for: entry)
-                } else {
-                  await store.setTodoStatus(status, for: entry)
-                }
-              }
+              Task { await remote.setAgendaStatus(status, for: entry) }
             } label: {
               Label(status.rawValue, systemImage: status.rawValue == entry.todo ? "checkmark" : "circle")
             }
@@ -515,7 +474,7 @@ private struct ApprovalsView: View {
   @State private var customSnoozeTarget: ApprovalEntry?
 
   private var approvals: [ApprovalEntry] {
-    remote.isPaired ? remote.workspaceApprovals : store.approvals
+    remote.isPaired ? remote.workspaceApprovals : []
   }
 
   /// Snoozing writes run state or a SCHEDULED date on the Mac, so it needs a paired Mac.
@@ -639,7 +598,9 @@ private struct ApprovalsView: View {
         }
       }
       .overlay {
-        if approvals.isEmpty && !audio.isEnabled && audio.replyHistory.isEmpty && remote.approvalHistory.isEmpty && isLoading {
+        if !remote.isPaired {
+          ConnectHostView(message: "Approvals come from your host, which applies every decision.")
+        } else if approvals.isEmpty && !audio.isEnabled && audio.replyHistory.isEmpty && remote.approvalHistory.isEmpty && isLoading {
           LoadingCorpusView()
         } else if approvals.isEmpty && !audio.isEnabled && audio.replyHistory.isEmpty && remote.approvalHistory.isEmpty, let connectionError = remoteWorkspaceError {
           ContentUnavailableView(
@@ -699,8 +660,6 @@ private struct ApprovalsView: View {
       .task {
         if remote.isPaired {
           await remote.refreshWorkspace(reportsErrors: false)
-        } else {
-          store.prepareCorpusViews()
         }
       }
     }
@@ -708,13 +667,9 @@ private struct ApprovalsView: View {
 
   @MainActor
   private func approve(_ item: ApprovalEntry) async {
-    guard approvingID == nil else { return }
+    guard approvingID == nil, remote.isPaired else { return }
     approvingID = item.id
-    if remote.isPaired {
-      await remote.decideApproval(item, decision: "approved")
-    } else {
-      await store.approve(item)
-    }
+    await remote.decideApproval(item, decision: "approved")
     if approvingID == item.id {
       approvingID = nil
     }
@@ -722,16 +677,13 @@ private struct ApprovalsView: View {
 
   @MainActor
   private func reject(_ item: ApprovalEntry, endStatus: OrgTodoStatus, reason: String) async {
-    if remote.isPaired {
-      await remote.decideApproval(
-        item,
-        decision: "rejected",
-        note: reason,
-        endStatus: endStatus
-      )
-    } else {
-      await store.reject(item, endStatus: endStatus, reason: reason)
-    }
+    guard remote.isPaired else { return }
+    await remote.decideApproval(
+      item,
+      decision: "rejected",
+      note: reason,
+      endStatus: endStatus
+    )
   }
 
   @MainActor
@@ -744,23 +696,18 @@ private struct ApprovalsView: View {
   }
 
   private var isLoading: Bool {
-    remote.isPaired
-      ? remote.isRefreshingWorkspace
-      : (store.isPreparingCorpus || store.isLoading)
+    remote.isPaired && remote.isRefreshingWorkspace
   }
 
   private var remoteWorkspaceError: String? {
     guard remote.isPaired, remote.workspaceUpdatedAt == nil else { return nil }
     return remote.workspaceConnectionError
-      ?? "Connect to the paired Mac to load canonical approvals."
+      ?? "Connect to your host to load approvals."
   }
 
   private func refresh() async {
-    if remote.isPaired {
-      await remote.refreshWorkspace()
-    } else {
-      await store.refresh()
-    }
+    guard remote.isPaired else { return }
+    await remote.refreshWorkspace()
   }
 }
 
@@ -1379,11 +1326,40 @@ private struct NewNoteView: View {
   @State private var isPhotoLibraryPresented = false
   @State private var isCameraPresented = false
   @State private var isCallImportPresented = false
+  @State private var confirmation: String?
   @FocusState private var focusedField: NewNoteFocusedField?
 
   var body: some View {
     NavigationStack {
       Form {
+        if let confirmation {
+          Section {
+            Label(confirmation, systemImage: "checkmark.circle")
+              .foregroundStyle(.secondary)
+          }
+        }
+        if !store.pendingCaptures.isEmpty {
+          Section {
+            ForEach(store.pendingCaptures) { item in
+              Label(item.title, systemImage: "tray.and.arrow.up")
+                .lineLimit(1)
+            }
+            Button {
+              Task { await store.sendPendingCaptures() }
+            } label: {
+              if store.isSendingCaptures {
+                MobileActivityIndicator(style: .sync, label: "Sending")
+              } else {
+                Text("Send Now")
+              }
+            }
+            .disabled(store.isSendingCaptures)
+          } header: {
+            Text("Waiting to Send")
+          } footer: {
+            Text(store.captureError ?? "Saved on this phone until your host stores them.")
+          }
+        }
         Section {
           TextField("Title", text: $title)
             .font(.title3.weight(.semibold))
@@ -1410,7 +1386,7 @@ private struct NewNoteView: View {
             }
           }
         } footer: {
-          Text("Saved to mobile-inbox.org for safe desktop sync.")
+          Text("Notes go to mobile-inbox.org on your host. Without a connection, they wait on this phone and are sent automatically.")
         }
 
         Section {
@@ -1519,12 +1495,16 @@ private struct NewNoteView: View {
         attachments: attachments,
         scheduledDate: scheduledDate
       )
+      confirmation = store.statusMessage
       title = ""
       bodyText = ""
       schedule = .none
       customScheduledDate = Date()
       attachments = []
       focusedField = nil
+      let shown = confirmation
+      try? await Task.sleep(for: .seconds(4))
+      if confirmation == shown { confirmation = nil }
     }
   }
 
@@ -1534,9 +1514,23 @@ private struct NewNoteView: View {
   }
 
   private func addImageData(_ data: Data) {
-    let imageData = UIImage(data: data)?.jpegData(compressionQuality: 0.86) ?? data
+    // Photos cross the tailnet to the host; full-resolution camera images
+    // would exceed what one request may carry.
+    let imageData = UIImage(data: data).flatMap { Self.scaledForUpload($0).jpegData(compressionQuality: 0.86) } ?? data
     let filename = "photo-\(UUID().uuidString.prefix(8)).jpg"
     attachments.append(NoteAttachment(filename: filename, data: imageData))
+  }
+
+  private static func scaledForUpload(_ image: UIImage, maxDimension: CGFloat = 2560) -> UIImage {
+    let longest = max(image.size.width, image.size.height)
+    guard longest > maxDimension else { return image }
+    let scale = maxDimension / longest
+    let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+    let format = UIGraphicsImageRendererFormat.default()
+    format.scale = 1
+    return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+      image.draw(in: CGRect(origin: .zero, size: size))
+    }
   }
 
   private func applyCallTranscript(_ draft: MobileCallTranscriptDraft) {
@@ -1568,13 +1562,13 @@ private struct RefreshButton: View {
     Button {
       Task { await store.refresh() }
     } label: {
-      if store.isPreparingCorpus || store.isLoading {
+      if store.isLoading {
         MobileActivityIndicator(style: .sync, label: "Refreshing")
       } else {
         Image(systemName: "arrow.clockwise")
       }
     }
-    .disabled(store.isPreparingCorpus || store.isLoading)
+    .disabled(store.isLoading)
   }
 }
 
