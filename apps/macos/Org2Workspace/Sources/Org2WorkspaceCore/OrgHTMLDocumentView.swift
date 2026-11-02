@@ -605,6 +605,9 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
   let reportStatus: @MainActor (String) -> Void
   var allowsCheckboxMutations = false
   var setCheckboxState: @MainActor (_ line: Int, _ checked: Bool) async -> Bool = { _, _ in false }
+  /// Shows drag handles that move, indent and outdent headings and list items.
+  var allowsOutlineMoves = false
+  var moveOutlineEntry: @MainActor (OrgOutlineMoveRequest) async -> Bool = { _ in false }
   var allowsTablePersistence = false
   var saveTableView: @MainActor (OrgHTMLTableViewSnapshot) -> Void = { _ in }
   var recalculateTableFormulas: @MainActor (Int) -> Void = { _ in }
@@ -649,6 +652,10 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     configuration.userContentController.add(
       context.coordinator,
       name: Coordinator.encryptedPeekMessageHandlerName
+    )
+    configuration.userContentController.add(
+      context.coordinator,
+      name: OrgHTMLOutlineDrag.messageHandlerName
     )
     configuration.userContentController.add(
       context.coordinator,
@@ -703,6 +710,9 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     let checkboxMutationsChanged = coordinator.allowsCheckboxMutations != allowsCheckboxMutations
     coordinator.allowsCheckboxMutations = allowsCheckboxMutations
     coordinator.setCheckboxState = setCheckboxState
+    let outlineMovesChanged = coordinator.allowsOutlineMoves != allowsOutlineMoves
+    coordinator.allowsOutlineMoves = allowsOutlineMoves
+    coordinator.moveOutlineEntry = moveOutlineEntry
     let tablePersistenceChanged = coordinator.allowsTablePersistence != allowsTablePersistence
     coordinator.allowsTablePersistence = allowsTablePersistence
     coordinator.saveTableView = saveTableView
@@ -735,8 +745,9 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     } else if layoutChanged || themeChanged {
       if layoutChanged { coordinator.applyLayout(to: webView) }
       if themeChanged { coordinator.applyTheme(to: webView) }
-    } else if checkboxMutationsChanged {
-      coordinator.applyCheckboxMutations(to: webView)
+    } else if checkboxMutationsChanged || outlineMovesChanged {
+      if checkboxMutationsChanged { coordinator.applyCheckboxMutations(to: webView) }
+      if outlineMovesChanged { coordinator.applyOutlineMoves(to: webView) }
     } else if tablePersistenceChanged {
       coordinator.applyTablePersistence(to: webView)
     } else if coordinator.searchQuery != searchQuery {
@@ -785,6 +796,9 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     )
     webView.configuration.userContentController.removeScriptMessageHandler(
       forName: Coordinator.encryptedPeekMessageHandlerName
+    )
+    webView.configuration.userContentController.removeScriptMessageHandler(
+      forName: OrgHTMLOutlineDrag.messageHandlerName
     )
     webView.configuration.userContentController.removeScriptMessageHandler(
       forName: OrgLinkHoverPreview.messageHandlerName
@@ -878,6 +892,8 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     var reportStatus: @MainActor (String) -> Void = { _ in }
     var allowsCheckboxMutations = false
     var setCheckboxState: @MainActor (_ line: Int, _ checked: Bool) async -> Bool = { _, _ in false }
+    var allowsOutlineMoves = false
+    var moveOutlineEntry: @MainActor (OrgOutlineMoveRequest) async -> Bool = { _ in false }
     var allowsTablePersistence = false
     var saveTableView: @MainActor (OrgHTMLTableViewSnapshot) -> Void = { _ in }
     var recalculateTableFormulas: @MainActor (Int) -> Void = { _ in }
@@ -1051,6 +1067,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       themeStylesheet = WorkspaceThemeCenter.shared.trackedDocumentStylesheet()
       applyTheme(to: webView)
       applyCheckboxMutations(to: webView)
+      applyOutlineMoves(to: webView)
       applyTablePersistence(to: webView)
       installRichCopyHandler(in: webView)
       if allowsEntryContextMenu {
@@ -1132,9 +1149,32 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
             persisted: persisted
           )
         }
+      case OrgHTMLOutlineDrag.messageHandlerName:
+        guard allowsOutlineMoves, let request = OrgOutlineMoveRequest(message.body) else {
+          finishOutlineMove(persisted: false)
+          return
+        }
+        Task { @MainActor [weak self] in
+          guard let self else { return }
+          let persisted = await self.moveOutlineEntry(request)
+          self.finishOutlineMove(persisted: persisted)
+        }
       default:
         return
       }
+    }
+
+    func applyOutlineMoves(to webView: WKWebView) {
+      let enabled = allowsOutlineMoves ? "true" : "false"
+      let subtree = source?.isSubtree == true ? "true" : "false"
+      webView.evaluateJavaScript(OrgHTMLOutlineDrag.installationScript)
+      webView.evaluateJavaScript("window.__org2SetOutlineDragEnabled?.(\(enabled), \(subtree));")
+    }
+
+    /// A successful move re-renders the page; a refused one puts the dragged
+    /// entry back where it was.
+    func finishOutlineMove(persisted: Bool) {
+      webView?.evaluateJavaScript("window.__org2FinishOutlineMove?.(\(persisted ? "true" : "false"));")
     }
 
     func applyHeadingWork(to webView: WKWebView) {

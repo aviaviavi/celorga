@@ -916,6 +916,8 @@ private struct OrgRenderedDocumentPreview: View {
             setCheckboxState: { line, checked in
               await store.setRenderedDocumentCheckbox(at: line, checked: checked)
             },
+            allowsOutlineMoves: source.isEditable,
+            moveOutlineEntry: { await store.moveRenderedOutlineEntry($0) },
             allowsTablePersistence: source.isEditable,
             saveTableView: { store.requestSaveRenderedTableView($0) },
             recalculateTableFormulas: { store.requestRecalculateRenderedTableFormulas(at: $0) },
