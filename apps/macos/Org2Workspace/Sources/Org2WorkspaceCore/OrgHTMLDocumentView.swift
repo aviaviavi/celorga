@@ -616,6 +616,8 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
   var startWorkAtHeading: (@MainActor (Int) -> Void)? = nil
   var openWorkAtHeading: @MainActor (Int) -> Void = { _ in }
   var headingWorkBadges: [HeadingWorkBadge] = []
+  /// Provisional heading changes to show before the re-render arrives.
+  var entryEffects: [OrgHTMLEntryEffect] = []
 
   func makeCoordinator() -> Coordinator {
     Coordinator()
@@ -769,6 +771,11 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       coordinator.scrollRequestID = scrollRequest?.id
       coordinator.applyScrollRequest(scrollRequest, to: webView)
     }
+    coordinator.applyEntryEffects(
+      entryEffects,
+      sourcePath: Self.sourceFileURL(source, corpusRoot: corpusRoot).path,
+      in: webView
+    )
     if headingWorkChanged, coordinator.renderID == renderID, !webView.isLoading {
       coordinator.applyHeadingWork(to: webView)
     }
@@ -923,7 +930,68 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     private var scrollRequestIDAtPreservedLoad: Int?
     private var freezeFrameView: NSImageView?
 
+    // MARK: Provisional entry effects
+
+    private var lastAppliedEntryEffectID: UInt64?
+    /// While an effect animation runs, a re-render of the same document waits
+    /// until it ends rather than cutting it off.
+    private var entryEffectAnimationDeadline: Date?
+    private var lastLoadRequest: (html: String, baseURL: URL, sourceFile: String)?
+
+    func applyEntryEffects(_ effects: [OrgHTMLEntryEffect], sourcePath: String, in webView: WKWebView) {
+      let latestID = effects.last?.id ?? 0
+      // A new web view starts from the current render; effects emitted
+      // before it existed are already reflected or superseded.
+      guard let lastApplied = lastAppliedEntryEffectID else {
+        lastAppliedEntryEffectID = latestID
+        return
+      }
+      guard latestID > lastApplied else { return }
+      lastAppliedEntryEffectID = latestID
+      let normalizedSourcePath = URL(fileURLWithPath: sourcePath).standardizedFileURL.path
+      for effect in effects where effect.id > lastApplied {
+        guard URL(fileURLWithPath: effect.file).standardizedFileURL.path == normalizedSourcePath else {
+          continue
+        }
+        if effect.change == .revert {
+          reloadLastRender()
+          continue
+        }
+        guard let script = OrgHTMLEntryEffectScript.invocation(for: effect) else { continue }
+        if effect.isAnimated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+          entryEffectAnimationDeadline = Date().addingTimeInterval(OrgHTMLEntryEffectScript.animationDuration)
+        }
+        if case .todo(_, .done, _) = effect.change {
+          NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+        }
+        Self.evaluateWithoutResult(script, in: webView)
+      }
+    }
+
+    /// A failed mutation leaves its provisional change on the page; reloading
+    /// the last authoritative render removes it.
+    private func reloadLastRender() {
+      guard let webView, let request = lastLoadRequest else { return }
+      entryEffectAnimationDeadline = nil
+      load(html: request.html, baseURL: request.baseURL, sourceFile: request.sourceFile, in: webView)
+    }
+
     func load(html: String, baseURL: URL, sourceFile: String, in webView: WKWebView) {
+      lastLoadRequest = (html, baseURL, sourceFile)
+      if let deadline = entryEffectAnimationDeadline {
+        let remaining = deadline.timeIntervalSinceNow
+        if remaining > 0, hasLoadedPage, loadedSourceFile == sourceFile {
+          loadGeneration &+= 1
+          let generation = loadGeneration
+          DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self, weak webView] in
+            guard let self, let webView, generation == self.loadGeneration else { return }
+            self.entryEffectAnimationDeadline = nil
+            self.load(html: html, baseURL: baseURL, sourceFile: sourceFile, in: webView)
+          }
+          return
+        }
+        entryEffectAnimationDeadline = nil
+      }
       loadGeneration &+= 1
       let generation = loadGeneration
       let style = OrgHTMLDocumentReloadStyle.style(

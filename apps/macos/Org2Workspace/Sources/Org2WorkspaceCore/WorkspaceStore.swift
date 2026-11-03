@@ -4131,6 +4131,10 @@ public final class WorkspaceStore {
   var automationRunIDsByThreadID: [UUID: String] = [:]
   var agendaTodoShortcutMutationTask: Task<Void, Never>?
   var pendingAgendaTodoShortcutMutations: [AgendaTodoShortcutMutation] = []
+  /// Recent provisional heading changes for the rendered document; see
+  /// `OrgHTMLEntryEffect`.
+  var renderedEntryEffects: [OrgHTMLEntryEffect] = []
+  var renderedEntryEffectCounter: UInt64 = 0
   var agendaRefreshDeferredForTodoShortcutBurst = false
   var agendaTodoShortcutMutationGeneration: UInt64 = 0
   var pendingAgendaRefreshAfterBlockEditing = false

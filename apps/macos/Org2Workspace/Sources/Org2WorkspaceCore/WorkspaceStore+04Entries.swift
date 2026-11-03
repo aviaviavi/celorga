@@ -60,6 +60,7 @@ extension WorkspaceStore {
       return
     }
     let archiveFile = Self.renderedEntryArchiveFile(for: source.file)
+    emitRenderedEntryEffect(.remove, file: source.file, line: block.startLine)
     do {
       guard let context = captureDocumentCorpusContext(forFile: source.file) else {
         throw WorkspaceDocumentMutationError.outsideCorpus(
@@ -89,10 +90,12 @@ extension WorkspaceStore {
       }
       scheduleAgendaRefresh(preserveSelection: true)
       Task { await refreshCorpusFiles() }
+      emitRenderedEntryEffect(payload.wrote ? .settle : .revert, file: source.file, line: block.startLine)
       statusText = payload.wrote
         ? "Archived entry to \(relativePath(archiveFile))"
         : "Entry was not archived"
     } catch {
+      emitRenderedEntryEffect(.revert, file: source.file, line: block.startLine)
       errorText = error.localizedDescription
       statusText = "Archive failed"
     }

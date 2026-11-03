@@ -924,7 +924,8 @@ private struct OrgRenderedDocumentPreview: View {
             reportViewportSourceLine: reportViewportSourceLine,
             startWorkAtHeading: startWorkAction,
             openWorkAtHeading: { store.openWork(onHeadingAt: $0) },
-            headingWorkBadges: store.headingWorkBadges(for: source)
+            headingWorkBadges: store.headingWorkBadges(for: source),
+            entryEffects: store.renderedEntryEffects
           )
           .frame(maxHeight: .infinity)
         }

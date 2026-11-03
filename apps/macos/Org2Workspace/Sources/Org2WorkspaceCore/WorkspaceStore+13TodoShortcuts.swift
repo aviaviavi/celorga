@@ -31,6 +31,12 @@ extension WorkspaceStore {
       return
     }
 
+    emitRenderedEntryEffect(
+      status.map { OrgHTMLEntryEffect.todoChange(for: $0) }
+        ?? .toggleTodo(closedTimestamp: OrgHTMLEntryEffect.closedTimestamp(Date())),
+      file: target.file,
+      line: target.line
+    )
     do {
       let newStatus: String
       if let status {
@@ -39,6 +45,7 @@ extension WorkspaceStore {
         newStatus = try await toggleTodoStatus(for: target)
         shouldAdvanceSelection = Self.isTerminalTodoStatus(newStatus)
       }
+      emitRenderedEntryEffect(.settle, file: target.file, line: target.line)
       guard isCurrentDocumentCorpusContext(context) else { return }
       statusText = status.map { "\($0.label) -> \(target.title)" }
         ?? "\(newStatus) -> \(target.title)"
@@ -54,6 +61,7 @@ extension WorkspaceStore {
         scheduleApprovalsRefresh()
       }
     } catch {
+      emitRenderedEntryEffect(.revert, file: target.file, line: target.line)
       guard isCurrentDocumentCorpusContext(context) else { return }
       errorText = error.localizedDescription
       statusText = "TODO update failed"
@@ -249,6 +257,12 @@ extension WorkspaceStore {
       return
     }
 
+    emitRenderedEntryEffect(
+      status.map { OrgHTMLEntryEffect.todoChange(for: $0) }
+        ?? .toggleTodo(closedTimestamp: OrgHTMLEntryEffect.closedTimestamp(Date())),
+      file: target.file,
+      line: target.line
+    )
     do {
       let newStatus: String
       if let status {
@@ -257,6 +271,7 @@ extension WorkspaceStore {
         newStatus = try await toggleTodoStatus(for: target)
         shouldAdvanceSelection = Self.isTerminalTodoStatus(newStatus)
       }
+      emitRenderedEntryEffect(.settle, file: target.file, line: target.line)
       guard isCurrentDocumentCorpusContext(context) else { return }
       statusText = status.map { "\($0.label) -> \(target.title)" }
         ?? "\(newStatus) -> \(target.title)"
@@ -272,6 +287,7 @@ extension WorkspaceStore {
         scheduleApprovalsRefresh()
       }
     } catch {
+      emitRenderedEntryEffect(.revert, file: target.file, line: target.line)
       guard isCurrentDocumentCorpusContext(context) else { return }
       errorText = error.localizedDescription
       statusText = "TODO update failed"
@@ -591,6 +607,11 @@ extension WorkspaceStore {
       statusText = "Planning update failed"
       return
     }
+    emitRenderedEntryEffect(
+      .planning(kind: kind, timestamp: OrgHTMLEntryEffect.planningTimestamp(date: date)),
+      file: mutationTarget.file,
+      line: mutationTarget.line
+    )
     do {
       let cli = self.cli
       _ = try await performDocumentMutation(context: context, files: [mutationTarget.file]) { execution in
@@ -602,10 +623,12 @@ extension WorkspaceStore {
           execution: execution
         )
       }
+      emitRenderedEntryEffect(.settle, file: mutationTarget.file, line: mutationTarget.line)
       guard isCurrentDocumentCorpusContext(context) else { return }
       statusText = "\(kind.rawValue.uppercased()) \(date) -> \(mutationTarget.title)"
       await refreshAfterHeadlineMutation(mutationTarget)
     } catch {
+      emitRenderedEntryEffect(.revert, file: mutationTarget.file, line: mutationTarget.line)
       guard isCurrentDocumentCorpusContext(context) else { return }
       errorText = error.localizedDescription
       statusText = "Planning update failed"
@@ -1310,6 +1333,7 @@ extension WorkspaceStore {
       statusText = "Priority update failed"
       return
     }
+    emitRenderedEntryEffect(.priority(priority), file: target.file, line: target.line)
     do {
       _ = try await performDocumentMutation(context: context, files: [target.file]) { execution in
         try await Self.updatePriorityInDocument(
@@ -1318,11 +1342,13 @@ extension WorkspaceStore {
           execution: execution
         )
       }
+      emitRenderedEntryEffect(.settle, file: target.file, line: target.line)
       guard isCurrentDocumentCorpusContext(context) else { return }
       statusText = priority.map { "Priority [#\($0)] -> \(target.title)" }
         ?? "Priority cleared -> \(target.title)"
       await refreshAfterHeadlineMutation(target)
     } catch {
+      emitRenderedEntryEffect(.revert, file: target.file, line: target.line)
       guard isCurrentDocumentCorpusContext(context) else { return }
       errorText = error.localizedDescription
       statusText = "Priority update failed"
