@@ -612,9 +612,12 @@ extension WorkspaceStore {
     return "Ready for a \(destination.title) message"
   }
 
+  /// Views read this many times per render (the composer alone asks through
+  /// a dozen properties on every keystroke). Use the ID index: a linear search
+  /// copied each of hundreds of threads per read.
   public var selectedAIChatThread: AIChatThread? {
     guard let selectedAIChatThreadID else { return nil }
-    return aiChatThreads.first(where: { $0.id == selectedAIChatThreadID })
+    return aiChatThread(withID: selectedAIChatThreadID)
   }
 
   /// A brand-new chat shows a project picker in the composer before its first

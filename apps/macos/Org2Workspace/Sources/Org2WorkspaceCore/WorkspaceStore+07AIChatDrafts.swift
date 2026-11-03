@@ -2094,9 +2094,7 @@ extension WorkspaceStore {
   }
 
   public var selectedAIChatRuntime: AIChatRuntime {
-    guard let selectedAIChatThreadID,
-          let thread = aiChatThreads.first(where: { $0.id == selectedAIChatThreadID })
-    else {
+    guard let thread = selectedAIChatThread else {
       return defaultAIChatDestination.runtime
     }
     return thread.runtime
@@ -2501,7 +2499,7 @@ extension WorkspaceStore {
   }
 
   var selectedChatAgentRef: String? {
-    aiChatThreads.first(where: { $0.id == selectedAIChatThreadID })?.agentRef
+    selectedAIChatThread?.agentRef
   }
 
   var selectedChatAgent: AgentProfileItem? {
@@ -2509,8 +2507,8 @@ extension WorkspaceStore {
   }
 
   var canChangeChatAgent: Bool {
-    guard let thread = aiChatThreads.first(where: { $0.id == selectedAIChatThreadID }) else { return false }
-    return !thread.isSharedRoom && !isAIChatThreadRunning(thread.id)
+    guard let thread = selectedAIChatThread else { return false }
+    return !thread.isSharedRoom && !isAIChatThreadRunning(thread.id, thread: thread)
   }
 
   func setSelectedChatAgent(_ profile: AgentProfileItem?) {

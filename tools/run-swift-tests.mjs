@@ -17,6 +17,7 @@ export const SWIFT_TIMING_CLASSES = [
 ];
 export const SWIFT_TIMING_CASES = [
   "CodexAppServerClientTests/testInitializationTimeoutResetsTransportForRetry",
+  "AIChatComposerTypingTests/testComposerKeystrokesStayFastWithALargeChatHistory",
   "AIChatLargePasteTests/testRestoredMegabyteDraftSizingRemainsBounded",
   "AIChatLayoutTests/testLargeSharedRoomTranscriptGroupingRemainsResponsive",
   "AIChatThreadCreationTests/testCreatingThreadInsertsIncrementallyWithoutFullSidebarRebuild",

@@ -3308,6 +3308,36 @@ struct AIChatGitHubStarPromptView: View {
   }
 }
 
+/// What the composer toolbar shows that depends on the draft rather than on
+/// the store. The toolbar re-renders when this changes or when a store value
+/// it reads changes, never merely because another character was typed.
+struct AIChatComposerFooterState: Equatable {
+  let canSend: Bool
+  let postsWithoutAgent: Bool
+  let showsModelConfiguration: Bool
+}
+
+/// Skips rebuilding the composer toolbar when the parent re-renders for a
+/// keystroke that leaves `state` unchanged. Store reads inside `content` are
+/// tracked by this view, so store changes still update it directly.
+struct AIChatComposerFooterHost<Content: View>: View, Equatable {
+  let state: AIChatComposerFooterState
+  @ViewBuilder let content: () -> Content
+
+  var body: some View {
+    AIChatComposerFooterMetrics.bodyEvaluationCount &+= 1
+    return content()
+  }
+
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.state == rhs.state }
+}
+
+@MainActor
+enum AIChatComposerFooterMetrics {
+  /// Counts toolbar rebuilds so tests can prove typing does not cause them.
+  static var bodyEvaluationCount = 0
+}
+
 struct AIChatComposerView: View {
   @Environment(WorkspaceStore.self) private var store
   @State private var showsModelConfiguration = false
@@ -3383,10 +3413,23 @@ struct AIChatComposerView: View {
             .padding(.bottom, 6)
         }
 
-        footer
-          .padding(.horizontal, AIChatComposerLayout.toolbarHorizontalInset)
-          .padding(.top, 4)
-          .padding(.bottom, AIChatComposerLayout.toolbarBottomInset)
+        // The toolbar's pickers and menus read a dozen store properties and
+        // lay out three candidate widths. Rebuilding it on every keystroke
+        // made typing lag behind the keyboard in large chats, so it updates
+        // only when the store changes or the draft changes what it shows.
+        AIChatComposerFooterHost(
+          state: AIChatComposerFooterState(
+            canSend: canSend,
+            postsWithoutAgent: postsWithoutAgent(userText: presentation.userText),
+            showsModelConfiguration: showsModelConfiguration
+          )
+        ) {
+          footer
+        }
+        .equatable()
+        .padding(.horizontal, AIChatComposerLayout.toolbarHorizontalInset)
+        .padding(.top, 4)
+        .padding(.bottom, AIChatComposerLayout.toolbarBottomInset)
       }
       .background(
         WorkspaceDesign.surfaceBackground,
@@ -4220,6 +4263,12 @@ struct AIChatComposerView: View {
     return store.isAIChatThreadRunning(threadID)
   }
 
+  /// A shared-room draft that mentions no agent is posted as context.
+  private func postsWithoutAgent(userText: String) -> Bool {
+    store.selectedAIChatIsSharedRoom
+      && store.selectedAIChatRoomTargetDestinationIDs(for: userText).isEmpty
+  }
+
   private var primaryActionTitle: String {
     if store.isRecordingAIChatVoiceNote {
       return "Finish & Send"
@@ -4227,10 +4276,7 @@ struct AIChatComposerView: View {
     if isRunning {
       return "Steer"
     }
-    if store.selectedAIChatIsSharedRoom,
-       store.selectedAIChatRoomTargetDestinationIDs(
-         for: AIChatContextPresentation(localDraft).userText
-       ).isEmpty {
+    if postsWithoutAgent(userText: AIChatContextPresentation(localDraft).userText) {
       return "Post"
     }
     return "Send"
@@ -4243,10 +4289,7 @@ struct AIChatComposerView: View {
     if isRunning {
       return "arrow.turn.up.right"
     }
-    if store.selectedAIChatIsSharedRoom,
-       store.selectedAIChatRoomTargetDestinationIDs(
-         for: AIChatContextPresentation(localDraft).userText
-       ).isEmpty {
+    if postsWithoutAgent(userText: AIChatContextPresentation(localDraft).userText) {
       return "text.bubble.fill"
     }
     return "paperplane.fill"
