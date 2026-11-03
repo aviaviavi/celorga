@@ -589,46 +589,94 @@ struct PeopleCompaniesView: View {
     }
   }
 
+  /// One row when the pane is wide; otherwise the controls move under the
+  /// title so the title never gets squeezed into a single-character column.
   private var header: some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(spacing: 10) {
+        titleBlock.fixedSize()
+        Spacer(minLength: 8)
+        filterField.frame(minWidth: 140, idealWidth: 220, maxWidth: 220)
+        filterControls
+        headerActions
+      }
+      VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 10) {
+          titleBlock.fixedSize()
+          Spacer(minLength: 8)
+          headerActions
+        }
+        HStack(spacing: 10) {
+          filterField.frame(minWidth: 140, maxWidth: .infinity)
+          filterControls
+        }
+      }
+      VStack(alignment: .leading, spacing: 8) {
+        HStack(alignment: .top, spacing: 10) {
+          titleBlock.layoutPriority(1)
+          Spacer(minLength: 4)
+          headerActions
+        }
+        filterField.frame(maxWidth: .infinity)
+        HStack(spacing: 10) {
+          filterControls
+          Spacer(minLength: 0)
+        }
+      }
+    }
+    .padding(.horizontal, 18)
+    .padding(.vertical, 12)
+    .accessibilityIdentifier("crm-header")
+  }
+
+  private var titleBlock: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text(kind.title).font(.title2.weight(.semibold)).lineLimit(1)
+      Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+        .help(subtitle)
+    }
+  }
+
+  private var filterField: some View {
+    TextField("Filter \(kind.title.lowercased())", text: $query)
+      .textFieldStyle(.roundedBorder)
+      .accessibilityIdentifier("crm-filter")
+  }
+
+  @ViewBuilder private var filterControls: some View {
+    if kind == .companies {
+      Picker("Show", selection: $sourceFilter) {
+        ForEach(CRMCompanySourceFilter.allCases) { filter in Text(filter.title).tag(filter.rawValue) }
+      }
+      .labelsHidden()
+      .fixedSize()
+      .help("Companies with notes, outreach-only accounts, or both")
+    }
+    Menu {
+      Button("All stages") { stageFilter = nil }
+      Divider()
+      ForEach(model.index?.stages ?? [], id: \.self) { stage in
+        Button(stage.capitalized) { stageFilter = stage }
+      }
+    } label: {
+      Label(stageFilter?.capitalized ?? "Stage", systemImage: "line.3.horizontal.decrease.circle")
+    }
+    .menuStyle(.borderlessButton)
+    .fixedSize()
+    Menu {
+      Button("Upcoming Meetings…", systemImage: "calendar") { sheet = .upcoming }
+      Button("Plan Follow-ups…", systemImage: "calendar.badge.clock") { sheet = .schedule }
+      Button("Review Suggested Links…", systemImage: "link") { sheet = .links }
+    } label: {
+      Label("Assist", systemImage: "sparkles")
+    }
+    .menuStyle(.borderlessButton)
+    .fixedSize()
+    .help("Meeting briefs, follow-up scheduling, and link suggestions")
+  }
+
+  private var headerActions: some View {
     HStack(spacing: 10) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(kind.title).font(.title2.weight(.semibold))
-        Text(subtitle).font(.caption).foregroundStyle(.secondary)
-      }
-      Spacer(minLength: 8)
-      TextField("Filter \(kind.title.lowercased())", text: $query)
-        .textFieldStyle(.roundedBorder)
-        .frame(maxWidth: 220)
-        .accessibilityIdentifier("crm-filter")
-      if kind == .companies {
-        Picker("Show", selection: $sourceFilter) {
-          ForEach(CRMCompanySourceFilter.allCases) { filter in Text(filter.title).tag(filter.rawValue) }
-        }
-        .labelsHidden()
-        .fixedSize()
-        .help("Companies with notes, outreach-only accounts, or both")
-      }
-      Menu {
-        Button("All stages") { stageFilter = nil }
-        Divider()
-        ForEach(model.index?.stages ?? [], id: \.self) { stage in
-          Button(stage.capitalized) { stageFilter = stage }
-        }
-      } label: {
-        Label(stageFilter?.capitalized ?? "Stage", systemImage: "line.3.horizontal.decrease.circle")
-      }
-      .menuStyle(.borderlessButton)
-      .fixedSize()
-      Menu {
-        Button("Upcoming Meetings…", systemImage: "calendar") { sheet = .upcoming }
-        Button("Plan Follow-ups…", systemImage: "calendar.badge.clock") { sheet = .schedule }
-        Button("Review Suggested Links…", systemImage: "link") { sheet = .links }
-      } label: {
-        Label("Assist", systemImage: "sparkles")
-      }
-      .menuStyle(.borderlessButton)
-      .fixedSize()
-      .help("Meeting briefs, follow-up scheduling, and link suggestions")
       if model.isLoading { ProgressView().controlSize(.small) }
       Button { Task { await reload(force: true) } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
         .labelStyle(.iconOnly)
@@ -639,8 +687,7 @@ struct PeopleCompaniesView: View {
         .disabled(root == nil)
         .help("Create a \(kind.singular) note")
     }
-    .padding(.horizontal, 18)
-    .padding(.vertical, 12)
+    .fixedSize()
   }
 
   private var subtitle: String {
@@ -834,32 +881,58 @@ private struct CRMEntityDetailView: View {
   }
 
   private var titleBlock: some View {
-    HStack(alignment: .top, spacing: 12) {
-      Image(systemName: entity.isLedgerOnly ? "paperplane.circle.fill" : kind.systemImage)
-        .font(.system(size: 30))
-        .foregroundStyle(Color.accentColor)
-      VStack(alignment: .leading, spacing: 4) {
-        Text(entity.title).font(.title.weight(.semibold)).textSelection(.enabled)
-        HStack(spacing: 8) {
-          stageMenu
-          if let company = entity.company {
-            Button {
-              store.crm.selectedCompanyKey = company.key
-              store.makeSurfacePrimary(.companies)
-            } label: { Label(company.title, systemImage: "building.2") }
-              .buttonStyle(.link)
-              .help(company.match == "explicit" || company.match == "property" ? "Company" : "Company (inferred from \(company.match.replacingOccurrences(of: "-", with: " ")))")
-          }
+    ViewThatFits(in: .horizontal) {
+      HStack(alignment: .top, spacing: 12) {
+        titleIcon
+        titleText.fixedSize(horizontal: true, vertical: false)
+        Spacer(minLength: 8)
+        titleActions
+      }
+      HStack(alignment: .top, spacing: 12) {
+        titleIcon
+        VStack(alignment: .leading, spacing: 8) {
+          titleText
+          titleActions
+        }
+        Spacer(minLength: 0)
+      }
+    }
+  }
+
+  private var titleIcon: some View {
+    Image(systemName: entity.isLedgerOnly ? "paperplane.circle.fill" : kind.systemImage)
+      .font(.system(size: 30))
+      .foregroundStyle(Color.accentColor)
+  }
+
+  private var titleText: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(entity.title).font(.title.weight(.semibold)).textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
+      HStack(spacing: 8) {
+        stageMenu
+        if let company = entity.company {
+          Button {
+            store.crm.selectedCompanyKey = company.key
+            store.makeSurfacePrimary(.companies)
+          } label: { Label(company.title, systemImage: "building.2").lineLimit(1) }
+            .buttonStyle(.link)
+            .help(company.match == "explicit" || company.match == "property" ? "Company" : "Company (inferred from \(company.match.replacingOccurrences(of: "-", with: " ")))")
         }
       }
-      Spacer()
-      if !entity.isLedgerOnly {
+    }
+  }
+
+  @ViewBuilder private var titleActions: some View {
+    if !entity.isLedgerOnly {
+      HStack(spacing: 8) {
         Button { openSheet(.followUp(entity)) } label: { Label("Follow-up", systemImage: "plus.circle") }
           .disabled(!canWrite)
           .help("Add a TODO to this note")
         Button { openSource(file: entity.file, line: entity.line) } label: { Label("Open Note", systemImage: "doc.text") }
           .help("Open the note")
       }
+      .fixedSize()
     }
   }
 
@@ -955,9 +1028,11 @@ private struct CRMEntityDetailView: View {
   private func upcoming(_ meetings: [CRMUpcomingMeeting]) -> some View {
     section("Upcoming", systemImage: "calendar") {
       ForEach(meetings) { meeting in
-        HStack {
-          Text(CRMDate.label(meeting.event.start) ?? meeting.event.start).font(.callout.weight(.medium)).frame(width: 150, alignment: .leading)
-          Text(meeting.event.title).lineLimit(1)
+        HStack(alignment: .firstTextBaseline) {
+          Text(CRMDate.label(meeting.event.start) ?? meeting.event.start).font(.callout.weight(.medium))
+            .lineLimit(1)
+            .frame(minWidth: 90, idealWidth: 150, maxWidth: 150, alignment: .leading)
+          Text(meeting.event.title).lineLimit(1).truncationMode(.tail)
           Spacer()
           if let link = meeting.event.meetingUrl ?? meeting.event.htmlLink, let url = URL(string: link) {
             Link("Open", destination: url).font(.caption)
