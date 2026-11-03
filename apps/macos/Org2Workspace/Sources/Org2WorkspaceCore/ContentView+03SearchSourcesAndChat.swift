@@ -2510,6 +2510,7 @@ struct AIChatView: View {
   private var showsEmptyChat: Bool {
     store.aiChatMessages.isEmpty
       && !store.isSendingAIChatMessage
+      && store.selectedAIChatThreadID.flatMap(store.aiChatRemoteLiveTurn(for:)) == nil
       && !store.isLoadingAIChatTranscript
       && store.aiChatTranscriptRecoveryNotice == nil
   }
@@ -2526,11 +2527,17 @@ struct AIChatView: View {
     // A dot mirror keeps only the newest stretch of the conversation; earlier
     // messages read from ChatGPT are shown above it without being saved.
     let earlierDotMessages = store.openAIDotMirrorEarlierMessages(for: store.selectedAIChatThreadID)
+    let isSharedRoom = store.selectedAIChatIsSharedRoom
+    let messages = store.aiChatDisplayedMessages(
+      store.aiChatMessages,
+      threadID: store.selectedAIChatThreadID,
+      isSharedRoom: isSharedRoom
+    )
     let window = AIChatTranscriptWindow(
       messages: earlierDotMessages.isEmpty
-        ? store.aiChatMessages
-        : earlierDotMessages + store.aiChatMessages,
-      isSharedRoom: store.selectedAIChatIsSharedRoom,
+        ? messages
+        : earlierDotMessages + messages,
+      isSharedRoom: isSharedRoom,
       displayLimit: transcriptDisplayLimit,
       anchor: transcriptWindowAnchor
     )

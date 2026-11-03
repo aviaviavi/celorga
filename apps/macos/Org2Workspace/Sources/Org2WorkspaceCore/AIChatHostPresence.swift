@@ -49,6 +49,28 @@ final class AIChatLocalHostRegistry: @unchecked Sendable {
   }
 }
 
+/// The message that started a live turn. The presence record is small and
+/// rewritten every few seconds, so it usually reaches other hosts before the
+/// transcript commit that carries the same message.
+public struct AIChatLiveTurnPrompt: Codable, Sendable, Equatable {
+  public var content: String
+  public var createdAt: Date
+  public var attachmentCount: Int?
+  public var provenance: AIChatMessageProvenance?
+
+  public init(
+    content: String,
+    createdAt: Date,
+    attachmentCount: Int? = nil,
+    provenance: AIChatMessageProvenance? = nil
+  ) {
+    self.content = content
+    self.createdAt = createdAt
+    self.attachmentCount = attachmentCount
+    self.provenance = provenance
+  }
+}
+
 /// A live turn published by the host that is executing it. Other hosts use it
 /// to show progress for conversations they do not run themselves.
 public struct AIChatLiveTurnRecord: Codable, Sendable, Equatable {
@@ -61,6 +83,8 @@ public struct AIChatLiveTurnRecord: Codable, Sendable, Equatable {
   public var reasoning: String
   public var activities: [AIChatRunActivity]
   public var statusText: String?
+  /// The message `userMessageID` names. Absent in records from older builds.
+  public var userMessage: AIChatLiveTurnPrompt?
 
   public init(
     threadID: UUID,
@@ -71,7 +95,8 @@ public struct AIChatLiveTurnRecord: Codable, Sendable, Equatable {
     streamingReply: String = "",
     reasoning: String = "",
     activities: [AIChatRunActivity] = [],
-    statusText: String? = nil
+    statusText: String? = nil,
+    userMessage: AIChatLiveTurnPrompt? = nil
   ) {
     self.threadID = threadID
     self.userMessageID = userMessageID
@@ -82,6 +107,39 @@ public struct AIChatLiveTurnRecord: Codable, Sendable, Equatable {
     self.reasoning = reasoning
     self.activities = activities
     self.statusText = statusText
+    self.userMessage = userMessage
+  }
+
+  /// The conversation as a host that does not run this turn should show it.
+  /// While the transcript commit carrying the turn's prompt is still
+  /// synchronizing, the prompt from this record stands in for it, so the
+  /// reader never sees work start with no message that asked for it. The
+  /// committed message replaces it as soon as it arrives (same ID).
+  public func messagesIncludingPrompt(_ messages: [AIChatMessage]) -> [AIChatMessage] {
+    guard let userMessageID,
+          let userMessage,
+          !messages.contains(where: { $0.id == userMessageID })
+    else { return messages }
+    let attachments = userMessage.attachmentCount ?? 0
+    let content = userMessage.content.isEmpty && attachments > 0
+      ? (attachments == 1 ? "1 attachment" : "\(attachments) attachments")
+      : userMessage.content
+    let prompt = AIChatMessage(
+      id: userMessageID,
+      role: .user,
+      content: content,
+      createdAt: userMessage.createdAt,
+      deliveryStatus: .sending,
+      targetDestinationID: destinationID,
+      provenance: userMessage.provenance
+    )
+    // Keep creation order: the prompt belongs after every message that
+    // preceded it, even if a later one has already synchronized.
+    let index = messages.lastIndex(where: { $0.createdAt <= prompt.createdAt })
+      .map { $0 + 1 } ?? 0
+    var result = messages
+    result.insert(prompt, at: index)
+    return result
   }
 }
 
@@ -167,7 +225,13 @@ enum AIChatLiveHostDirectory {
   static let directoryName = "live"
   static let maximumStreamingCharacters = 24 * 1_024
   static let maximumReasoningCharacters = 4 * 1_024
+  static let maximumPromptCharacters = 8 * 1_024
   static let maximumActivities = 12
+
+  static func boundedHead(_ text: String, maximum: Int) -> String {
+    guard text.count > maximum else { return text }
+    return String(text.prefix(maximum)) + "…"
+  }
 
   static func directory(forTranscript legacyURL: URL) -> URL {
     AIChatTranscriptStore.storeDirectory(for: legacyURL)

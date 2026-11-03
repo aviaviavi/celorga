@@ -13,6 +13,22 @@ private final class CrossHostObservationFlag: @unchecked Sendable {
   }
 }
 
+private actor CrossHostTurnGate {
+  private var isOpen = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    guard !isOpen else { return }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+
+  func open() {
+    isOpen = true
+    waiters.forEach { $0.resume() }
+    waiters.removeAll()
+  }
+}
+
 private actor CrossHostSendCounter {
   private(set) var prompts: [String] = []
 
@@ -601,6 +617,182 @@ final class AIChatCrossHostTests: XCTestCase {
     XCTAssertTrue(runningStateChanged.value)
     XCTAssertTrue(store.aiChatRemoteRunningThreadIDs.isEmpty)
     XCTAssertFalse(store.isAIChatThreadRunning(thread.id))
+  }
+
+  /// A phone sends a follow-up to the server, which starts the turn at once.
+  /// Its presence record reaches the laptop before the transcript commit that
+  /// holds the message. The laptop must not show the work without the message
+  /// that asked for it.
+  @MainActor
+  func testRemoteTurnShowsItsPromptBeforeTheTranscriptCommitArrives() async throws {
+    let transcriptURL = root.appendingPathComponent("chat.json")
+    let reply = AIChatMessage(
+      role: .assistant,
+      content: "Blocked: two timing checks failed.",
+      createdAt: Date().addingTimeInterval(-600)
+    )
+    let thread = AIChatThread(
+      title: "Automation: maintainer",
+      runtime: .codex,
+      sessionKey: "maintainer",
+      messages: [reply]
+    )
+    try AIChatTranscriptStore.shared.flush(
+      AIChatTranscriptSnapshot(threads: [thread], selectedThreadID: thread.id, settlementSettings: settings),
+      legacyURL: transcriptURL
+    )
+    let store = try makeStore(transcriptURL: transcriptURL)
+    await store.waitForAIChatTranscriptLoadForTesting()
+
+    let promptID = UUID()
+    let sentAt = Date()
+    let provenance = AIChatMessageProvenance(
+      originClient: .mobile,
+      originDeviceName: "Test Phone",
+      receivedByHostRef: "press",
+      receivedByHostName: "OpenOrg on press",
+      executionHostRef: "press",
+      executionHostName: "OpenOrg on press",
+      acceptedAt: sentAt
+    )
+    try AIChatLiveHostDirectory.write(
+      AIChatLiveHostRecord(
+        writerID: "server-writer",
+        host: AIChatHostIdentity(ref: "press", name: "OpenOrg on press", kind: .server),
+        enabledDestinationIDs: [thread.destinationID],
+        turns: [AIChatLiveTurnRecord(
+          threadID: thread.id,
+          userMessageID: promptID,
+          destinationName: "Codex",
+          startedAt: sentAt,
+          streamingReply: "Picking up the saved repair…",
+          userMessage: AIChatLiveTurnPrompt(
+            content: "That is not a reason to stop. Fix it and finish.",
+            createdAt: sentAt,
+            provenance: provenance
+          )
+        )]
+      ),
+      transcriptURL: transcriptURL
+    )
+    await store.refreshAIChatRemoteLiveHosts()
+
+    XCTAssertEqual(store.aiChatMessages.map(\.id), [reply.id], "the replica itself is not edited")
+    let shown = store.aiChatDisplayedMessages(
+      store.aiChatMessages,
+      threadID: thread.id,
+      isSharedRoom: false
+    )
+    XCTAssertEqual(shown.map(\.id), [reply.id, promptID])
+    let prompt = try XCTUnwrap(shown.last)
+    XCTAssertEqual(prompt.role, .user)
+    XCTAssertEqual(prompt.content, "That is not a reason to stop. Fix it and finish.")
+    XCTAssertEqual(prompt.provenance?.originClient, .mobile)
+    XCTAssertEqual(store.aiChatProvenanceCaption(for: prompt), provenance.caption(role: .user))
+
+    // When the commit arrives, its copy (same ID) is the only one shown.
+    let committed = AIChatMessage(
+      id: promptID,
+      role: .user,
+      content: "That is not a reason to stop. Fix it and finish.",
+      createdAt: sentAt,
+      deliveryStatus: .sending,
+      provenance: provenance
+    )
+    XCTAssertEqual(
+      store.aiChatDisplayedMessages([reply, committed], threadID: thread.id, isSharedRoom: false).map(\.id),
+      [reply.id, promptID]
+    )
+    XCTAssertEqual(
+      store.aiChatDisplayedMessages(store.aiChatMessages, threadID: thread.id, isSharedRoom: true).map(\.id),
+      [reply.id],
+      "shared rooms present rounds from committed messages only"
+    )
+
+    // Records from older builds carry no prompt and change nothing.
+    let legacy = try JSONDecoder().decode(
+      AIChatLiveTurnRecord.self,
+      from: Data(#"{"threadID":"\#(thread.id.uuidString)","userMessageID":"\#(promptID.uuidString)","streamingReply":"","reasoning":"","activities":[]}"#.utf8)
+    )
+    XCTAssertNil(legacy.userMessage)
+    XCTAssertEqual(legacy.messagesIncludingPrompt([reply]).map(\.id), [reply.id])
+
+    // Once the turn ends here, nothing stands in for the prompt.
+    try AIChatLiveHostDirectory.write(
+      AIChatLiveHostRecord(
+        writerID: "server-writer",
+        host: AIChatHostIdentity(ref: "press", name: "OpenOrg on press", kind: .server),
+        enabledDestinationIDs: [thread.destinationID]
+      ),
+      transcriptURL: transcriptURL
+    )
+    await store.refreshAIChatRemoteLiveHosts()
+    XCTAssertEqual(
+      store.aiChatDisplayedMessages(store.aiChatMessages, threadID: thread.id, isSharedRoom: false).map(\.id),
+      [reply.id]
+    )
+  }
+
+  @MainActor
+  func testRunningTurnPublishesItsPromptForOtherHosts() async throws {
+    let transcriptURL = root.appendingPathComponent("chat.json")
+    let thread = AIChatThread(title: "Follow-up", runtime: .codex, sessionKey: "follow-up")
+    try AIChatTranscriptStore.shared.flush(
+      AIChatTranscriptSnapshot(threads: [thread], selectedThreadID: thread.id, settlementSettings: settings),
+      legacyURL: transcriptURL
+    )
+    let gate = CrossHostTurnGate()
+    let store = try makeStore(transcriptURL: transcriptURL, codex: { _, _, _ in
+      await gate.wait()
+      return "done"
+    })
+    await store.waitForAIChatTranscriptLoadForTesting()
+
+    let send = Task { @MainActor in await store.sendAIChatMessage(text: "Fix it and finish.") }
+    for _ in 0..<300 where !store.isAIChatThreadRunningOnCurrentHost(thread.id) {
+      try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    XCTAssertTrue(store.isAIChatThreadRunningOnCurrentHost(thread.id))
+    let promptID = try XCTUnwrap(store.aiChatMessages.last(where: { $0.role == .user })?.id)
+
+    store.publishAIChatLivePresenceIfNeeded(force: true)
+    var turn: AIChatLiveTurnRecord?
+    for _ in 0..<300 {
+      turn = AIChatLiveHostDirectory.readAll(transcriptURL: transcriptURL, excludingWriterID: nil)
+        .flatMap(\.turns)
+        .first(where: { $0.threadID == thread.id && $0.userMessage != nil })
+      if turn != nil { break }
+      try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    let published = try XCTUnwrap(turn)
+    XCTAssertEqual(published.userMessageID, promptID)
+    XCTAssertEqual(published.userMessage?.content, "Fix it and finish.")
+    XCTAssertEqual(published.userMessage?.provenance?.executionHostRef, store.aiChatHostIdentity.ref)
+
+    await gate.open()
+    await send.value
+  }
+
+  func testLivePromptIsBoundedAndKeepsCreationOrder() throws {
+    let threadID = UUID()
+    let earlier = AIChatMessage(role: .assistant, content: "earlier", createdAt: Date(timeIntervalSince1970: 100))
+    let later = AIChatMessage(role: .assistant, content: "later", createdAt: Date(timeIntervalSince1970: 300))
+    let turn = AIChatLiveTurnRecord(
+      threadID: threadID,
+      userMessageID: UUID(),
+      userMessage: AIChatLiveTurnPrompt(
+        content: "",
+        createdAt: Date(timeIntervalSince1970: 200),
+        attachmentCount: 2
+      )
+    )
+    let shown = turn.messagesIncludingPrompt([earlier, later])
+    XCTAssertEqual(shown.map(\.content), ["earlier", "2 attachments", "later"])
+
+    let long = String(repeating: "a", count: AIChatLiveHostDirectory.maximumPromptCharacters + 10)
+    let bounded = AIChatLiveHostDirectory.boundedHead(long, maximum: AIChatLiveHostDirectory.maximumPromptCharacters)
+    XCTAssertEqual(bounded.count, AIChatLiveHostDirectory.maximumPromptCharacters + 1)
+    XCTAssertTrue(bounded.hasSuffix("…"))
   }
 
   @MainActor

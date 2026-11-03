@@ -2274,6 +2274,24 @@ extension WorkspaceStore {
     return nil
   }
 
+  /// `messages` of `threadID` as this host shows them. A turn another host
+  /// runs is announced by its presence record before the transcript commit
+  /// that holds its prompt has synchronized here; until it arrives, the
+  /// record's copy of the prompt stands in for it.
+  public func aiChatDisplayedMessages(
+    _ messages: [AIChatMessage],
+    threadID: UUID?,
+    isSharedRoom: Bool
+  ) -> [AIChatMessage] {
+    // A shared room groups messages into rounds; it keeps the committed list.
+    guard !isSharedRoom,
+          let threadID,
+          !isAIChatThreadRunningOnCurrentHost(threadID),
+          let remote = aiChatRemoteLiveTurn(for: threadID)
+    else { return messages }
+    return remote.turn.messagesIncludingPrompt(messages)
+  }
+
   /// The machine where the conversation's agent harness runs when its
   /// destination is a remote (SSH or endpoint) harness. Message provenance
   /// records the OpenOrg host that drove the turn, which is a different
@@ -2380,9 +2398,15 @@ extension WorkspaceStore {
             updatedAt: activity.updatedAt
           )
         }
+      let userMessageID = activeAIChatUserMessageIDByThreadID[thread.id]
+      // The selected conversation's current messages live in `aiChatMessages`.
+      let messages = selectedAIChatThreadID == thread.id ? aiChatMessages : thread.messages
+      let userMessage = userMessageID.flatMap { id in
+        messages.last(where: { $0.id == id && $0.role == .user })
+      }
       return AIChatLiveTurnRecord(
         threadID: thread.id,
-        userMessageID: activeAIChatUserMessageIDByThreadID[thread.id],
+        userMessageID: userMessageID,
         destinationID: destinationID,
         destinationName: destinationID.map(aiChatDestinationTitle),
         startedAt: aiChatRequestStartedAtByThreadID[thread.id],
@@ -2394,7 +2418,18 @@ extension WorkspaceStore {
           snapshot.reasoning,
           maximum: AIChatLiveHostDirectory.maximumReasoningCharacters
         ),
-        activities: Array(activities)
+        activities: Array(activities),
+        userMessage: userMessage.map { message in
+          AIChatLiveTurnPrompt(
+            content: AIChatLiveHostDirectory.boundedHead(
+              message.content,
+              maximum: AIChatLiveHostDirectory.maximumPromptCharacters
+            ),
+            createdAt: message.createdAt,
+            attachmentCount: message.attachments.isEmpty ? nil : message.attachments.count,
+            provenance: message.provenance
+          )
+        }
       )
     }
     let authenticationNeeded = aiChatAuthenticationNeededDestinationIDs()
@@ -2485,6 +2520,15 @@ extension WorkspaceStore {
     if visible != aiChatRemoteLiveHosts {
       aiChatRemoteLiveHosts = visible
       syncSelectedAIChatSendState()
+      // The open conversation shows another host's turn whose prompt has not
+      // arrived in this replica yet. Look for the commit that carries it
+      // instead of waiting for the next file event.
+      if let selectedID = selectedAIChatThreadID,
+         !unloadedAIChatThreadIDs.contains(selectedID),
+         let promptID = aiChatRemoteLiveTurn(for: selectedID)?.turn.userMessageID,
+         !aiChatMessages.contains(where: { $0.id == promptID }) {
+        scheduleSyncedAIChatTranscriptRefresh()
+      }
     }
   }
 
