@@ -1018,6 +1018,7 @@ celorga run create --title "Prepare the weekly operating review" \
   --step agent:"Draft cited review" --step validation:"Validate citations and export" \
   --context notes/operations.org --capability agent-context --dir ~/notes
 celorga run list --dir ~/notes --json
+celorga run list --status queued --status running --summary --limit 50 --dir ~/notes --json
 celorga run show RUN_ID --dir ~/notes --json
 celorga run start RUN_ID --dir ~/notes
 celorga run step RUN_ID step-1 --status completed --dir ~/notes
@@ -1041,6 +1042,8 @@ celorga run complete RUN_ID \
   --summary "Prepared the cited operating review and validated its PDF export." \
   --highlight "All claims retain citations" --next-action "Share after owner review" --dir ~/notes
 #+end_src
+
+=run list= orders runs by most recent update, then by run ID. With no options, =--json= returns the original envelope: every full record plus =logicalWork= roll-ups for each matching logical-work group. Repeat =--status= to match any of several statuses; an unknown status fails with the list of valid statuses. =--summary= returns compact records with identity, title, status, risk, ownership, workflow and attempt identity, timestamps, blocked or failure reason, and counts of comments, events, approvals, artifacts, validations, and plan steps. It omits the goal text and those histories. =--limit N= and =--offset N= page the matching runs. With =--summary=, =--limit=, or =--offset=, the envelope adds =projection= and =page= (=total=, =offset=, =limit=, =returned=, =hasMore=, =nextOffset=). To read all matches, repeat the request with =--offset= set to =nextOffset= until it is =null=. In these responses =logicalWork= lists only the groups that have a run on the returned page. Each listed roll-up counts all matching attempts in its group, including attempts on other pages, and an empty page has no roll-ups. Use these options in scripts and cleanup jobs to keep output proportional to the page you request.
 
 =--title= is concise display metadata, limited to 120 characters. Put the complete task brief and execution instructions in =--goal=. When an older caller omits =--title=, Celorga derives and stores a bounded title from the goal; workflow runs always preserve the workflow title separately from its instructions.
 

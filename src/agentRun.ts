@@ -1322,10 +1322,184 @@ export function loadAgentRunSnapshot(corpusRoot: string, id: string): AgentRunSn
 export function listAgentRuns(corpusRoot: string): AgentRun[] {
   // List consumers (including workspace refresh) need runs, not a retained copy
   // of every readable projection, revision, and source-consistency result.
-  // Consume snapshots one at a time so large approval histories do not keep
+  // Consume records one at a time so large approval histories do not keep
   // the entire corpus of source strings alive until the list is complete.
-  return Array.from(iterateAgentRunSnapshots(corpusRoot), (snapshot) => snapshot.run)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
+  return Array.from(iterateAgentRuns(corpusRoot)).sort(compareAgentRunsByRecency);
+}
+
+/** List order for runs: most recently updated first, then ascending run ID. */
+export function compareAgentRunsByRecency(
+  a: Pick<AgentRun, "id" | "updatedAt">,
+  b: Pick<AgentRun, "id" | "updatedAt">,
+): number {
+  return b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id);
+}
+
+export interface AgentRunListSummary {
+  id: string;
+  title: string;
+  status: AgentRunStatus;
+  riskClass: AgentRunRiskClass;
+  owner?: string;
+  assignee?: string;
+  agentRef?: string;
+  goalRef?: string;
+  workflowId?: string;
+  workflowVersion?: string;
+  destinationRef?: string;
+  provider?: string;
+  model?: string;
+  logicalWorkId?: string;
+  attempt?: Omit<AgentRunAttempt, "signalIds" | "signals">;
+  parentRunId?: string;
+  forkedFromEventId?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  blockedReason?: string;
+  failure?: string;
+  counts: {
+    comments: number;
+    events: number;
+    approvals: number;
+    pendingApprovals: number;
+    artifacts: number;
+    reviewRequiredArtifacts: number;
+    validations: number;
+    failedValidations: number;
+    planSteps: number;
+  };
+}
+
+/**
+ * Compact list projection of a run. It keeps identity, lifecycle, ownership,
+ * timestamps, and counts, and omits the goal text, comments, events, and other
+ * nested histories that make full records large.
+ */
+export function summarizeAgentRunForList(run: AgentRun): AgentRunListSummary {
+  const attempt = run.attempt
+    ? withoutUndefined({
+      id: run.attempt.id,
+      number: run.attempt.number,
+      triggerId: run.attempt.triggerId,
+      triggerType: run.attempt.triggerType,
+      scheduledFor: run.attempt.scheduledFor,
+    })
+    : undefined;
+  return withoutUndefined({
+    id: run.id,
+    title: run.title || deriveAgentRunTitle(run.goal),
+    status: run.status,
+    riskClass: run.riskClass,
+    owner: run.owner,
+    assignee: run.assignee,
+    agentRef: run.agentRef,
+    goalRef: run.goalRef,
+    workflowId: run.workflowId,
+    workflowVersion: run.workflowVersion,
+    destinationRef: run.destinationRef,
+    provider: run.provider,
+    model: run.model,
+    logicalWorkId: run.logicalWorkId,
+    attempt,
+    parentRunId: run.parentRunId,
+    forkedFromEventId: run.forkedFromEventId,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+    startedAt: run.startedAt,
+    completedAt: run.completedAt,
+    blockedReason: run.blockedReason,
+    failure: run.failure,
+    counts: {
+      comments: run.comments.length,
+      events: run.events.length,
+      approvals: run.approvals.length,
+      pendingApprovals: run.approvals.filter((approval) => approval.status === "pending").length,
+      artifacts: run.artifacts.length,
+      reviewRequiredArtifacts: run.artifacts.filter((artifact) => artifact.reviewStatus === "review-required").length,
+      validations: run.validations.length,
+      failedValidations: run.validations.filter((validation) => validation.status === "failed").length,
+      planSteps: run.plan.length,
+    },
+  }) as AgentRunListSummary;
+}
+
+function withoutUndefined<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as T;
+}
+
+export interface AgentRunQuery<T> {
+  /** Runs whose status equals any listed value; absent or empty matches every run. */
+  statuses?: readonly string[];
+  offset?: number;
+  limit?: number;
+  project: (run: AgentRun) => T;
+}
+
+export interface AgentRunQueryResult<T> {
+  items: T[];
+  /** Number of runs matching the status filter, before offset and limit. */
+  total: number;
+  /**
+   * Attempt roll-ups for the logical-work groups that have a run in `items`.
+   * Each roll-up counts every matching attempt in its group, including
+   * attempts outside the returned page. Groups with no run on the page are
+   * omitted, so an empty page has no roll-ups; a query without offset or
+   * limit returns every matching group.
+   */
+  logicalWork: AgentRunAttemptRollup[];
+}
+
+/**
+ * Filters, orders, and pages runs while reading them one at a time. Runs that
+ * do not match are discarded immediately, and a bounded request retains at
+ * most offset + limit projected records, so a long history does not stay in
+ * memory to produce a short answer.
+ */
+export function queryAgentRuns<T>(corpusRoot: string, query: AgentRunQuery<T>): AgentRunQueryResult<T> {
+  const statuses = query.statuses && query.statuses.length > 0 ? new Set(query.statuses) : null;
+  const offset = query.offset ?? 0;
+  const capacity = query.limit === undefined ? Infinity : offset + query.limit;
+  const retained: Array<{ id: string; updatedAt: string; logicalWorkId?: string; value: T }> = [];
+  const attempts: AgentRunAttemptRollupSource[] = [];
+  let total = 0;
+  for (const run of iterateAgentRuns(corpusRoot)) {
+    if (statuses && !statuses.has(run.status)) continue;
+    total += 1;
+    const logicalWorkId = run.logicalWorkId && run.attempt ? run.logicalWorkId : undefined;
+    if (logicalWorkId) {
+      attempts.push({ id: run.id, status: run.status, updatedAt: run.updatedAt, logicalWorkId, attempt: { number: run.attempt!.number } });
+    }
+    if (capacity === 0) continue;
+    if (capacity === Infinity) {
+      retained.push({ id: run.id, updatedAt: run.updatedAt, logicalWorkId, value: query.project(run) });
+      continue;
+    }
+    if (retained.length >= capacity && compareAgentRunsByRecency(run, retained[retained.length - 1]!) >= 0) continue;
+    let low = 0;
+    let high = retained.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (compareAgentRunsByRecency(retained[middle]!, run) <= 0) low = middle + 1;
+      else high = middle;
+    }
+    retained.splice(low, 0, { id: run.id, updatedAt: run.updatedAt, logicalWorkId, value: query.project(run) });
+    if (retained.length > capacity) retained.pop();
+  }
+  if (capacity === Infinity) retained.sort(compareAgentRunsByRecency);
+  const end = query.limit === undefined ? undefined : offset + query.limit;
+  const page = retained.slice(offset, end);
+  // Roll-ups follow the page so one-run output cannot grow with unrelated
+  // workflow history; counts for a represented group still cover all matches.
+  const represented = new Set(page.flatMap((entry) => entry.logicalWorkId ? [entry.logicalWorkId] : []));
+  return {
+    items: page.map((entry) => entry.value),
+    total,
+    logicalWork: represented.size === 0
+      ? []
+      : summarizeAgentRunAttempts(attempts.filter((attempt) => represented.has(attempt.logicalWorkId!)).sort(compareAgentRunsByRecency)),
+  };
 }
 
 type AgentRunApprovalIndexEntry = {
@@ -1471,13 +1645,33 @@ function* iterateAgentRunSnapshots(corpusRoot: string): Generator<AgentRunSnapsh
   }
 }
 
+// Canonical runs only, without the source text, revision, or consistency
+// check that snapshot consumers need; list paths parse and drop each source.
+function* iterateAgentRuns(corpusRoot: string): Generator<AgentRun> {
+  const dir = agentRunDirectory(corpusRoot);
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile() || !isOrgRecordFileName(entry.name)) continue;
+    const file = path.resolve(dir, entry.name);
+    const run = parseAgentRunOrg(fs.readFileSync(file, "utf8"));
+    // Syncthing conflict copies are not authoritative, even when they carry
+    // the same durable ID and a more recent timestamp.
+    if (file !== agentRunPath(corpusRoot, run.id)) continue;
+    yield run;
+  }
+}
+
 export function listAgentRunSnapshots(corpusRoot: string): AgentRunSnapshot[] {
   return Array.from(iterateAgentRunSnapshots(corpusRoot))
     .sort((a, b) => b.run.updatedAt.localeCompare(a.run.updatedAt) || a.run.id.localeCompare(b.run.id));
 }
 
-export function summarizeAgentRunAttempts(runs: AgentRun[]): AgentRunAttemptRollup[] {
-  const groups = new Map<string, AgentRun[]>();
+type AgentRunAttemptRollupSource = Pick<AgentRun, "id" | "status" | "updatedAt" | "logicalWorkId"> & {
+  attempt?: Pick<AgentRunAttempt, "number">;
+};
+
+export function summarizeAgentRunAttempts(runs: readonly AgentRunAttemptRollupSource[]): AgentRunAttemptRollup[] {
+  const groups = new Map<string, AgentRunAttemptRollupSource[]>();
   for (const run of runs) {
     if (!run.logicalWorkId || !run.attempt) continue;
     groups.set(run.logicalWorkId, [...(groups.get(run.logicalWorkId) || []), run]);

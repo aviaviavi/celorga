@@ -11,6 +11,7 @@ import {
   AGENT_RUN_ARTIFACT_REVIEW_STATUSES,
   AGENT_RUN_ARTIFACT_ROLES,
   AGENT_RUN_RISK_CLASSES,
+  AGENT_RUN_STATUSES,
   AGENT_RUN_APPROVAL_PRIORITIES,
   AGENT_RUN_STEP_KINDS,
   AGENT_RUN_STEP_STATUSES,
@@ -183,6 +184,17 @@ function choice<const Choices extends readonly string[]>(value: string | undefin
   if (!choices.includes(selected)) throw new Error(`invalid ${label}: ${selected}; expected one of: ${choices.join(", ")}`);
   return selected as Choices[number];
 }
+function integerFlag(parsed: ParsedArgs, name: string, minimum: number): number | undefined {
+  const values = flags(parsed, name);
+  if (values.length === 0) return undefined;
+  if (values.length > 1) throw new Error(`--${name} may be given only once`);
+  const raw = values[0]!;
+  const value = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`--${name} must be ${minimum > 0 ? "a positive" : "a non-negative"} integer: ${raw === "true" ? "missing value" : raw}`);
+  }
+  return value;
+}
 function optionalChoice<const Choices extends readonly string[]>(value: string | undefined, choices: Choices, label: string): Choices[number] | undefined {
   return value === undefined ? undefined : choice(value, choices, label);
 }
@@ -248,6 +260,11 @@ const HELP = `Agentic workspace commands:
   celorga agent-profile resolve --runtime openclaw|codex --runtime-agent-id ID [--json]
   celorga run create [--title TEXT] --goal TEXT [--goal-ref ID] [--agent-ref ID] [--thread AI_CHAT_THREAD_ID] [--destination-ref ID] [--accept TEXT] [--risk CLASS] [--owner NAME] [--capability ID] [--dir CORPUS]
     --thread links the run to the AI chat that created it (use ORG2_AI_CHAT_THREAD_ID); resuming the run returns to that chat's agent.
+  celorga run list [--status STATUS ...] [--summary] [--limit N] [--offset N] [--dir CORPUS] [--json]
+    Newest update first, ties by run ID. Repeat --status to match any listed status. --summary omits goal text,
+    comments, events, and other histories but keeps identity, lifecycle, ownership, timestamps, and counts.
+    --summary, --limit, or --offset adds page (total, returned, hasMore, nextOffset); continue until nextOffset is null.
+    logicalWork then lists only groups with a run on the returned page, counting all matching attempts in each.
   celorga run show ID --with-revision --json
   celorga run wait ID --until approval|blocked|needs-you|running|completed|failed|terminal|status:STATUS [--timeout SECONDS] [--json]
   celorga run list|show|wait|validate|start|resume|retry|cancel|complete|complete-external|reopen-external|fail|block|fork|normalize|reconcile-source|artifact-review
@@ -1378,10 +1395,22 @@ async function runCommand(parsed: ParsedArgs): Promise<void> {
     const file = saveAgentRun(corpus, linked, { expectedRevision: null }); output(parsed, { run: linked, file }, `created ${linked.id}\n${file}`); return;
   }
   if (action === "list") {
-    const status = flag(parsed, "status");
-    const payload = workspaceRunList(corpus, status);
+    const summary = parsed.flags.get("summary");
+    if (summary && summary.some((value) => value !== "true")) throw new Error("--summary does not take a value");
+    const statuses = flags(parsed, "status");
+    if (statuses.includes("true")) throw new Error(`--status requires a value: ${AGENT_RUN_STATUSES.join(", ")}`);
+    const payload = workspaceRunList(corpus, {
+      statuses,
+      limit: integerFlag(parsed, "limit", 1),
+      offset: integerFlag(parsed, "offset", 0),
+      summary: summary !== undefined,
+    });
     const runs = payload.runs;
-    output(parsed, payload, runs.length ? runs.map((run) => `${run.id}\t${run.status}\t${run.attempt ? `${run.logicalWorkId}#${run.attempt.number}\t` : ""}${run.goal}`).join("\n") : "No runs."); return;
+    const lines = runs.map((run) => `${run.id}\t${run.status}\t${run.attempt ? `${run.logicalWorkId}#${run.attempt.number}\t` : ""}${"goal" in run ? run.goal : run.title}`);
+    const page = payload.page;
+    if (page && page.returned > 0) lines.push(`Showing ${page.offset + 1}-${page.offset + page.returned} of ${page.total}${page.nextOffset !== null ? `; next page: --offset ${page.nextOffset}` : ""}`);
+    else if (page && page.total > 0) lines.push(`No runs at offset ${page.offset}; ${page.total} matching.`);
+    output(parsed, payload, lines.length ? lines.join("\n") : "No runs."); return;
   }
   if (action === "normalize") { const result = normalizeLegacyAgentRuns(corpus); output(parsed, result, `created ${result.created.length}; skipped ${result.skippedExisting.length}`); return; }
   if (action === "approval-reconcile") {

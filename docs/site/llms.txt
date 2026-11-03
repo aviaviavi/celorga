@@ -63,6 +63,7 @@ Event-triggered automations use deterministic detectors, never a model deciding 
 Durable delegation uses generated run records under `.celorga/runs/` and authored workflow files under the visible `workflows/` directory. Celorga continues to read the legacy early-alpha workflows folder inside the hidden state directory. Discover the interfaces with:
 
     celorga run --help
+    celorga run list --status queued --status running --summary --limit 50 --dir CORPUS --json
     celorga workflow --help
     celorga doctor --dir CORPUS --json
     celorga ledger list account-outreach --eligible --dir CORPUS --json
