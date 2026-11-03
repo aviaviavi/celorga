@@ -278,6 +278,9 @@ final class WorkspaceDocumentMutationLaneTests: XCTestCase {
       // Capture attachment staging is a unique hidden temporary file; its
       // promotion and daily-note commit occur while the lane is held.
       "data.write(to: temporaryURL",
+      // Mobile binary/non-Org attachments, inside the mutation lane after
+      // descendant authorization. Org uploads use execution.commit instead.
+      "request.data.write(to: authorizedDestination, options: .atomic)",
       // Non-Org app stylesheet customization.
       "template.write(to: stylesheetURL",
       // AI chat JSON machine state, explicitly outside the ordinary document
@@ -296,7 +299,7 @@ final class WorkspaceDocumentMutationLaneTests: XCTestCase {
       "text.write(to: url, atomically: true, encoding: .utf8)",
       "previousText.write(to: backupURL",
     ]
-    XCTAssertEqual(directWriteLines.count, 15, "Classify every new direct filesystem write")
+    XCTAssertEqual(directWriteLines.count, 16, "Classify every new direct filesystem write")
     for line in directWriteLines {
       XCTAssertTrue(
         classifiedDirectWriteMarkers.contains(where: line.contains),
@@ -304,10 +307,12 @@ final class WorkspaceDocumentMutationLaneTests: XCTestCase {
       )
     }
 
-    // These commands mutate ordinary corpus documents through the TypeScript
-    // implementation. Their enclosing Store flows must reserve the same lane;
+    // These flows mutate ordinary corpus documents natively or through the
+    // TypeScript implementation and must reserve the same lane;
     // durable .org2 machine-state/chat commands are intentionally out of scope.
     for functionName in [
+      "mobileRemoteCaptureAttachment",
+      "mobileRemoteCapture",
       "refileRenderedEntry",
       "archiveRenderedEntry",
       "performSyncAndStageSource",

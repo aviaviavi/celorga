@@ -27,6 +27,7 @@ assert.equal(correctness[correctness.indexOf("--skip") + 1], timing[timing.index
 assert.ok([correctness, timing].every((args) => args.includes("--skip-build")), "both lanes reuse one build");
 const selection = new RegExp(SWIFT_TIMING_TESTS);
 for (const id of [
+  "Org2WorkspaceCoreTests.CodexAppServerClientTests/testInitializationTimeoutResetsTransportForRetry",
   "Org2WorkspaceCoreTests.WorkspacePerformanceRegressionTests/testWarmRefresh",
   "Org2WorkspaceCoreTests.Org2ModelsTests/testRelaunchRecoveryDoesNotBlockBootstrapOrOtherThreads",
   "Org2WorkspaceCoreTests.OrgEditorInteractionTests/testKeyboardReturnAtEndOfExistingParagraphCreatesParagraphAfterCurrentText",

@@ -20,7 +20,7 @@ private actor SourceSyncGate {
 final class SourceSyncResponsivenessTests: XCTestCase {
   @MainActor
   func testSourceSyncStillSerializesEditsInsideImportZones() async throws {
-    let fixture = try makeFixture()
+    let fixture = try makeFixture(sourceSyncDelayMilliseconds: 3_000)
     defer { fixture.cleanup() }
     let gate = SourceSyncGate()
     await holdSourceSync(fixture, at: gate)
@@ -42,7 +42,10 @@ final class SourceSyncResponsivenessTests: XCTestCase {
       let startedWhileSyncPending = await finished.started
       XCTAssertFalse(startedWhileSyncPending, "Both import zones must remain reserved")
     }
+    // Releasing the hook lets the CLI run; its completion, rather than a
+    // two-second process-start budget, releases the import reservations.
     await gate.release()
+    await sync.value
     // Release each overlapping edit as it starts, then drain both tasks.
     for (edit, finished) in edits {
       let editStarted = await waitUntil { await finished.started }
@@ -50,7 +53,6 @@ final class SourceSyncResponsivenessTests: XCTestCase {
       await finished.release()
       try await edit.value
     }
-    await sync.value
   }
 
   @MainActor
@@ -165,7 +167,7 @@ final class SourceSyncResponsivenessTests: XCTestCase {
   }
 
   @MainActor
-  private func makeFixture() throws -> Fixture {
+  private func makeFixture(sourceSyncDelayMilliseconds: Int = 0) throws -> Fixture {
     let workspace = FileManager.default.temporaryDirectory.appendingPathComponent("org2-sync-responsive-\(UUID().uuidString)")
     let repo = workspace.appendingPathComponent("repo")
     let corpus = workspace.appendingPathComponent("corpus")
@@ -175,9 +177,9 @@ final class SourceSyncResponsivenessTests: XCTestCase {
     try """
     const args = process.argv.slice(2);
     if (args[0] === 'source' && args[1] === 'sync') {
-      process.stdout.write(JSON.stringify({schema:'org2:source-sync:v1',root:'.',results:[{
+      setTimeout(() => process.stdout.write(JSON.stringify({schema:'org2:source-sync:v1',root:'.',results:[{
         id:'slack',ok:true,skipped:true,reason:'sync-in-progress'
-      }]}));
+      }]})), \(sourceSyncDelayMilliseconds));
     } else if (args[0] === 'source' && args[1] === 'list') {
       process.stdout.write('[]');
     } else {

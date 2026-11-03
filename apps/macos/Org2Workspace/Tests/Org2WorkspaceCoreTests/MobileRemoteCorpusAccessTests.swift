@@ -122,6 +122,51 @@ final class MobileRemoteCorpusAccessTests: XCTestCase {
     XCTAssertEqual(badEntry.statusCode, 422)
   }
 
+  @MainActor
+  func testOrgAttachmentRejectsConcurrentReplacementAndSymlinkEscape() async throws {
+    let fm = FileManager.default
+    let container = fm.temporaryDirectory.appendingPathComponent("mobile-attachment-\(UUID().uuidString)")
+    let corpus = container.appendingPathComponent("corpus")
+    let folder = corpus.appendingPathComponent("mobile-inbox-assets/entry")
+    let outside = container.appendingPathComponent("outside")
+    try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+    try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: container) }
+    let suite = "MobileAttachmentTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let store = WorkspaceStore(cli: Org2CLI(repoRoot: try Org2CLI.defaultRepoRoot()), defaults: defaults, legacyDefaultsDomains: [])
+    store.corpusRoot = corpus
+    let destination = folder.appendingPathComponent("note.org")
+    try "* Original\n".write(to: destination, atomically: true, encoding: .utf8)
+    await store.documentMutationLane.setEventHookForTesting { event in
+      guard case .willCommit(_, let path, _) = event, path == destination.path else { return }
+      try? "* External\n".write(to: destination, atomically: true, encoding: .utf8)
+    }
+    do {
+      _ = try await store.mobileRemoteCaptureAttachment(MobileRemoteCaptureAttachmentRequest(
+        entryID: "entry", filename: "note.org", data: Data("* Upload\n".utf8)
+      ))
+      XCTFail("An Org attachment must not overwrite a concurrent document edit")
+    } catch let error as WorkspaceDocumentMutationError {
+      XCTAssertEqual(error, .fileChanged(file: destination.path))
+    }
+    XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "* External\n")
+    await store.documentMutationLane.setEventHookForTesting(nil)
+    // The binary path must also remain within the active corpus.
+    try fm.removeItem(at: folder)
+    try fm.createSymbolicLink(at: folder, withDestinationURL: outside)
+    do {
+      _ = try await store.mobileRemoteCaptureAttachment(MobileRemoteCaptureAttachmentRequest(
+        entryID: "entry", filename: "photo.jpg", data: Data([1, 2, 3])
+      ))
+      XCTFail("An attachment directory must not escape through a symlink")
+    } catch let error as WorkspaceDocumentMutationError {
+      guard case .outsideCorpus = error else { return XCTFail("Unexpected error: \(error)") }
+    }
+    XCTAssertFalse(fm.fileExists(atPath: outside.appendingPathComponent("photo.jpg").path))
+  }
+
   func testIgnorePatternsMatchLikeTheCorpusConfig() {
     XCTAssertTrue(WorkspaceStore.mobileCorpusPath("archive/2024/a.org", matches: "archive"))
     XCTAssertTrue(WorkspaceStore.mobileCorpusPath("a/b/c.org", matches: "**/c.org"))

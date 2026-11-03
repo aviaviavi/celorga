@@ -7821,6 +7821,9 @@ final class Org2ModelsTests: XCTestCase {
 
     await firstSend.value
     await secondSend.value
+    try await waitForCondition {
+      store.aiChatMessages.last?.content == "reply 2" && !store.isSendingAIChatMessage
+    }
 
     XCTAssertEqual(store.aiChatMessages.map { "\($0.role.rawValue):\($0.content)" }, [
       "user:first",
@@ -20537,6 +20540,8 @@ final class Org2ModelsTests: XCTestCase {
     try await waitForCondition {
       (try? String(contentsOf: note, encoding: .utf8)) == original
         && store.selectedEntrySource?.text == original
+        && store.statusText == "Undid edit in live-undo.org2"
+        && !store.workspaceRedoStack.isEmpty
     }
     XCTAssertEqual(store.statusText, "Undid edit in live-undo.org2")
 
@@ -20544,6 +20549,8 @@ final class Org2ModelsTests: XCTestCase {
     try await waitForCondition {
       (try? String(contentsOf: note, encoding: .utf8)) == updated
         && store.selectedEntrySource?.text == updated
+        && store.statusText == "Redid edit in live-undo.org2"
+        && !store.workspaceUndoStack.isEmpty
     }
     XCTAssertEqual(store.statusText, "Redid edit in live-undo.org2")
   }

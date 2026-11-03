@@ -230,13 +230,33 @@ extension WorkspaceStore {
           request.data.count <= Self.mobileCaptureMaxAttachmentBytes
     else { throw MobileCaptureError.invalidAttachment }
     let relativePath = "\(Self.mobileInboxAssetsDirectory)/\(request.entryID)/\(request.filename)"
-    try await Task.detached(priority: .userInitiated) {
-      let folder = root
-        .appendingPathComponent(Self.mobileInboxAssetsDirectory, isDirectory: true)
-        .appendingPathComponent(request.entryID, isDirectory: true)
-      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-      try request.data.write(to: folder.appendingPathComponent(request.filename), options: .atomic)
-    }.value
+    let folder = root
+      .appendingPathComponent(Self.mobileInboxAssetsDirectory, isDirectory: true)
+      .appendingPathComponent(request.entryID, isDirectory: true)
+    let destination = folder.appendingPathComponent(request.filename)
+    guard let context = captureDocumentCorpusContext(mutationRoot: root) else {
+      throw WorkspaceDocumentMutationError.outsideCorpus(file: destination.path, root: root.path)
+    }
+    try await performDocumentMutation(context: context, files: [folder.path, destination.path]) { execution in
+      let authorizedFolder = try execution.authorizeDescendant(folder, ofDeclaredDirectory: folder)
+      try FileManager.default.createDirectory(at: authorizedFolder, withIntermediateDirectories: true)
+      let authorizedDestination = try execution.authorizeDescendant(destination, ofDeclaredDirectory: folder)
+      // Org attachments are ordinary documents, including when replacing an
+      // earlier upload. Use the same conflict checks and recovery as edits.
+      if ["org", "org2"].contains(authorizedDestination.pathExtension.lowercased()) {
+        guard let text = String(data: request.data, encoding: .utf8) else {
+          throw WorkspaceDocumentMutationError.invalidUTF8(file: destination.path)
+        }
+        let snapshot = try await execution.readSnapshot(at: authorizedDestination, allowMissing: true)
+        try await execution.commit(text, over: snapshot) { text, url, previous in
+          try Self.commitDocumentText(text, url: url, previousText: previous, operation: "mobile attachment")
+        }
+      } else {
+        // Binary/non-Org attachments still reserve their destination directory.
+        try request.data.write(to: authorizedDestination, options: .atomic)
+      }
+    }
+    invalidateCanonicalDocumentCache(for: destination.path)
     return MobileRemoteCaptureResponse(accepted: true, path: relativePath, duplicate: false)
   }
 

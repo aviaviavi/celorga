@@ -16,6 +16,7 @@ export const SWIFT_TIMING_CLASSES = [
   "OrgEditorInteractionTests",
 ];
 export const SWIFT_TIMING_CASES = [
+  "CodexAppServerClientTests/testInitializationTimeoutResetsTransportForRetry",
   "AIChatLargePasteTests/testRestoredMegabyteDraftSizingRemainsBounded",
   "AIChatLayoutTests/testLargeSharedRoomTranscriptGroupingRemainsResponsive",
   "AIChatThreadCreationTests/testCreatingThreadInsertsIncrementallyWithoutFullSidebarRebuild",
