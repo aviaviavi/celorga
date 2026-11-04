@@ -229,7 +229,7 @@ CLOSED: [2026-02-20 Fri]</code></pre>
 <li><p>Ordered markers: <code>1.</code>, <code>1)</code></p></li>
 <li><p>Checkboxes: <code>[ ]</code>, <code>[X]</code>, <code>[x]</code>, <code>[-]</code></p></li>
 <li><p>Cycle a list checkbox with <code>celorga checkbox --file FILE --line N --apply</code>: <code>[ ]</code> → <code>[-]</code> → <code>[X]</code> → <code>[ ]</code>. The CLI and LSP code action change only the selected marker; see <a href="tooling-reference.html">Tooling reference</a>.</p></li>
-<li><p>Checkbox progress cookies: <code>[n/m]</code> and <code>[p%]</code> may appear in headings or list items; <code>[/]</code> and <code>[%]</code> are empty placeholders. Compile output and lint compare each cookie with its innermost containing heading total. Checked items count as completed; unchecked and indeterminate items count only toward the total. <code>celorga checkbox fix-cookies --file FILE --apply</code> writes corrected values, while <code>celorga checkbox cycle --file FILE --line N --fix-cookies --apply</code> changes a marker and refreshes cookies atomically.</p></li>
+<li><p>Checkbox progress cookies: <code>[n/m]</code> and <code>[p%]</code> may appear in headings or list items; <code>[/]</code> and <code>[%]</code> are empty placeholders. Compile output and lint compare each cookie with its innermost containing heading total. A percent cookie rounds down, so <code>[100%]</code> means every item is done, and it shows at least <code>[1%]</code> once any item is done (1 of 201 is <code>[1%]</code>, not <code>[0%]</code>), as in Org 10. Checked items count as completed; unchecked and indeterminate items count only toward the total. <code>celorga checkbox fix-cookies --file FILE --apply</code> writes corrected values, while <code>celorga checkbox cycle --file FILE --line N --fix-cookies --apply</code> changes a marker and refreshes cookies atomically.</p></li>
 <li><p>Nested lists via indentation.</p></li>
 <li><p>Counter cookies such as <code>[@3]</code> are stored separately from the written ordered-list marker.</p></li>
 <li><p>Descriptive items use <code>term :: definition</code> and render as description lists.</p></li>
@@ -241,13 +241,23 @@ CLOSED: [2026-02-20 Fri]</code></pre>
 <ul>
 <li><p>Bracket links: <code>[[https://example.com][label]]</code></p></li>
 <li><p>Plain URLs: <code>https://example.com</code></p></li>
-<li><p>File links: <code>[[file:path/to/file.org]]</code></p></li>
-<li><p>ID links: <code>[[id:UUID][label]]</code> (roam-style link)</p></li>
+<li><p>File links: <code>[[file:path/to/file.org]]</code>, optionally with a search option: <code>[[file:notes.org::*Heading]]</code></p></li>
+<li><p>ID links: <code>[[id:UUID][label]]</code> (roam-style link), optionally with a search option: <code>[[id:UUID::launch window][label]]</code></p></li>
 <li><p>Wiki links: <code>[[Node Title]]</code> (roam-style link)</p></li>
 <li><p>Angle links: <code>&lt;mailto:hello@example.com&gt;</code></p></li>
 <li><p>Targets: <code>&lt;&lt;name&gt;&gt;</code> and radio targets <code>&lt;&lt;&lt;name&gt;&gt;&gt;</code></p></li>
 </ul>
 <p>Both ID links and Wiki links are first-class in Celorga roam workflows.</p>
+<section class="org2-headline level-2">
+<h2 id="search-options">Search options</h2>
+<p>Text after <code>::</code> in a <code>file:</code> or <code>id:</code> link selects a place in the linked file. The forms follow Org 10:</p>
+<ul>
+<li><p><code>42</code> is line 42 of the file. <code>[[id:UUID::42]]</code> is a stable citation of a line in the note that holds the ID.</p></li>
+<li><p><code>*Heading</code> is a heading title. The TODO keyword, priority, tags, and statistics cookies are ignored.</p></li>
+<li><p><code>#custom-id</code> is the heading whose <code>:CUSTOM_ID:</code> property has that value.</p></li>
+<li><p>Plain text is a dedicated target <code>&lt;&lt;text&gt;&gt;</code> first, then a <code>#+NAME:</code>, then a heading title, and then the first line that contains the text.</p></li>
+</ul>
+<p>Matching ignores case. For <code>id:ID::SEARCH</code>, Celorga searches the subtree of the heading that holds the ID first, and then the rest of that file. A file-level ID searches the whole file. A link with a search option is still a link to the ID: backlinks, graph neighbors, and relations count it as a link to that node. Live embeds (<code>#+EMBED: id:ID::SEARCH</code>) embed the heading section that contains the match.</p>
 <p>Link abbreviations are supported with built-ins, config, and <code>#+LINK</code> directives.</p>
 <p>Built-in abbreviations:</p>
 <ul>
@@ -278,6 +288,7 @@ CLOSED: [2026-02-20 Fri]</code></pre>
 <li><p>built-ins</p></li>
 </ol>
 <p>Celorga expands abbreviation targets when rendering/exporting and for LSP document-link targets.</p>
+</section>
 </section>
 <section class="org2-headline level-1">
 <h1 id="corpus-identity">Corpus identity</h1>

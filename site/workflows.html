@@ -145,6 +145,30 @@ celorga workflow migrate --dir ~/notes</code></pre>
 <p>This first version requires Celorga to be running. A small background helper or provider-native scheduler can be added later without changing the workflow file or splitting its run history.</p>
 </section>
 <section class="org2-headline level-1">
+<h1 id="scheduled-todo-starts">Scheduled TODO starts</h1>
+<p>An assigned TODO can start at the time Org already records for it. Celorga never decides to start work on its own, so a heading opts in explicitly:</p>
+<pre class="org2-src language-org" style="padding: 0.9rem 1rem; border: 1px solid rgba(127,127,127,0.28); border-radius: 0.6rem; background: rgba(127,127,127,0.11); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 0.92rem; line-height: 1.28;"><code class="language-org">,* TODO Draft the launch checklist
+SCHEDULED: &lt;2026-11-05 Thu 09:00&gt;
+:PROPERTIES:
+:ID: 0d6c1e1a-1111-4a1a-8a1a-000000000001
+:AGENT_REF: research-assistant
+:AGENT_START: scheduled
+:END:</code></pre>
+<p><code>celorga todo assign --file FILE --line N --assignee NAME --agent-ref ID --start scheduled --apply</code> writes <code>:AGENT_START: scheduled</code> beside the assignment. A heading starts when all of these hold:</p>
+<ul>
+<li><p>it is a TODO that is not done or canceled,</p></li>
+<li><p>it has <code>:AGENT_START: scheduled</code> and an <code>:AGENT_REF:</code>,</p></li>
+<li><p>its <code>SCHEDULED:</code> timestamp has a time of day, and that time has passed (in the host's local time zone), and</p></li>
+<li><p>it has an <code>:ID:</code>.</p></li>
+</ul>
+<p>A heading that opts in but lacks an ID, an AGENT_REF, or a time of day is not started; <code>workflow due</code> reports it under <code>scheduledTodoStarts.notStartable</code> with the reason instead of guessing.</p>
+<p>Each occurrence starts at most once. Its idempotency key is <code>scheduled-start:ID:OCCURRENCE</code>, and the run ID is derived from that key, so a second start of the same occurrence, from the same or another host, is refused when the run file already exists. For a repeating timestamp such as <code>&lt;2026-11-01 Sun 07:30 +1d&gt;</code>, Celorga starts only the latest occurrence at or before now, matching how schedules catch up only the latest missed occurrence. Nothing starts while the heading's <code>:ORG2_RUN_ID:</code> run, or an earlier scheduled start for the same ID, is still queued, running, waiting for approval, or blocked.</p>
+<pre class="org2-src language-sh" style="padding: 0.9rem 1rem; border: 1px solid rgba(127,127,127,0.28); border-radius: 0.6rem; background: rgba(127,127,127,0.11); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 0.92rem; line-height: 1.28;"><code class="language-sh">celorga workflow due --dir ~/notes --json              # scheduledTodoStarts.due / skipped / notStartable
+celorga workflow start-todo --id ID --dir ~/notes      # preview
+celorga workflow start-todo --id ID --dir ~/notes --apply</code></pre>
+<p><code>workflow start-todo --apply</code> does what Start work does: it creates and starts a durable run that cites the heading, adds <code>:ORG2_RUN_ID:</code> to the heading, and moves a <code>TODO</code> or <code>NEXT</code> keyword to in progress. Its JSON includes the Start work prompt. The Mac app or headless server that owns automations (<code>automationHostRef</code>) runs it on every scheduler check and sends the task to the heading's AI chat thread on the default run destination (<strong>Settings → AI Chat → Agent Work → Run new agent work with</strong>). Without an enabled destination, it reports the problem and starts nothing.</p>
+</section>
+<section class="org2-headline level-1">
 <h1 id="event-triggered-workflows">Event-triggered workflows</h1>
 <p>An automation can also start when something happens in the corpus or on GitHub. Celorga is the workspace agents work in, not an agent: triggers are deterministic detectors that record signals, and a model never decides whether an attempt starts.</p>
 <ul>
