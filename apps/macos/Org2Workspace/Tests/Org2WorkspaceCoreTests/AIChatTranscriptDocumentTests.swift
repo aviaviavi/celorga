@@ -531,6 +531,37 @@ final class AIChatTranscriptDocumentTests: XCTestCase {
     XCTAssertEqual(result?["details"] as? Bool, false)
   }
 
+  func testTurnChangeMarkerRendersAboveItsUserMessageAndClearsWhenRemoved() async throws {
+    let view = try await document()
+    var switched = entry("switched", AIChatDocumentHTML.plain("Try again"), role: "user")
+    switched.turnChange = "Switched to Model X · high effort"
+    try await update(view, payload([
+      entry("first", AIChatDocumentHTML.plain("Hello"), role: "user"),
+      entry("reply", "<main><p>Hi.</p></main>"),
+      switched,
+    ]))
+    let script = """
+      ({markers:[...document.querySelectorAll('.turn-change')].map(m=>m.closest('article').id),
+        text:document.querySelector('#message-switched .turn-change')?.textContent,
+        role:document.querySelector('#message-switched .turn-change')?.getAttribute('role'),
+        beforeCard:document.querySelector('#message-switched')?.firstElementChild?.className})
+      """
+    let result = try await view.evaluateJavaScript(script) as? [String: Any]
+    XCTAssertEqual(result?["markers"] as? [String], ["message-switched"])
+    XCTAssertEqual(result?["text"] as? String, "Switched to Model X · high effort")
+    XCTAssertEqual(result?["role"] as? String, "separator")
+    XCTAssertEqual(result?["beforeCard"] as? String, "turn-change")
+
+    switched.turnChange = nil
+    try await update(view, payload([
+      entry("first", AIChatDocumentHTML.plain("Hello"), role: "user"),
+      entry("reply", "<main><p>Hi.</p></main>"),
+      switched,
+    ]))
+    let cleared = try await view.evaluateJavaScript(script) as? [String: Any]
+    XCTAssertEqual(cleared?["markers"] as? [String], [])
+  }
+
   func testPreparingMessageUsesAVisualSkeletonWithoutVisiblePlaceholderCopy() async throws {
     let view = try await document()
     try await update(view, payload([

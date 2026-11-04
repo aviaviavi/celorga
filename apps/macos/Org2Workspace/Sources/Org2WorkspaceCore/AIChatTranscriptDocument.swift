@@ -274,6 +274,7 @@ struct AIChatTranscriptDocument: View {
       guard !reasoning.isEmpty else { return nil }
       return ReasoningInput(id: message.id, text: reasoning)
     }
+    let turnChanges = turnChangeMarkers(for: messageSlots)
     let entries = zip(messageSlots, inputs).map { slot, input in
       let message = slot.message
       let excerpt = AIChatMessageBodyExcerpt(
@@ -311,7 +312,8 @@ struct AIChatTranscriptDocument: View {
           return AIChatTranscriptHTML.Trace(trace, reasoningHTML: reasoningHTML, reasoning: reasoning)
         },
         changeSummary: message.changeSummary.map(AIChatTranscriptHTML.ChangeSummary.init),
-        startWork: AIChatTranscriptHTML.StartWork(message, corpusRoot: store.corpusRoot)
+        startWork: AIChatTranscriptHTML.StartWork(message, corpusRoot: store.corpusRoot),
+        turnChange: slot.isRoomResponse ? nil : turnChanges[message.id]
       )
     }
     AIChatTranscriptWebView(
@@ -471,6 +473,25 @@ struct AIChatTranscriptDocument: View {
       copyFeedbackTask?.cancel()
       copyFeedbackTask = nil
     }
+  }
+
+  /// Agent, model, and effort change markers for the visible turns. Earlier
+  /// turns just above the window are included, bounded, so the first visible
+  /// turn can still be compared with the one before it.
+  private func turnChangeMarkers(for slots: [MessageSlot]) -> [UUID: String] {
+    let visible = slots.compactMap { $0.isRoomResponse ? nil : $0.message }
+    let visibleTurnIDs = Set(visible.filter(AIChatTurnChangeMarkers.countsAsTurn).map(\.id))
+    guard !visibleTurnIDs.isEmpty else { return [:] }
+    let context = AIChatTurnChangeMarkers.precedingContext(
+      before: visible.first?.id,
+      in: store.aiChatMessages
+    )
+    return AIChatTurnChangeMarkers.markers(
+      for: Array(context) + visible,
+      isSharedRoom: store.selectedAIChatIsSharedRoom,
+      labels: store.aiChatTurnChangeLabels,
+      markedMessageIDs: visibleTurnIDs
+    )
   }
 
   private func cachedPreparedBody(
@@ -854,6 +875,9 @@ enum AIChatTranscriptHTML {
     let changeSummary: ChangeSummary?
     /// A Start work prompt, shown as a compact card with the prompt folded.
     var startWork: StartWork? = nil
+    /// A one-line marker above a user turn whose agent, model, or effort
+    /// differs from the previous turn's; see `AIChatTurnChangeMarkers`.
+    var turnChange: String? = nil
   }
   struct StartWork: Codable, Equatable {
     let title: String
@@ -926,6 +950,10 @@ enum AIChatTranscriptHTML {
   body.compact { padding:10px!important; }
   article { display:flex; align-items:flex-start; gap:10px; min-width:0; }
   article.user { justify-content:flex-end; }
+  article.has-turn-change { flex-wrap:wrap; }
+  .turn-change { flex:0 0 100%; display:flex; align-items:center; gap:8px; margin:2px 0 4px; font-size:11px; color:light-dark(#888,#999); user-select:none; -webkit-user-select:none; }
+  .turn-change::before,.turn-change::after { content:''; flex:1 1 24px; border-top:1px solid light-dark(#dddcd7,#444642); }
+  .turn-change span { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   article.room-response { display:block; }
   .message-card { width:fit-content; max-width:calc(100% - 82px); min-width:0; padding:9px 11px 12px; border:1px solid light-dark(#d8d8d3,#424442); border-radius:8px; background:light-dark(#fcfbf8,#242624); }
   article.user .message-card { background:light-dark(#eef2f9,#252d39); }
@@ -1186,6 +1214,11 @@ enum AIChatTranscriptHTML {
       const a=document.createElement('article'); a.id='message-'+e.id; a.className=e.role;
       if(e.isRoomResponse) a.classList.add('room-response');
       a.setAttribute('aria-label',e.title+' message');
+      if(e.turnChange) {
+        const marker=document.createElement('div'); marker.className='turn-change'; marker.setAttribute('role','separator');
+        const label=document.createElement('span'); label.textContent=e.turnChange; marker.title=e.turnChange;
+        marker.append(label); a.classList.add('has-turn-change'); a.append(marker);
+      }
       if(e.role!=='user' && !e.isRoomResponse) {
         const avatar=document.createElement('span'); avatar.className='avatar'; avatar.append(icon(e.role==='assistant'?'sparkle':'gear')); a.append(avatar);
       }

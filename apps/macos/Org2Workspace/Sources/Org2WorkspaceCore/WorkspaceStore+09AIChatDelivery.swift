@@ -246,8 +246,11 @@ extension WorkspaceStore {
       routedTo: routeTarget?.host,
       at: createdAt
     )
+    let turnSettings = aiChatTurnSettings(for: thread)
     let userMessages = targetDestinationIDs.enumerated().map { index, destinationID in
       let runtime = aiChatDestinationRuntime(destinationID)
+      var messageProvenance = provenance
+      if index == 0 { messageProvenance.turnSettings = turnSettings }
       return AIChatMessage(
         id: index == 0 ? (roomRoundID ?? messageID ?? UUID()) : UUID(),
         role: .user,
@@ -262,7 +265,7 @@ extension WorkspaceStore {
         targetDestinationID: destinationID,
         isRoomDispatchCopy: index > 0,
         roomRoundID: roomRoundID,
-        provenance: provenance
+        provenance: messageProvenance
       )
     }
     messages.append(contentsOf: userMessages)

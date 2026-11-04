@@ -2833,6 +2833,10 @@ public struct AIChatMessageProvenance: Hashable, Codable, Sendable {
   public var requestedByDestinationID: String?
   /// The visible message that made the request.
   public var requestedByMessageID: UUID?
+  /// For a user turn: the agent, model, and reasoning effort the conversation
+  /// had selected when the turn was sent. Absent on messages written before
+  /// Celorga recorded it, so a missing value means "unknown", not "default".
+  public var turnSettings: AIChatTurnSettings?
 
   public init(
     originClient: Client? = nil,
@@ -2844,7 +2848,8 @@ public struct AIChatMessageProvenance: Hashable, Codable, Sendable {
     acceptedAt: Date? = nil,
     requestedByLabel: String? = nil,
     requestedByDestinationID: String? = nil,
-    requestedByMessageID: UUID? = nil
+    requestedByMessageID: UUID? = nil,
+    turnSettings: AIChatTurnSettings? = nil
   ) {
     self.originClient = originClient
     self.originDeviceName = originDeviceName
@@ -2856,6 +2861,7 @@ public struct AIChatMessageProvenance: Hashable, Codable, Sendable {
     self.requestedByLabel = requestedByLabel
     self.requestedByDestinationID = requestedByDestinationID
     self.requestedByMessageID = requestedByMessageID
+    self.turnSettings = turnSettings
   }
 
   public var isEmpty: Bool {
@@ -2863,7 +2869,7 @@ public struct AIChatMessageProvenance: Hashable, Codable, Sendable {
       && receivedByHostName == nil && executionHostRef == nil
       && executionHostName == nil && acceptedAt == nil
       && requestedByLabel == nil && requestedByDestinationID == nil
-      && requestedByMessageID == nil
+      && requestedByMessageID == nil && turnSettings == nil
   }
 
   /// Whether this message is a turn another agent requested.
@@ -2905,6 +2911,30 @@ public struct AIChatMessageProvenance: Hashable, Codable, Sendable {
       parts.insert("requested by \(requestedByLabel)", at: 0)
     }
     return parts.isEmpty ? nil : parts.joined(separator: " · ")
+  }
+}
+
+/// The selection a conversation sends a turn with. In a single-agent thread
+/// `destinationID` is the thread's agent; in a shared room it is the room's
+/// default agent (the one that answers messages without an @mention), or nil
+/// when such messages only post context. `model` and `reasoningEffort` are the
+/// choices for that agent; nil means the agent's default.
+public struct AIChatTurnSettings: Hashable, Codable, Sendable {
+  public var destinationID: String?
+  public var model: String?
+  public var reasoningEffort: String?
+
+  public init(destinationID: String?, model: String? = nil, reasoningEffort: String? = nil) {
+    self.destinationID = Self.normalized(destinationID)
+    self.model = Self.normalized(model)
+    self.reasoningEffort = Self.normalized(reasoningEffort)
+  }
+
+  private static func normalized(_ value: String?) -> String? {
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+      return nil
+    }
+    return trimmed
   }
 }
 
