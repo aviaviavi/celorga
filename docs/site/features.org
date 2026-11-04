@@ -69,6 +69,7 @@
         <li><strong>Event triggers</strong>Start work when a TODO enters <code>NEXT</code> or a pull request gets a review, with nearby events combined</li>
         <li><strong>Workflows</strong>Reusable steps, models, and history in files</li>
         <li><strong>Activity</strong>What's running, where, why it stopped, and whether a retry is safe</li>
+        <li><strong>Background jobs</strong>Builds and dev servers outlive the agent's turn, report back into the chat when they finish, and stop from above the composer</li>
         <li><strong>Troubleshooting handoff</strong>Doctor hands diagnostics to your chosen agent, no app needed</li>
         <li><strong>Workspace coordinator</strong>Stuck, shipped, and safe-to-continue work across machines</li>
         <li><strong>Attention digest</strong>A morning brief and one notification only when something new needs you</li>

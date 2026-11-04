@@ -996,9 +996,32 @@ Agents in a shared room can also start each other's turns: when an agent's reply
 
 =thread settle/reopen=, =thread configure --auto-settle never|SECONDS=, =thread configure ROOM_ID --agent-turn-limit N|default=, and =thread auto-settle= are also preview-first. With =--apply= they atomically queue =celorga:ai-chat-operation:v1= envelopes under =.celorga/ai-chat-inbox/operations/= instead of directly rewriting the transcript. Celorga drains these operations in deterministic order while running or when the corpus opens, commits each resulting transcript and settlement-settings generation durably, and only then removes that operation file. An invalid entry or failed durability barrier remains in the journal for inspection and retry.
 
-The selected Mac chat is identified in Codex, Claude Code, Pi, OpenCode, and OpenClaw workspace prompts by =CELORGA_AI_CHAT_THREAD_ID=. Pass that marker into a subagent, cron task, or other background worker only when it is explicitly expected to report after its parent turn ends; also pass the active corpus root, readable author, source/run reference, and a stable idempotency key. Embedded Codex advertises =celorga_thread_post= as a native dynamic tool, while =celorga mcp serve= exposes the same tool through MCP =tools/list=. The OpenClaw lifecycle plugin adds the conditional CLI guidance to workflow and continuation prompts. It deliberately does not mirror every foreground completion because the ordinary assistant reply already reaches the thread.
+The selected Mac chat is identified in Codex, Claude Code, Pi, OpenCode, and OpenClaw workspace prompts by =CELORGA_AI_CHAT_THREAD_ID=. Pass that marker into a subagent, cron task, or other background worker only when it is explicitly expected to report after its parent turn ends; also pass the active corpus root, readable author, source/run reference, and a stable idempotency key. For a long-running command, =celorga job start --thread CELORGA_AI_CHAT_THREAD_ID --dir CORPUS --label TEXT --apply -- COMMAND= does this without a hand-built worker (see [[*Background jobs][Background jobs]]). Embedded Codex advertises =celorga_thread_post= as a native dynamic tool, while =celorga mcp serve= exposes the same tool through MCP =tools/list=. The OpenClaw lifecycle plugin adds the conditional CLI guidance to workflow and continuation prompts. It deliberately does not mirror every foreground completion because the ordinary assistant reply already reaches the thread.
 
 The transcript schema keeps the legacy =isArchived= field for older clients and adds =settledAt= plus =settlementSettings.autoSettleAfterSeconds=. Existing archived threads therefore load as settled, while older unclassified threads remain active. Auto-settlement excludes the selected thread, pinned or unread threads, pending turns, and a latest message that is still sending, failed, or interrupted. Empty threads and threads with a historical failure followed by a successful delivery remain eligible once inactive.
+
+** Background jobs
+
+A process an agent starts in the background with its shell tool belongs to the turn's process tree and usually dies when the turn ends. =celorga job= runs such work under a detached supervisor that Celorga owns, and reports the outcome into the chat that asked for it.
+
+#+begin_src sh
+celorga job start --thread THREAD_ID --dir ~/notes --label "Example build" \
+  --cwd ~/src/example -- npm run build                     # preview
+celorga job start --thread THREAD_ID --dir ~/notes --label "Example build" \
+  --cwd ~/src/example --apply -- npm run build
+celorga job list --dir ~/notes --thread THREAD_ID --json   # running jobs
+celorga job list --dir ~/notes --all --json                # plus recent finished jobs
+celorga job status JOB_ID --dir ~/notes --lines 40
+celorga job stop JOB_ID --dir ~/notes --apply
+#+end_src
+
+=job start= previews by default. With =--apply= it records the job and starts a supervisor in a new session with no inherited standard streams, so killing the caller's process group or tree does not stop it. The supervisor runs =COMMAND= directly (no shell; use =sh -c '…'= for pipelines) in its own process group, with standard output and error appended to a log file, and records the exit code or signal and end time. Records (=celorga:background-job:v1=), logs, and stop markers live under =jobs/= in the corpus's machine-local directory in the Celorga index home (=ORG2_INDEX_HOME=), not in the corpus, because they hold process IDs and are disposable.
+
+With =--thread=, Celorga validates the thread before starting and, when the command exits, queues exactly one message through the same inbox path as =thread post=: author =Background job= (or =--author=, with optional =--agent-ref=), source =job:JOB_ID=, idempotency key =job:JOB_ID:exit=, and a body with the label, outcome, duration, command, directory, log path, and the last 20 lines of output. The post does not start an agent turn; the person replies to continue.
+
+=job list= shows running jobs newest first; =--thread= filters to one chat and =--all= adds recent finished jobs (=--limit N=, default 20). =job status= reports =starting=, =running=, =succeeded=, =failed=, =stopped=, or =lost=, plus the exit code and log tail. =lost= means the supervisor is no longer alive but never recorded an exit, for example after a restart. =job stop= previews by default; with =--apply= it sends SIGTERM to the job's process group, waits =--grace= seconds (default 5), sends SIGKILL if anything remains, and records =stopped=. A stopped job with a thread posts its one message saying it was stopped. Jobs are not exposed as MCP tools, because starting one executes an arbitrary command.
+
+In the Celorga app for macOS, an AI chat with running jobs shows a row above the composer, such as "1 job running · Example build", with *Stop*. The app runs =job list --thread THREAD_ID --json= only while the chat is visible and =job stop JOB_ID --apply= for *Stop*. Jobs started on a remote host are not shown.
 
 ** Deterministic chat repair
 

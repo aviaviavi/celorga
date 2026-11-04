@@ -49,6 +49,7 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
       "Use `celorga activity explain --json` (optionally `--thread|--run|--workflow ID`) to learn why work is running or blocked before acting, `celorga activity trace --run ID --json` to explain why one run stopped (dispatch, executor, tools, result, and delivery evidence; verdict queued|running|waiting|failed|completed|completed-undelivered|canceled|unknown; whether a retry is safe) before retrying it, `celorga activity events --follow --json` for an NDJSON stream of run, approval, thread, workflow, and host transitions, and `celorga thread wait ID --until reply|needs-you|idle` or `celorga run wait ID --until approval|blocked|completed` for race-free coordination; waits check durable state first and exit 0 matched, 2 unreachable, 124 timed out.",
       "Use `celorga thread repair --dir CORPUS --json` on macOS to preview deterministic transcript reconciliation through the native OpenOrgServer worker; `--apply` commits a new repair head without changing original writer heads. `--watch --interval SECONDS --apply` runs without an LLM and skips unchanged chat storage. Build the worker with npm run build:server or supply --executable PATH. Desktop Settings and server chat-repair configure the background check interval; 0/off disables it.",
       "Never ask the user to paste credentials into chat. Use preview-first `celorga secret request NAME --reason TEXT --author NAME --apply` (MCP `celorga_secret_request`): the Celorga app asks in a secure sheet and stores the value GPG-encrypted in the corpus. Check `celorga secret status ID`, then run `celorga secret exec NAME [--env VAR] -- COMMAND`; no secret command prints a value.",
+      "A shell background process dies when an agent turn ends. Start long-running work that must outlive the turn with preview-first `celorga job start --thread THREAD_ID --dir CORPUS --label TEXT --apply -- COMMAND [ARGS...]`: it runs detached with output in a machine-local log and, when it exits, posts one message with the outcome, duration, and log tail into that AI chat. Inspect with `celorga job list|status --json`; `celorga job stop JOB_ID --apply` terminates its process group. A job whose supervisor died reports `lost`.",
       "To find a file on this Mac outside the corpus (a downloaded PDF, a spreadsheet, a folder), use `celorga files search WORDS [--kind pdf|sheet|...] [--json]`. It searches names and folders under the machine-local indexed folders (home and cloud drives by default; `celorga files config` changes them), ranks recent documents first, and returns repeat downloads and copies as one result with `copies`. The index lives outside the corpus and never reads file contents.",
       "Use `celorga ledger` for stable per-account bookkeeping in recurring workflows; canonical accounts live under `notes/LEDGER/accounts/`.",
       "Use `celorga corpus show|validate|init` to inspect or establish portable corpus identity before team mounting.",
@@ -271,6 +272,12 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
         id: "encryption",
         purpose: "Encrypt, decrypt, or re-encrypt scoped :crypt: subtrees with GPG recipients; request credentials through the app's secure sheet instead of chat and use them without printing them.",
         commands: ["celorga crypt", "celorga secret request", "celorga secret status", "celorga secret list", "celorga secret exec"],
+        writes: "preview-by-default",
+      },
+      {
+        id: "background-jobs",
+        purpose: "Run long commands detached from the agent turn that started them, inspect or stop them, and report each exit once into the AI chat that asked for it.",
+        commands: ["celorga job start", "celorga job list", "celorga job status", "celorga job stop"],
         writes: "preview-by-default",
       },
       {
