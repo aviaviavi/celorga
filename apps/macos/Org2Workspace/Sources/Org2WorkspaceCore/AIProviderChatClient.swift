@@ -371,12 +371,37 @@ public struct AIProviderChatClient: Sendable {
     }
     guard (200..<300).contains(http.statusCode) else {
       let detail = String(data: data.prefix(2_000), encoding: .utf8)
-      throw AIProviderChatError.httpStatus(http.statusCode, detail)
+      let error = AIProviderChatError.httpStatus(http.statusCode, detail)
+      if let limit = Self.usageLimit(error, response: http) {
+        throw AIChatUsageLimitError(limit)
+      }
+      throw error
     }
     guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       throw AIProviderChatError.invalidResponse
     }
     return object
+  }
+
+  /// A refused request that is a usage or quota limit, with the reset time
+  /// from `Retry-After` or the provider's rate-limit headers when present.
+  static func usageLimit(
+    _ error: AIProviderChatError,
+    response: HTTPURLResponse,
+    now: Date = Date()
+  ) -> AIChatUsageLimit? {
+    guard case .httpStatus(let status, let detail) = error else { return nil }
+    var headers: [String: String] = [:]
+    for (key, value) in response.allHeaderFields {
+      if let key = key as? String { headers[key] = "\(value)" }
+    }
+    let limit = AIChatUsageLimitClassifier.classify(
+      detail ?? "",
+      statusCode: status,
+      headers: headers,
+      now: now
+    )
+    return limit.map { AIChatUsageLimit(resetsAt: $0.resetsAt, detail: error.localizedDescription) }
   }
 }
 

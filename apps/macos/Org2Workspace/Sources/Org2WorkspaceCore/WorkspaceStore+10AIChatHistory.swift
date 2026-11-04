@@ -2789,9 +2789,16 @@ extension WorkspaceStore {
     if aiChatRequestStartedAt != requestStartedAt { aiChatRequestStartedAt = requestStartedAt }
   }
 
-  nonisolated static func aiChatSendFailureText(from error: Error) -> String {
+  /// The stored failure for a turn. A usage limit from any runtime is stored
+  /// in one canonical form (see `AIChatUsageLimit`), with any relative reset
+  /// time fixed against `now`.
+  nonisolated static func aiChatSendFailureText(from error: Error, now: Date = Date()) -> String {
+    if let limitError = error as? AIChatUsageLimitError {
+      return limitError.limit.failureText
+    }
     let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-    return message.isEmpty ? "AI chat message failed to send." : message
+    guard !message.isEmpty else { return "AI chat message failed to send." }
+    return AIChatUsageLimitClassifier.classify(message, now: now)?.failureText ?? message
   }
 
   func beginCorpusChangeObservation(

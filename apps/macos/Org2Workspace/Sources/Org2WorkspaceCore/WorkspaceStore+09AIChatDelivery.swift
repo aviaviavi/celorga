@@ -1017,8 +1017,10 @@ extension WorkspaceStore {
           return
         }
         let failureText = Self.aiChatSendFailureText(from: error)
+        let usageLimit = AIChatUsageLimit(failureText: failureText)
         if isActiveAIChatSendOrigin(sendOrigin) {
-          aiChatStatusText = failureText
+          aiChatStatusText = usageLimit.map { "\(dispatchDestination.name): \($0.headline())" }
+            ?? failureText
         }
         if aiChatThread(
           threadID,
@@ -1032,8 +1034,11 @@ extension WorkspaceStore {
         }
         if chatThread.isSharedRoom {
           replaceAIChatDeliveryStatus(for: userMessageID, in: threadID, with: .sent)
+          // A room shows the failure as a message, so it reads in local time.
           insertSharedRoomFailure(
-            failureText,
+            usageLimit.map { limit in
+              limit.detail.isEmpty ? limit.headline() : "\(limit.headline()). \(limit.detail)"
+            } ?? failureText,
             destinationID: dispatchDestinationID,
             runtime: dispatchRuntime,
             after: userMessageID,
@@ -1284,7 +1289,7 @@ extension WorkspaceStore {
           pendingTurn,
           in: threadID,
           transcriptURL: sendOrigin.transcriptURL,
-          failureText: error.localizedDescription
+          failureText: Self.aiChatSendFailureText(from: error)
         )
         // The failed accepted turn is terminal; any explicit follow-up remains
         // a separate queued request and may continue normally.

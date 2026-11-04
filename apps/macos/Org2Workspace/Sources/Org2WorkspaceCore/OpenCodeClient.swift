@@ -160,15 +160,48 @@ struct OpenCodeStreamDecoder: Sendable {
       }
     case "error":
       let nestedError = object["error"] as? [String: Any]
+      // Provider failures arrive as a named error, for example
+      // {"name":"APIError","data":{"message":…,"statusCode":429,…}}.
+      let errorData = nestedError?["data"] as? [String: Any]
       let detail = (object["message"] as? String)
         ?? (nestedError?["message"] as? String)
+        ?? (errorData?["message"] as? String)
         ?? (object["error"] as? String)
         ?? "OpenCode reported an error."
-      result.errors.append(detail)
+      let limit = Self.usageLimit(
+        detail: detail,
+        errorName: nestedError?["name"] as? String,
+        data: errorData
+      )
+      result.errors.append(limit?.failureText ?? detail)
       await eventHandler(.warning(detail))
     default:
       break
     }
+  }
+
+  /// A provider usage or quota limit inside an OpenCode error event, using the
+  /// status code, response headers, and body that OpenCode forwards.
+  static func usageLimit(
+    detail: String,
+    errorName: String?,
+    data: [String: Any]?,
+    now: Date = Date()
+  ) -> AIChatUsageLimit? {
+    let status = (data?["statusCode"] as? NSNumber)?.intValue
+    var headers: [String: String] = [:]
+    for (key, value) in data?["responseHeaders"] as? [String: Any] ?? [:] {
+      headers[key] = "\(value)"
+    }
+    let body = data?["responseBody"] as? String ?? ""
+    let text = [errorName ?? "", detail, body].filter { !$0.isEmpty }.joined(separator: "\n")
+    guard let limit = AIChatUsageLimitClassifier.classify(
+      text,
+      statusCode: status,
+      headers: headers,
+      now: now
+    ) else { return nil }
+    return AIChatUsageLimit(resetsAt: limit.resetsAt, detail: detail)
   }
 
   private nonisolated static func activityTitle(for tool: String) -> String {

@@ -313,7 +313,11 @@ struct AIChatTranscriptDocument: View {
         },
         changeSummary: message.changeSummary.map(AIChatTranscriptHTML.ChangeSummary.init),
         startWork: AIChatTranscriptHTML.StartWork(message, corpusRoot: store.corpusRoot),
-        turnChange: slot.isRoomResponse ? nil : turnChanges[message.id]
+        turnChange: slot.isRoomResponse ? nil : turnChanges[message.id],
+        usageLimit: message.sendFailure == nil ? nil : AIChatTranscriptHTML.UsageLimit(
+          failure: message.sendFailure,
+          resendDestinations: store.aiChatResendDestinations(forUsageLimitedMessage: message.id)
+        )
       )
     }
     AIChatTranscriptWebView(
@@ -636,6 +640,9 @@ struct AIChatTranscriptDocument: View {
     case "expand": expandedMessageIDs.insert(uuid)
     case "collapse": expandedMessageIDs.remove(uuid)
     case "retry": Task { await store.retryAIChatMessage(uuid) }
+    case "resend":
+      guard let detail else { return }
+      Task { await store.resendUsageLimitedAIChatMessage(uuid, toDestinationID: detail) }
     case "edit": store.editQueuedAIChatMessage(uuid)
     case "delete": store.deleteQueuedAIChatMessage(uuid)
     case "steer": Task { await store.steerQueuedAIChatMessage(uuid) }
@@ -878,6 +885,8 @@ enum AIChatTranscriptHTML {
     /// A one-line marker above a user turn whose agent, model, or effort
     /// differs from the previous turn's; see `AIChatTurnChangeMarkers`.
     var turnChange: String? = nil
+    /// A usage-limit failure, shown as its own state with resend actions.
+    var usageLimit: UsageLimit? = nil
   }
   struct StartWork: Codable, Equatable {
     let title: String
@@ -998,6 +1007,10 @@ enum AIChatTranscriptHTML {
   .failure { display:grid; grid-template-columns:14px minmax(0,1fr) max-content; align-items:start; gap:8px; margin-top:8px; padding:7px 8px; color:light-dark(#b33820,#ffa98d); background:light-dark(#fff0ed,#3a2420); border:1px solid light-dark(#efc1b8,#704139); border-radius:6px; font-size:11px; }
   .failure > .glyph { margin-top:1px; }
   .failure-copy { min-width:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .failure-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:4px; }
+  .failure.usage-limit { color:light-dark(#8a5300,#f3c27a); background:light-dark(#fff6e5,#3a2f1c); border-color:light-dark(#efd7a8,#6b5530); }
+  .usage-limit-title { display:block; font-weight:600; }
+  .usage-limit-detail { display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:3; margin-top:2px; color:light-dark(#777,#aaa); }
   .failure button { display:inline-flex; align-items:center; justify-content:center; flex:none; min-width:max-content; white-space:nowrap; font-weight:600; line-height:1.25; }
   .expansion { margin-top:7px; font-size:11px; font-weight:500; color:light-dark(#777,#aaa); }
   .detail-block { margin-top:12px; padding-top:9px; border-top:1px solid light-dark(#dddcd7,#444642); font-size:11px; max-width:640px; }
@@ -1285,7 +1298,22 @@ enum AIChatTranscriptHTML {
       }
       if(e.failure) {
         const failure=document.createElement('div'); failure.className='failure'; failure.append(icon('failed'));
-        const copy=document.createElement('span'); copy.className='failure-copy'; copy.textContent=e.failure; failure.append(copy,button('Retry','retry',e.id)); card.append(failure);
+        const copy=document.createElement('span'); copy.className='failure-copy';
+        const actions=document.createElement('span'); actions.className='failure-actions';
+        const limit=e.usageLimit;
+        if(limit) {
+          failure.classList.add('usage-limit');
+          const title=document.createElement('strong'); title.className='usage-limit-title'; title.textContent=limit.title; copy.append(title);
+          if(limit.detail) { const detail=document.createElement('span'); detail.className='usage-limit-detail'; detail.textContent=limit.detail; detail.title=limit.detail; copy.append(detail); }
+        } else copy.textContent=e.failure;
+        actions.append(button('Retry','retry',e.id));
+        if(limit && limit.resend.length===1) actions.append(button('Resend to '+limit.resend[0].title,'resend',e.id,limit.resend[0].id));
+        else if(limit && limit.resend.length>1) {
+          const resend=document.createElement('button'); resend.textContent='Resend to…'; resend.className='resend-menu'; resend.setAttribute('aria-haspopup','menu');
+          resend.onclick=()=>{ const r=resend.getBoundingClientRect(); post('resendMenu',e.id,JSON.stringify({x:r.left,y:r.bottom})); };
+          actions.append(resend);
+        }
+        failure.append(copy,actions); card.append(failure);
       }
       if(e.responseTrace) {
         const trace=document.createElement('section'); trace.className='detail-block trace';
@@ -1642,8 +1670,30 @@ struct AIChatTranscriptWebView: NSViewRepresentable {
         onPosition?(thread,min(1,max(0,position)))
       }
       if let action=value["action"] as? String {
+        if action == "resendMenu", let webView = message.webView {
+          presentResendMenu(messageID: value["id"] as? String, detail: value["detail"] as? String, in: webView)
+          return
+        }
         onAction?(action, value["id"] as? String, value["detail"] as? String)
       }
+    }
+
+    /// Shows the agents a usage-limited message can be resent to, below the
+    /// button that asked. The options come from the rendered payload.
+    private func presentResendMenu(messageID: String?, detail: String?, in webView: WKWebView) {
+      guard let messageID,
+            let options = payload?.entries.first(where: { $0.id == messageID })?.usageLimit?.resend,
+            !options.isEmpty
+      else { return }
+      let anchor = detail?.data(using: .utf8)
+        .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Double] }
+      let x = anchor?["x"] ?? 0
+      let y = anchor?["y"] ?? 0
+      let point = NSPoint(x: x, y: webView.isFlipped ? y : Double(webView.bounds.height) - y)
+      let menu = AIChatResendMenu.makeMenu(options: options) { [weak self] destinationID in
+        self?.onAction?("resend", messageID, destinationID)
+      }
+      menu.popUp(positioning: nil, at: point, in: webView)
     }
 
     private func completeRestoration(for thread: String) {

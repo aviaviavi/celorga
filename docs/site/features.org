@@ -75,6 +75,7 @@
         <li><strong>Attention digest</strong>A morning brief and one notification only when something new needs you</li>
         <li><strong>Per-thread models</strong>Pick model and reasoning effort each time; the transcript marks each switch</li>
         <li><strong>Runs in chat</strong>A chat lists the runs it started and answers their approvals</li>
+        <li><strong>Usage limits</strong>See when an agent's quota resets, then resend to another agent with one click</li>
         <li><strong>Skills</strong>Workspace <code>SKILL.md</code> files for every agent</li>
         <li><strong>Projects</strong>Group chats around one shared brief</li>
         <li><strong>Interactive answers</strong>Charts, tables, and live HTML in chat</li>

@@ -948,4 +948,55 @@ final class AIChatTranscriptDocumentTests: XCTestCase {
     }
   }
 
+
+  // MARK: Usage limits
+
+  func testUsageLimitFailureShowsItsStateAndResendActions() async throws {
+    let limit = AIChatUsageLimit(
+      resetsAt: Date().addingTimeInterval(3_600),
+      detail: "Codex turn failed: You've hit your usage limit."
+    )
+    let destinations = AIChatDestinationConfiguration.defaults
+    let claude = destinations.filter { $0.id == AIChatDestinationConfiguration.localClaudeID }
+    var single = entry("single", "<main><p>Plan the launch</p></main>", role: "user", failure: limit.failureText)
+    single.usageLimit = AIChatTranscriptHTML.UsageLimit(failure: limit.failureText, resendDestinations: claude)
+    var several = entry("several", "<main><p>Plan the review</p></main>", role: "user", failure: limit.failureText)
+    several.usageLimit = AIChatTranscriptHTML.UsageLimit(
+      failure: limit.failureText,
+      resendDestinations: Array(destinations.prefix(2))
+    )
+    let plain = entry("plain", "<main><p>Hello</p></main>", role: "user", failure: "Codex disconnected.")
+    let view = try await document()
+    try await update(view, payload([single, several, plain]))
+    let result = try await view.evaluateJavaScript("""
+      (()=>{
+        const read=id=>{
+          const failure=document.querySelector('#message-'+id+' .failure');
+          return {
+            limit:failure.classList.contains('usage-limit'),
+            title:failure.querySelector('.usage-limit-title')?.textContent ?? failure.querySelector('.failure-copy').textContent,
+            buttons:[...failure.querySelectorAll('button')].map(b=>b.textContent)
+          };
+        };
+        const out={single:read('single'), several:read('several'), plain:read('plain')};
+        document.querySelectorAll('#message-single .failure button')[1].click();
+        document.querySelectorAll('#message-several .failure button')[1].click();
+        return out;
+      })()
+      """) as? [String: [String: Any]]
+    XCTAssertEqual(result?["single"]?["limit"] as? Bool, true)
+    XCTAssertTrue((result?["single"]?["title"] as? String)?.hasPrefix("Usage limit reached · resets ") == true)
+    XCTAssertEqual(result?["single"]?["buttons"] as? [String], ["Retry", "Resend to Claude Code"])
+    XCTAssertEqual(result?["several"]?["buttons"] as? [String], ["Retry", "Resend to…"])
+    XCTAssertEqual(result?["plain"]?["limit"] as? Bool, false)
+    XCTAssertEqual(result?["plain"]?["title"] as? String, "Codex disconnected.")
+    XCTAssertEqual(result?["plain"]?["buttons"] as? [String], ["Retry"])
+
+    // Resending is only ever the person's click; each button posts its choice.
+    let events = try await view.evaluateJavaScript("events") as? [[String: Any]] ?? []
+    let resend = try XCTUnwrap(events.first { $0["action"] as? String == "resend" })
+    XCTAssertEqual(resend["id"] as? String, "single")
+    XCTAssertEqual(resend["detail"] as? String, AIChatDestinationConfiguration.localClaudeID)
+    XCTAssertTrue(events.contains { $0["action"] as? String == "resendMenu" && $0["id"] as? String == "several" })
+  }
 }

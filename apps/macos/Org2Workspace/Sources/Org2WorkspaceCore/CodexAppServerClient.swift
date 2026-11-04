@@ -2686,7 +2686,7 @@ while True:
       }
     case "error":
       let turnID = params["turnId"]?.stringValue
-      let message = params["error"]?["message"]?.stringValue ?? "Codex turn error"
+      let message = Self.turnErrorMessage(params["error"]) ?? "Codex turn error"
       if let turnID {
         let pending = pendingTurns[turnID] ?? PendingTurn()
         pending.errorMessage = message
@@ -2761,7 +2761,7 @@ while True:
     let pending = pendingTurns[turnID] ?? PendingTurn()
     let status = CodexTurnResult.Status(rawValue: turn["status"]?.stringValue ?? "")
       ?? .unknown
-    let errorMessage = turn["error"]?["message"]?.stringValue ?? pending.errorMessage
+    let errorMessage = Self.turnErrorMessage(turn["error"]) ?? pending.errorMessage
     let recoveredReply = Self.recoveredTurnReply(turn)
     let result = CodexTurnResult(
       threadID: threadID,
@@ -2869,6 +2869,17 @@ while True:
         await self?.cancelPendingTurn(threadID: threadID, turnID: turnID)
       }
     }
+  }
+
+  /// A turn error's message. Codex tags a usage limit with
+  /// `codexErrorInfo: "usageLimitExceeded"`; make sure the text says so even
+  /// when the message itself does not.
+  nonisolated static func turnErrorMessage(_ error: JSONValue?) -> String? {
+    guard let message = error?["message"]?.stringValue else { return nil }
+    guard error?["codexErrorInfo"]?.stringValue == "usageLimitExceeded",
+          !AIChatUsageLimitClassifier.mentionsUsageLimit(message)
+    else { return message }
+    return "\(AIChatUsageLimit.canonicalPrefix): \(message)"
   }
 
   nonisolated private static func recoveredTurnReply(_ turn: JSONValue) -> String? {

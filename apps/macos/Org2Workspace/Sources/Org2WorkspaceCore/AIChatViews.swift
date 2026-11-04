@@ -3033,7 +3033,7 @@ private struct AIChatSendFailureView: View {
         Text(title)
           .font(.caption.weight(.semibold))
           .foregroundStyle(.red)
-        Text(failureText)
+        Text(usageLimit?.detail ?? failureText)
           .font(.caption)
           .foregroundStyle(.secondary)
           .lineLimit(compact ? 4 : 5)
@@ -3063,7 +3063,14 @@ private struct AIChatSendFailureView: View {
     )
   }
 
+  private var usageLimit: AIChatUsageLimit? {
+    AIChatUsageLimit(failureText: failureText)
+  }
+
   private var title: String {
+    if let usageLimit {
+      return usageLimit.headline()
+    }
     if isProviderAuthenticationFailure {
       return "Model provider authentication failed"
     }

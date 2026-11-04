@@ -45,6 +45,28 @@ struct ClaudeCodeStreamResult: Equatable, Sendable {
   var reply = ""
   var errors: [String] = []
   var succeeded = false
+  /// The `result` text of a result event marked `is_error`. A usage limit
+  /// arrives this way ("Claude AI usage limit reached|…") with no `errors`.
+  var errorResult: String?
+  /// Set when a `rate_limit_event` reported the request as rejected.
+  var rateLimitRejected = false
+  var rateLimitResetsAt: Date?
+
+  /// The failure for an unsuccessful turn, typed as a usage limit when the
+  /// stream or its text says so.
+  func failure(stderr: String, status: Int32, now: Date = Date()) -> Error {
+    let detail = [errors.joined(separator: "\n"), errorResult ?? "", stderr]
+      .first(where: { !$0.isEmpty }) ?? "Claude Code exited with status \(status)."
+    let wrapped = ClaudeCodeError.turnFailed(detail)
+    let classified = AIChatUsageLimitClassifier.classify(detail, now: now)
+    if rateLimitRejected || classified != nil {
+      return AIChatUsageLimitError(AIChatUsageLimit(
+        resetsAt: rateLimitResetsAt ?? classified?.resetsAt,
+        detail: wrapped.localizedDescription
+      ))
+    }
+    return wrapped
+  }
 }
 
 struct ClaudeCodeStreamDecoder: Sendable {
@@ -102,9 +124,22 @@ struct ClaudeCodeStreamDecoder: Sendable {
         && (object["is_error"] as? Bool != true)
       if let reply = object["result"] as? String {
         result.reply = reply
+        if object["is_error"] as? Bool == true {
+          result.errorResult = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
       }
       if let errors = object["errors"] as? [String] {
         result.errors.append(contentsOf: errors)
+      }
+    case "rate_limit_event":
+      guard let info = object["rate_limit_info"] as? [String: Any],
+            info["status"] as? String == "rejected"
+      else { return }
+      result.rateLimitRejected = true
+      if let resetsAt = (info["resetsAt"] as? NSNumber)?.doubleValue, resetsAt > 0 {
+        result.rateLimitResetsAt = Date(
+          timeIntervalSince1970: resetsAt >= 1e12 ? resetsAt / 1_000 : resetsAt
+        )
       }
     default:
       break
@@ -291,10 +326,7 @@ public actor ClaudeCodeClient {
       throw ClaudeCodeError.interrupted
     }
     guard status == 0, decoded.succeeded else {
-      let detail = decoded.errors.joined(separator: "\n")
-      throw ClaudeCodeError.turnFailed(
-        [detail, stderr].first(where: { !$0.isEmpty }) ?? "Claude Code exited with status \(status)."
-      )
+      throw decoded.failure(stderr: stderr, status: status)
     }
     guard let sessionID = decoded.sessionID, !sessionID.isEmpty else {
       throw ClaudeCodeError.invalidResponse("the response did not include a session ID")
