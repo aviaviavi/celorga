@@ -598,6 +598,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
   var restorationSourceLine: Int? = nil
   let layout: OrgHTMLDocumentLayout
   var activateWorkspacePane: @MainActor () -> Void = {}
+  var openChatThread: (@MainActor (UUID) -> Void)? = nil
   let askAIAboutHeading: @MainActor (Int) -> Void
   let performEntryAction: @MainActor (OrgHTMLRenderedEntryAction, Int) -> Void
   var peekEncryptedText: (@MainActor (Int) -> Void)? = nil
@@ -719,6 +720,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     coordinator.allowsTablePersistence = allowsTablePersistence
     coordinator.saveTableView = saveTableView
     coordinator.recalculateTableFormulas = recalculateTableFormulas
+    coordinator.openChatThread = openChatThread
     coordinator.reportViewportSourceLine = reportViewportSourceLine
     coordinator.restorationSourceLine = restorationSourceLine
     let layoutChanged = coordinator.layout != layout
@@ -879,6 +881,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     var layout = OrgHTMLDocumentLayout(width: .comfortable, margin: .standard)
     var themeStylesheet = ""
     var openOrgFileReference: @MainActor (AIChatFileReference) -> Void = { _ in }
+    var openChatThread: (@MainActor (UUID) -> Void)?
     var openOrgFileReferenceInNewTab: (@MainActor (AIChatFileReference) -> Void)?
     var openWorkspaceWebLink = OpenWorkspaceWebLinkAction()
     var recordUsageEvent: @MainActor (OpenOrgUsageEvent, [String: OpenOrgUsageValue]) -> Void = { _, _ in }
@@ -1621,6 +1624,11 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
         return
       }
 
+      if openChatLink(url) {
+        decisionHandler(.cancel)
+        return
+      }
+
       if url.scheme?.lowercased() == AIChatFileReference.deepLinkScheme,
          url.host == "ask-ai",
          let rawLine = URLComponents(url: url, resolvingAgainstBaseURL: false)?
@@ -1686,6 +1694,12 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       }
 
       decisionHandler(.cancel)
+    }
+
+    func openChatLink(_ url: URL) -> Bool {
+      guard let id = AIChatThreadLinks.threadID(from: url) else { return false }
+      openChatThread?(id)
+      return true
     }
 
     func applySearch(to webView: WKWebView, backwards: Bool) {

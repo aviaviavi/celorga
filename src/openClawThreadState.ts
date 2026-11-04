@@ -110,6 +110,10 @@ export interface OpenClawThreadMutationResult {
 
 export interface LoadOpenClawThreadStateOptions {
   hydrateThreadID?: string;
+  /** Hydrate messages in recently updated threads using Unix milliseconds. */
+  hydrateUpdatedSince?: number;
+  /** Let read-only projections discard trace payloads while each shard is decoded. */
+  projectMessage?: (message: OpenClawChatMessageRecord) => OpenClawChatMessageRecord;
   includePendingOperations?: boolean;
 }
 
@@ -724,6 +728,7 @@ function hydrateThread(
   entries: Map<string, ManifestThreadEntry>,
   storeRoot: string,
   requestedThreadID: string,
+  projectMessage?: LoadOpenClawThreadStateOptions["projectMessage"],
 ): OpenClawThreadState {
   const canonicalID = requestedThreadID.toLowerCase();
   const entry = entries.get(canonicalID);
@@ -741,10 +746,11 @@ function hydrateThread(
     if (!isRecord(stored) || !isRecord(stored.message) || !Array.isArray(stored.attachments)) {
       throw new Error(`invalid AI chat stored message ${index}: ${shardFile}`);
     }
-    return {
+    const message = {
       ...stored.message,
       attachments: stored.attachments,
     } as OpenClawChatMessageRecord;
+    return projectMessage ? projectMessage(message) : message;
   });
   return {
     ...state,
@@ -829,14 +835,23 @@ export function loadOpenClawThreadState(
   options: LoadOpenClawThreadStateOptions = {},
 ): OpenClawThreadState {
   const resolved = resolveAuthoritativeTranscript(corpusRoot);
-  const hydrated = options.hydrateThreadID && resolved.storeRoot
+  let hydrated = options.hydrateThreadID && resolved.storeRoot
     ? hydrateThread(
       resolved.state,
       resolved.entries,
       resolved.storeRoot,
       options.hydrateThreadID,
+      options.projectMessage,
     )
     : resolved.state;
+  if (options.hydrateUpdatedSince !== undefined && resolved.storeRoot) {
+    for (const thread of resolved.state.threads) {
+      const at = openClawDateMilliseconds(thread.updatedAt);
+      if (!Number.isFinite(at) || at >= options.hydrateUpdatedSince) {
+        hydrated = hydrateThread(hydrated, resolved.entries, resolved.storeRoot, thread.id, options.projectMessage);
+      }
+    }
+  }
   return options.includePendingOperations === false
     ? hydrated
     : stateIncludingPendingOperations(corpusRoot, hydrated);

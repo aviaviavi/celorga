@@ -244,7 +244,7 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
       },
       {
         id: "data-and-charts",
-        purpose: "Recalculate safe spreadsheet formulas, inspect or materialize DuckDB-backed datasets, and render deterministic charts from note-local declarations.",
+        purpose: "Recalculate safe spreadsheet formulas, inspect or materialize DuckDB-backed datasets, and render deterministic charts from note-local declarations. Local type: celorga datasets expose canonical chat-threads, chat-messages, and fresh chat-turns to ordinary SQL notebooks; since: 7d selects a rolling window, and Refresh Data reruns the report without a special page syntax.",
         commands: ["celorga table recalculate", "celorga query-data", "celorga render-chart"],
         writes: "mixed",
       },

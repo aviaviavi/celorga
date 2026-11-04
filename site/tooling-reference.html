@@ -759,6 +759,27 @@ celorga view bridge today --message 'FRAME_INTENT_JSON' --dir CORPUS</code></pre
 </section>
 <section class="org2-headline level-1">
 <h1 id="data-queries">Data queries</h1>
+<section class="org2-headline level-2">
+<h2 id="local-celorga-datasets">Local Celorga datasets</h2>
+<p>Ordinary SQL notebooks can query their own corpus with <code>type: celorga</code>. The adapter uses the canonical transcript loader, including writer-head reconciliation and shard digest checks, rather than globbing old JSON history. It never loads another corpus. Supported <code>source</code> values are <code>chat-threads</code> (thread identity, title, destination, runtime, settlement and archive state), <code>chat-messages</code> (message identity, stable order, UTC timestamps, text, delivery state, failure, destination and room-round attribution), and <code>chat-turns</code> (turns reported by fresh online hosts). The <code>since</code> window is 1 to 3650 days, defaulting to <code>7d</code>; thread and message relations are limited to that window. Queries over an empty corpus retain the same typed columns. More than 100,000 rows fail with a diagnostic requesting a shorter window.</p>
+<pre class="org2-example">#+begin_src dataset messages
+type: celorga
+source: chat-messages
+since: 7d
+#+end_src
+
+#+begin_src sql results=message_states
+SELECT delivery_status, count(*) AS messages
+FROM messages
+WHERE role = 'user'
+GROUP BY delivery_status
+#+end_src</pre>
+<p>All local relations in a result share one transcript snapshot. Reads do not mutate chat state, retry work, or settle conversations. <code>--inspect</code> validates the declaration without opening chat storage. Paths, URLs, profiles, credentials, and remote-query arguments are rejected for this local dataset type. Timestamp columns are ISO 8601 UTC strings; cast them to <code>TIMESTAMPTZ</code> for comparisons, and use <code>AT TIME ZONE 'UTC'</code> before formatting a UTC label. <code>chat-turns</code> omits stale host claims. The adapter returns records; business rules such as unanswered-reply matching belong in the note's SQL. See <code>examples/chat-response-queue/views/unanswered.org</code> for a report using all three relations, including shared rooms and uncertain reply associations.</p>
+<p>Use the existing <strong>Refresh Data</strong> action or <code>query-data --all-results --apply</code> to replace generated tables. Opening a note still does not execute a query. Ordinary Org links of the form <code>org2-chat:THREAD-UUID</code> open the conversation from the macOS reader. Query definitions can sit inside a closed Org drawer while their named generated tables remain visible outside it.</p>
+<p>In the reader, generated <code>#+query-data:</code> provenance appears as a compact refresh-time and row-count disclosure. Expand it to inspect query and script hashes; the complete metadata remains in Org source.</p>
+</section>
+<section class="org2-headline level-2">
+<h2 id="external-and-table-datasets">External and table datasets</h2>
 <p><code>celorga query-data</code> is the DuckDB-backed bridge for local and remote datasets described in Org notes. It scans <code>#+begin_src dataset</code> blocks, creates DuckDB views for explicit <code>csv</code>, <code>parquet</code>, or <code>json</code> paths/URLs, named Org tables, ClickHouse queries, or saved Metabase questions, optionally creates reusable SQL views from <code>#+begin_src sql view=NAME</code> blocks, then runs a <code>#+begin_src sql results=NAME</code> block and materializes the returned rows. Equivalent fences remain accepted as typing sugar.</p>
 <pre class="org2-example">#+begin_src dataset fetches
 type: csv
@@ -823,6 +844,7 @@ celorga query-data --file report.org --results fetches_by_state --apply
 celorga query-data --file report.org --all-results --apply --format json
 cat report.org | celorga query-data --stdin --results fetches_by_state</code></pre>
 <p>The default output is a named org table with <code>#+name: fetches_by_state</code> so it can be pasted or written into the note and consumed by <code>render-chart</code> via <code>source: fetches_by_state</code>. <code>--apply</code> inserts that generated block after the selected SQL block or replaces the existing <code>#+query-data: result</code>...= block in place. <code>--all-results --apply</code> runs every named SQL result first, applies the complete set in memory, advances existing <code>#+updated:</code> and <code>CELORGA_OBSERVED_AT</code> file metadata from the latest successful result timestamp, and writes the source file once only after all results succeed; any query failure leaves the file unchanged. Materialized tables include a compact provenance line with the result id, row count, explicit source dependencies, optional artifact/freshness, query and script hashes, and <code>ran_at</code> timestamp. Add <code>artifact=PATH</code> to record an intended materialized output and <code>freshness=24h</code>, <code>ttl=24h</code>, or <code>max-age=24h</code> when clients should know how long a result can be treated as fresh. SQL result ids must be unique within the note, and dataset ids and SQL view ids share DuckDB's relation namespace. Inline bearer tokens and passwords are rejected. JSON output includes diagnostics, dataset metadata, SQL views, available result blocks, provenance, rows, and the generated org table; <code>--include-script</code> includes DuckDB setup SQL. Use <code>--inspect</code> to parse without running DuckDB. Celorga uses its bundled DuckDB engine by default; <code>--duckdb PATH</code> is an explicit CLI-engine override. ClickHouse and Metabase datasets resolve named <code>dataSources</code> profiles from the nearest <code>celorga.json</code>; secrets are read only from profile-named environment variables or the Mac app's Keychain workflow. Metabase datasets may target saved questions or include reproducible native SQL with a configured database ID. Remote refresh is explicit: HTML export and merely opening a note in the Mac rendered view never execute warehouse queries. See <a href="language-reference.html">the language reference</a> for profile and dataset examples.</p>
+</section>
 </section>
 <section class="org2-headline level-1">
 <h1 id="agent-discovery-and-retrieval">Agent discovery and retrieval</h1>

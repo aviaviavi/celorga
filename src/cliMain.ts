@@ -9916,7 +9916,10 @@ Input:
   Reads fenced \`\`\`dataset NAME blocks with engine: duckdb and either
   type: csv|parquet|json plus path/url, type: table plus source:
   named_org_table, type: clickhouse plus profile/query, or type: metabase
-  plus profile/question. Remote profiles are resolved from dataSources in the
+  plus profile/question. type: celorga plus source: chat-threads|chat-messages|
+  chat-turns and optional since: 7d reads local canonical chat records from the
+  report's own corpus (1d to 3650d, default 7d), with no profile or credentials.
+  Remote profiles are resolved from dataSources in the
   nearest celorga.json and secrets are read from profile-named environment
   variables. Optional \`\`\`sql view=NAME blocks define reusable
   DuckDB views before the selected \`\`\`sql results=NAME block is run. SQL result

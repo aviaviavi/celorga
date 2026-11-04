@@ -560,6 +560,7 @@ SELECT * FROM recent_organizations_source
 ORDER BY created_at DESC
 #+end_src</pre>
 <p>Refreshing data is always explicit. Use <code>celorga query-data --apply</code> to insert the selected result after its SQL block or replace the existing provenance-stamped result in place. HTML rendering and opening a note in the Mac app only consume tables already present in the document; they never contact Metabase or ClickHouse. Valid chart declarations over those tables are rendered automatically as responsive inline SVG in the Mac app and static HTML exports.</p>
+<p>Local workspace data uses the same dataset and SQL syntax: <code>type: celorga</code> with <code>source: chat-threads</code>, <code>chat-messages</code>, or <code>chat-turns</code> and an optional <code>since: 7d</code> window. It exposes the report's own canonical chat records, with no path, profile, or credential. Inspection does not load records, and refresh is explicit. See <a href="tooling-reference.html#local-celorga-datasets">local dataset fields and refresh behavior</a>.</p>
 <p>Use <code>type: table</code> with <code>source: NAME</code> when the source data already lives in a named Org table:</p>
 <pre class="org2-example">#+name: raw_fetches
 | state | fetches |

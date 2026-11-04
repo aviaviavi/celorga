@@ -740,6 +740,33 @@ Sandboxed controls post =org2-view-intent= messages with =version: 1=, the =view
 
 * Data queries
 
+** Local Celorga datasets
+
+Ordinary SQL notebooks can query their own corpus with =type: celorga=. The adapter uses the canonical transcript loader, including writer-head reconciliation and shard digest checks, rather than globbing old JSON history. It never loads another corpus. Supported =source= values are =chat-threads= (thread identity, title, destination, runtime, settlement and archive state), =chat-messages= (message identity, stable order, UTC timestamps, text, delivery state, failure, destination and room-round attribution), and =chat-turns= (turns reported by fresh online hosts). The =since= window is 1 to 3650 days, defaulting to =7d=; thread and message relations are limited to that window. Queries over an empty corpus retain the same typed columns. More than 100,000 rows fail with a diagnostic requesting a shorter window.
+
+#+begin_example
+#+begin_src dataset messages
+type: celorga
+source: chat-messages
+since: 7d
+#+end_src
+
+#+begin_src sql results=message_states
+SELECT delivery_status, count(*) AS messages
+FROM messages
+WHERE role = 'user'
+GROUP BY delivery_status
+#+end_src
+#+end_example
+
+All local relations in a result share one transcript snapshot. Reads do not mutate chat state, retry work, or settle conversations. =--inspect= validates the declaration without opening chat storage. Paths, URLs, profiles, credentials, and remote-query arguments are rejected for this local dataset type. Timestamp columns are ISO 8601 UTC strings; cast them to =TIMESTAMPTZ= for comparisons, and use =AT TIME ZONE 'UTC'= before formatting a UTC label. =chat-turns= omits stale host claims. The adapter returns records; business rules such as unanswered-reply matching belong in the note's SQL. See =examples/chat-response-queue/views/unanswered.org= for a report using all three relations, including shared rooms and uncertain reply associations.
+
+Use the existing *Refresh Data* action or =query-data --all-results --apply= to replace generated tables. Opening a note still does not execute a query. Ordinary Org links of the form =org2-chat:THREAD-UUID= open the conversation from the macOS reader. Query definitions can sit inside a closed Org drawer while their named generated tables remain visible outside it.
+
+In the reader, generated =#+query-data:= provenance appears as a compact refresh-time and row-count disclosure. Expand it to inspect query and script hashes; the complete metadata remains in Org source.
+
+** External and table datasets
+
 =celorga query-data= is the DuckDB-backed bridge for local and remote datasets described in Org notes. It scans =#+begin_src dataset= blocks, creates DuckDB views for explicit =csv=, =parquet=, or =json= paths/URLs, named Org tables, ClickHouse queries, or saved Metabase questions, optionally creates reusable SQL views from =#+begin_src sql view=NAME= blocks, then runs a =#+begin_src sql results=NAME= block and materializes the returned rows. Equivalent fences remain accepted as typing sugar.
 
 #+begin_example

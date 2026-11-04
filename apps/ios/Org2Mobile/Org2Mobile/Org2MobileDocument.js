@@ -5282,6 +5282,8 @@ ${rows}
     return new Map([...candidates].filter((entry) => entry[1] !== null));
   }
   function appLinkHref(rawTarget, expandedTarget, context) {
+    const chat = /^org2-chat:([0-9a-f-]{36})(?:#([0-9a-f-]{36}))?$/i.exec(expandedTarget);
+    if (chat) return `org2-workspace://open-thread?id=${chat[1].toLowerCase()}`;
     if (context.embedded && context.sourcePath) {
       rawTarget = expandedTarget;
       if (linkTargetNeedsHeadingAnchor(rawTarget)) {
@@ -5811,6 +5813,15 @@ ${childrenHtml}
     if (node.type === "KeywordLine") {
       const key = String(node.keyRaw || "").trim().toUpperCase();
       if (key === "EMBED") return renderLiveEmbed(node.valueRaw.trim(), context);
+      if (key === "QUERY-DATA" && context.profile === "app") {
+        const raw = node.valueRaw.trim();
+        const values = Object.fromEntries([...raw.matchAll(/(?:^|\s)([a-z_0-9]+)=([^\s]+)/gi)].map((match) => [match[1].toLowerCase(), match[2]]));
+        const at = Date.parse(values.ran_at ?? "");
+        const rows = Number(values.rows);
+        const count = Number.isSafeInteger(rows) && rows >= 0 ? ` \xB7 ${rows} row${rows === 1 ? "" : "s"}` : "";
+        const label = values.status === "not-run" ? "Not refreshed" : Number.isFinite(at) ? `Refreshed ${new Date(at).toISOString().slice(0, 16).replace("T", " ")} UTC${count}` : `Query provenance${count}`;
+        return `<details class="org2-drawer org2-query-provenance"${renderSourceAttributes(node, context)}><summary>${escapeHtml2(label)}</summary><pre>${escapeHtml2(raw)}</pre></details>`;
+      }
       if (HIDDEN_DOCUMENT_KEYWORDS.has(key)) return "";
       return `<p class="org2-keyword"><span class="org2-keyword-name">${escapeHtml2(node.keyRaw)}</span>: ${escapeHtml2(node.valueRaw.trim())}</p>`;
     }
@@ -5853,7 +5864,7 @@ ${childrenHtml}
       if (node.type === "KeywordLine") {
         const key = String(node.keyRaw || "").trim();
         const upper = key.toUpperCase();
-        if (upper === "EMBED") {
+        if (upper === "EMBED" || upper === "QUERY-DATA") {
           inPreamble = false;
           body.push(node);
           continue;

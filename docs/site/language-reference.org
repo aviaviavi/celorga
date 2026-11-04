@@ -562,6 +562,8 @@ ORDER BY created_at DESC
 
 Refreshing data is always explicit. Use =celorga query-data --apply= to insert the selected result after its SQL block or replace the existing provenance-stamped result in place. HTML rendering and opening a note in the Mac app only consume tables already present in the document; they never contact Metabase or ClickHouse. Valid chart declarations over those tables are rendered automatically as responsive inline SVG in the Mac app and static HTML exports.
 
+Local workspace data uses the same dataset and SQL syntax: =type: celorga= with =source: chat-threads=, =chat-messages=, or =chat-turns= and an optional =since: 7d= window. It exposes the report's own canonical chat records, with no path, profile, or credential. Inspection does not load records, and refresh is explicit. See [[file:tooling-reference.org::*Local Celorga datasets][local dataset fields and refresh behavior]].
+
 Use =type: table= with =source: NAME= when the source data already lives in a named Org table:
 
 #+begin_example

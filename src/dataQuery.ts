@@ -6,6 +6,7 @@ import { findConfigFile, loadConfig, type Org2DataSourceConfig } from "./config.
 import { loadRemoteDataset, type RemoteDatasetRequest } from "./dataSources.js";
 import { isOrgTableDataLine, isOrgTableHline, parseOrgTableDataLine } from "./orgTableData.js";
 import { formatLocalOrgDate } from "./calendarDate.js";
+import { CELORGA_DATASET_SCHEMAS, createCelorgaDatasetLoader, parseCelorgaDataset, type CelorgaDatasetSpec } from "./celorgaDatasets.js";
 
 export type DataQueryDiagnostic = {
   severity: "error" | "warning";
@@ -19,7 +20,7 @@ export type DataQueryDiagnostic = {
 export type DataQueryDataset = {
   id: string;
   line: number;
-  type: "csv" | "parquet" | "json" | "table" | "clickhouse" | "metabase";
+  type: "csv" | "parquet" | "json" | "table" | "clickhouse" | "metabase" | "celorga";
   engine: "duckdb";
   path?: string;
   url?: string;
@@ -36,6 +37,7 @@ export type DataQueryDataset = {
     endLine: number;
   };
   rowCount?: number;
+  celorga?: CelorgaDatasetSpec;
 };
 
 export type DataQuerySqlBlock = {
@@ -123,7 +125,7 @@ type NamedOrgTable = {
   rows: string[][];
 };
 
-const SUPPORTED_DATASET_TYPES = new Set(["csv", "parquet", "json", "table", "org-table", "clickhouse", "metabase"]);
+const SUPPORTED_DATASET_TYPES = new Set(["csv", "parquet", "json", "table", "org-table", "clickhouse", "metabase", "celorga"]);
 
 function diagnostic(message: string, source?: { line?: number; blockId?: string }, severity: "error" | "warning" = "error"): DataQueryDiagnostic {
   return { severity, message, ...(source ? { source } : {}) };
@@ -388,8 +390,20 @@ function parseDataset(block: FencedBlock, baseDir: string, namedTables: Map<stri
   const parametersRaw = values.get("parameters") || values.get("params") || "";
   const remoteType = type === "clickhouse" || type === "metabase";
 
+  if (type === "celorga") {
+    try {
+      const celorga = parseCelorgaDataset(sourceTable, values.get("since") || "7d");
+      if (sourcePath || sourceUrl || credentialRef || configRef || query || questionRaw || parametersRaw) throw new Error("Celorga datasets read their report's own corpus; path, URL, credentials, profiles, and remote queries are not accepted");
+      if (engineRaw !== "duckdb") throw new Error("Celorga datasets require engine: duckdb");
+      if (!id) throw new Error("Celorga dataset requires a name");
+      return { dataset: { id, line: block.line, type: "celorga", engine: "duckdb", celorga }, diagnostics };
+    } catch (error) {
+      return { diagnostics: [diagnostic(error instanceof Error ? error.message : String(error), { line: block.line, blockId: id })] };
+    }
+  }
+
   if (!SUPPORTED_DATASET_TYPES.has(typeRaw)) {
-    diagnostics.push(diagnostic("Dataset type must be csv, parquet, json, table, clickhouse, or metabase", { line: block.line, ...(id ? { blockId: id } : {}) }));
+    diagnostics.push(diagnostic("Dataset type must be csv, parquet, json, table, clickhouse, metabase, or celorga", { line: block.line, ...(id ? { blockId: id } : {}) }));
   }
   if (engineRaw && engineRaw !== "duckdb") {
     diagnostics.push(diagnostic(`Unsupported dataset engine "${engineRaw}"; only duckdb is supported`, { line: block.line, ...(id ? { blockId: id } : {}) }));
@@ -572,6 +586,14 @@ function sqlValue(value: unknown): string {
 }
 
 function inlineRemoteRowsView(dataset: DataQueryDataset, rows: Record<string, unknown>[]): string {
+  if (dataset.celorga) {
+    const schema = CELORGA_DATASET_SCHEMAS[dataset.celorga.source];
+    const columns = Object.keys(schema);
+    const projection = columns.map(column => `CAST(${rows.length ? quoteIdentifier(column) : "NULL"} AS ${schema[column as keyof typeof schema]}) AS ${quoteIdentifier(column)}`).join(", ");
+    if (!rows.length) return `CREATE OR REPLACE VIEW ${quoteIdentifier(dataset.id)} AS SELECT ${projection} WHERE false;`;
+    const values = rows.map(row => `(${columns.map(column => sqlValue(row[column])).join(", ")})`).join(", ");
+    return `CREATE OR REPLACE VIEW ${quoteIdentifier(dataset.id)} AS SELECT ${projection} FROM (VALUES ${values}) AS t(${columns.map(quoteIdentifier).join(", ")});`;
+  }
   const columns = Array.from(rows.reduce((keys, row) => {
     for (const key of Object.keys(row)) keys.add(key);
     return keys;
@@ -604,7 +626,7 @@ function buildDuckDbScript(
   remoteRows: Map<string, Record<string, unknown>[]> = new Map(),
 ): string {
   const setup = datasets.map((dataset) => {
-    if (dataset.type === "clickhouse" || dataset.type === "metabase") {
+    if (dataset.type === "clickhouse" || dataset.type === "metabase" || dataset.type === "celorga") {
       return inlineRemoteRowsView(dataset, remoteRows.get(dataset.id) || []);
     }
     if (dataset.type === "table" && dataset.sourceTable) {
@@ -974,6 +996,19 @@ export async function runOrg2DataQuery(input: string, opts: RunDataQueryOptions 
   }
 
   const remoteRows = new Map<string, Record<string, unknown>[]>();
+  const localDatasets = activeDatasets.filter(dataset => dataset.celorga);
+  if (localDatasets.length) {
+    try {
+      const load = createCelorgaDatasetLoader(file, localDatasets.map(dataset => dataset.celorga!), opts.ranAt ? new Date(opts.ranAt) : new Date());
+      for (const dataset of localDatasets) {
+        const loaded = load(dataset.celorga!);
+        remoteRows.set(dataset.id, loaded.rows);
+        dataset.rowCount = loaded.rows.length;
+      }
+    } catch (error) {
+      diagnostics.push(diagnostic(`Failed to load Celorga dataset: ${error instanceof Error ? error.message : String(error)}`));
+    }
+  }
   await Promise.all(remoteDatasets.map(async (dataset) => {
     const request = remoteDatasetRequest(dataset);
     if (!request) return;

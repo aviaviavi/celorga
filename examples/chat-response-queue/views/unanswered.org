@@ -1,0 +1,175 @@
+#+TITLE: Conversations awaiting a response
+
+Use *Refresh Data* to read the current chat records. This view covers human messages sent during the past seven days. It checks recorded reply completion, rather than answer quality. Settled and archived conversations remain included. Uncertain reply associations stay visible for review.
+
+* Awaiting a response
+:QUERY:
+#+begin_src sql results=unanswered freshness=manual
+WITH queue AS (
+SELECT conversation AS Conversation, string_agg(DISTINCT target, ', ') AS Agent,
+       string_agg(DISTINCT status, ', ') AS Status,
+       strftime(max(requested_at) AT TIME ZONE 'UTC', '%Y-%m-%d %H:%M UTC') AS Requested,
+       count(*) AS Requests, arg_max(preview, requested_at) AS Request,
+       coalesce(arg_max(failure, requested_at), '') AS Error
+FROM outstanding
+WHERE status NOT IN ('Running', 'Recently sent')
+GROUP BY thread_id, conversation
+)
+SELECT * FROM queue
+UNION ALL
+SELECT 'No outstanding requests in this window', '', 'Clear', '', 0, '', ''
+WHERE NOT EXISTS (SELECT 1 FROM queue)
+ORDER BY Requested DESC
+#+end_src
+:END:
+
+#+query-data: result=unanswered status=not-run
+| Conversation | Status        |
+|--------------+---------------|
+| Refresh Data | Not refreshed |
+
+* In progress
+:QUERY:
+#+begin_src sql results=in_progress freshness=manual
+WITH active AS (
+SELECT conversation AS Conversation, target AS Agent, status AS Status,
+       strftime(requested_at AT TIME ZONE 'UTC', '%Y-%m-%d %H:%M UTC') AS Requested,
+       preview AS Request
+FROM outstanding
+WHERE status IN ('Running', 'Recently sent')
+)
+SELECT * FROM active
+UNION ALL
+SELECT 'No active requests in this window', '', 'Clear', '', ''
+WHERE NOT EXISTS (SELECT 1 FROM active)
+ORDER BY Requested DESC
+#+end_src
+:END:
+
+#+query-data: result=in_progress status=not-run
+| Conversation | Status        |
+|--------------+---------------|
+| Refresh Data | Not refreshed |
+
+* Query definitions
+:DATA:
+#+begin_src dataset threads
+type: celorga
+source: chat-threads
+since: 7d
+#+end_src
+
+#+begin_src dataset messages
+type: celorga
+source: chat-messages
+since: 7d
+#+end_src
+
+#+begin_src dataset turns
+type: celorga
+source: chat-turns
+since: 7d
+#+end_src
+
+#+begin_src sql view=requests
+WITH expanded AS (
+  SELECT m.*, t.title, t.is_shared_room, target,
+         try_cast(m.created_at AS TIMESTAMPTZ) AS requested_at
+  FROM messages m JOIN threads t USING (thread_id)
+  CROSS JOIN unnest(
+    CASE
+      WHEN m.target_destination_id IS NOT NULL THEN [m.target_destination_id]
+      WHEN t.is_shared_room AND m.audience_destination_ids <> '[]'
+        THEN CAST(m.audience_destination_ids AS VARCHAR[])
+      WHEN t.is_shared_room AND t.room_default_destination_id = '' THEN []
+      WHEN t.is_shared_room THEN [coalesce(t.room_default_destination_id,
+        list_extract(CAST(t.room_destination_ids AS VARCHAR[]), 1))]
+      ELSE [coalesce(t.destination_id, t.runtime, 'Agent')]
+    END
+  ) targets(target)
+  WHERE m.role = 'user'
+    AND m.requested_by_destination_id IS NULL
+    AND NOT regexp_matches(m.content, '(?i)#\+(org2|celorga)_automation_')
+    AND NOT (starts_with(t.title, 'Automation:') AND m.ordinal = 1)
+    AND try_cast(m.created_at AS TIMESTAMPTZ)
+        BETWEEN current_timestamp - INTERVAL 7 DAY AND current_timestamp
+)
+SELECT *,
+       coalesce(room_round_id, message_id, CAST(ordinal AS VARCHAR)) || ':' || target AS request_key
+FROM expanded
+QUALIFY row_number() OVER (
+  PARTITION BY thread_id, coalesce(room_round_id, message_id, CAST(ordinal AS VARCHAR)), target
+  ORDER BY is_dispatch_copy DESC, ordinal DESC
+) = 1
+#+end_src
+
+#+begin_src sql view=valid_replies
+SELECT * FROM messages
+WHERE role = 'assistant' AND delivery_status = 'sent'
+  AND send_failure IS NULL AND source IS NULL AND author_agent_ref IS NULL
+  AND (length(trim(content)) > 0 OR attachment_count > 0)
+  AND (author_destination_id IS NOT NULL OR author_label IS NULL)
+#+end_src
+
+#+begin_src sql view=direct_replies
+SELECT r.thread_id, r.request_key, min(a.ordinal) AS reply_ordinal
+FROM requests r JOIN valid_replies a ON a.thread_id = r.thread_id
+  AND a.ordinal > r.ordinal
+  AND (a.author_destination_id = r.target
+       OR (NOT r.is_shared_room AND a.author_destination_id IS NULL))
+  AND CASE WHEN r.room_round_id IS NOT NULL
+      THEN a.room_round_id = r.room_round_id
+      ELSE NOT EXISTS (
+        SELECT 1 FROM messages next_user
+        WHERE next_user.thread_id = r.thread_id AND next_user.role = 'user'
+          AND next_user.delivery_kind <> 'steer'
+          AND next_user.ordinal > r.ordinal AND next_user.ordinal < a.ordinal
+      ) END
+WHERE r.delivery_status = 'sent' AND r.send_failure IS NULL
+GROUP BY r.thread_id, r.request_key
+#+end_src
+
+#+begin_src sql view=request_errors
+SELECT r.thread_id, r.request_key,
+  arg_min(coalesce(a.send_failure, 'Agent response stopped before completion'), a.ordinal) AS failure,
+  arg_min(CASE WHEN a.delivery_status = 'interrupted' THEN 'Interrupted' ELSE 'Failed' END, a.ordinal) AS status
+FROM requests r JOIN messages a ON a.thread_id = r.thread_id
+  AND a.ordinal > r.ordinal AND a.role = 'assistant' AND a.source IS NULL
+  AND (a.send_failure IS NOT NULL OR a.delivery_status IN ('failed', 'interrupted'))
+  AND (a.author_destination_id = r.target
+       OR (NOT r.is_shared_room AND a.author_destination_id IS NULL))
+  AND CASE WHEN r.room_round_id IS NOT NULL THEN a.room_round_id = r.room_round_id
+      ELSE NOT EXISTS (SELECT 1 FROM messages next_user
+        WHERE next_user.thread_id = r.thread_id AND next_user.role = 'user'
+          AND next_user.delivery_kind <> 'steer'
+          AND next_user.ordinal > r.ordinal AND next_user.ordinal < a.ordinal) END
+GROUP BY r.thread_id, r.request_key
+#+end_src
+
+#+begin_src sql view=outstanding
+SELECT r.thread_id, r.target, r.requested_at,
+  '[[org2-chat:' || r.thread_id || '][' ||
+    regexp_replace(r.title, '[\[\]\r\n|]', ' ', 'g') || ']]' AS conversation,
+  left(regexp_replace(r.content, '[\r\n|]+', ' ', 'g'), 220) AS preview,
+  left(regexp_replace(coalesce(r.send_failure, errors.failure), '[\r\n|]+', ' ', 'g'), 500) AS failure,
+  CASE
+    WHEN EXISTS (SELECT 1 FROM turns live WHERE live.thread_id = r.thread_id
+      AND (live.destination_id IS NULL OR live.destination_id = r.target)
+      AND (live.message_id = r.message_id OR (live.message_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM requests later
+          WHERE later.thread_id = r.thread_id AND later.target = r.target
+            AND later.ordinal > r.ordinal)))) THEN 'Running'
+    WHEN r.delivery_attempt_state = 'unconfirmed' THEN 'Awaiting confirmation'
+    WHEN r.delivery_status = 'interrupted' THEN 'Interrupted'
+    WHEN r.delivery_status = 'failed' OR r.send_failure IS NOT NULL THEN 'Failed'
+    WHEN errors.status IS NOT NULL THEN errors.status
+    WHEN r.requested_at > current_timestamp - INTERVAL 2 MINUTE THEN 'Recently sent'
+    WHEN r.delivery_status = 'sent' THEN 'Reply association unclear'
+    ELSE 'No completed response'
+  END AS status
+FROM requests r LEFT JOIN request_errors errors
+  ON errors.thread_id = r.thread_id AND errors.request_key = r.request_key
+WHERE NOT EXISTS (SELECT 1 FROM direct_replies d
+  WHERE d.thread_id = r.thread_id AND d.request_key = r.request_key)
+#+end_src
+:END:

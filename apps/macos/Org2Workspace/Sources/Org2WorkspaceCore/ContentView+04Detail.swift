@@ -908,6 +908,7 @@ private struct OrgRenderedDocumentPreview: View {
             restorationSourceLine: store.documentViewportSourceLine(for: source),
             layout: store.renderedDocumentLayout,
             activateWorkspacePane: { store.activateWorkspacePane(.detail) },
+            openChatThread: { store.openAIChatThreadLink($0) },
             askAIAboutHeading: { store.askAIChatAboutSourceHeading(at: $0) },
             performEntryAction: { store.performRenderedEntryAction($0, at: $1) },
             peekEncryptedText: { line in Task { await store.peekOrgCrypt(line: line) } },

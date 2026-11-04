@@ -1687,6 +1687,8 @@ function embeddedSourceAnchorLines(document: DocumentNode): Map<string, number> 
 }
 
 function appLinkHref(rawTarget: string, expandedTarget: string, context: RenderContext): string {
+  const chat = /^org2-chat:([0-9a-f-]{36})(?:#([0-9a-f-]{36}))?$/i.exec(expandedTarget);
+  if (chat) return `org2-workspace://open-thread?id=${chat[1]!.toLowerCase()}`;
   if (context.embedded && context.sourcePath) {
     rawTarget = expandedTarget;
     if (linkTargetNeedsHeadingAnchor(rawTarget)) {
@@ -2329,6 +2331,16 @@ function renderNode(node: Node, context: RenderContext): string {
   if (node.type === "KeywordLine") {
     const key = String(node.keyRaw || "").trim().toUpperCase();
     if (key === "EMBED") return renderLiveEmbed(node.valueRaw.trim(), context);
+    if (key === "QUERY-DATA" && context.profile === "app") {
+      const raw = node.valueRaw.trim();
+      const values = Object.fromEntries([...raw.matchAll(/(?:^|\s)([a-z_0-9]+)=([^\s]+)/gi)].map(match => [match[1]!.toLowerCase(), match[2]!]));
+      const at = Date.parse(values.ran_at ?? "");
+      const rows = Number(values.rows);
+      const count = Number.isSafeInteger(rows) && rows >= 0 ? ` · ${rows} row${rows === 1 ? "" : "s"}` : "";
+      const label = values.status === "not-run" ? "Not refreshed"
+        : Number.isFinite(at) ? `Refreshed ${new Date(at).toISOString().slice(0, 16).replace("T", " ")} UTC${count}` : `Query provenance${count}`;
+      return `<details class="org2-drawer org2-query-provenance"${renderSourceAttributes(node, context)}><summary>${escapeHtml(label)}</summary><pre>${escapeHtml(raw)}</pre></details>`;
+    }
     if (HIDDEN_DOCUMENT_KEYWORDS.has(key)) return "";
     return `<p class="org2-keyword"><span class="org2-keyword-name">${escapeHtml(node.keyRaw)}</span>: ${escapeHtml(node.valueRaw.trim())}</p>`;
   }
@@ -2382,7 +2394,7 @@ function splitAppFileProperties(nodes: Node[]): { properties: AppFileProperty[];
     if (node.type === "KeywordLine") {
       const key = String(node.keyRaw || "").trim();
       const upper = key.toUpperCase();
-      if (upper === "EMBED") { inPreamble = false; body.push(node); continue; }
+      if (upper === "EMBED" || upper === "QUERY-DATA") { inPreamble = false; body.push(node); continue; }
       if (HIDDEN_DOCUMENT_KEYWORDS.has(upper)) continue;
       const value = node.valueRaw.trim();
       if (upper === "PROPERTY") {
