@@ -964,7 +964,8 @@ public struct AIChatThreadContinuation: Sendable {
     lines.append("")
     lines.append("Background thread delivery")
     lines.append("ORG2_AI_CHAT_THREAD_ID: \(id.uuidString.lowercased())")
-    lines.append("Give this ID, the active corpus root, an author, and a source or run ref to a background job, cron task, or subagent that must report into this chat after the turn ends. It posts with =celorga_thread_post= or =celorga thread post ORG2_AI_CHAT_THREAD_ID --message TEXT --author NAME --agent-ref AGENT_REF --source REF --idempotency-key KEY --apply=, using a stable idempotency key, only after the reported state is durable. Do not post a duplicate background message for ordinary foreground replies in this active turn.")
+    lines.append("Give this ID, the corpus root, an author, and a source or run ref to a cron task or subagent that reports here after the turn ends. It posts with =celorga_thread_post= or =celorga thread post ORG2_AI_CHAT_THREAD_ID --message TEXT --author NAME --agent-ref AGENT_REF --source REF --idempotency-key KEY --apply= only after the reported state is durable. Do not post a duplicate background message for foreground replies.")
+    lines.append("For long commands, =celorga job start --thread ORG2_AI_CHAT_THREAD_ID --dir CORPUS_ROOT --label TEXT --apply -- COMMAND= outlives the turn and reports here.")
 
     if !org2References.isEmpty {
       lines.append("")

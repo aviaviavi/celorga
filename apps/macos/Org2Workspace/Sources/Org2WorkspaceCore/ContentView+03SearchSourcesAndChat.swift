@@ -2331,6 +2331,8 @@ struct AIChatView: View {
 
       AIChatGuestMessagesPanel()
 
+      AIChatBackgroundJobsBar(compact: presentation.isCompact)
+
       AIChatComposerView(
         focusOnAppear: presentation != .assistantPanel,
         compact: presentation.isCompact

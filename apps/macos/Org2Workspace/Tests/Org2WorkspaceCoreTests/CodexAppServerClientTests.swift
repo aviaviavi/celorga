@@ -411,6 +411,7 @@ final class CodexAppServerClientTests: XCTestCase {
       XCTAssertTrue(prompt.contains("ORG2_AI_CHAT_THREAD_ID: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
       XCTAssertTrue(prompt.contains("celorga_thread_post"))
       XCTAssertTrue(prompt.contains("Do not post a duplicate background message"))
+      XCTAssertTrue(prompt.contains("celorga job start --thread ORG2_AI_CHAT_THREAD_ID"))
     }
   }
 
