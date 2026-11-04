@@ -2632,6 +2632,9 @@ public final class WorkspaceStore {
   public var isLaunchGuidePresented = false
   /// The one-time "star Celorga on GitHub" nudge above the AI chat composer.
   public var isGitHubStarPromptPresented = false
+  /// Called once when the GitHub star nudge is first shown; the app sends a
+  /// telemetry event from it.
+  @ObservationIgnored public var gitHubStarPromptShownHandler: (() -> Void)?
   public var captureDraft = WorkspaceCaptureDraft()
   public var isSimilarTodoAssignmentPresented = false
   public var similarTodoCandidates: [SimilarTodoCandidate] = []

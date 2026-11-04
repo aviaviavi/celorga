@@ -18,6 +18,61 @@ final class OpenOrgLaunchTelemetryTests: XCTestCase {
   }
 
   @MainActor
+  func testGitHubStarPromptEventUsesTheLaunchEndpointWithItsOwnEventName() async throws {
+    let suite = "OpenOrgLaunchTelemetryTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let requests = RecordedRequests()
+    let sent = expectation(description: "launch and star prompt events")
+    sent.expectedFulfillmentCount = 2
+    sent.assertForOverFulfill = true
+    let telemetry = OpenOrgLaunchTelemetry(defaults: defaults, send: { request in
+      await requests.append(request)
+      sent.fulfill()
+    })
+    launch(telemetry)
+    telemetry.recordEvent(OpenOrgLaunchTelemetry.gitHubStarPromptShownEvent)
+    await fulfillment(of: [sent], timeout: 1)
+    let recorded = await requests.all
+    XCTAssertEqual(Set(recorded.map { $0.url?.absoluteString }), ["https://org2.gateway.scarf.sh/telemetry/celorga/launch"])
+    let bodies = try recorded.map { request in
+      try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: String])
+    }
+    XCTAssertEqual(Set(bodies.compactMap { $0["event"] }), ["app_launch", "github_star_prompt_shown"])
+    let star = try XCTUnwrap(bodies.first { $0["event"] == "github_star_prompt_shown" })
+    XCTAssertEqual(star, ["event": "github_star_prompt_shown", "version": "0.9.0", "platform": "macos",
+                          "os_version": "26.0.1", "architecture": "arm64", "schema_version": "1"])
+  }
+
+  @MainActor
+  func testProductEventsNeedAnEligibleLaunchAndEnabledTelemetry() async throws {
+    let suite = "OpenOrgLaunchTelemetryTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let notSent = expectation(description: "ineligible product event")
+    notSent.isInverted = true
+    // Before any launch has been recorded.
+    let unlaunched = OpenOrgLaunchTelemetry(defaults: defaults, send: { _ in notSent.fulfill() })
+    unlaunched.recordEvent(OpenOrgLaunchTelemetry.gitHubStarPromptShownEvent)
+    // A Preview build.
+    let preview = OpenOrgLaunchTelemetry(defaults: defaults, send: { _ in notSent.fulfill() })
+    preview.recordLaunch(bundleIdentifier: "org.org2.workspace.codex", version: "0.9.0", osVersion: "26.0.1",
+                         architecture: "arm64", environment: [:], arguments: [])
+    preview.recordEvent(OpenOrgLaunchTelemetry.gitHubStarPromptShownEvent)
+    // DO_NOT_TRACK in the launch environment.
+    let doNotTrack = OpenOrgLaunchTelemetry(defaults: defaults, send: { _ in notSent.fulfill() })
+    doNotTrack.recordLaunch(bundleIdentifier: "org.org2.workspace", version: "0.9.0", osVersion: "26.0.1",
+                            architecture: "arm64", environment: ["DO_NOT_TRACK": "1"], arguments: [])
+    doNotTrack.recordEvent(OpenOrgLaunchTelemetry.gitHubStarPromptShownEvent)
+    // Opted out of telemetry.
+    let optedOut = OpenOrgLaunchTelemetry(defaults: defaults, send: { _ in notSent.fulfill() })
+    optedOut.enabled = false
+    launch(optedOut)
+    optedOut.recordEvent(OpenOrgLaunchTelemetry.gitHubStarPromptShownEvent)
+    await fulfillment(of: [notSent], timeout: 0.1)
+  }
+
+  @MainActor
   func testEnabledByDefaultSendsOnceEvenIfLaunchIsCalledAgain() async throws {
     let suite = "OpenOrgLaunchTelemetryTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -94,4 +149,9 @@ final class OpenOrgLaunchTelemetryTests: XCTestCase {
     telemetry.recordLaunch(bundleIdentifier: "org.org2.workspace", version: "0.9.0",
                            osVersion: "26.0.1", architecture: "arm64", environment: [:], arguments: [])
   }
+}
+
+private actor RecordedRequests {
+  private(set) var all: [URLRequest] = []
+  func append(_ request: URLRequest) { all.append(request) }
 }

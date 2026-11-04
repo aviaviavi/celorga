@@ -194,7 +194,7 @@ private struct GeneralSettingsView: View {
       } header: {
         Label("Telemetry", systemImage: "chart.bar")
       } footer: {
-        SettingsFooterText("Help us understand Celorga usage. Each app launch sends the app version, macOS version, and CPU architecture to Scarf. Scarf receives your network address to process the request. No notes, chats, file paths, or installation identifiers are sent. Enabled by default; turning this off applies to all workspaces on this Mac.")
+        SettingsFooterText("Help us understand Celorga usage. Each app launch, and the one-time prompt to star Celorga on GitHub, sends the event name, app version, macOS version, and CPU architecture to Scarf. Scarf receives your network address to process the request. No notes, chats, file paths, or installation identifiers are sent. Enabled by default; turning this off applies to all workspaces on this Mac.")
       }
     }
     .formStyle(.grouped)

@@ -48,6 +48,9 @@ struct Org2WorkspaceApp: App {
           appDelegate.prepareForTermination = { [store] in
             await store.prepareForTermination()
           }
+          store.gitHubStarPromptShownHandler = { [weak telemetry = appDelegate.telemetry] in
+            telemetry?.recordEvent(OpenOrgLaunchTelemetry.gitHubStarPromptShownEvent)
+          }
           NSApplication.shared.setActivationPolicy(.regular)
           NSApplication.shared.activate(ignoringOtherApps: true)
           AppIconInstaller.install()

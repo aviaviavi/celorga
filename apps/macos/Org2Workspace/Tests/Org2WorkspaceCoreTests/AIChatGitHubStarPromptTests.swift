@@ -12,13 +12,16 @@ final class AIChatGitHubStarPromptTests: XCTestCase {
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
+    var shownEvents = 0
     func makeStore() -> WorkspaceStore {
-      WorkspaceStore(
+      let store = WorkspaceStore(
         cli: Org2CLI(repoRoot: URL(fileURLWithPath: root.path)),
         defaults: defaults,
         aiChatTranscriptURL: root.appendingPathComponent("chat-\(UUID().uuidString).json"),
         aiChatSendHandler: { _, _, _, _ in "Done" }
       )
+      store.gitHubStarPromptShownHandler = { shownEvents += 1 }
+      return store
     }
 
     let store = makeStore()
@@ -26,6 +29,7 @@ final class AIChatGitHubStarPromptTests: XCTestCase {
       await store.sendAIChatMessage(text: "Prompt \(index)")
       XCTAssertFalse(store.isGitHubStarPromptPresented, "shown early after prompt \(index)")
     }
+    XCTAssertEqual(shownEvents, 0, "no telemetry event before the prompt is shown")
 
     // Local slash commands are not prompts.
     let slashSubmission = AIChatComposerSubmission(
@@ -39,6 +43,7 @@ final class AIChatGitHubStarPromptTests: XCTestCase {
 
     await store.sendAIChatMessage(text: "Prompt 5")
     XCTAssertTrue(store.isGitHubStarPromptPresented)
+    XCTAssertEqual(shownEvents, 1, "showing the prompt sends one telemetry event")
 
     store.dismissGitHubStarPrompt()
     XCTAssertFalse(store.isGitHubStarPromptPresented)
@@ -53,5 +58,6 @@ final class AIChatGitHubStarPromptTests: XCTestCase {
       await relaunched.sendAIChatMessage(text: "Again \(index)")
     }
     XCTAssertFalse(relaunched.isGitHubStarPromptPresented)
+    XCTAssertEqual(shownEvents, 1, "the event is never sent again")
   }
 }
