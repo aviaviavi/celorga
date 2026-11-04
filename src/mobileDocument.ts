@@ -2,6 +2,7 @@ import type { DocumentNode, HeadlineNode, InlineNode, Node } from "./ast.js";
 import { parseInlinesFromText, parseOrgToCanonicalAst } from "./parser.js";
 import { documentTodoSequences, parseTodoSequenceDefinitions } from "./todo.js";
 import { renderOrgDocumentToAppHtml } from "./export.js";
+import { parseIdLinkTarget, resolveIdLinkInText } from "./linkSearch.js";
 
 type Ranged = Node & { sourceRange?: { startLine: number; endLine: number } };
 
@@ -50,8 +51,18 @@ export function resolveEntry(source: string, path: string, selector: string, seq
   const entries = indexDocument(source, path, sequences);
   if (!selector) return { entry: null };
   let matches: typeof entries = [];
-  if (selector.startsWith("id:")) {
-    matches = entries.filter(entry => entry.nodeID === selector.slice(3));
+  const idTarget = parseIdLinkTarget(selector);
+  if (idTarget?.search) {
+    // Org 10 `id:ID::SEARCH`: select the entry that contains the match,
+    // searching the ID's subtree first and then its file.
+    const owners = entries.filter(entry => entry.nodeID === idTarget.id);
+    if (owners.length > 1) throw new Error("This entry link is ambiguous.");
+    const match = owners.length ? resolveIdLinkInText(source, idTarget) : null;
+    if (!match) throw new Error("The linked entry no longer exists. Refresh the corpus and try again.");
+    matches = entries.filter(entry => entry.line > 0 && entry.line <= match.line).slice(-1);
+    if (!matches.length) return { entry: null };
+  } else if (idTarget) {
+    matches = entries.filter(entry => entry.nodeID === idTarget.id);
   } else if (/^[1-9][0-9]*$/.test(selector)) {
     const line = Number(selector);
     if (line > source.replace(/\r\n?/g, "\n").split("\n").length) throw new Error("The linked line no longer exists.");

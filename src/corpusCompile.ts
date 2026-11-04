@@ -14,6 +14,7 @@ import {
   type CheckboxProgressIssue,
 } from "./checkboxProgress.js";
 import { brandProperty, isBrandName } from "./brandNames.js";
+import { idLinkTargetId, isUuidIdLinkTarget } from "./linkSearch.js";
 
 export { extractCheckboxProgress, extractOwnedCheckboxIssues } from "./checkboxProgress.js";
 export type { CheckboxProgress, CheckboxProgressIssue } from "./checkboxProgress.js";
@@ -367,7 +368,7 @@ function extractPlanning(lines: string[], startIndex: number, endExclusive: numb
 function linkType(target: string): CompiledCorpusLink["type"] {
   const value = target.trim();
   const lower = value.toLowerCase();
-  if (/^id:[0-9a-f-]{36}$/i.test(value)) return "id";
+  if (isUuidIdLinkTarget(value)) return "id";
   if (lower.startsWith("file:")) return "file";
   if (lower.startsWith("http://") || lower.startsWith("https://")) return "url";
   if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(value) && value && !value.startsWith("/") && !value.startsWith("./") && !value.startsWith("../") && !value.startsWith("#")) return "wiki";
@@ -532,7 +533,7 @@ function finalizeCompiledCorpus(options: {
       let targetId: string | null = null;
       let resolvedBy: "id" | "wiki" | null = null;
       if (link.type === "id") {
-        targetId = normalizeId(link.target.replace(/^id:/i, ""));
+        targetId = idLinkTargetId(link.target);
         resolvedBy = "id";
       } else if (link.type === "wiki") {
         const candidates = Array.from(labels.get(normalizeLabel(link.target)) || []);
@@ -809,14 +810,13 @@ function buildEntityIndex(nodes: CompiledCorpusNode[]): CompiledCorpusEntity[] {
 
 function parseRelationObject(raw: string): { objectRef: string; objectId: string | null; objectTitle?: string } {
   const value = String(raw || "").trim();
-  const idMatch = /(?:^|\s)(?:id:)?([0-9a-fA-F-]{36})(?:\s|$)/.exec(value);
+  const idMatch = /(?:^|\s)(?:id:)?([0-9a-fA-F-]{36})(?:\s|::|$)/.exec(value);
   if (idMatch) return { objectRef: `id:${String(idMatch[1]).toLowerCase()}`, objectId: String(idMatch[1]).toLowerCase() };
   const linkMatch = /\[\[([^\]\n]+?)(?:\]\[([^\]\n]*))?\]\]/.exec(value);
   if (linkMatch) {
     const target = String(linkMatch[1] || "").trim();
     const description = String(linkMatch[2] || "").trim();
-    const linkId = /^id:([0-9a-fA-F-]{36})$/i.exec(target);
-    return { objectRef: target, objectId: linkId ? String(linkId[1]).toLowerCase() : null, ...(description ? { objectTitle: description } : {}) };
+    return { objectRef: target, objectId: isUuidIdLinkTarget(target) ? idLinkTargetId(target) : null, ...(description ? { objectTitle: description } : {}) };
   }
   return { objectRef: value, objectId: null };
 }
@@ -824,9 +824,8 @@ function parseRelationObject(raw: string): { objectRef: string; objectId: string
 function resolveLinkObject(rawTarget: string, rawDescription: string | undefined, byId: Map<string, CompiledCorpusNode>, labels: Map<string, Set<string>>): { objectId: string | null; objectRef: string; objectTitle?: string } {
   const target = String(rawTarget || "").trim();
   const description = String(rawDescription || "").trim();
-  const idMatch = /^id:([0-9a-fA-F-]{36})$/i.exec(target);
-  if (idMatch) {
-    const objectId = String(idMatch[1]).toLowerCase();
+  if (isUuidIdLinkTarget(target)) {
+    const objectId = idLinkTargetId(target)!;
     return { objectId, objectRef: `id:${objectId}`, objectTitle: description || byId.get(objectId)?.title };
   }
   const candidates = Array.from(labels.get(normalizeLabel(target)) || []);

@@ -5716,8 +5716,8 @@ ${items}
     return "";
   }
   function renderHeadline(node, context) {
-    const headingLevel = Math.max(1, Math.min(6, node.level));
-    const headingTag = `h${headingLevel}`;
+    const headingLevel2 = Math.max(1, Math.min(6, node.level));
+    const headingTag = `h${headingLevel2}`;
     const title = renderInlineChildren(node.title, context);
     const headingNumberRaw = context.headlineNumbers?.get(node);
     const headingNumber = headingNumberRaw ? `<span class="org2-headline-number">${escapeHtml2(headingNumberRaw)}</span> ` : "";
@@ -6196,6 +6196,147 @@ ${CHART_INTERACTION_SCRIPT}
     return out + html.slice(cursor);
   }
 
+  // src/linkSearch.ts
+  function parseIdLinkTarget(raw) {
+    const value = String(raw ?? "").trim();
+    if (!/^id:/i.test(value)) return null;
+    const body = value.slice(3);
+    const separator = body.indexOf("::");
+    const id = (separator < 0 ? body : body.slice(0, separator)).trim();
+    if (!id) return null;
+    const search = separator < 0 ? "" : body.slice(separator + 2).trim();
+    return search ? { id, search } : { id };
+  }
+  function toLines(text2) {
+    return Array.isArray(text2) ? text2 : String(text2 ?? "").replace(/\r\n?/g, "\n").split("\n");
+  }
+  function normalizeSearchText(value) {
+    return value.replace(/\[\d*\/\d*\]|\[\d*%\]/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+  function headingMatches(line, wanted) {
+    if (!/^\*+\s+/.test(line)) return false;
+    const base = line.trim().replace(/^\*+\s+/, "").replace(/\s+:[^\s:]+(?::[^\s:]+)*:\s*$/, "").trim();
+    const candidates = [base];
+    const keyword = /^[A-Z][A-Z0-9_-]*\s+(.+)$/.exec(base);
+    if (keyword) candidates.push(keyword[1]);
+    return candidates.some((candidate) => normalizeSearchText(candidate.replace(/^\[#[A-Za-z0-9]\]\s+/, "")) === wanted);
+  }
+  function headingLevel(line) {
+    const match = /^(\*+)\s/.exec(line);
+    return match ? match[1].length : 0;
+  }
+  function orgSubtreeLineRange(text2, headingLine) {
+    const lines = toLines(text2);
+    const start = Math.max(1, Math.min(headingLine, lines.length));
+    const level = headingLevel(lines[start - 1] ?? "");
+    if (!level) return { startLine: 1, endLine: lines.length };
+    let end = lines.length;
+    for (let i = start; i < lines.length; i += 1) {
+      const other = headingLevel(lines[i] ?? "");
+      if (other && other <= level) {
+        end = i;
+        break;
+      }
+    }
+    return { startLine: start, endLine: end };
+  }
+  function findInRange(lines, range, test) {
+    let inBlock = false;
+    for (let i = range.startLine - 1; i < range.endLine && i < lines.length; i += 1) {
+      const line = lines[i] ?? "";
+      const trimmed = line.trim();
+      if (/^#\+begin_/i.test(trimmed)) {
+        inBlock = true;
+        continue;
+      }
+      if (/^#\+end_/i.test(trimmed)) {
+        inBlock = false;
+        continue;
+      }
+      if (test(line, inBlock)) return i + 1;
+    }
+    return null;
+  }
+  function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  function resolveOrgSearchOption(text2, rawSearch, options = {}) {
+    const lines = toLines(text2);
+    const search = String(rawSearch ?? "").trim();
+    if (!search || lines.length === 0) return null;
+    if (/^\d+$/.test(search)) {
+      const line = Number.parseInt(search, 10);
+      if (!Number.isFinite(line) || line < 1) return null;
+      return { line: Math.min(line, lines.length), kind: "line" };
+    }
+    const whole = { startLine: 1, endLine: lines.length };
+    const ranges = options.scope ? [options.scope, whole] : [whole];
+    const first = (test) => {
+      for (const range of ranges) {
+        const found = findInRange(lines, range, test);
+        if (found !== null) return found;
+      }
+      return null;
+    };
+    if (search.startsWith("*")) {
+      const wanted2 = normalizeSearchText(search.replace(/^\*+\s*/, ""));
+      if (!wanted2) return null;
+      const line = first((candidate) => headingMatches(candidate, wanted2));
+      return line === null ? null : { line, kind: "heading" };
+    }
+    if (search.startsWith("#")) {
+      const wanted2 = search.slice(1).trim().toLowerCase();
+      if (!wanted2) return null;
+      const line = first((candidate) => (/^\s*:CUSTOM_ID:\s*(\S+)\s*$/i.exec(candidate)?.[1] ?? "").toLowerCase() === wanted2);
+      return line === null ? null : { line, kind: "custom-id" };
+    }
+    const wanted = normalizeSearchText(search);
+    const targetPattern = new RegExp(`<<<?\\s*${escapeRegExp(search.replace(/\s+/g, " ")).replace(/ /g, "\\s+")}\\s*>>>?`, "i");
+    const targetLine = first((candidate, inBlock) => !inBlock && targetPattern.test(candidate));
+    if (targetLine !== null) return { line: targetLine, kind: "target" };
+    const nameLine = first((candidate) => normalizeSearchText(/^\s*#\+name:\s*(.*)$/i.exec(candidate)?.[1] ?? "\0") === wanted);
+    if (nameLine !== null) return { line: nameLine, kind: "name" };
+    const headingLine = first((candidate) => headingMatches(candidate, wanted));
+    if (headingLine !== null) return { line: headingLine, kind: "heading" };
+    const lowered = search.toLowerCase();
+    const textLine = first((candidate) => candidate.toLowerCase().includes(lowered));
+    return textLine === null ? null : { line: textLine, kind: "text" };
+  }
+  function findIdOwner(text2, rawId) {
+    const lines = toLines(text2);
+    const id = String(rawId ?? "").trim().toLowerCase();
+    if (!id) return null;
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i] ?? "";
+      const property2 = /^\s*:ID:\s*(\S+)\s*$/i.exec(line);
+      const keyword = property2 ? null : /^\s*#\+ID:\s*(\S+)\s*$/i.exec(line);
+      const match = property2 ?? keyword;
+      if (!match || match[1].toLowerCase() !== id) continue;
+      const heading = enclosingHeadingLine(lines, i + 1);
+      if (heading === null) return { line: 1, scope: { startLine: 1, endLine: lines.length } };
+      if (keyword) continue;
+      return { line: heading, scope: orgSubtreeLineRange(lines, heading) };
+    }
+    return null;
+  }
+  function resolveIdLinkInText(text2, target) {
+    const parsed = typeof target === "string" ? parseIdLinkTarget(target) : target;
+    if (!parsed) return null;
+    const lines = toLines(text2);
+    const owner = findIdOwner(lines, parsed.id);
+    if (!owner) return null;
+    if (!parsed.search) return { line: owner.line, kind: "heading", ownerLine: owner.line };
+    const match = resolveOrgSearchOption(lines, parsed.search, { scope: owner.scope });
+    return match ? { ...match, ownerLine: owner.line } : null;
+  }
+  function enclosingHeadingLine(text2, line) {
+    const lines = toLines(text2);
+    for (let i = Math.min(line, lines.length) - 1; i >= 0; i -= 1) {
+      if (headingLevel(lines[i] ?? "")) return i + 1;
+    }
+    return null;
+  }
+
   // src/mobileDocument.ts
   function inlineText(nodes) {
     return nodes.map((node) => node.type === "Text" ? node.value : node.type === "Emphasis" ? node.content : node.type === "Link" ? node.descriptionRaw ?? node.targetRaw : "raw" in node ? node.raw : "").join("");
@@ -6246,8 +6387,16 @@ ${CHART_INTERACTION_SCRIPT}
     const entries = indexDocument(source, path, sequences);
     if (!selector) return { entry: null };
     let matches = [];
-    if (selector.startsWith("id:")) {
-      matches = entries.filter((entry) => entry.nodeID === selector.slice(3));
+    const idTarget = parseIdLinkTarget(selector);
+    if (idTarget?.search) {
+      const owners = entries.filter((entry) => entry.nodeID === idTarget.id);
+      if (owners.length > 1) throw new Error("This entry link is ambiguous.");
+      const match = owners.length ? resolveIdLinkInText(source, idTarget) : null;
+      if (!match) throw new Error("The linked entry no longer exists. Refresh the corpus and try again.");
+      matches = entries.filter((entry) => entry.line > 0 && entry.line <= match.line).slice(-1);
+      if (!matches.length) return { entry: null };
+    } else if (idTarget) {
+      matches = entries.filter((entry) => entry.nodeID === idTarget.id);
     } else if (/^[1-9][0-9]*$/.test(selector)) {
       const line = Number(selector);
       if (line > source.replace(/\r\n?/g, "\n").split("\n").length) throw new Error("The linked line no longer exists.");

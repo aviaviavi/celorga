@@ -568,6 +568,19 @@ The canonical AST emits a =Link= inline node with:
 - =targetRaw=: the raw target payload
 - =descriptionRaw= (optional): the raw description payload
 
+** Link search options
+
+A =file:= or =id:= link target MAY end with =::SEARCH=. The canonical AST keeps the whole target in =targetRaw=. An =id:= target splits at the first =::=: the text before it is the ID, and the trimmed text after it is the search option. Consumers that index links (backlinks, graph neighbors, relations) MUST treat =id:ID::SEARCH= as a link to =ID=.
+
+A search option resolves within one file (for =id:=, the file that holds the ID), case-insensitively:
+
+- Digits only: that 1-based line of the file.
+- =*TITLE=: the first heading whose title matches after removing tags, an optional TODO keyword and priority, and statistics cookies.
+- =#NAME=: the first =:CUSTOM_ID: NAME= property line.
+- Any other text: the first dedicated target =<<TEXT>>= (or radio target) outside blocks, then the first =#+NAME: TEXT=, then the first matching heading title, then the first line containing the text.
+
+For =id:ID::SEARCH=, a non-numeric search MUST look inside the subtree of the heading that holds the ID before the rest of the file. A file-level ID scopes to the whole file.
+
 ** Plain URLs
 
 A *plain URL* is recognized when it begins with =http://= or =https://= and extends until the next whitespace.

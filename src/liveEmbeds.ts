@@ -5,6 +5,8 @@ import { findConfigFile, loadConfig, resolveFilesFromDir } from "./config.js";
 import { compileCorpus, type CompiledCorpus, type CompiledCorpusNode } from "./corpusCompile.js";
 import { parseOrgToCanonicalAst } from "./parser.js";
 import { configFilePath } from "./brandNames.js";
+import { parseHeadlineTitleForRoam } from "./headlineTitle.js";
+import { parseIdLinkTarget, resolveOrgSearchOption } from "./linkSearch.js";
 
 export type LiveEmbedResolution = {
   ok: true; key: string; file: string; line: number; title: string;
@@ -16,9 +18,12 @@ export type LiveEmbedResolver = ((target: string, sourcePath?: string) => LiveEm
 export function liveEmbedDirective(target: string): string {
   target = target.trim();
   if (!target || /[\r\n\0]/.test(target) || target.length > 4096) throw new Error("An embed needs one file: or id: target on a single line");
-  if (/^id:[^\s\[\]]+$/i.test(target)) return `#+EMBED: id:${target.slice(3).toLowerCase()}`;
+  const idTarget = parseIdLinkTarget(target);
+  if (idTarget && /^[^\s\[\]]+$/.test(idTarget.id) && !/[\[\]]/.test(idTarget.search ?? "")) {
+    return `#+EMBED: id:${idTarget.id.toLowerCase()}${idTarget.search ? `::${idTarget.search}` : ""}`;
+  }
   if (/^file:.+\.(org|org2)$/i.test(target) && !target.includes("::") && !path.isAbsolute(target.slice(5)) && !target.slice(5).startsWith("~")) return `#+EMBED: ${target}`;
-  throw new Error("Use id:STABLE-ID for a note or heading, or file:relative/path.org for a whole note");
+  throw new Error("Use id:STABLE-ID (optionally id:STABLE-ID::SEARCH) for a note or heading, or file:relative/path.org for a whole note");
 }
 
 type RangedNode = Node & { sourceRange?: { startLine: number; endLine: number } };
@@ -48,6 +53,21 @@ function canonicalEmbedRange(document: DocumentNode, candidate: CompiledCorpusNo
   return { line: heading.sourceRange.startLine, endLine: heading.sourceRange.endLine };
 }
 
+function innermostHeading(document: DocumentNode, line: number): (HeadlineNode & RangedNode) | undefined {
+  let found: (HeadlineNode & RangedNode) | undefined;
+  const visit = (nodes: Node[]) => {
+    for (const node of nodes) if (node.type === "Headline") {
+      const range = (node as RangedNode).sourceRange;
+      if (range && range.startLine <= line && line <= range.endLine) {
+        found = node as HeadlineNode & RangedNode;
+        visit(node.children);
+      }
+    }
+  };
+  visit(document.children);
+  return found;
+}
+
 /** Resolution is scoped to one explicitly selected corpus, with no mounts or network reads. */
 export function createLiveEmbedResolver(options: { sourcePath: string; rootDir?: string }): LiveEmbedResolver {
   const configFile = options.rootDir ? configFilePath(options.rootDir) : findConfigFile(path.dirname(path.resolve(options.sourcePath)));
@@ -69,7 +89,10 @@ export function createLiveEmbedResolver(options: { sourcePath: string; rootDir?:
       let title: string | undefined;
       let verifiedSource: string | undefined;
       let sourceDocument: DocumentNode | undefined;
-      if (target.startsWith("id:")) {
+      const idTarget = parseIdLinkTarget(target);
+      if (idTarget) {
+        const idValue = idTarget.id;
+        const search = idTarget.search;
         if (!corpus) {
           const config = configFile && fs.existsSync(configFile) ? loadConfig(configFile) : {};
           const candidates = resolveFilesFromDir(root, ["**/*.org", "**/*.org2"], ["node_modules", "node_modules/**", ".git", ".git/**", ...(config.ignorePatterns ?? [])], true);
@@ -84,7 +107,7 @@ export function createLiveEmbedResolver(options: { sourcePath: string; rootDir?:
           if (totalBytes > 64 * 1024 * 1024) throw new Error("Embed ID lookup exceeds the 64 MiB limit; use a file: target");
           corpus = compileCorpus(files, { rootDir: root });
         }
-        const candidates = corpus.nodes.filter(node => node.id === target.slice(3));
+        const candidates = corpus.nodes.filter(node => node.id === idValue);
         if (candidates.length === 0) return { ok: false, message: "Embed target is missing (or excluded from this corpus)" };
         // Compiled projections can contain Org-looking text inside source or
         // example blocks. Verify actual full-document nodes before ambiguity
@@ -109,6 +132,23 @@ export function createLiveEmbedResolver(options: { sourcePath: string; rootDir?:
         line = selected.line;
         endLine = selected.endLine;
         title = selected.title;
+        if (search) {
+          // Org 10 `id:ID::SEARCH`: search the ID's subtree, then its file,
+          // and embed the heading section that contains the match.
+          const lines = selected.raw.split("\n");
+          const match = resolveOrgSearchOption(lines, search, { scope: { startLine: line, endLine: endLine ?? lines.length } });
+          if (!match) return { ok: false, message: `Embed search option "${search}" was not found in the note that contains ${idValue}` };
+          const section = innermostHeading(selected.document, match.line);
+          if (section?.sourceRange) {
+            line = section.sourceRange.startLine;
+            endLine = section.sourceRange.endLine;
+            title = parseHeadlineTitleForRoam(lines[line - 1] ?? "") || title;
+          } else {
+            line = 1;
+            endLine = undefined;
+            title = undefined;
+          }
+        }
         verifiedSource = selected.raw;
         sourceDocument = selected.document;
       } else {
@@ -134,7 +174,7 @@ export function createLiveEmbedResolver(options: { sourcePath: string; rootDir?:
 
 export async function runEmbedCommand(args: string[]): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) {
-    console.log("Usage: celorga embed resolve --target file:NOTE.org|id:ID --file SOURCE [--dir CORPUS] [--json]\nRead-only validation returns a portable #+EMBED directive and source location; it never copies content or writes files.");
+    console.log("Usage: celorga embed resolve --target file:NOTE.org|id:ID[::SEARCH] --file SOURCE [--dir CORPUS] [--json]\nRead-only validation returns a portable #+EMBED directive and source location; it never copies content or writes files.");
     return;
   }
   if (args[0] !== "resolve") throw new Error("Use celorga embed resolve --help");

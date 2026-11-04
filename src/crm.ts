@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { configFilePath } from "./brandNames.js";
+import { idLinkTargetId } from "./linkSearch.js";
 import { formatOrgDateTimestamp } from "./calendarDate.js";
 import { configPathMatches, loadConfig, type Org2Config } from "./config.js";
 import { compileCorpusIncremental, type CompiledCorpus, type CompiledCorpusNode } from "./corpusCompile.js";
@@ -214,7 +215,7 @@ function splitList(value: string): string[] {
 }
 
 function idLinks(value: string): string[] {
-  return [...String(value || "").matchAll(ID_LINK_PATTERN)].map((match) => String(match[1]).toLowerCase());
+  return [...String(value || "").matchAll(ID_LINK_PATTERN)].map((match) => idLinkTargetId(`id:${match[1]}`)).filter((id): id is string => !!id);
 }
 
 function localIso(date: Date): string {
@@ -783,7 +784,7 @@ export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}, walk?: 
       for (const fileNode of nodesByFile.get(node.file) ?? []) {
         for (const link of fileNode.links) {
           if (link.type !== "id") continue;
-          const target = byId.get(link.target.replace(/^id:/i, "").toLowerCase());
+          const target = byId.get(idLinkTargetId(link.target) ?? "");
           if (target && entities.get(target)?.kind === "company") linked.add(target);
         }
       }
@@ -801,7 +802,7 @@ export function buildCrm(rootRaw: string, options: CrmIndexOptions = {}, walk?: 
     const related = new Set<string>();
     for (const link of node.links) {
       if (link.type !== "id") continue;
-      const target = byId.get(link.target.replace(/^id:/i, "").toLowerCase());
+      const target = byId.get(idLinkTargetId(link.target) ?? "");
       if (target) related.add(target);
     }
     for (const id of idLinks(node.title)) { const target = byId.get(id); if (target) related.add(target); }
@@ -1348,7 +1349,7 @@ function resolveKey(lookup: CrmLookup, refRaw: string): string {
   const ref = String(refRaw || "").trim();
   if (!ref) throw new Error("an entity reference is required (ID, title, email, domain or ledger:LEDGER/ID)");
   const lower = ref.toLowerCase();
-  const direct = lookup.entities.get(ref) || lookup.entities.get(`id:${lower.replace(/^id:/, "")}`);
+  const direct = lookup.entities.get(ref) || lookup.entities.get(`id:${idLinkTargetId(lower) ?? lower}`);
   if (direct) return direct.key;
   const matches = resolveCandidates(lookup, ref);
   if (matches.length === 1) return matches[0]!.key;

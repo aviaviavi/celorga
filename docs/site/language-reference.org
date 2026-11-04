@@ -147,13 +147,24 @@ Supported link forms:
 
 - Bracket links: =[[https://example.com][label]]=
 - Plain URLs: =https://example.com=
-- File links: =[[file:path/to/file.org]]=
-- ID links: =[[id:UUID][label]]= (roam-style link)
+- File links: =[[file:path/to/file.org]]=, optionally with a search option: =[[file:notes.org::*Heading]]=
+- ID links: =[[id:UUID][label]]= (roam-style link), optionally with a search option: =[[id:UUID::launch window][label]]=
 - Wiki links: =[[Node Title]]= (roam-style link)
 - Angle links: =<mailto:hello@example.com>=
 - Targets: =<<name>>= and radio targets =<<<name>>>=
 
 Both ID links and Wiki links are first-class in Celorga roam workflows.
+
+** Search options
+
+Text after =::= in a =file:= or =id:= link selects a place in the linked file. The forms follow Org 10:
+
+- =42= is line 42 of the file. =[[id:UUID::42]]= is a stable citation of a line in the note that holds the ID.
+- =*Heading= is a heading title. The TODO keyword, priority, tags, and statistics cookies are ignored.
+- =#custom-id= is the heading whose =:CUSTOM_ID:= property has that value.
+- Plain text is a dedicated target =<<text>>= first, then a =#+NAME:=, then a heading title, and then the first line that contains the text.
+
+Matching ignores case. For =id:ID::SEARCH=, Celorga searches the subtree of the heading that holds the ID first, and then the rest of that file. A file-level ID searches the whole file. A link with a search option is still a link to the ID: backlinks, graph neighbors, and relations count it as a link to that node. Live embeds (=#+EMBED: id:ID::SEARCH=) embed the heading section that contains the match.
 
 Link abbreviations are supported with built-ins, config, and =#+LINK= directives.
 

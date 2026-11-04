@@ -2,6 +2,7 @@ import { parseIsoCalendarDate } from "./calendarDate.js";
 import type { CompiledCorpus, CompiledCorpusEntityProfile, CompiledCorpusNode } from "./corpusCompile.js";
 import { isActiveTodoKeyword, terminalTodoStatusFromKeyword } from "./todo.js";
 import { brandProperty, withNameAliases } from "./brandNames.js";
+import { idLinkTargetId } from "./linkSearch.js";
 
 export type AgentInclude = "backlinks" | "neighbors" | "sources";
 export type AgentAction = "context" | "search" | "fetch" | "bundle";
@@ -572,7 +573,7 @@ function buildAgentCorpusLookup(corpus: CompiledCorpus): AgentCorpusLookup {
 
   for (const source of corpus.nodes) {
     for (const link of source.links) {
-      const targets = nodesById.get(normalizeId(link.target.replace(/^id:/i, ""))) || [];
+      const targets = nodesById.get(normalizeId(idLinkTargetId(link.target) ?? link.target)) || [];
       for (const target of targets) {
         if (source.key === target.key) continue;
         addBacklink(target.key, {
@@ -605,7 +606,7 @@ function neighborsFor(lookup: AgentCorpusLookup, node: CompiledCorpusNode): Agen
   const out = new Map<string, NonNullable<AgentNode["neighbors"]>[number]>();
   for (const link of node.links) {
     const idTarget = link.type === "id" || /^id:/i.test(link.target)
-      ? lookup.nodeById.get(normalizeId(link.target.replace(/^id:/i, "")))
+      ? lookup.nodeById.get(normalizeId(idLinkTargetId(link.target)))
       : undefined;
     const target = idTarget || (link.type === "wiki" ? lookup.nodeByTitle.get(link.target.trim().toLowerCase()) : undefined);
     if (!target) continue;
@@ -662,7 +663,7 @@ function parseContextAttachmentList(raw: string | undefined): AgentContextAttach
 function attachmentFromLink(link: CompiledCorpusNode["links"][number]): AgentContextAttachment | null {
   if (link.type === "id" || /^id:/i.test(link.target)) {
     const target = link.target.replace(/^id:/i, "").trim();
-    if (!target) return null;
+    if (!idLinkTargetId(link.target)) return null;
     return { type: "id", ref: `id:${target}`, ...(link.description ? { label: link.description } : {}), line: link.line, source: "link" };
   }
   if (link.type === "file") return { type: "file", ref: link.target, ...(link.description ? { label: link.description } : {}), line: link.line, source: "link" };
@@ -711,7 +712,7 @@ function nodeHasExactLabel(node: CompiledCorpusNode, raw: string): boolean {
 function attachmentTargetFor(corpus: CompiledCorpus, attachment: AgentContextAttachment): AgentContextAttachment["target"] | undefined {
   let target: CompiledCorpusNode | undefined;
   if (attachment.type === "id") {
-    const id = attachment.ref.replace(/^id:/i, "");
+    const id = idLinkTargetId(attachment.ref) ?? attachment.ref;
     target = corpus.nodes.find((node) => node.id && normalizeId(node.id) === normalizeId(id));
   } else if (attachment.type === "note") {
     const noteTitle = attachment.ref.trim().toLowerCase();
@@ -772,7 +773,7 @@ function agentThreadMetadataFor(corpus: CompiledCorpus, node: CompiledCorpusNode
 
 function attachmentMatchesNode(node: CompiledCorpusNode, attachment: AgentContextAttachment): boolean {
   if (attachment.target?.key === node.key) return true;
-  if (attachment.type === "id" && node.id && normalizeId(refTail(attachment.ref)) === normalizeId(node.id)) return true;
+  if (attachment.type === "id" && node.id && normalizeId(idLinkTargetId(attachment.ref) ?? refTail(attachment.ref)) === normalizeId(node.id)) return true;
   if (attachment.type === "file" && node.kind === "file") {
     const wanted = normalizeFileRef(attachment.ref);
     const actual = normalizeFileRef(node.file);

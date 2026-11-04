@@ -1,4 +1,5 @@
 import { parseHeadlineTitleForRoam } from "./headlineTitle.js";
+import { isUuidIdLinkTarget, parseIdLinkTarget } from "./linkSearch.js";
 
 export interface Backlink {
   targetId: string;
@@ -51,18 +52,23 @@ function extractFileId(lines: string[]): string | null {
 function findIdLinksInLine(line: string): string[] {
   const ids: string[] = [];
 
-  // [[id:UUID]] or [[id:UUID][...]]
-  const bracketRe = /\[\[id:([0-9a-fA-F-]{36})(?:\]\[[^\]\n]*\])?\]\]/g;
+  // [[id:UUID]], [[id:UUID][...]], and Org 10 [[id:UUID::SEARCH][...]].
+  // A link with a search option is still a backlink to the ID's node.
+  const bracketRe = /\[\[([^\]\n]+?)(?:\]\[[^\]\n]*)?\]\]/g;
   let m: RegExpExecArray | null;
+  let withoutBracketLinks = "";
+  let cursor = 0;
   while ((m = bracketRe.exec(line)) !== null) {
-    const id = (m[1] ?? "").toLowerCase();
-    ids.push(id);
+    const parsed = parseIdLinkTarget(m[1]);
+    if (!parsed || !isUuidIdLinkTarget(m[1])) continue;
+    ids.push(parsed.id.toLowerCase());
+    // Avoid double-counting `id:` inside [[id:...]] links.
+    withoutBracketLinks += line.slice(cursor, m.index);
+    cursor = m.index + m[0].length;
   }
+  withoutBracketLinks += line.slice(cursor);
 
-  // Avoid double-counting `id:` inside [[id:...]] links.
-  const withoutBracketLinks = line.replace(/\[\[id:[0-9a-fA-F-]{36}(?:\]\[[^\]\n]*\])?\]\]/g, "");
-
-  // Bare id:UUID
+  // Bare id:UUID (a trailing ::SEARCH does not change the target)
   const bareRe = /\bid:([0-9a-fA-F-]{36})\b/g;
   while ((m = bareRe.exec(withoutBracketLinks)) !== null) {
     const id = (m[1] ?? "").toLowerCase();

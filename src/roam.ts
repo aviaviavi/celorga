@@ -4,6 +4,7 @@ import path from "node:path";
 import { parseOrgToCanonicalAst } from "./parser.js";
 import type { DocumentNode, HeadlineNode, Node } from "./ast.js";
 import { parseHeadlineTitleForRoam } from "./headlineTitle.js";
+import { idLinkTargetId } from "./linkSearch.js";
 
 export function normalizeRoamLinkLabel(raw: string): string {
   return String(raw || "")
@@ -307,15 +308,16 @@ export function findRoamIdLinksInLine(line: string): string[] {
   const bracketRe = /\[\[id:([^\s\[\]<>]+)(?:\]\[[^\]\n]*\])?\]\]/g;
   let match: RegExpExecArray | null;
 
-  while ((match = bracketRe.exec(line)) !== null) {
-    ids.push(String(match[1] || "").toLowerCase());
-  }
+  // An Org 10 `id:ID::SEARCH` target still links to ID.
+  const push = (raw: string | undefined) => {
+    const id = idLinkTargetId(`id:${raw || ""}`);
+    if (id) ids.push(id);
+  };
+  while ((match = bracketRe.exec(line)) !== null) push(match[1]);
 
   const withoutBracketLinks = line.replace(/\[\[id:[^\s\[\]<>]+(?:\]\[[^\]\n]*\])?\]\]/g, "");
   const bareRe = /\bid:([^\s\[\]<>]+)(?=$|[\s\[\]<>])/g;
-  while ((match = bareRe.exec(withoutBracketLinks)) !== null) {
-    ids.push(String(match[1] || "").toLowerCase());
-  }
+  while ((match = bareRe.exec(withoutBracketLinks)) !== null) push(match[1]);
 
   return ids;
 }

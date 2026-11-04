@@ -517,7 +517,17 @@ struct AIChatDocumentWebView: NSViewRepresentable {
       } else if url.scheme == AIChatFileReference.deepLinkScheme, url.host == "open-link",
         let target = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "target" })?.value {
         if let resolved = linkResolver.resolve(target: target) {
-          openFileReference?(resolved.fileReference)
+          if OrgLinkSearchOption.idTargetNeedsFileSearch(target) {
+            linkTask?.cancel()
+            let resolver = linkResolver
+            linkTask = Task { @MainActor [weak self] in
+              let refined = await resolver.resolveSearchingFile(target: target) ?? resolved
+              guard !Task.isCancelled, let self else { return }
+              self.openFileReference?(refined.fileReference)
+            }
+          } else {
+            openFileReference?(resolved.fileReference)
+          }
         } else if let external = OrgHTMLDocumentLinkRouting.externalURL(for: target, linkResolver: linkResolver) {
           openWebLink(external, inNewTab: navigationAction.modifierFlags.contains(.command))
         } else {

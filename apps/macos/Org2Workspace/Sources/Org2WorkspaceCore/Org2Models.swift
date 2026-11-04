@@ -5504,16 +5504,39 @@ public struct OrgRoamLinkResolver: Equatable, Sendable {
     let target = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !target.isEmpty else { return nil }
 
-    let lowercased = target.lowercased()
     let node: OrgRoamNodeReference?
-    if lowercased.hasPrefix("id:") {
-      node = nodesByID[Self.normalizedID(String(target.dropFirst(3)))]
+    var line: Int?
+    if let idTarget = OrgLinkSearchOption.parseIDTarget(target) {
+      node = nodesByID[Self.normalizedID(idTarget.id)]
+      // `id:ID::42` cites a line in the ID's file. Other search options need
+      // the file text; see `resolveSearchingFile(target:)`.
+      if let search = idTarget.search, let number = Int(search), number >= 1 { line = number }
+    } else if target.lowercased().hasPrefix("id:") {
+      node = nil
     } else {
       node = nodesByTitle[Self.normalizedTitle(target)]
     }
 
     guard let node else { return nil }
-    return OrgRoamResolvedLink(title: node.title, fileReference: node.fileReference)
+    let reference = line.map { AIChatFileReference(path: node.file, line: $0) } ?? node.fileReference
+    return OrgRoamResolvedLink(title: node.title, fileReference: reference)
+  }
+
+  /// Like `resolve(target:)`, but also resolves an Org 10 `id:ID::SEARCH`
+  /// option by reading the ID's file off the main thread. An unmatched
+  /// search lands on the ID itself.
+  public func resolveSearchingFile(target rawTarget: String) async -> OrgRoamResolvedLink? {
+    guard let resolved = resolve(target: rawTarget) else { return nil }
+    guard OrgLinkSearchOption.idTargetNeedsFileSearch(rawTarget),
+          let idTarget = OrgLinkSearchOption.parseIDTarget(rawTarget)
+    else { return resolved }
+    let path = resolved.fileReference.path
+    let line = await Task.detached(priority: .userInitiated) { () -> Int? in
+      guard let source = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+      return OrgLinkSearchOption.line(forIDTarget: idTarget, in: source)
+    }.value
+    guard let line else { return resolved }
+    return OrgRoamResolvedLink(title: resolved.title, fileReference: AIChatFileReference(path: path, line: line))
   }
 
   /// The file-level node for the absolute `path`, if the file has one.
@@ -5537,7 +5560,8 @@ public struct OrgRoamLinkResolver: Equatable, Sendable {
     let target = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !target.isEmpty else { return [] }
     if target.lowercased().hasPrefix("id:") {
-      return nodesByID[Self.normalizedID(String(target.dropFirst(3)))].map { [$0] } ?? []
+      guard let idTarget = OrgLinkSearchOption.parseIDTarget(target) else { return [] }
+      return nodesByID[Self.normalizedID(idTarget.id)].map { [$0] } ?? []
     }
     return nodeCandidatesByTitle[Self.normalizedTitle(target)] ?? []
   }

@@ -26,6 +26,7 @@ import { parseHeadlineTitleForRoam } from "./headlineTitle.js";
 import { buildPublishDiagnosticsParams } from "./lsp-diagnostics.js";
 import { documentTodoKeywords, todoSequencesForFile, normalizeTodoKeyword, statusFromKeyword } from "./todo.js";
 import { formatLocalOrgTimestamp } from "./calendarDate.js";
+import { idLinkSearchSuffix, idLinkTargetId, parseIdLinkTarget, resolveIdLinkInText, resolveOrgSearchOption } from "./linkSearch.js";
 
 import fs from "node:fs";
 import path from "node:path";
@@ -2708,7 +2709,11 @@ class LSPServer {
     if (normalizedTarget.toLowerCase().startsWith("id:")) {
       const normalizedId = this.normalizeIdValue(normalizedTarget);
       const location = this.resolveIdDefinitionLocation(sourceUri, normalizedTarget);
+      const search = parseIdLinkTarget(normalizedTarget)?.search;
       const details = [`**Org ID link** \`id:${normalizedId}\``];
+      if (search) {
+        details.push(`Search option \`${search}\` in that note.`);
+      }
 
       if (location) {
         details.push(`Resolves to \`${this.formatLocationForHover(location)}\`.`);
@@ -3003,9 +3008,18 @@ class LSPServer {
 
     const targetId = this.normalizeIdValue(target);
     if (!targetId) return null;
+    const search = parseIdLinkTarget(target)?.search;
+    // With a search option, land on the match inside the ID's file
+    // (subtree first); an unmatched search falls back to the ID itself.
+    const lineFor = (text: string, idLine: number): number => {
+      if (!search) return idLine;
+      const match = resolveIdLinkInText(text, { id: targetId, search });
+      return match ? match.line - 1 : idLine;
+    };
 
     for (const doc of this.documents.values()) {
-      const line = this.findIdLine(doc.text, targetId);
+      const idLine = this.findIdLine(doc.text, targetId);
+      const line = idLine >= 0 ? lineFor(doc.text, idLine) : -1;
       if (line >= 0) {
         return {
           uri: doc.uri,
@@ -3026,7 +3040,8 @@ class LSPServer {
         } catch {
           continue;
         }
-        const line = this.findIdLine(text, targetId);
+        const idLine = this.findIdLine(text, targetId);
+        const line = idLine >= 0 ? lineFor(text, idLine) : -1;
         if (line >= 0) {
           return {
             uri: pathToFileURL(filePath).toString(),
@@ -3066,51 +3081,8 @@ class LSPServer {
   }
 
   private resolveFileLinkSearchLine(text: string, searchSuffix: string): number {
-    const lines = text.split("\n");
-    const maxLine = Math.max(0, lines.length - 1);
-    const normalizedSearch = searchSuffix.trim();
-    if (!normalizedSearch || lines.length === 0) {
-      return 0;
-    }
-
-    if (/^\d+$/.test(normalizedSearch)) {
-      const targetLine = Number.parseInt(normalizedSearch, 10);
-      if (Number.isFinite(targetLine) && targetLine > 0) {
-        return this.clampLine(targetLine - 1, maxLine);
-      }
-    }
-
-    if (normalizedSearch.startsWith("*")) {
-      const headingTarget = normalizedSearch.replace(/^\*+\s*/, "").trim();
-      if (headingTarget) {
-        for (let i = 0; i < lines.length; i++) {
-          const title = this.extractHeadlineTitleFromLine(lines[i]);
-          if (title && title === headingTarget) {
-            return i;
-          }
-        }
-      }
-    }
-
-    if (normalizedSearch.startsWith("#")) {
-      const customIdTarget = normalizedSearch.slice(1).trim().toLowerCase();
-      if (customIdTarget) {
-        for (let i = 0; i < lines.length; i++) {
-          const match = lines[i]?.match(/^\s*:CUSTOM_ID:\s*(\S+)\s*$/i);
-          if ((match?.[1] || "").trim().toLowerCase() === customIdTarget) {
-            return i;
-          }
-        }
-      }
-    }
-
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i]?.includes(normalizedSearch)) {
-        return i;
-      }
-    }
-
-    return 0;
+    const match = resolveOrgSearchOption(text, searchSuffix);
+    return match ? match.line - 1 : 0;
   }
 
   private extractReferenceQuery(sourceUri: string, text: string, position: Position): ReferenceQuery | null {
@@ -3416,7 +3388,7 @@ class LSPServer {
 
         addEdit(doc.uri, {
           range: link.targetRange,
-          newText: `id:${newId}`,
+          newText: `id:${newId}${idLinkSearchSuffix(link.target)}`,
         });
       }
 
@@ -3884,9 +3856,10 @@ class LSPServer {
   }
 
   private normalizeIdValue(value: string): string {
-    let normalized = value.trim();
+    const normalized = value.trim();
     if (normalized.toLowerCase().startsWith("id:")) {
-      normalized = normalized.slice(3);
+      // `id:ID::SEARCH` (Org 10) still identifies ID.
+      return idLinkTargetId(normalized) ?? "";
     }
     return normalized.toLowerCase();
   }

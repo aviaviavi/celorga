@@ -1,6 +1,7 @@
 import type { CompiledCorpus, CompiledCorpusLink, CompiledCorpusNode } from "./corpusCompile.js";
 import { isActiveTodoKeyword, normalizeTodoKeyword } from "./todo.js";
 import { brandProperty } from "./brandNames.js";
+import { idLinkTargetId } from "./linkSearch.js";
 
 export type NodeActionRelationship = "direct" | "meeting";
 
@@ -67,7 +68,7 @@ function objectTarget(raw: string): string {
 
 function resolveTarget(corpus: CompiledCorpus, rawObject: string): CompiledCorpusNode {
   const target = objectTarget(rawObject);
-  const idValue = target.replace(/^id:/i, "").trim().toLowerCase();
+  const idValue = idLinkTargetId(target) ?? target.trim().toLowerCase();
   const looksLikeID = /^id:/i.test(target) || /^[0-9a-f-]{36}$/i.test(target);
   if (looksLikeID) {
     const matches = corpus.nodes.filter((node) => node.id?.toLowerCase() === idValue);
@@ -88,7 +89,7 @@ function resolveTarget(corpus: CompiledCorpus, rawObject: string): CompiledCorpu
 
 function linkTargetsNode(link: CompiledCorpusLink, target: CompiledCorpusNode): boolean {
   if (link.type === "id" && target.id) {
-    return link.target.replace(/^id:/i, "").trim().toLowerCase() === target.id.toLowerCase();
+    return idLinkTargetId(link.target) === target.id.toLowerCase();
   }
   if (link.type !== "wiki") return false;
   const labels = new Set([target.title, ...target.aliases].map(normalizedLabel));
@@ -101,7 +102,7 @@ function titleTargetsNode(title: string, target: CompiledCorpusNode): boolean {
     const ref = String(match[1] || "").trim();
     const description = normalizedLabel(String(match[2] || ""));
     if (target.id && /^id:/i.test(ref)) {
-      if (ref.replace(/^id:/i, "").trim().toLowerCase() === target.id.toLowerCase()) return true;
+      if (idLinkTargetId(ref) === target.id.toLowerCase()) return true;
     } else if (labels.has(normalizedLabel(ref)) || (description && labels.has(description))) {
       return true;
     }
@@ -169,7 +170,7 @@ function resolvedLinkedNode(
   nodesByLabel: Map<string, CompiledCorpusNode[]>,
 ): CompiledCorpusNode | undefined {
   if (link.type === "id") {
-    return nodesByID.get(link.target.replace(/^id:/i, "").trim().toLowerCase());
+    return nodesByID.get(idLinkTargetId(link.target) ?? "");
   }
   if (link.type !== "wiki") return undefined;
   const matches = nodesByLabel.get(normalizedLabel(link.target)) || [];

@@ -50,6 +50,7 @@ import { fileEntryInDatetree, parseDatetreeLevels, type DatetreeLevel } from "./
 import { cancelRepeatersInText, planningKindFromArg, updatePlanningInText, type PlanningKindArg } from "./planning.js";
 import { computeSubtreeRange, findHeadingAtOrAbove, isHeadlineLine, upsertHeadlinePropertyInLines } from "./sourceLines.js";
 import { findBacklinksInText, type Backlink } from "./backlinks.js";
+import { idLinkTargetId } from "./linkSearch.js";
 import { renderOrgDocumentToHtml, renderOrgExportIndexToHtml } from "./export.js";
 import { renderPresentationToBeamer } from "./presentation.js";
 import { compileBeamerPdf } from "./beamerCompile.js";
@@ -12905,7 +12906,7 @@ Flags:
     const objectLinkMatch = /^\[\[([^\]\n]+?)(?:\]\[([^\]\n]*))?\]\]$/.exec(objectRaw);
     const objectTarget = objectLinkMatch ? String(objectLinkMatch[1] || "").trim() : objectRaw;
     const objectDescription = objectLinkMatch ? String(objectLinkMatch[2] || "").trim().toLowerCase() : "";
-    const objectIdMatch = /^(?:id:)?([0-9a-fA-F-]{36})$/.exec(objectTarget);
+    const objectIdMatch = /^(?:id:)?([0-9a-fA-F-]{36})(?:::.*)?$/.exec(objectTarget);
     const objectId = objectIdMatch ? objectIdMatch[1]!.toLowerCase() : "";
     const objectLabel = objectId ? "" : objectTarget.toLowerCase();
     const predicate = queryRelationPredicate.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "_");
@@ -13595,7 +13596,10 @@ Flags:
         }
 
         if (ref.kind === "id" || ref.kind === "artifact") {
-          const normalizedId = String(ref.value || "").trim().toLowerCase();
+          // `id:ID::SEARCH` provenance cites a place inside the ID's note.
+          const normalizedId = ref.kind === "id"
+            ? idLinkTargetId(`id:${ref.value || ""}`) ?? ""
+            : String(ref.value || "").trim().toLowerCase();
           if (!normalizedId || allArtifactIds.has(normalizedId)) continue;
 
           const rule = ref.kind === "artifact" ? "artifact-provenance-artifact-missing" : "artifact-provenance-id-missing";

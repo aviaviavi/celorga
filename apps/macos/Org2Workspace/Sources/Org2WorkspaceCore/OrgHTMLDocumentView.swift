@@ -1806,7 +1806,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
 
     /// Resolves a workspace link target to a file and line without opening it.
     private func resolveWorkspaceTarget(_ target: String) async -> AIChatFileReference? {
-      if let resolved = linkResolver.resolve(target: target) { return resolved.fileReference }
+      if let resolved = await linkResolver.resolveSearchingFile(target: target) { return resolved.fileReference }
       if OrgHTMLDocumentLinkRouting.externalURL(for: target, linkResolver: linkResolver) != nil { return nil }
       guard let source else { return nil }
       guard let fileTarget = await fileLinkResolver(target, source.file, corpusRoot),
@@ -1867,7 +1867,18 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       }
 
       if let resolved = linkResolver.resolve(target: target) {
-        openReference(resolved.fileReference)
+        guard OrgLinkSearchOption.idTargetNeedsFileSearch(target) else {
+          openReference(resolved.fileReference)
+          return
+        }
+        let generation = fileLinkResolutionGeneration
+        let resolver = linkResolver
+        fileLinkResolutionTask = Task { @MainActor [weak self] in
+          let refined = await resolver.resolveSearchingFile(target: target) ?? resolved
+          guard !Task.isCancelled, let self, generation == self.fileLinkResolutionGeneration else { return }
+          self.fileLinkResolutionTask = nil
+          openReference(refined.fileReference)
+        }
         return
       }
 
@@ -2138,7 +2149,7 @@ enum OrgHTMLLinkTarget {
     if let explicitLine = Int(search) {
       line = max(1, explicitLine)
     } else if !search.isEmpty {
-      line = headingLine(search, in: url)
+      line = searchLine(search, in: url)
     } else {
       line = nil
     }
@@ -2146,33 +2157,9 @@ enum OrgHTMLLinkTarget {
     return OrgHTMLResolvedFileTarget(url: url, line: line)
   }
 
-  private static func headingLine(_ rawHeading: String, in url: URL) -> Int? {
-    let expected = rawHeading
-      .replacingOccurrences(of: #"^\*+\s*"#, with: "", options: .regularExpression)
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !expected.isEmpty,
-          let source = try? String(contentsOf: url, encoding: .utf8)
-    else {
-      return nil
-    }
-
-    for (index, line) in source.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-      let raw = String(line)
-      guard raw.first == "*",
-            let space = raw.firstIndex(of: " ")
-      else {
-        continue
-      }
-      var title = String(raw[raw.index(after: space)...])
-        .replacingOccurrences(of: #"\s+:[A-Za-z0-9_@#%:]+:\s*$"#, with: "", options: .regularExpression)
-        .trimmingCharacters(in: .whitespaces)
-      title = title
-        .replacingOccurrences(of: #"^(?:TODO|IN_PROGRESS|DONE|CANCELED|CANCELLED|WAITING|NEXT)\s+"#, with: "", options: .regularExpression)
-        .trimmingCharacters(in: .whitespaces)
-      if Org2Display.cleanInline(title).caseInsensitiveCompare(Org2Display.cleanInline(expected)) == .orderedSame {
-        return index + 1
-      }
-    }
-    return nil
+  /// Shared Org search-option semantics (see `OrgLinkSearchOption`).
+  private static func searchLine(_ search: String, in url: URL) -> Int? {
+    guard let source = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+    return OrgLinkSearchOption.line(for: search, in: source)
   }
 }

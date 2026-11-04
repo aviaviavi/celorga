@@ -5,6 +5,7 @@ import { canonicalNoteTargets, type CanonicalNoteTarget } from "./canonicalNoteT
 import { loadConfig, resolveFilesFromDir } from "./config.js";
 import { guardedContentRevision, guardedWriteFile, readGuardedFile } from "./guardedFile.js";
 import { configFilePath } from "./brandNames.js";
+import { parseIdLinkTarget } from "./linkSearch.js";
 
 export type CanvasObject = Record<string, unknown>;
 export interface JSONCanvasNode extends CanvasObject {
@@ -201,7 +202,7 @@ function nodeResource(root: string, node: JSONCanvasNode, allNodes: () => Canoni
     if (node.type === "group" && !node.background) return { status: "ready", title: String(node.label || "Group") };
     if (!["file", "group"].includes(node.type)) return { status: "unsupported", title, message: "Unknown node type retained for roundtrip." };
     const idRef = typeof node.org2Ref === "string" && node.org2Ref.startsWith("id:")
-      ? node.org2Ref.slice(3) : typeof node.subpath === "string" && node.subpath.startsWith("#id:") ? node.subpath.slice(4) : undefined;
+      ? parseIdLinkTarget(node.org2Ref)?.id : typeof node.subpath === "string" && node.subpath.startsWith("#id:") ? node.subpath.slice(4) : undefined;
     let targetNode: CanonicalNoteTarget | undefined;
     let file: string;
     if (idRef) {
