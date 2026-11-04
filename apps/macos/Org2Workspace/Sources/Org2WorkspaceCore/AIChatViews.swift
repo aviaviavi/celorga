@@ -180,12 +180,25 @@ struct AIChatContextPresentation: Equatable, Sendable {
   /// A context that quotes an earlier chat message. The composer shows it as a
   /// removable pill, the transcript as a reply pill, and the agent receives
   /// the quoted excerpt with the user's text.
-  static func replyContext(author: String, messageID: UUID, content: String) -> String {
-    let text = AIChatContextPresentation(content).userText
-      .trimmingCharacters(in: .whitespacesAndNewlines)
+  ///
+  /// With `passage`, the reply quotes only that selected part of the message;
+  /// the reference still points at the whole message.
+  static func replyContext(
+    author: String,
+    messageID: UUID,
+    content: String,
+    passage: String? = nil
+  ) -> String {
+    let quotedPassage = passage?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let isPassage = quotedPassage?.isEmpty == false
+    let text = isPassage
+      ? quotedPassage ?? ""
+      : AIChatContextPresentation(content).userText.trimmingCharacters(in: .whitespacesAndNewlines)
     let firstLine = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
     let snippet = truncated(firstLine.trimmingCharacters(in: .whitespaces), limit: replyTitleLimit)
-    let title = snippet.isEmpty ? author : "\(author): \(snippet)"
+    let title = snippet.isEmpty
+      ? author
+      : isPassage ? "\(author): ‘\(snippet)’" : "\(author): \(snippet)"
     let excerpt = truncated(text, limit: replyExcerptLimit)
       .split(separator: "\n", omittingEmptySubsequences: false)
       .map { line -> String in
@@ -196,9 +209,16 @@ struct AIChatContextPresentation: Equatable, Sendable {
           : String(line)
       }
       .joined(separator: "\n")
-    let speaker = author == "You" ? "their own earlier message" : "this earlier message from \(author)"
+    let lead: String
+    if isPassage {
+      let source = author == "You" ? "their own earlier message" : "an earlier message from \(author)"
+      lead = "The user is replying to this passage they selected from \(source):"
+    } else {
+      let speaker = author == "You" ? "their own earlier message" : "this earlier message from \(author)"
+      lead = "The user is replying to \(speaker):"
+    }
     let prompt = [
-      "The user is replying to \(speaker):",
+      lead,
       "#+begin_quote",
       excerpt.isEmpty ? "(no text)" : excerpt,
       "#+end_quote",

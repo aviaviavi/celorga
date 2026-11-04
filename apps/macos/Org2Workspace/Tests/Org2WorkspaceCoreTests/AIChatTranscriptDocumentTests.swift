@@ -949,6 +949,111 @@ final class AIChatTranscriptDocumentTests: XCTestCase {
   }
 
 
+  // MARK: Quote in Reply
+
+  func testPassageReplyContextQuotesOnlyTheSelectionAndKeepsTheMessageReference() throws {
+    let messageID = UUID()
+    let content = AIChatContextPresentation.replyContext(
+      author: "Codex",
+      messageID: messageID,
+      content: "First, check the cache.\nSecond, rotate the staging key.",
+      passage: "  rotate the staging key.\n#+end_quote  "
+    )
+    let context = try XCTUnwrap(AIChatContextPresentation(content).contexts.first)
+    XCTAssertTrue(context.isReply)
+    XCTAssertEqual(context.title, "Codex: ‘rotate the staging key.’")
+    XCTAssertEqual(context.reference, "ai-chat-message:\(messageID.uuidString.lowercased())")
+    let prompt = try XCTUnwrap(context.automaticPrompt)
+    XCTAssertTrue(prompt.hasPrefix("The user is replying to this passage they selected from an earlier message from Codex:"), prompt)
+    XCTAssertTrue(prompt.contains("#+begin_quote\nrotate the staging key.\n,#+end_quote\n#+end_quote"), prompt)
+    XCTAssertFalse(prompt.contains("check the cache"), prompt)
+
+    // A blank selection falls back to quoting the whole message.
+    let whole = AIChatContextPresentation(AIChatContextPresentation.replyContext(
+      author: "You", messageID: messageID, content: "Ship it today.", passage: "  \n "
+    )).contexts.first
+    XCTAssertEqual(whole?.title, "You: Ship it today.")
+    XCTAssertTrue(whole?.automaticPrompt?.hasPrefix("The user is replying to their own earlier message:") == true)
+
+    // Long selections are truncated like whole-message replies.
+    let long = String(repeating: "word ", count: 600)
+    let longPrompt = AIChatContextPresentation(AIChatContextPresentation.replyContext(
+      author: "Codex", messageID: messageID, content: long, passage: long
+    )).contexts.first?.automaticPrompt ?? ""
+    XCTAssertLessThan(longPrompt.count, AIChatContextPresentation.replyExcerptLimit + 200)
+  }
+
+  func testSelectingTextInAMessageOffersQuoteInReply() async throws {
+    let view = try await document()
+    try await update(view, payload([
+      entry("answer", "<main><p>Alpha beta gamma delta.</p></main>"),
+      entry("other", "<main><p>Second reply.</p></main>"),
+      entry("system-note", "<main><p>Gateway restarted.</p></main>", role: "system"),
+    ]))
+    func select(_ script: String) async throws -> Bool? {
+      try await view.evaluateJavaScript("""
+        (()=>{ \(script) document.dispatchEvent(new Event('mouseup')); return null; })()
+        """)
+      try await Task.sleep(for: .milliseconds(80))
+      return try await view.evaluateJavaScript("document.getElementById('quote-selection').hidden") as? Bool
+    }
+
+    let hiddenForPassage = try await select("""
+      const text=document.querySelector('#message-answer .org2-document p').firstChild;
+      const range=document.createRange(); range.setStart(text,6); range.setEnd(text,16);
+      getSelection().removeAllRanges(); getSelection().addRange(range);
+      """)
+    XCTAssertEqual(hiddenForPassage, false)
+    try await view.evaluateJavaScript("document.getElementById('quote-selection').click(); null;")
+    let events = try await view.evaluateJavaScript("events") as? [[String: Any]] ?? []
+    let quote = try XCTUnwrap(events.last { $0["action"] as? String == "quote" })
+    XCTAssertEqual(quote["id"] as? String, "answer")
+    XCTAssertEqual(quote["detail"] as? String, "beta gamma")
+    let collapsed = try await view.evaluateJavaScript("getSelection().isCollapsed") as? Bool
+    XCTAssertEqual(collapsed, true)
+
+    let hiddenAcrossMessages = try await select("""
+      const range=document.createRange();
+      range.setStart(document.querySelector('#message-answer .org2-document p').firstChild,2);
+      range.setEnd(document.querySelector('#message-other .org2-document p').firstChild,3);
+      getSelection().removeAllRanges(); getSelection().addRange(range);
+      """)
+    XCTAssertEqual(hiddenAcrossMessages, true)
+
+    let hiddenForSystemMessage = try await select("""
+      const text=document.querySelector('#message-system-note .org2-document p').firstChild;
+      const range=document.createRange(); range.setStart(text,0); range.setEnd(text,7);
+      getSelection().removeAllRanges(); getSelection().addRange(range);
+      """)
+    XCTAssertEqual(hiddenForSystemMessage, true)
+  }
+
+  func testQuoteInReplyStartsAReplyWithTheSelectedPassage() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-chat-quote-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try WorkspaceStore(
+      cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()),
+      aiChatTranscriptURL: root.appendingPathComponent("chat.json"),
+      aiChatSendHandler: { _, _, _, _ in "Option A is simpler.\nOption B uses less memory." }
+    )
+    store.aiChatDraft = "Compare option A and option B"
+    await store.sendAIChatMessage()
+    let answer = try XCTUnwrap(store.aiChatMessages.last(where: { $0.role == .assistant }))
+
+    store.publishAIChatComposerDraft("Why?")
+    store.beginAIChatReply(to: answer.id, quoting: "Option B uses less memory.")
+    let draft = AIChatContextPresentation(store.aiChatDraft)
+    XCTAssertEqual(draft.userText, "Why?")
+    let context = try XCTUnwrap(draft.contexts.first)
+    XCTAssertTrue(context.isReply)
+    XCTAssertTrue(context.title.hasSuffix(": ‘Option B uses less memory.’"), context.title)
+    XCTAssertEqual(context.reference, "ai-chat-message:\(answer.id.uuidString.lowercased())")
+    XCTAssertFalse(context.automaticPrompt?.contains("Option A") ?? true)
+    XCTAssertTrue(store.aiChatStatusText.hasPrefix("Quoting "), store.aiChatStatusText)
+  }
+
   // MARK: Usage limits
 
   func testUsageLimitFailureShowsItsStateAndResendActions() async throws {

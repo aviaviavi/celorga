@@ -647,6 +647,9 @@ struct AIChatTranscriptDocument: View {
     case "delete": store.deleteQueuedAIChatMessage(uuid)
     case "steer": Task { await store.steerQueuedAIChatMessage(uuid) }
     case "reply": store.beginAIChatReply(to: uuid)
+    case "quote":
+      guard let detail, !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+      store.beginAIChatReply(to: uuid, quoting: detail)
     case "context":
       guard let context = AIChatTranscriptHTML.openableContext(in: message, index: detail) else { return }
       store.openAIChatContext(store.resolvedAIChatContext(context))
@@ -1087,6 +1090,8 @@ enum AIChatTranscriptHTML {
     #live.animating .live-title { color:inherit; background:none; animation:none; }
   }
   #latest { position:fixed; bottom:12px; right:14px; border:1px solid #8886; border-radius:20px; background:light-dark(#fff,#333); box-shadow:0 2px 6px #0002; }
+  #quote-selection { position:absolute; z-index:5; display:inline-flex; align-items:center; gap:5px; padding:3px 8px; font-size:11px; font-weight:600; white-space:nowrap; border:1px solid #8886; border-radius:6px; background:light-dark(#fff,#333); box-shadow:0 2px 6px #0002; }
+  #quote-selection[hidden] { display:none; }
   pre { max-height:none!important; height:auto!important; overflow-x:auto; overflow-y:hidden; white-space:pre; }
   table { max-width:100%; table-layout:fixed; }
   """
@@ -1243,7 +1248,7 @@ enum AIChatTranscriptHTML {
       if(e.role==='system') { const badge=document.createElement('span'); badge.className='system-badge'; badge.textContent='System'; header.append(badge); }
       if(e.queued) { const q=document.createElement('span'); q.className='queued-badge'; q.textContent='Queued'; header.append(q); }
       header.append(time,iconButton(e.copied?'check':'copy',e.copied?'Copied':'Copy message','copy',e.id,e.copied));
-      if(!e.queued && !e.preparing && e.role!=='system') header.append(iconButton('reply','Reply to this message','reply',e.id));
+      if(!e.queued && !e.preparing && e.role!=='system') { header.append(iconButton('reply','Reply to this message','reply',e.id)); a.dataset.replyable='true'; }
       card.append(header);
       if(e.contexts.length && !e.startWork) {
         const pills=document.createElement('div'); pills.className='context-pills';
@@ -1521,6 +1526,41 @@ enum AIChatTranscriptHTML {
       if(pending) { const next=pending; pending=null; window.__transcriptUpdate(next); }
       else if(hasPendingLive) { const next=pendingLive; hasPendingLive=false; pendingLive=null; window.__transcriptLiveUpdate(next); }
     });
+    // Selecting text inside one message offers Quote in Reply, which starts a
+    // reply that quotes only the selection.
+    const quoteButton=document.getElementById('quote-selection');
+    let quoteSelection=null, pointerSelecting=false;
+    const selectedQuote = () => {
+      const s=getSelection();
+      if(!s || s.isCollapsed || !s.rangeCount) return null;
+      const range=s.getRangeAt(0);
+      const elementOf=node=>node && (node.nodeType===1 ? node : node.parentElement);
+      const startBody=elementOf(range.startContainer)?.closest('.org2-document');
+      const endBody=elementOf(range.endContainer)?.closest('.org2-document');
+      const article=startBody?.closest('article[data-replyable]');
+      if(!startBody || startBody!==endBody || !article) return null;
+      const text=s.toString().trim();
+      if(!text) return null;
+      return {id:article.id.replace(/^message-/,''), text, rect:range.getBoundingClientRect()};
+    };
+    const updateQuoteButton = () => {
+      quoteSelection=pointerSelecting ? null : selectedQuote();
+      if(!quoteSelection) { quoteButton.hidden=true; return; }
+      quoteButton.hidden=false;
+      const r=quoteSelection.rect, width=quoteButton.offsetWidth;
+      quoteButton.style.left=Math.max(8,Math.min(r.left,innerWidth-width-8))+'px';
+      quoteButton.style.top=(scrollY+r.bottom+6)+'px';
+    };
+    quoteButton.addEventListener('mousedown',event=>event.preventDefault());
+    quoteButton.addEventListener('click',()=>{
+      const quote=quoteSelection; if(!quote) return;
+      quoteButton.hidden=true; quoteSelection=null;
+      post('quote',quote.id,quote.text);
+      getSelection().removeAllRanges();
+    });
+    document.addEventListener('mousedown',event=>{ if(event.target!==quoteButton) { pointerSelecting=true; quoteButton.hidden=true; } });
+    document.addEventListener('mouseup',()=>{ pointerSelecting=false; setTimeout(updateQuoteButton,0); });
+    document.addEventListener('selectionchange',()=>{ if(!pointerSelecting) setTimeout(updateQuoteButton,0); });
     document.getElementById('earlier').onclick=()=>post('earlier');
     document.getElementById('latest').onclick=()=>scrollTo(0,maxScroll());
     let scheduled=false;
@@ -1532,7 +1572,7 @@ enum AIChatTranscriptHTML {
   """#
 
   static let shell = """
-  <!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src about: org2-frame:; img-src https: http: data: org2-resource:; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'"><style>\(style)</style></head><body><button id="earlier" hidden></button><div id="messages"></div><section id="live" hidden aria-label="Live agent activity"></section><div id="status"></div><button id="latest" hidden aria-label="Jump to latest message">↓</button></body></html>
+  <!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src about: org2-frame:; img-src https: http: data: org2-resource:; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'"><style>\(style)</style></head><body><button id="earlier" hidden></button><div id="messages"></div><section id="live" hidden aria-label="Live agent activity"></section><div id="status"></div><button id="latest" hidden aria-label="Jump to latest message">↓</button><button id="quote-selection" hidden>Quote in Reply</button></body></html>
   """
 }
 

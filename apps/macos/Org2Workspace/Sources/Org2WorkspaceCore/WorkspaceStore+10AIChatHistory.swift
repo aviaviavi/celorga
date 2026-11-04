@@ -2317,8 +2317,9 @@ extension WorkspaceStore {
   }
 
   /// Starts a reply to one message in the selected thread: the composer gains
-  /// a removable reply pill and the sent prompt quotes that message.
-  public func beginAIChatReply(to messageID: UUID) {
+  /// a removable reply pill and the sent prompt quotes that message, or only
+  /// `passage` when the person selected part of it.
+  public func beginAIChatReply(to messageID: UUID, quoting passage: String? = nil) {
     guard let threadID = selectedAIChatThreadID,
           aiChatThreadID(containing: messageID) == threadID,
           let message = aiChatMessages.first(where: { $0.id == messageID })
@@ -2327,7 +2328,8 @@ extension WorkspaceStore {
     let replyContext = AIChatContextPresentation.replyContext(
       author: author,
       messageID: message.id,
-      content: message.content
+      content: message.content,
+      passage: passage
     )
     let previousDraft = currentAIChatDraftForSelectedThread()
     let nextDraft = AIChatContextPresentation.draft(previousDraft, replyingWith: replyContext)
@@ -2336,7 +2338,8 @@ extension WorkspaceStore {
       recordWorkspaceUndo(.aiChatDraft(previous: previousDraft, next: nextDraft))
     }
     aiChatComposerFocusRequest &+= 1
-    aiChatStatusText = "Replying to \(author)"
+    let quotesPassage = passage?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    aiChatStatusText = quotesPassage ? "Quoting \(author)" : "Replying to \(author)"
   }
 
   func aiChatReplyAuthor(for message: AIChatMessage) -> String {
