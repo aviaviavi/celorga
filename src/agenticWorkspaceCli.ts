@@ -70,6 +70,9 @@ import {
   saveWorkflow,
   updateWorkflow,
   validateWorkflow,
+  loadWorkflowSnapshot,
+  workflowPath,
+  workflowSourcePath,
   workflowTriggerEligibility,
   workflowFromRun,
   workflowExecutionPrompt,
@@ -151,6 +154,18 @@ import {
   type AgentRuntimeBinding,
   type AgentProfileDefaultRuntime,
 } from "./coordination.js";
+import {
+  checkpointGoalDrive,
+  ensureGoalPlanSection,
+  evaluateGoalDrive,
+  goalDriveGate,
+  goalDriverWorkflow,
+  goalFileRelative,
+  setGoalDriveState,
+  startGoalDrive,
+  stopGoalDrive,
+  type GoalDriveStatus,
+} from "./goalDrive.js";
 
 interface ParsedArgs { positional: string[]; flags: Map<string, string[]>; }
 function parseArgs(args: string[]): ParsedArgs {
@@ -254,6 +269,15 @@ const HELP = `Agentic workspace commands:
   celorga project update ID [--thread UUID [--remove]] [--color COLOR] [--if-revision SHA256] [--apply]
   celorga goal list|show|create|update [--dir CORPUS] [--apply]
   celorga goal create ID --title TEXT [--description TEXT] [--status planned|active|achieved|canceled] [--parent-goal-ref ID] [--owner-agent-ref ID] [--measure TEXT]
+  celorga goal drive ID [--every 15m|--schedule CRON] [--timezone TZ] [--stall-after N] [--daily-cost-limit USD] [--daily-token-limit N]
+                        [--permit TEXT ...] [--destination-ref ID] [--agent-ref ID] [--model ID] [--reasoning-effort LEVEL] [--thread THREAD_ID] [--apply]
+  celorga goal drive ID --pause|--resume|--stop [--apply]
+    Keeps one driver pass at a time working the goal's Plan section (child TODOs with :ACTOR: agent|human|external).
+    Celorga skips a pass while the drive is paused or stalled, over its rolling 24-hour budget, or waiting on a person.
+  celorga goal status ID [--now ISO] [--json]
+    Deterministic drive state: mode (work|plan|replan|waiting|complete|stalled|paused|over-budget), next agent items, items needing you, spend.
+  celorga goal checkpoint ID --run RUN_ID [--apply]
+    Ends a driver pass. A pass that leaves the plan unchanged counts toward --stall-after; reaching it stalls the drive.
   celorga agent-profile list|show|create|update|resolve [--dir CORPUS] [--apply]
   celorga agent-profile create ID --name TEXT [--default-runtime openclaw|codex|claude] [--binding RUNTIME:AGENT_ID] [--goal-ref ID] [--primary-goal-ref ID] [--responsibility TEXT] [--capability ID] [--skill ID]
   celorga agent-profile update ID [--default-runtime openclaw|codex|claude|none]
@@ -1260,6 +1284,99 @@ function agentProfileDefaultRuntime(raw: string | undefined): AgentProfileDefaul
   return choice(raw, AGENT_PROFILE_DEFAULT_RUNTIMES, "agent default runtime");
 }
 
+function renderGoalDriveStatusText(status: GoalDriveStatus): string {
+  const drive = status.drive;
+  return [
+    `${status.goalId}\t${status.mode}${status.eligible ? "" : " (no pass)"}\t${status.reason}`,
+    ...(drive ? [`drive: ${drive.state}, ${drive.passesWithoutProgress}/${drive.stallAfter} passes without progress, workflow ${drive.workflowRef}`] : []),
+    `plan: ${status.plan.present ? `${status.plan.items.length} items, ${status.plan.done} done, open agent ${status.plan.open.agent} / human ${status.plan.open.human} / external ${status.plan.open.external}` : "no Plan section"}`,
+    ...(drive ? [`spend (24h): ${status.spend.passes} passes, $${status.spend.costUsd}, ${status.spend.tokens} tokens${status.activeRun ? `; active run ${status.activeRun.id} is ${status.activeRun.status}` : ""}`] : []),
+    ...status.next.slice(0, 3).map((item) => `next: ${item.state} ${item.title} (line ${item.line})`),
+    ...status.needsYou.map((item) => `needs you: ${item.state} ${item.title} (line ${item.line})`),
+    ...status.plan.issues.map((issue) => `warning: ${issue}`),
+  ].join("\n");
+}
+
+function positiveNumberFlag(parsed: ParsedArgs, name: string, integer: boolean): number | undefined {
+  const raw = flag(parsed, name);
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0 || (integer && !Number.isSafeInteger(value))) throw new Error(`--${name} must be a positive ${integer ? "integer" : "number"}`);
+  return value;
+}
+
+function goalDriveCommand(parsed: ParsedArgs, corpus: string, id: string): void {
+  const apply = enabled(parsed, "apply");
+  const snapshot = loadGoalSnapshot(corpus, id);
+  const controls = (["pause", "resume", "stop"] as const).filter((name) => enabled(parsed, name));
+  if (controls.length > 1) throw new Error("choose one of --pause, --resume, or --stop");
+  const control = controls[0];
+  if (control) {
+    const goal = control === "stop" ? stopGoalDrive(snapshot.value) : setGoalDriveState(snapshot.value, control === "pause" ? "paused" : "driving");
+    const workflowRef = snapshot.value.drive?.workflowRef;
+    if (!workflowRef) throw new Error(`goal ${id} is not being driven`);
+    const workflowExists = fs.existsSync(workflowSourcePath(corpus, workflowRef));
+    if (apply) {
+      saveGoal(corpus, goal, { expectedRevision: snapshot.revision, previousRaw: snapshot.raw });
+      // Stopping keeps the driver workflow and its run history but stops its schedule.
+      if (workflowExists && control === "stop") updateWorkflow(corpus, workflowRef, (item) => ({ ...item, state: "paused" }));
+      if (workflowExists && control === "resume") updateWorkflow(corpus, workflowRef, (item) => ({ ...item, state: "active" }));
+    }
+    output(parsed, { schema: "org2:goal-drive:v1", applied: apply, action: control, goal, workflowId: workflowRef, file: snapshot.file },
+      `${apply ? "" : "preview: "}${id}: drive ${control === "stop" ? "stopped (workflow paused, history kept)" : control === "pause" ? "paused" : "resumed"}`);
+    return;
+  }
+  const every = flag(parsed, "every")?.trim();
+  const schedule = flag(parsed, "schedule")?.trim() || (every ? (/^every\s/i.test(every) ? every : `every ${every}`) : undefined);
+  const goal = startGoalDrive(snapshot.value, {
+    stallAfter: positiveNumberFlag(parsed, "stall-after", true),
+    dailyCostLimitUsd: positiveNumberFlag(parsed, "daily-cost-limit", false),
+    dailyTokenLimit: positiveNumberFlag(parsed, "daily-token-limit", true),
+    permissions: parsed.flags.has("permit") ? flags(parsed, "permit").map((item) => item.trim()).filter(Boolean) : undefined,
+    workflowId: flag(parsed, "workflow-id"),
+  });
+  const drive = goal.drive!;
+  const workflowFile = workflowSourcePath(corpus, drive.workflowRef);
+  const existing = fs.existsSync(workflowFile) ? loadWorkflowSnapshot(corpus, drive.workflowRef) : undefined;
+  if (existing && existing.workflow.goalRef && existing.workflow.goalRef !== goal.id) {
+    throw new Error(`workflow ${drive.workflowRef} already belongs to goal ${existing.workflow.goalRef}`);
+  }
+  const workflow = goalDriverWorkflow(goal, drive, {
+    goalFile: goalFileRelative(corpus, snapshot.file),
+    schedule,
+    timezone: flag(parsed, "timezone") || flag(parsed, "tz"),
+    destinationRef: flag(parsed, "destination-ref")?.trim() || undefined,
+    model: flag(parsed, "model")?.trim() || undefined,
+    reasoningEffort: (flag(parsed, "reasoning-effort") || flag(parsed, "reasoning"))?.trim() || undefined,
+    agentRef: flag(parsed, "agent-ref")?.trim() || undefined,
+    threadId: flag(parsed, "thread")?.trim() || undefined,
+  }, existing?.workflow);
+  const validation = validateWorkflow(workflow);
+  if (!validation.valid) throw new Error(`invalid driver workflow: ${validation.issues.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
+  const previousRaw = ensureGoalPlanSection(snapshot.raw);
+  if (apply) {
+    // Record the drive on the goal first: the scheduler gates a driver
+    // workflow only through the goal that names it.
+    saveGoal(corpus, goal, { expectedRevision: snapshot.revision, previousRaw });
+    saveWorkflow(corpus, workflow, { expectedRevision: existing ? existing.revision : null });
+  }
+  const status = evaluateGoalDrive(goal, renderGoalOrg(goal, previousRaw), snapshot.file, listAgentRuns(corpus));
+  output(parsed, {
+    schema: "org2:goal-drive:v1",
+    applied: apply,
+    action: existing ? "update" : "start",
+    goal,
+    workflow,
+    file: snapshot.file,
+    workflowFile: workflowPath(corpus, workflow.id),
+    status,
+  }, [
+    `${apply ? "" : "preview: "}${id}: driving with ${workflow.id} (${workflow.triggers.find((item) => item.type === "schedule")?.schedule}, one pass at a time)`,
+    `next pass mode: ${status.mode} — ${status.reason}`,
+    ...(apply ? [] : ["Run again with --apply to record the drive and write the driver workflow."]),
+  ].join("\n"));
+}
+
 function goalCommand(parsed: ParsedArgs): void {
   const action = parsed.positional[0] || "list";
   const corpus = root(parsed);
@@ -1289,6 +1406,42 @@ function goalCommand(parsed: ParsedArgs): void {
     output(parsed, { schema: "org2:goal-mutation:v1", applied: enabled(parsed, "apply"), file, goal, preview: renderGoalOrg(goal) }, `${enabled(parsed, "apply") ? "created" : "would create"} ${goal.id}\n${file}`);
     return;
   }
+  if (action === "status") {
+    const snapshot = loadGoalSnapshot(corpus, id);
+    const status = evaluateGoalDrive(snapshot.value, snapshot.raw, snapshot.file, listAgentRuns(corpus), { now: flag(parsed, "now") });
+    output(parsed, status, renderGoalDriveStatusText(status));
+    return;
+  }
+  if (action === "checkpoint") {
+    const snapshot = loadGoalSnapshot(corpus, id);
+    const run = loadAgentRun(corpus, required(flag(parsed, "run"), "--run RUN_ID is required"));
+    const result = checkpointGoalDrive(snapshot.value, snapshot.raw, snapshot.file, run, { now: flag(parsed, "now") });
+    const apply = enabled(parsed, "apply");
+    if (apply && !result.idempotent) saveGoal(corpus, result.goal, { expectedRevision: snapshot.revision, previousRaw: snapshot.raw });
+    const drive = result.goal.drive!;
+    output(parsed, {
+      schema: "org2:goal-checkpoint:v1",
+      applied: apply && !result.idempotent,
+      idempotent: result.idempotent,
+      goalId: id,
+      runId: run.id,
+      progress: result.progress,
+      stalled: result.stalled,
+      passesWithoutProgress: drive.passesWithoutProgress,
+      stallAfter: drive.stallAfter,
+      state: drive.state,
+      ...(drive.stalledReason ? { stalledReason: drive.stalledReason } : {}),
+      fingerprint: result.fingerprint,
+      file: snapshot.file,
+    }, result.idempotent
+      ? `${id}: run ${run.id} already checkpointed`
+      : `${apply ? "" : "preview: "}${id}: ${result.progress ? "plan changed" : `no plan change (${drive.passesWithoutProgress}/${drive.stallAfter})`}${result.stalled ? `; drive stalled: ${drive.stalledReason}` : ""}`);
+    return;
+  }
+  if (action === "drive") {
+    goalDriveCommand(parsed, corpus, id);
+    return;
+  }
   if (action === "update") {
     const snapshot = loadGoalSnapshot(corpus, id);
     const goal = {
@@ -1301,8 +1454,8 @@ function goalCommand(parsed: ParsedArgs): void {
       ...(parsed.flags.has("measure") ? { measures: flags(parsed, "measure") } : {}),
       updatedAt: new Date().toISOString(),
     };
-    if (enabled(parsed, "apply")) saveGoal(corpus, goal, { expectedRevision: snapshot.revision });
-    output(parsed, { schema: "org2:goal-mutation:v1", applied: enabled(parsed, "apply"), file: snapshot.file, goal, preview: renderGoalOrg(goal) }, `${enabled(parsed, "apply") ? "updated" : "would update"} ${goal.id}\n${snapshot.file}`);
+    if (enabled(parsed, "apply")) saveGoal(corpus, goal, { expectedRevision: snapshot.revision, previousRaw: snapshot.raw });
+    output(parsed, { schema: "org2:goal-mutation:v1", applied: enabled(parsed, "apply"), file: snapshot.file, goal, preview: renderGoalOrg(goal, snapshot.raw) }, `${enabled(parsed, "apply") ? "updated" : "would update"} ${goal.id}\n${snapshot.file}`);
     return;
   }
   throw new Error(`unknown goal action: ${action}`);
@@ -1683,7 +1836,9 @@ function workflowCommand(parsed: ParsedArgs): void {
           timezone: occurrence.trigger.timezone,
           scheduledFor: occurrence.scheduledFor,
         };
+        const driveGate = activeRun ? null : goalDriveGate(corpus, item, runs, { now });
         if (activeRun) skipped.push({ ...summary, reason: `active attempt ${activeRun.id} is ${activeRun.status}`, activeRunId: activeRun.id });
+        else if (driveGate && !driveGate.eligible) skipped.push({ ...summary, reason: driveGate.reason, goalDriveMode: driveGate.mode });
         else due.push(summary);
       }
       for (const trigger of item.triggers.filter((candidate) => isSignalTrigger(candidate))) {
@@ -1937,6 +2092,14 @@ function workflowCommand(parsed: ParsedArgs): void {
       const activeAttempt = trigger?.type === "schedule"
         ? existingAttempts.find((item) => workflowAttemptHoldsScheduleSlot(item, trigger))
         : undefined;
+      const driveGate = trigger?.type === "schedule" && !activeAttempt
+        ? goalDriveGate(corpus, workflow, listAgentRuns(corpus), { now: flag(parsed, "now") })
+        : null;
+      if (driveGate && !driveGate.eligible) {
+        output(parsed, { schema: "org2:workflow-run-skipped:v1", workflowId: id, triggerId, eligible: false, reason: driveGate.reason, goalDriveMode: driveGate.mode },
+          `skipped ${id}: ${driveGate.reason}`);
+        return;
+      }
       if (activeAttempt) {
         output(parsed, {
           schema: "org2:workflow-run-skipped:v1",

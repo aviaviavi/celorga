@@ -64,6 +64,7 @@
         <li><strong>Start work</strong>Turn any TODO into a durable agent run</li>
         <li><strong>Live status</strong>Working, Your turn, Needs you, Done</li>
         <li><strong>Automations</strong>Scheduled prompts that catch up after sleep</li>
+        <li><strong>Goal drives</strong>Keep agents working a goal's plan within a daily budget, pausing when they stall or need you</li>
         <li><strong>Event triggers</strong>Start work when a TODO enters <code>NEXT</code> or a pull request gets a review, with nearby events combined</li>
         <li><strong>Workflows</strong>Reusable steps, models, and history in files</li>
         <li><strong>Activity</strong>What's running, where, why it stopped, and whether a retry is safe</li>

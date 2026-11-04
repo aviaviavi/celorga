@@ -62,6 +62,21 @@ celorga agent-profile resolve --runtime openclaw \
 
 Durable runs and workflows accept =--agent-ref= and =--goal-ref=. =todo assign= accepts the same refs and writes =:AGENT_REF:= and =:GOAL_REF:= beside its readable =:ASSIGNEE:=. Do not replace the portable profile ID with =openclaw=, =codex=, a provider/model name, or a session ID. If resolution finds no active binding, omit the refs rather than guessing.
 
+** Driving a goal
+
+=celorga goal drive= keeps agents working on a goal until it is achieved, without one hand-written prompt per goal. It writes a driver workflow that runs one pass at a time on a schedule (=every 15m= by default), records the drive in the goal file, and adds a =Plan= section under the goal heading. Plan items are headings with a TODO keyword and an =:ACTOR:= of =agent= (the default), =human=, or =external=.
+
+Each pass runs =celorga goal status GOAL --json=, works the first open agent item (or writes the plan), updates the plan, and ends with =celorga goal checkpoint GOAL --run RUN_ID --apply=. Celorga, not the model, decides whether the next pass starts. It skips passes while the drive is paused or stalled, while the rolling 24-hour cost or token budget is spent, and while only human or external items remain and the plan has not changed. Editing the plan, for example marking a human item =DONE=, lets the next pass run. A pass that leaves item states, items, and checkboxes unchanged counts toward =--stall-after=. Prose notes don't count as progress. Reaching the limit stalls the drive until a person resumes it. Standing permissions (=--permit=) list what the driver may do without asking. Anything else becomes a human plan item, not a blocked run.
+
+#+begin_src sh
+celorga goal drive customer-trust --every 15m --stall-after 3   --daily-cost-limit 10 --permit "Draft replies in drafts/"   --agent-ref customer-support --dir ~/notes                       # preview
+celorga goal drive customer-trust --every 15m --stall-after 3   --daily-cost-limit 10 --permit "Draft replies in drafts/"   --agent-ref customer-support --dir ~/notes --apply
+celorga goal status customer-trust --dir ~/notes
+celorga goal drive customer-trust --pause|--resume|--stop --dir ~/notes --apply
+#+end_src
+
+Structured goal saves keep a file-level property drawer and every goal section that Celorga does not generate, such as =Plan= or working notes. Celorga regenerates only =Measures=, =Drive=, and =Machine state=.
+
 The Mac app exposes the same records under *Agent Work → Goals* and *Agent Work → Agents*. Selecting a row opens its canonical plain-text record in the detail pane. Owner, primary-goal, manager, linked-run, and default-runtime controls use the shared CLI rather than app-private profile state.
 
 * Agent retrieval

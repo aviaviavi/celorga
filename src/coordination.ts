@@ -9,10 +9,44 @@ export const ORG2_AGENT_PROFILE_SCHEMA = "org2:agent-profile:v1" as const;
 export const GOAL_STATUSES = ["planned", "active", "achieved", "canceled"] as const;
 export const AGENT_PROFILE_STATUSES = ["active", "paused", "retired"] as const;
 export const AGENT_PROFILE_DEFAULT_RUNTIMES = ["openclaw", "codex", "claude"] as const;
+export const GOAL_DRIVE_STATES = ["driving", "paused", "stalled"] as const;
+export const GOAL_DRIVE_DEFAULT_STALL_AFTER = 3;
+/** Level-2 goal sections that Celorga regenerates; every other section is user-owned and preserved. */
+const GENERATED_GOAL_SECTIONS = new Set(["measures", "drive", "machine state"]);
 
 export type GoalStatus = typeof GOAL_STATUSES[number];
 export type AgentProfileStatus = typeof AGENT_PROFILE_STATUSES[number];
 export type AgentProfileDefaultRuntime = typeof AGENT_PROFILE_DEFAULT_RUNTIMES[number];
+export type GoalDriveState = typeof GOAL_DRIVE_STATES[number];
+
+/**
+ * Optional "drive this goal" configuration. A driven goal has one driver
+ * workflow that schedules passes; Celorga gates each pass deterministically on
+ * this state, the goal's plan, and the rolling daily budget.
+ */
+export interface GoalDrive {
+  state: GoalDriveState;
+  /** The driver workflow that schedules passes for this goal. */
+  workflowRef: string;
+  /** Consecutive checkpointed passes that leave the plan unchanged before the drive stalls. */
+  stallAfter: number;
+  /** Rolling 24-hour cost ceiling across driver passes, from recorded run runtime. */
+  dailyCostLimitUsd?: number;
+  /** Rolling 24-hour token ceiling across driver passes, from recorded run runtime. */
+  dailyTokenLimit?: number;
+  /** Standing permissions: actions the driver may take without asking. Everything else becomes a human plan item. */
+  permissions: string[];
+  passesWithoutProgress: number;
+  /** Plan fingerprint recorded by the most recent checkpoint. */
+  planFingerprint?: string;
+  lastCheckpointRunId?: string;
+  lastCheckpointAt?: string;
+  stalledReason?: string;
+  startedAt: string;
+  /** Last start or resume after the first; uncheckpointed passes before it no longer count. */
+  resumedAt?: string;
+  updatedAt: string;
+}
 
 export interface GoalRecord {
   schema: typeof ORG2_GOAL_SCHEMA;
@@ -23,6 +57,7 @@ export interface GoalRecord {
   parentGoalRef?: string;
   ownerAgentRef?: string;
   measures: string[];
+  drive?: GoalDrive;
   createdAt: string;
   updatedAt: string;
 }
@@ -100,7 +135,22 @@ function assertGoal(goal: GoalRecord): GoalRecord {
   if (goal.parentGoalRef && goal.parentGoalRef === goal.id) throw new Error("a goal cannot be its own parent");
   if (!goal.createdAt || Number.isNaN(new Date(goal.createdAt).getTime())) throw new Error("goal createdAt must be an ISO timestamp");
   if (!goal.updatedAt || Number.isNaN(new Date(goal.updatedAt).getTime())) throw new Error("goal updatedAt must be an ISO timestamp");
+  if (goal.drive !== undefined) assertGoalDrive(goal.drive);
   return goal;
+}
+
+function assertGoalDrive(drive: GoalDrive): void {
+  if (!GOAL_DRIVE_STATES.includes(drive.state)) throw new Error(`invalid goal drive state: ${drive.state}`);
+  safeIdentifier(drive.workflowRef, { label: "goal drive workflow ref" });
+  if (!Number.isSafeInteger(drive.stallAfter) || drive.stallAfter < 1) throw new Error("goal drive stallAfter must be a positive integer");
+  if (!Number.isSafeInteger(drive.passesWithoutProgress) || drive.passesWithoutProgress < 0) throw new Error("goal drive passesWithoutProgress must be a non-negative integer");
+  if (drive.dailyCostLimitUsd !== undefined && !(Number.isFinite(drive.dailyCostLimitUsd) && drive.dailyCostLimitUsd > 0)) throw new Error("goal drive dailyCostLimitUsd must be a positive number");
+  if (drive.dailyTokenLimit !== undefined && !(Number.isSafeInteger(drive.dailyTokenLimit) && drive.dailyTokenLimit > 0)) throw new Error("goal drive dailyTokenLimit must be a positive integer");
+  if (!Array.isArray(drive.permissions)) throw new Error("goal drive permissions must be a list");
+  for (const key of ["startedAt", "updatedAt", "lastCheckpointAt", "resumedAt"] as const) {
+    const value = drive[key];
+    if ((key === "startedAt" || key === "updatedAt" || value !== undefined) && (!value || Number.isNaN(new Date(value).getTime()))) throw new Error(`goal drive ${key} must be an ISO timestamp`);
+  }
 }
 
 function assertAgentProfile(profile: AgentProfile): AgentProfile {
@@ -192,9 +242,74 @@ export function createAgentProfile(input: {
   });
 }
 
-export function renderGoalOrg(goal: GoalRecord): string {
-  assertGoal(goal);
+function goalDriveSection(drive: GoalDrive): string[] {
   return [
+    "** Drive",
+    `- State: ${drive.state}${drive.stalledReason && drive.state === "stalled" ? ` (${orgText(drive.stalledReason)})` : ""}`,
+    `- Driver workflow: ${drive.workflowRef}`,
+    `- Stalls after: ${drive.stallAfter} pass${drive.stallAfter === 1 ? "" : "es"} without plan progress (now ${drive.passesWithoutProgress})`,
+    `- Daily budget: ${[
+      drive.dailyCostLimitUsd !== undefined ? `$${drive.dailyCostLimitUsd}` : "",
+      drive.dailyTokenLimit !== undefined ? `${drive.dailyTokenLimit} tokens` : "",
+    ].filter(Boolean).join(", ") || "none"}`,
+    ...(drive.lastCheckpointAt ? [`- Last checkpoint: ${drive.lastCheckpointAt}${drive.lastCheckpointRunId ? ` (run ${drive.lastCheckpointRunId})` : ""}`] : []),
+    "- Standing permissions:",
+    ...(drive.permissions.length ? drive.permissions.map((item) => `  - ${orgText(item)}`) : ["  - None. Every external or irreversible action becomes a human plan item."]),
+    "",
+  ];
+}
+
+interface PreservedGoalSource {
+  preamble: string[];
+  sections: string[][];
+  trailing: string[];
+}
+
+/** Splits an existing goal file into the parts Celorga does not generate. */
+function preservedGoalSource(raw: string | undefined): PreservedGoalSource {
+  const empty: PreservedGoalSource = { preamble: [], sections: [], trailing: [] };
+  if (!raw) return empty;
+  const lines = raw.replace(/\r\n/g, "\n").split("\n");
+  const goalHeading = lines.findIndex((line) => /^\* /.test(line));
+  if (goalHeading < 0) return empty;
+  const title = lines.findIndex((line) => /^#\+TITLE:/i.test(line));
+  const preambleEnd = title >= 0 && title < goalHeading ? title : goalHeading;
+  const preamble = lines.slice(0, preambleEnd);
+  while (preamble.length && !preamble[preamble.length - 1]!.trim()) preamble.pop();
+  let end = lines.findIndex((line, index) => index > goalHeading && /^\* /.test(line));
+  if (end < 0) end = lines.length;
+  const sections: string[][] = [];
+  let current: string[] | undefined;
+  let block = false;
+  for (let index = goalHeading + 1; index < end; index += 1) {
+    const line = lines[index]!;
+    if (/^\s*#\+begin_/i.test(line)) block = true;
+    else if (/^\s*#\+end_/i.test(line)) block = false;
+    const heading = !block && /^\*\* +(.*?)\s*$/.exec(line);
+    if (heading) {
+      const name = heading[1]!.replace(/\s+:[\w@#%:]+:\s*$/, "").trim().toLowerCase();
+      current = GENERATED_GOAL_SECTIONS.has(name) ? undefined : [];
+      if (current) sections.push(current);
+    }
+    current?.push(line);
+  }
+  for (const section of sections) while (section.length && !section[section.length - 1]!.trim()) section.pop();
+  const trailing = lines.slice(end);
+  while (trailing.length && !trailing[trailing.length - 1]!.trim()) trailing.pop();
+  return { preamble, sections, trailing };
+}
+
+/**
+ * Renders a goal file. When `previousRaw` is given, user-owned parts of the
+ * existing file survive: a file-level property drawer before #+TITLE, every
+ * level-2 section other than Measures, Drive, and Machine state (for example
+ * Plan or Working context), and any later top-level headings.
+ */
+export function renderGoalOrg(goal: GoalRecord, previousRaw?: string): string {
+  assertGoal(goal);
+  const preserved = preservedGoalSource(previousRaw);
+  return [
+    ...(preserved.preamble.length ? [...preserved.preamble, ""] : []),
     `#+TITLE: Goal: ${orgText(goal.title)}`,
     "#+ORG2_KIND: goal",
     "",
@@ -215,11 +330,14 @@ export function renderGoalOrg(goal: GoalRecord): string {
     "** Measures",
     ...(goal.measures.length ? goal.measures.map((measure) => `- ${measure}`) : ["- None recorded."]),
     "",
+    ...(goal.drive ? goalDriveSection(goal.drive) : []),
+    ...preserved.sections.flatMap((section) => [...section, ""]),
     "** Machine state",
     "#+begin_src json :org2-goal",
     JSON.stringify(goal, null, 2),
     "#+end_src",
     "",
+    ...(preserved.trailing.length ? [...preserved.trailing, ""] : []),
   ].join("\n");
 }
 
@@ -283,8 +401,16 @@ export function agentProfileDirectory(root: string): string { return path.join(p
 export function goalPath(root: string, id: string): string { return orgRecordPath(goalDirectory(root), safeIdentifier(id, { label: "goal id" })); }
 export function agentProfilePath(root: string, id: string): string { return orgRecordPath(agentProfileDirectory(root), safeIdentifier(id, { label: "agent profile id" })); }
 
-export function saveGoal(root: string, goal: GoalRecord, options: GuardedFileWriteOptions = {}): string {
-  return guardedWriteFile(goalPath(root, goal.id), renderGoalOrg(goal), options).file;
+/**
+ * Saves a goal and keeps the user-owned parts of the existing file. Pass
+ * `previousRaw` to base the preserved parts on an edited copy instead of the
+ * file on disk; `expectedRevision` still guards the file on disk.
+ */
+export function saveGoal(root: string, goal: GoalRecord, options: GuardedFileWriteOptions & { previousRaw?: string } = {}): string {
+  const file = goalPath(root, goal.id);
+  const { previousRaw, ...writeOptions } = options;
+  const previous = previousRaw ?? (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : undefined);
+  return guardedWriteFile(file, renderGoalOrg(goal, previous), writeOptions).file;
 }
 
 export function saveAgentProfile(root: string, profile: AgentProfile, options: GuardedFileWriteOptions = {}): string {

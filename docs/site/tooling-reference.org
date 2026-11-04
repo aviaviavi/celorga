@@ -992,6 +992,19 @@ The native worker defaults to the checkout's built native server worker; =--exec
 
 Goals and named workers are portable corpus records, distinct from the runtime that executes them. =celorga goal create/update/list/show= manages =celorga:goal:v1= files under =goals/=. =celorga agent-profile create/update/list/show= manages =celorga:agent-profile:v1= files under =agent-profiles/=. Both create and update preview by default and require =--apply= to write.
 
+=celorga goal drive GOAL [--every 15m|--schedule CRON] [--stall-after N] [--daily-cost-limit USD] [--daily-token-limit N] [--permit TEXT ...] [--agent-ref ID] [--destination-ref ID] [--thread ID] [--apply]= starts or reconfigures a goal drive. It previews by default. With =--apply= it records an optional =drive= object on the goal, adds a =Plan= section if none exists, and writes the driver workflow =goal-drive-GOAL=. That workflow is an ordinary prompt automation with =whenRunning: wait= and =whenBlocked: wait=, so only one pass runs at a time. =--pause=, =--resume=, and =--stop= change the drive. Stopping removes the drive and pauses the workflow, but keeps the workflow file and its run history.
+
+Plan items are descendant headings of the goal's level-2 =Plan= heading that have a TODO keyword. =:ACTOR:= is =agent= (the default), =human=, or =external=, and unknown values count as =human=. Terminal states follow the file's and corpus's TODO sequences. =celorga goal status GOAL [--json]= returns =celorga:goal-drive-status:v1= with these fields:
+- =mode=: =work=, =plan=, =replan=, =waiting=, =complete=, =stalled=, =paused=, =over-budget=, =inactive=, or =not-driving=
+- =eligible= and =reason=
+- =next= (open agent items) and =needsYou= (open human items)
+- plan counts and a plan fingerprint
+- rolling 24-hour spend, taken from recorded run runtime
+
+=workflow due= and =workflow run --trigger= read the same evaluation. They skip a driver pass, with a =goalDriveMode= and a reason, unless the mode is =work=, =plan=, or =replan=. An unchanged empty plan, only human or external items left with no plan change since the last checkpoint, a spent budget, a pause, or a stall each skip the pass. As many uncheckpointed settled passes as =--stall-after= also skip it. Workflows that do not drive a goal are unaffected.
+
+=celorga goal checkpoint GOAL --run RUN_ID [--apply]= ends a pass. The plan fingerprint covers item titles, states, actors, and checkbox states, but not prose. A changed fingerprint resets the no-progress count. Otherwise the count rises, and at =stallAfter= the drive becomes =stalled= with a reason. Checkpointing the same run again changes nothing. Structured goal saves preserve a leading file property drawer, all goal sections other than =Measures=, =Drive=, and =Machine state=, and later top-level headings.
+
 The Mac workspace projects these records into *Agent Work → Goals* and *Agent Work → Agents*. The catalogs show status, ownership or primary-goal relationships, default runtimes, runtime bindings, measures, and linked-run counts while the detail pane renders the canonical file. Relationship controls navigate between goals, profiles, and filtered runs. Lifecycle and default-runtime changes use the same =goal update= and =agent-profile update= commands instead of app-private state.
 
 An agent profile may declare responsibilities, capabilities, skills, reporting and goal relationships, an optional =defaultRuntime= of =openclaw=, =codex=, or =claude=, and repeatable non-secret runtime bindings such as =openclaw:customer-support= or =codex:default=. The default runtime is a user-visible starting preference, not a binding or a fixed destination; chat users can override it before the conversation starts. Credentials, session IDs, destination configuration, provider/model choice, and machine paths do not belong in the profile. Resolve the active runtime identity before delegation:
