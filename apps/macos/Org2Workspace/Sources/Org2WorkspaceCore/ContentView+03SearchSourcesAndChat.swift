@@ -2331,6 +2331,8 @@ struct AIChatView: View {
 
       AIChatGuestMessagesPanel()
 
+      AIChatLinkedRunsStrip(compact: presentation.isCompact)
+
       AIChatBackgroundJobsBar(compact: presentation.isCompact)
 
       AIChatComposerView(

@@ -1564,6 +1564,7 @@ extension WorkspaceStore {
     var runsByID: [AgentRunItem.ID: AgentRunItem] = [:]
     var countByGoalRef: [String: Int] = [:]
     var countByAgentRef: [String: Int] = [:]
+    var runIDsByLinkedAIChatThreadID: [String: [AgentRunItem.ID]] = [:]
     filterTextByID.reserveCapacity(runs.count)
     runsByID.reserveCapacity(runs.count)
     for (index, run) in runs.enumerated() {
@@ -1572,6 +1573,9 @@ extension WorkspaceStore {
       runsByID[run.id] = run
       if let goalRef = run.goalRef { countByGoalRef[goalRef, default: 0] += 1 }
       if let agentRef = run.agentRef { countByAgentRef[agentRef, default: 0] += 1 }
+      if let threadID = run.linkedAIChatThreadID {
+        runIDsByLinkedAIChatThreadID[threadID, default: []].append(run.id)
+      }
     }
 
     var scopeCounts: [AgentRunScope: Int] = [:]
@@ -1604,6 +1608,7 @@ extension WorkspaceStore {
       sectionsByScope: [:],
       sourceMeetingContextsByID: sourceMeetingContexts,
       runIDsBySourceMeetingReference: runIDsBySourceMeetingReference,
+      runIDsByLinkedAIChatThreadID: runIDsByLinkedAIChatThreadID,
       wasBuiltOnMainThread: Thread.isMainThread
     )
     guard let projection = agentRunProjection(
@@ -1662,6 +1667,7 @@ extension WorkspaceStore {
       sectionsByScope: sectionsByScope,
       sourceMeetingContextsByID: indexes.sourceMeetingContextsByID,
       runIDsBySourceMeetingReference: indexes.runIDsBySourceMeetingReference,
+      runIDsByLinkedAIChatThreadID: indexes.runIDsByLinkedAIChatThreadID,
       wasBuiltOnMainThread: Thread.isMainThread
     )
     projection.reusedRunIndexes = true
@@ -1692,6 +1698,9 @@ extension WorkspaceStore {
     agentRunSectionsByScope = projection.sectionsByScope
     agentRunSourceMeetingContextsByID = projection.sourceMeetingContextsByID
     agentRunIDsBySourceMeetingReference = projection.runIDsBySourceMeetingReference
+    if agentRunIDsByLinkedAIChatThreadID != projection.runIDsByLinkedAIChatThreadID {
+      agentRunIDsByLinkedAIChatThreadID = projection.runIDsByLinkedAIChatThreadID
+    }
     agentRunDisplayRevision &+= 1
   }
 

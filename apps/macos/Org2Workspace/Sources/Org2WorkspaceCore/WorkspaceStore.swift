@@ -1155,6 +1155,8 @@ final class AgentRunProjectionBox: @unchecked Sendable {
   let sectionsByScope: [AgentRunScope: [RunCenterSection]]
   let sourceMeetingContextsByID: [AgentRunItem.ID: AgentRunContextItem]
   let runIDsBySourceMeetingReference: [String: [AgentRunItem.ID]]
+  /// Runs keyed by the lowercased AI chat thread ID they link to.
+  let runIDsByLinkedAIChatThreadID: [String: [AgentRunItem.ID]]
   let wasBuiltOnMainThread: Bool
   /// True when only the filter changed and the run-derived indexes were reused.
   var reusedRunIndexes = false
@@ -1172,6 +1174,7 @@ final class AgentRunProjectionBox: @unchecked Sendable {
     sectionsByScope: [AgentRunScope: [RunCenterSection]],
     sourceMeetingContextsByID: [AgentRunItem.ID: AgentRunContextItem],
     runIDsBySourceMeetingReference: [String: [AgentRunItem.ID]],
+    runIDsByLinkedAIChatThreadID: [String: [AgentRunItem.ID]] = [:],
     wasBuiltOnMainThread: Bool
   ) {
     self.filterTextByID = filterTextByID
@@ -1186,6 +1189,7 @@ final class AgentRunProjectionBox: @unchecked Sendable {
     self.sectionsByScope = sectionsByScope
     self.sourceMeetingContextsByID = sourceMeetingContextsByID
     self.runIDsBySourceMeetingReference = runIDsBySourceMeetingReference
+    self.runIDsByLinkedAIChatThreadID = runIDsByLinkedAIChatThreadID
     self.wasBuiltOnMainThread = wasBuiltOnMainThread
   }
 }
@@ -4157,6 +4161,7 @@ public final class WorkspaceStore {
   var agentRunSectionsByScope: [AgentRunScope: [RunCenterSection]] = [:]
   var agentRunSourceMeetingContextsByID: [AgentRunItem.ID: AgentRunContextItem] = [:]
   var agentRunIDsBySourceMeetingReference: [String: [AgentRunItem.ID]] = [:]
+  var agentRunIDsByLinkedAIChatThreadID: [String: [AgentRunItem.ID]] = [:]
   var agentRunCountByGoalRef: [String: Int] = [:]
   var agentRunCountByAgentRef: [String: Int] = [:]
   @ObservationIgnored var agentRunProjectionGeneration: UInt64 = 0

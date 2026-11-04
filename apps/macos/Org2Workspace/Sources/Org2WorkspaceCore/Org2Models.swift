@@ -835,7 +835,9 @@ public struct AgentRunItem: Identifiable, Decodable, Hashable, Sendable {
   /// presence use the same link to confirm whether an executor is working.
   public var linkedAIChatThreadID: String? {
     for comment in comments.reversed() {
-      guard let range = comment.body.range(
+      // Most comments never mention a chat; skip the regex for them.
+      guard comment.body.contains("AI chat thread"),
+            let range = comment.body.range(
         of: #"AI chat thread:?\s+[0-9A-Fa-f-]{36}"#,
         options: .regularExpression
       ) else { continue }
