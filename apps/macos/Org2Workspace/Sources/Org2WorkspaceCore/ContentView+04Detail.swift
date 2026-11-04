@@ -1700,6 +1700,7 @@ private struct OrgSourceEditorWithLinkTools: View {
       caretPublishingDelayMilliseconds: 180,
       semanticAnalysisDelayMilliseconds: 900,
       commandRequest: store.sourceEditorCommandRequest,
+      lineRevealRequest: store.sourceEditorLineRevealRequest,
       semanticAnalyzer: analyzer,
       diagnostics: $store.sourceEditorDiagnostics,
       onCommandStatus: { status in

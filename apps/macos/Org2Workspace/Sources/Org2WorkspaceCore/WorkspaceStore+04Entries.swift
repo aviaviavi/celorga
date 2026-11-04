@@ -2494,6 +2494,22 @@ extension WorkspaceStore {
     )
   }
 
+  /// Moves the open source editor to a file line, flashing it when the move
+  /// came from an explicit link click.
+  func requestSourceEditorLineReveal(_ line: Int, highlights: Bool) {
+    guard isEditingEntry,
+          let source = selectedEntrySource,
+          line >= source.startLine,
+          !source.isSubtree || line < source.endLineExclusive
+    else { return }
+    sourceEditorCommandGeneration += 1
+    sourceEditorLineRevealRequest = OrgSourceEditorLineRevealRequest(
+      id: sourceEditorCommandGeneration,
+      line: line - source.startLine + 1,
+      highlights: highlights
+    )
+  }
+
   public func analyzeSourceEditorText(_ text: String) async -> OrgSourceEditorSemanticSnapshot? {
     do {
       return try await cli.analyzeEditorText(text, sourcePath: selectedEntrySource?.file)
@@ -2963,6 +2979,7 @@ extension WorkspaceStore {
     sourceEditorSavedDraftGeneration = sourceEditorDraftGeneration
     sourceEditorDiagnostics = []
     sourceEditorCommandRequest = nil
+    sourceEditorLineRevealRequest = nil
     isEditingEntry = false
   }
 

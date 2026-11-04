@@ -2092,10 +2092,11 @@ extension WorkspaceStore {
     )
   }
 
-  public func requestDetailScroll(toSourceLine line: Int) {
+  public func requestDetailScroll(toSourceLine line: Int, highlightingIn file: String? = nil) {
     detailScrollRequest = DetailScrollRequest(
       id: (detailScrollRequest?.id ?? 0) + 1,
-      target: .sourceLine(max(1, line))
+      target: .sourceLine(max(1, line)),
+      highlightedFile: file
     )
   }
 

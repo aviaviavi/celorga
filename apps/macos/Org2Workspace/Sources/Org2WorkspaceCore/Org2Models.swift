@@ -8160,10 +8160,14 @@ public enum DetailScrollTarget: Equatable, Sendable {
 public struct DetailScrollRequest: Equatable, Sendable {
   public let id: Int
   public let target: DetailScrollTarget
+  /// Set when an explicit link click asked for a line: the file whose target
+  /// line briefly flashes once that file is shown.
+  public let highlightedFile: String?
 
-  public init(id: Int, target: DetailScrollTarget) {
+  public init(id: Int, target: DetailScrollTarget, highlightedFile: String? = nil) {
     self.id = id
     self.target = target
+    self.highlightedFile = highlightedFile
   }
 
   public init(id: Int, direction: DetailScrollDirection) {

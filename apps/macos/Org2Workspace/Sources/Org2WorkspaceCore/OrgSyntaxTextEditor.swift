@@ -63,6 +63,21 @@ public struct OrgSourceEditorCommandRequest: Equatable, Sendable {
   }
 }
 
+/// Moves the editor to a line of its text, optionally flashing it so a
+/// cited line is easy to find after an explicit link click.
+public struct OrgSourceEditorLineRevealRequest: Equatable, Sendable {
+  public let id: Int
+  /// One-based line within the editor's text.
+  public let line: Int
+  public let highlights: Bool
+
+  public init(id: Int, line: Int, highlights: Bool) {
+    self.id = id
+    self.line = max(1, line)
+    self.highlights = highlights
+  }
+}
+
 enum OrgSourceTextEditing {
   static func newlineReplacement(
     in text: String,
@@ -668,6 +683,44 @@ enum OrgSourceTextEditing {
   ) -> NSRange {
     lineIndex?.lineRange(forLine: requestedLine)
       ?? lineRange(in: text, line: requestedLine)
+  }
+
+  /// The full range of a one-based line and the range of its visible text,
+  /// for revealing and flashing a cited line.
+  static func lineRevealRanges(in text: NSString, line: Int) -> (line: NSRange, content: NSRange) {
+    let range = lineRange(in: text, line: line)
+    let end = lineContentEnd(in: text, lineRange: range)
+    return (range, NSRange(location: range.location, length: max(0, end - range.location)))
+  }
+
+  /// Briefly marks a revealed line: the system find indicator, or with Reduce
+  /// Motion a still highlight that clears after a second.
+  @MainActor
+  static func flashLine(
+    _ ranges: (line: NSRange, content: NSRange),
+    in textView: NSTextView,
+    reduceMotion: Bool
+  ) {
+    let target = ranges.content.length > 0 ? ranges.content : ranges.line
+    guard target.length > 0, NSMaxRange(target) <= (textView.textStorage?.length ?? 0) else { return }
+    if !reduceMotion {
+      DispatchQueue.main.async { [weak textView] in
+        textView?.showFindIndicator(for: target)
+      }
+      return
+    }
+    guard let layoutManager = textView.layoutManager else { return }
+    layoutManager.addTemporaryAttribute(
+      .backgroundColor,
+      value: NSColor.findHighlightColor.withAlphaComponent(0.6),
+      forCharacterRange: target
+    )
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak layoutManager] in
+      guard let layoutManager,
+            NSMaxRange(target) <= (layoutManager.textStorage?.length ?? 0)
+      else { return }
+      layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: target)
+    }
   }
 
   static func lineText(in text: NSString, line: Int) -> String {
@@ -2193,6 +2246,7 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
   let caretPublishingDelayMilliseconds: Int
   let semanticAnalysisDelayMilliseconds: Int
   let commandRequest: OrgSourceEditorCommandRequest?
+  let lineRevealRequest: OrgSourceEditorLineRevealRequest?
   let semanticAnalyzer: ((String) async -> OrgSourceEditorSemanticSnapshot?)?
   let diagnostics: Binding<[Org2EditorDiagnostic]>?
   let onCommandStatus: ((String) -> Void)?
@@ -2245,6 +2299,7 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
     caretPublishingDelayMilliseconds: Int = 0,
     semanticAnalysisDelayMilliseconds: Int = 180,
     commandRequest: OrgSourceEditorCommandRequest? = nil,
+    lineRevealRequest: OrgSourceEditorLineRevealRequest? = nil,
     semanticAnalyzer: ((String) async -> OrgSourceEditorSemanticSnapshot?)? = nil,
     diagnostics: Binding<[Org2EditorDiagnostic]>? = nil,
     onCommandStatus: ((String) -> Void)? = nil,
@@ -2291,6 +2346,7 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
     self.caretPublishingDelayMilliseconds = caretPublishingDelayMilliseconds
     self.semanticAnalysisDelayMilliseconds = semanticAnalysisDelayMilliseconds
     self.commandRequest = commandRequest
+    self.lineRevealRequest = lineRevealRequest
     self.semanticAnalyzer = semanticAnalyzer
     self.diagnostics = diagnostics
     self.onCommandStatus = onCommandStatus
@@ -2606,6 +2662,7 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
     }
     Coordinator.restoreVisibleOrigin(focusedVisibleOriginBeforeProgrammaticText, of: textView)
     context.coordinator.performRequestedCommandIfNeeded(commandRequest, in: textView)
+    context.coordinator.revealRequestedLineIfNeeded(lineRevealRequest, in: textView)
     context.coordinator.publishContentHeight(for: textView)
   }
 
@@ -2765,6 +2822,7 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
     private var diagnosticPresentationRanges: [NSRange] = []
     private var semanticPresentationRanges: [NSRange] = []
     private var lastCommandRequestID: Int?
+    private var lastLineRevealRequestID: Int?
     private var observedClipView: NSClipView?
     nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
     private weak var activeTextView: NSTextView?
@@ -3581,6 +3639,26 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
       guard let request, request.id != lastCommandRequestID else { return }
       lastCommandRequestID = request.id
       _ = performSourceEditorCommand(request.command, in: textView)
+    }
+
+    func revealRequestedLineIfNeeded(
+      _ request: OrgSourceEditorLineRevealRequest?,
+      in textView: OrgSyntaxTextView
+    ) {
+      guard let request, request.id != lastLineRevealRequestID else { return }
+      lastLineRevealRequestID = request.id
+      guard let text = textView.textStorage?.mutableString else { return }
+      let ranges = OrgSourceTextEditing.lineRevealRanges(in: text, line: request.line)
+      let caret = NSRange(location: ranges.line.location, length: 0)
+      textView.setSelectedRange(caret)
+      textView.scrollRangeToVisible(ranges.line)
+      publishSelectionIfNeeded(caret, from: textView)
+      guard request.highlights else { return }
+      OrgSourceTextEditing.flashLine(
+        ranges,
+        in: textView,
+        reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+      )
     }
 
     func performGutterAction(

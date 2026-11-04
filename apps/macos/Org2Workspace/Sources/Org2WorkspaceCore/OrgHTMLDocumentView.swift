@@ -877,6 +877,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     var searchOccurrenceIndex: Int?
     var scrollRequestID: Int?
     var scrollRequest: DetailScrollRequest?
+    private var highlightedLinkRequestID: Int?
     var restorationSourceLine: Int?
     var layout = OrgHTMLDocumentLayout(width: .comfortable, margin: .standard)
     var themeStylesheet = ""
@@ -1741,6 +1742,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       guard let request else { return }
       if case .sourceLine(let line) = request.target {
         applySourceLineScroll(line, to: webView)
+        highlightLinkTargetIfNeeded(request, in: webView)
         return
       }
       guard case .page(let direction) = request.target else { return }
@@ -1758,6 +1760,22 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       origin.y = min(max(0, origin.y + distance * directionMultiplier * flippedMultiplier), maxY)
       clipView.scroll(to: origin)
       scrollView.reflectScrolledClipView(clipView)
+    }
+
+    /// Flashes a link's cited line once, after the linked page has loaded.
+    private func highlightLinkTargetIfNeeded(_ request: DetailScrollRequest, in webView: WKWebView) {
+      guard request.id != highlightedLinkRequestID,
+            let line = OrgHTMLLinkTargetHighlight.line(
+              for: request,
+              loadedSourceFile: loadedSourceFile,
+              isPageReady: hasLoadedPage && !webView.isLoading
+            )
+      else { return }
+      highlightedLinkRequestID = request.id
+      webView.evaluateJavaScript(OrgHTMLLinkTargetHighlight.script(
+        line: line,
+        reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+      ))
     }
 
     private func applySourceLineScroll(_ line: Int, to webView: WKWebView) {

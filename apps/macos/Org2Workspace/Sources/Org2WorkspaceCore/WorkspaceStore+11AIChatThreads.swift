@@ -2547,10 +2547,12 @@ extension WorkspaceStore {
     usageLog.record(.linkOpenInNewTab)
     newWorkspaceTab()
     pendingNavigationSource = "link_new_tab"
-    openChatFileReference(reference)
+    openChatFileReference(reference, highlightsLine: true)
   }
 
-  public func openChatFileReference(_ reference: AIChatFileReference) {
+  /// Opens a file reference. `highlightsLine` is for an explicit link click:
+  /// the cited line briefly flashes once it is shown.
+  public func openChatFileReference(_ reference: AIChatFileReference, highlightsLine: Bool = false) {
     guard let file = localPathForOpenClawReference(reference.path) else {
       let message = "Could not resolve file link: \(reference.path)"
       aiChatStatusText = message
@@ -2570,7 +2572,13 @@ extension WorkspaceStore {
           mode: selectedEntrySourceMode
         )
       }
-      requestDetailScroll(toSourceLine: reference.line ?? 1)
+      requestDetailScroll(
+        toSourceLine: reference.line ?? 1,
+        highlightingIn: highlightsLine && reference.line != nil ? file : nil
+      )
+      if isEditingEntry, let line = reference.line {
+        requestSourceEditorLineReveal(line, highlights: highlightsLine)
+      }
       statusText = "Jumped to \(relativePath(file))"
       return
     }
@@ -2586,7 +2594,7 @@ extension WorkspaceStore {
     )
     activateDetailLocation(.aiChatThreadRecord(thread), mode: .page, surface: nil, recordsHistory: true)
     if let line = reference.line {
-      requestDetailScroll(toSourceLine: line)
+      requestDetailScroll(toSourceLine: line, highlightingIn: highlightsLine ? file : nil)
     }
     statusText = "Opened \(relativePath(file))"
   }

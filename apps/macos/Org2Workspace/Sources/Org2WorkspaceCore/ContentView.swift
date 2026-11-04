@@ -133,7 +133,7 @@ public struct ContentView: View {
         store.handleWorkspaceKeyDown(event, scope: scope)
       }
       .environment(\.openOrgFileReference) { reference in
-        store.openChatFileReference(reference)
+        store.openChatFileReference(reference, highlightsLine: true)
       }
       .environment(\.openOrgFileReferenceInNewTab) { reference in
         store.openChatFileReferenceInNewTab(reference)
@@ -1730,7 +1730,7 @@ private struct WorkspaceSurfaceCacheView: NSViewRepresentable {
           .environment(store)
           .environment(\.workspaceTabID, workspaceTabID)
           .environment(\.openOrgFileReference) { reference in
-            store.openChatFileReference(reference)
+            store.openChatFileReference(reference, highlightsLine: true)
           }
           .environment(\.openWorkspaceWebLink, store.openWorkspaceWebLinkAction)
           .workspaceThemed()

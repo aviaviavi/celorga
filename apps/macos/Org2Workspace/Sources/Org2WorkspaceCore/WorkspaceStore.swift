@@ -3301,6 +3301,7 @@ public final class WorkspaceStore {
   public internal(set) var currentDocumentViewportSourceLine: Int?
   public internal(set) var currentDocumentSlidePageIndex: Int?
   public var sourceEditorCommandRequest: OrgSourceEditorCommandRequest?
+  public var sourceEditorLineRevealRequest: OrgSourceEditorLineRevealRequest?
   public var sourceEditorDiagnostics: [Org2EditorDiagnostic] = []
   public var selectedBlockID: OrgEditableBlock.ID?
   public internal(set) var foldedRenderedBlockIDs: Set<OrgEditableBlock.ID> = []
