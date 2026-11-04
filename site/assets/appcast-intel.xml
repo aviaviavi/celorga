@@ -4,30 +4,26 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>OpenOrg</title>
         <item>
-            <title>0.10.0</title>
-            <pubDate>Tue, 27 Oct 2026 15:45:05 -0700</pubDate>
+            <title>0.10.1</title>
+            <pubDate>Wed, 04 Nov 2026 12:29:37 -0800</pubDate>
             <link>https://celorga.io/downloads.html</link>
-            <sparkle:version>0.10.0</sparkle:version>
-            <sparkle:shortVersionString>0.10.0</sparkle:shortVersionString>
+            <sparkle:version>0.10.1</sparkle:version>
+            <sparkle:shortVersionString>0.10.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <description sparkle:format="markdown"><![CDATA[## Highlights
 
-- **Secrets for agents**: secure credential requests on macOS, secret redaction in shared threads, and guest-message approvals.
-- **Review and approvals**: a scannable Review queue, keyboard navigation, Org-style snoozing, optional rejection reasons, and Request Changes handoffs.
-- **Editor and search**: optional Vim mode, AI revision alternatives, web link previews, reliable Save & Done, and faster ranked search.
-- **Agents and chat**: shared AI rooms, per-agent reasoning settings, configurable turn limits, warm OpenCode servers, DeepSeek and OpenAI destinations, reviewed file renames and trash, and persistent thread drafts.
-- **Automation**: TODO-state and pull-request triggers, overlapping scheduled runs, clearer stop reasons, workspace coordination, and opt-in attention notifications.
-- **Org tooling**: flexible capture datetrees, repeater cancellation, archive parent IDs, and priority linting.
-- **Calendar and meetings**: connected Google Calendar sync and stable navigation when transcription completes.
-- **iPhone**: Push to Talk and walkie-talkie approval fixes, voice selection, optional speaker routing, and notification fixes.
-- **macOS**: Dock and Cmd-Tab presence, plus fixes for navigation, bulk snooze, and launch stalls.
+- Faster workspace search, typing, and AI chat updates, with new search filters.
+- Optional People & Companies workspace and a Calendar surface.
+- Drag rendered headings and list items to reorder or nest them.
+- Improved cross-host chat visibility and non-image attachment delivery.
+- iOS now connects to its paired host without maintaining an on-device corpus.
+- The GitHub star prompt sends a one-time event through the existing Scarf telemetry endpoint and respects telemetry opt-outs.
 
-Includes reliability improvements for remote agents, chat synchronization, and test infrastructure.
 ]]></description>
-            <enclosure url="https://org2.gateway.scarf.sh/downloads/0.10.0/Celorga-Intel.dmg" length="246857014" type="application/octet-stream" sparkle:edSignature="VDntVMGxSCes/BEQaplS7kQnGbylBZ4oBgDV1vmkxHW7LlIOmJSTcmRUcYVVim8HJb7DQjxRfIx7KLXgyCzBBQ=="></enclosure>
+            <enclosure url="https://org2.gateway.scarf.sh/downloads/0.10.1/Celorga-Intel.dmg" length="248989687" type="application/octet-stream" sparkle:edSignature="X3SfsW0sFU1J72e5B5wcLucrMNFT7qiFFSKIAe7rf2CrjdxWw8Uw4VQJopN+cNN0p90XORDRhhSc8ldwJDNqBA=="></enclosure>
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: rdh7la2ZF+p5OnkF5nthI58IaZZ+PkSjNYffdMDt6iBunj6SS1wDOf827+AVRHRRLTEVtThbFto/X0FpU+wfBA==
-length: 2537
+edSignature: UlZGFUAaV9kf8JrhElLCALu14nWuvIVlKPg9k9Ikb43XoKp72QPrvjlNr1od5IJ60AGPYPg0UVvfV/eW/RyJAg==
+length: 1675
 -->
