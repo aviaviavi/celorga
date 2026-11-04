@@ -2549,9 +2549,28 @@ extension WorkspaceStore {
         automationOwnerHostRef = hostRef
       }
       let failures = payload.failures ?? []
+      // Opted-in TODOs whose SCHEDULED time passed start through the same
+      // tick; the runtime records each occurrence exactly once.
+      var todoStartFailures: [String] = []
+      var startedTodoCount = 0
+      for item in payload.scheduledTodoStarts?.due ?? [] {
+        automationSchedulerErrorText = nil
+        switch await dispatchScheduledTodoStart(item, now: now) {
+        case true?: startedTodoCount += 1
+        case false?: todoStartFailures.append("\(item.title): \(automationSchedulerErrorText ?? "Could not start")")
+        case nil: break
+        }
+      }
+      automationSchedulerErrorText = nil
       if payload.due.isEmpty {
-        automationSchedulerErrorText = failures.isEmpty ? nil : failures
-          .map { "\($0.title): \($0.failure)" }.joined(separator: "\n")
+        let messages = failures.map { "\($0.title): \($0.failure)" } + todoStartFailures
+        automationSchedulerErrorText = messages.isEmpty ? nil : messages.joined(separator: "\n")
+        if startedTodoCount > 0 || !todoStartFailures.isEmpty {
+          automationSchedulerStatusText = todoStartFailures.isEmpty
+            ? "Started \(startedTodoCount) scheduled TODO\(startedTodoCount == 1 ? "" : "s")"
+            : "\(todoStartFailures.count) scheduled TODO\(todoStartFailures.count == 1 ? "" : "s") could not start"
+          return
+        }
         automationSchedulerStatusText = payload.reason ?? (!failures.isEmpty
           ? "\(failures.count) automation\(failures.count == 1 ? "" : "s") last failed"
           : payload.skipped.isEmpty
@@ -2573,8 +2592,8 @@ extension WorkspaceStore {
         }
         automationSchedulerErrorText = nil
       }
-      automationSchedulerErrorText = failureMessages.isEmpty ? nil : failureMessages
-        .sorted { $0.key < $1.key }.map { $0.value }.joined(separator: "\n")
+      let allFailures = failureMessages.sorted { $0.key < $1.key }.map { $0.value } + todoStartFailures
+      automationSchedulerErrorText = allFailures.isEmpty ? nil : allFailures.joined(separator: "\n")
       automationSchedulerStatusText = dispatchedCount == payload.due.count
         ? "Dispatched \(dispatchedCount) automation\(dispatchedCount == 1 ? "" : "s")"
         : "Dispatched \(dispatchedCount) of \(payload.due.count) automations"

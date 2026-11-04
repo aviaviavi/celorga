@@ -7619,6 +7619,7 @@ async function main(): Promise<void> {
   let todoAssignee = "";
   let todoAgentRef = "";
   let todoGoalRef = "";
+  let todoAgentStart = "";
   let todoApply = false;
   let todoFormat: "text" | "json" | "diff" = "json";
   let todoNow = ""; // ISO string
@@ -8180,6 +8181,12 @@ async function main(): Promise<void> {
       i++;
       if (i < args.length) {
         if (command === "todo") todoGoalRef = args[i]!;
+        i++;
+      }
+    } else if (arg === "--start" && command === "todo") {
+      i++;
+      if (i < args.length) {
+        todoAgentStart = args[i]!;
         i++;
       }
     } else if (arg === "--exclude-status") {
@@ -9579,6 +9586,8 @@ Flags:
   --assignee NAME     Assignee for 'assign'
   --agent-ref ID      Portable agent profile ID for 'assign'
   --goal-ref ID       Portable goal ID for 'assign'
+  --start scheduled   For 'assign': set :AGENT_START: scheduled so the automation
+                      host starts a durable run at the heading's SCHEDULED time
   --now ISO           Override approval / closed timestamp
   --apply             Write changes instead of previewing`;
   } else if (command === "approvals") {
@@ -13723,6 +13732,7 @@ Flags:
           assignee: todoAssignee,
           ...(todoAgentRef ? { agentRef: todoAgentRef } : {}),
           ...(todoGoalRef ? { goalRef: todoGoalRef } : {}),
+          ...(todoAgentStart ? { agentStart: todoAgentStart } : {}),
         })
       : updateTodoInText(beforeRaw, {
           filePath: todoFile,
@@ -13768,6 +13778,7 @@ Flags:
                   newAssignee: "newAssignee" in res ? res.newAssignee : todoAssignee,
                   ...("newAgentRef" in res && res.newAgentRef ? { agentRef: res.newAgentRef } : {}),
                   ...("newGoalRef" in res && res.newGoalRef ? { goalRef: res.newGoalRef } : {}),
+                  ...("newAgentStart" in res && res.newAgentStart ? { agentStart: res.newAgentStart } : {}),
                 }
               : {
                   oldStatus: "oldStatus" in res ? res.oldStatus : undefined,

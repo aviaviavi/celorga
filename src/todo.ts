@@ -234,6 +234,8 @@ export type AssignTodoResult = {
   newAgentRef?: string;
   oldGoalRef?: string;
   newGoalRef?: string;
+  oldAgentStart?: string;
+  newAgentStart?: string;
   changed: boolean;
   text: string;
 };
@@ -244,6 +246,8 @@ export type AssignTodoOptions = {
   assignee: string;
   agentRef?: string;
   goalRef?: string;
+  /** `scheduled` opts the heading into starting at its SCHEDULED time (`:AGENT_START:`). */
+  agentStart?: string;
 };
 
 export function computeToggleStatus(current: TodoStatus): TodoStatus {
@@ -381,16 +385,21 @@ export function assignTodoInText(input: string, opts: AssignTodoOptions): Assign
   const oldAssignee = props ? getDrawerPropertyValue(lines, props, "ASSIGNEE") : undefined;
   const oldAgentRef = props ? getDrawerPropertyValue(lines, props, "AGENT_REF") : undefined;
   const oldGoalRef = props ? getDrawerPropertyValue(lines, props, "GOAL_REF") : undefined;
+  const oldAgentStart = props ? getDrawerPropertyValue(lines, props, "AGENT_START") : undefined;
   const agentRef = opts.agentRef?.trim() || undefined;
   const goalRef = opts.goalRef?.trim() || undefined;
+  const agentStart = opts.agentStart?.trim().toLowerCase() || undefined;
+  if (agentStart && agentStart !== "scheduled") throw new Error("--start supports only 'scheduled'");
   const changed = oldAssignee !== assignee
     || (opts.agentRef !== undefined && oldAgentRef !== agentRef)
-    || (opts.goalRef !== undefined && oldGoalRef !== goalRef);
+    || (opts.goalRef !== undefined && oldGoalRef !== goalRef)
+    || (agentStart !== undefined && oldAgentStart !== agentStart);
   if (oldAssignee !== assignee) {
     upsertHeadlinePropertyInLines(lines, headingIndex, "ASSIGNEE", assignee);
   }
   if (agentRef && oldAgentRef !== agentRef) upsertHeadlinePropertyInLines(lines, headingIndex, "AGENT_REF", agentRef);
   if (goalRef && oldGoalRef !== goalRef) upsertHeadlinePropertyInLines(lines, headingIndex, "GOAL_REF", goalRef);
+  if (agentStart && oldAgentStart !== agentStart) upsertHeadlinePropertyInLines(lines, headingIndex, "AGENT_START", agentStart);
 
   return {
     filePath: opts.filePath,
@@ -402,6 +411,8 @@ export function assignTodoInText(input: string, opts: AssignTodoOptions): Assign
     ...(agentRef ? { newAgentRef: agentRef } : {}),
     ...(oldGoalRef ? { oldGoalRef } : {}),
     ...(goalRef ? { newGoalRef: goalRef } : {}),
+    ...(oldAgentStart ? { oldAgentStart } : {}),
+    ...(agentStart ? { newAgentStart: agentStart } : {}),
     changed,
     text: lines.join("\n"),
   };

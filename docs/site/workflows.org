@@ -104,6 +104,39 @@ Automation threads use the workflow's exact =model= and =reasoningEffort= when p
 
 This first version requires Celorga to be running. A small background helper or provider-native scheduler can be added later without changing the workflow file or splitting its run history.
 
+* Scheduled TODO starts
+
+An assigned TODO can start at the time Org already records for it. Celorga never decides to start work on its own, so a heading opts in explicitly:
+
+#+begin_src org
+,* TODO Draft the launch checklist
+SCHEDULED: <2026-11-05 Thu 09:00>
+:PROPERTIES:
+:ID: 0d6c1e1a-1111-4a1a-8a1a-000000000001
+:AGENT_REF: research-assistant
+:AGENT_START: scheduled
+:END:
+#+end_src
+
+=celorga todo assign --file FILE --line N --assignee NAME --agent-ref ID --start scheduled --apply= writes =:AGENT_START: scheduled= beside the assignment. A heading starts when all of these hold:
+
+- it is a TODO that is not done or canceled,
+- it has =:AGENT_START: scheduled= and an =:AGENT_REF:=,
+- its =SCHEDULED:= timestamp has a time of day, and that time has passed (in the host's local time zone), and
+- it has an =:ID:=.
+
+A heading that opts in but lacks an ID, an AGENT_REF, or a time of day is not started; =workflow due= reports it under =scheduledTodoStarts.notStartable= with the reason instead of guessing.
+
+Each occurrence starts at most once. Its idempotency key is =scheduled-start:ID:OCCURRENCE=, and the run ID is derived from that key, so a second start of the same occurrence, from the same or another host, is refused when the run file already exists. For a repeating timestamp such as =<2026-11-01 Sun 07:30 +1d>=, Celorga starts only the latest occurrence at or before now, matching how schedules catch up only the latest missed occurrence. Nothing starts while the heading's =:ORG2_RUN_ID:= run, or an earlier scheduled start for the same ID, is still queued, running, waiting for approval, or blocked.
+
+#+begin_src sh
+celorga workflow due --dir ~/notes --json              # scheduledTodoStarts.due / skipped / notStartable
+celorga workflow start-todo --id ID --dir ~/notes      # preview
+celorga workflow start-todo --id ID --dir ~/notes --apply
+#+end_src
+
+=workflow start-todo --apply= does what Start work does: it creates and starts a durable run that cites the heading, adds =:ORG2_RUN_ID:= to the heading, and moves a =TODO= or =NEXT= keyword to in progress. Its JSON includes the Start work prompt. The Mac app or headless server that owns automations (=automationHostRef=) runs it on every scheduler check and sends the task to the heading's AI chat thread on the default run destination (*Settings → AI Chat → Agent Work → Run new agent work with*). Without an enabled destination, it reports the problem and starts nothing.
+
 * Event-triggered workflows
 
 An automation can also start when something happens in the corpus or on GitHub. Celorga is the workspace agents work in, not an agent: triggers are deterministic detectors that record signals, and a model never decides whether an attempt starts.

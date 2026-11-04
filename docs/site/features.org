@@ -62,6 +62,7 @@
         <li><strong>Multi-agent rooms</strong>Mention several agents in one thread</li>
         <li><strong>Handoffs</strong>Agents start each other's turns, with a loop limit</li>
         <li><strong>Start work</strong>Turn any TODO into a durable agent run</li>
+        <li><strong>Scheduled starts</strong>An assigned TODO starts at its <code>SCHEDULED</code> time when it opts in with <code>:AGENT_START: scheduled</code></li>
         <li><strong>Live status</strong>Working, Your turn, Needs you, Done</li>
         <li><strong>Automations</strong>Scheduled prompts that catch up after sleep</li>
         <li><strong>Goal drives</strong>Keep agents working a goal's plan within a daily budget, pausing when they stall or need you</li>

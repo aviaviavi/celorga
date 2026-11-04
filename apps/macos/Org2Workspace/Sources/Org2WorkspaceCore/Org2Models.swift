@@ -555,6 +555,42 @@ public struct AgentWorkflowDueListPayload: Decodable, Sendable {
   public let failures: [AgentWorkflowFailureItem]?
   public let hostRef: String?
   public let eventSources: AgentWorkflowEventSources?
+  /// Opted-in TODOs (`:AGENT_START: scheduled`) whose SCHEDULED time passed.
+  public let scheduledTodoStarts: ScheduledTodoStartList?
+}
+
+public struct ScheduledTodoStartList: Decodable, Sendable {
+  public let due: [ScheduledTodoStartItem]
+  public let notStartable: [ScheduledTodoNotStartableItem]?
+}
+
+public struct ScheduledTodoStartItem: Decodable, Hashable, Sendable, Identifiable {
+  /// The heading's `:ID:`.
+  public let id: String
+  public let title: String
+  /// Corpus-relative path of the file that holds the heading.
+  public let file: String
+  public let line: Int
+  public let agentRef: String?
+  public let scheduledFor: String
+  public let runId: String
+}
+
+public struct ScheduledTodoNotStartableItem: Decodable, Hashable, Sendable {
+  public let file: String
+  public let line: Int
+  public let title: String
+  public let reason: String
+}
+
+/// `celorga workflow start-todo --apply --json`.
+struct ScheduledTodoStartPayload: Decodable, Sendable {
+  struct Run: Decodable, Sendable { let id: String }
+  struct Heading: Decodable, Sendable { let line: Int?; let error: String? }
+  let status: String
+  let reason: String?
+  let run: Run?
+  let heading: Heading?
 }
 
 public struct AgentWorkflowFailureItem: Decodable, Sendable {

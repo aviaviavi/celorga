@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { automationHostRef, acquireWorkflowDispatchLock } from "./automationHost.js";
+import { listScheduledTodoStarts, SCHEDULED_TODO_START_KIND, SCHEDULED_TODO_START_SCHEMA, startScheduledTodo } from "./scheduledTodoStart.js";
 import {
   AGENT_RUN_APPROVAL_DECISIONS,
   AGENT_RUN_ARTIFACT_REVIEW_STATUSES,
@@ -313,10 +314,14 @@ const HELP = `Agentic workspace commands:
   celorga run approval-resolve --decision-key PROVIDER_KEY [--json]
   celorga run approval-reconcile [--apply] [--json]
   celorga review list [--status pending] | celorga review show RUN
-  celorga workflow list|show|validate|create|save|run|due|observe|poll|triggers|trigger-set|trigger-remove|signal|gate|activate|pause|draft|schedule|delete|migrate|package|corpus-template|install-builtin
+  celorga workflow list|show|validate|create|save|run|due|start-todo|observe|poll|triggers|trigger-set|trigger-remove|signal|gate|activate|pause|draft|schedule|delete|migrate|package|corpus-template|install-builtin
   celorga workflow create ID --title TEXT --prompt TEXT --destination-ref ID [--model ID] [--reasoning-effort LEVEL] [--agent-ref ID] [--schedule EXPR --timezone IANA]
   celorga workflow due [--host-ref HOST] [--now ISO_TIMESTAMP] [--dir CORPUS] [--json]
-    Lists due schedule occurrences and todo-state/pull-request triggers whose recorded signals are ready (after any coalesce window).
+    Lists due schedule occurrences and todo-state/pull-request triggers whose recorded signals are ready (after any coalesce window),
+    plus scheduledTodoStarts: opted-in TODOs (:AGENT_START: scheduled) whose SCHEDULED time has passed.
+  celorga workflow start-todo --id HEADING_ID [--scheduled-for ISO] [--host-ref HOST] [--now ISO] [--actor NAME] [--apply] [--dir CORPUS] [--json]
+    Starts one durable run for the due occurrence (idempotency key scheduled-start:ID:OCCURRENCE), links it with :ORG2_RUN_ID:,
+    and moves a TODO to IN_PROGRESS. Preview by default. A second start of the same occurrence is skipped.
   celorga workflow trigger-set ID --trigger TRIGGER_ID --type todo-state --state KEYWORD [--state ...] [--tag TAG] [--path GLOB] [--property NAME[=VALUE]] [--coalesce 5m] [--disable]
   celorga workflow trigger-set ID --trigger TRIGGER_ID --type pull-request --repo OWNER/NAME [--pr-event opened|commit|review|comment|merged|closed ...] [--number N] [--author LOGIN] [--coalesce 5m] [--disable]
   celorga workflow trigger-remove ID --trigger TRIGGER_ID
@@ -1866,7 +1871,45 @@ function workflowCommand(parsed: ParsedArgs): void {
         }
       }
     }
-    output(parsed, { schema: "org2:automation-due-list:v1", now, due, skipped, pending, eventSources, failures, hostRef: owner }, due.length ? due.map((item) => `${item.workflowId}\t${item.scheduledFor}${item.triggerType ? `\t${item.triggerType}` : ""}`).join("\n") : "No automations due.");
+    // Opted-in TODOs (`:AGENT_START: scheduled`) whose SCHEDULED time passed.
+    // They are listed apart from workflow items because they carry no
+    // workflow ID; drivers start them with `workflow start-todo`.
+    const scheduledTodoStarts = listScheduledTodoStarts(corpus, { now, runs });
+    const lines = [
+      ...due.map((item) => `${item.workflowId}\t${item.scheduledFor}${item.triggerType ? `\t${item.triggerType}` : ""}`),
+      ...scheduledTodoStarts.due.map((item) => `todo:${item.id}\t${item.scheduledFor}\t${SCHEDULED_TODO_START_KIND}\t${item.title}`),
+      ...scheduledTodoStarts.notStartable.map((item) => `not startable\t${item.file}:${item.line}\t${item.title}\t${item.reason}`),
+    ];
+    output(parsed, { schema: "org2:automation-due-list:v1", now, due, skipped, pending, eventSources, failures, scheduledTodoStarts, hostRef: owner }, lines.length ? lines.join("\n") : "No automations due.");
+    return;
+  }
+  if (action === "start-todo") {
+    const owner = automationHostRef(corpus);
+    const requestingHost = flag(parsed, "host-ref") || "desktop";
+    if (owner !== requestingHost) {
+      output(parsed, { schema: SCHEDULED_TODO_START_SCHEMA, status: "not-owner", applied: false, hostRef: owner, reason: `Automations are owned by ${owner}` }, `Automations are owned by ${owner}.`);
+      return;
+    }
+    const id = required(flag(parsed, "id") || parsed.positional[1], "--id is required");
+    const apply = enabled(parsed, "apply");
+    let release: (() => void) | undefined;
+    if (apply) {
+      try {
+        release = acquireWorkflowDispatchLock(corpus, `scheduled-todo-${crypto.createHash("sha256").update(id.toLowerCase()).digest("hex").slice(0, 24)}`);
+      } catch {
+        output(parsed, { schema: SCHEDULED_TODO_START_SCHEMA, status: "skipped", applied: false, reason: "Another scheduled start for this TODO is in progress." }, `skipped ${id}: another start is in progress`);
+        return;
+      }
+    }
+    try {
+      const result = startScheduledTodo(corpus, { id, scheduledFor: flag(parsed, "scheduled-for"), now: flag(parsed, "now"), apply, actor: flag(parsed, "actor") });
+      output(parsed, result, [
+        `${result.status}${result.run ? `\t${result.run.id}` : ""}${result.item ? `\t${result.item.title}` : ""}`,
+        ...(result.reason ? [result.reason] : []),
+        ...(result.heading?.error ? [`Heading not updated: ${result.heading.error}`] : []),
+        ...(result.status === "preview" ? ["Run again with --apply to start the run."] : []),
+      ].join("\n"));
+    } finally { release?.(); }
     return;
   }
   if (action === "observe" || action === "poll") {

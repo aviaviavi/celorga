@@ -3170,6 +3170,104 @@ extension WorkspaceStore {
     await refreshAgentRuns()
   }
 
+  /// Starts a TODO that opted in with `:AGENT_START: scheduled` once its
+  /// SCHEDULED time has passed. The shared runtime (`workflow start-todo`)
+  /// creates the durable run exactly once per occurrence, links it to the
+  /// heading, and marks the TODO in progress; this sends the Start work task
+  /// to the heading's chat on the default run destination without changing
+  /// what the user is looking at. Returns true when it started the run, nil
+  /// when there was nothing to do, and false on a failure, with the reason in
+  /// `automationSchedulerErrorText`.
+  func dispatchScheduledTodoStart(_ item: ScheduledTodoStartItem, now: Date = Date()) async -> Bool? {
+    guard let corpusRoot else { return false }
+    // Check the destination first so no run starts that nothing will work on.
+    guard let destination = defaultRunDestination else {
+      automationSchedulerErrorText = "Turn on an AI destination in Settings › AI Chat to start scheduled TODOs."
+      return false
+    }
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    let result: ScheduledTodoStartPayload
+    do {
+      // The same clock as the `workflow due` check that listed the item.
+      result = try await cli.runJSON([
+        "workflow", "start-todo",
+        "--id", item.id,
+        "--scheduled-for", item.scheduledFor,
+        "--now", formatter.string(from: now),
+        "--host-ref", automationHostRef,
+        "--actor", "Celorga Automation Scheduler",
+        "--apply",
+        "--dir", corpusRoot.path,
+        "--json",
+      ])
+    } catch {
+      automationSchedulerErrorText = error.localizedDescription
+      return false
+    }
+    guard result.status == "started", let runID = result.run?.id else {
+      // Another host or an earlier check already started this occurrence.
+      if result.status == "skipped" || result.status == "not-owner" { return nil }
+      automationSchedulerErrorText = result.reason ?? "Could not start the scheduled TODO"
+      return false
+    }
+
+    let file = corpusRoot.appendingPathComponent(item.file).standardizedFileURL.path
+    let line = result.heading?.line ?? item.line
+    let resource = AIChatResourceReference(
+      key: "id:\(item.id)",
+      kind: .heading,
+      title: item.title,
+      file: file,
+      line: line,
+      idValue: item.id
+    )
+    let thread: AIChatThread
+    if let existing = aiChatThreads.first(where: { $0.resource?.key == resource.key }) {
+      if existing.isSettled { reopenAIChatThread(existing.id) }
+      thread = existing
+    } else {
+      thread = createAIChatThread(
+        title: "Work: \(item.title)",
+        statusText: "",
+        resource: resource,
+        runtime: destination.runtime,
+        destinationID: destination.id,
+        defersPersistence: true,
+        selectsThread: false
+      )
+    }
+    let pointer = aiChatContextPointer(for: WorkspaceLocation.aiChatThreadRecord(AIChatThreadRecord(
+      title: item.title,
+      file: file,
+      line: line,
+      zone: "entry",
+      modifiedAt: nil,
+      idValue: item.id
+    )))
+    let prompt = injectedAIChatContext(pointer) + HeadingWorkStatus.startWorkPrompt(
+      title: item.title,
+      reference: pointer.reference,
+      runID: runID,
+      keepsCLIInstructions: !destination.adapter.isDirectProvider
+    )
+    _ = try? await cli.run([
+      "run", "comment", runID,
+      "--author", "Celorga",
+      "--body", "AI destination: \(destination.id)\nAI chat thread: \(thread.id.uuidString.lowercased())",
+      "--dir", corpusRoot.path,
+      "--json",
+    ])
+    let sent = sendAIChatRemoteMessage(prompt, threadID: thread.id)
+    usageLog.record(.startWork, ["origin": .string("scheduled"), "resumed": false, "sent": .bool(sent), "had_id": true])
+    await refreshAgentRuns()
+    if !sent {
+      automationSchedulerErrorText = "Started run \(runID) for \(item.title), but the task could not be sent to \(destination.title)."
+      return false
+    }
+    return true
+  }
+
   /// Applies Start Work dialog choices to the chat that will receive the
   /// task. A running chat keeps its model; changing it mid-turn is unsafe.
   private func applyStartWorkSettings(
