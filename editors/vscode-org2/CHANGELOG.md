@@ -4,6 +4,17 @@ All notable changes to the Celorga VS Code extension (formerly Org2) are documen
 
 ## Unreleased
 
+## 0.10.1 - 2026-11-04
+
+## Highlights
+
+- Faster workspace search, typing, and AI chat updates, with new search filters.
+- Optional People & Companies workspace and a Calendar surface.
+- Drag rendered headings and list items to reorder or nest them.
+- Improved cross-host chat visibility and non-image attachment delivery.
+- iOS now connects to its paired host without maintaining an on-device corpus.
+- The GitHub star prompt sends a one-time event through the existing Scarf telemetry endpoint and respects telemetry opt-outs.
+
 ## 0.10.0 - 2026-10-27
 
 ## Highlights
