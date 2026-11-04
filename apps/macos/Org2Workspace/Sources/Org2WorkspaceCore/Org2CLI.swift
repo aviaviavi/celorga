@@ -93,6 +93,7 @@ public struct Org2CLI: Sendable {
     "brief.node", "compile.corpus", "corpus.show", "corpus.validate", "corpus.init",
     "data.refresh", "entity.show", "eval.run", "eval.fixture", "export.html",
     "export.beamer", "goal.list", "goal.show", "goal.create", "goal.update",
+    "goal.drive", "goal.status", "goal.checkpoint",
     "graph.audit", "id.get", "id.ensure", "ledger.list", "ledger.show", "ledger.create",
     "ledger.update", "ledger.event", "mcp.serve", "mcp.clients", "mcp.client-add",
     "mcp.discover", "mcp.snapshot", "review.list", "review.show", "run.create", "skill.install",

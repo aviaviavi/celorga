@@ -77,7 +77,7 @@ celorga goal drive customer-trust --pause|--resume|--stop --dir ~/notes --apply
 
 Structured goal saves keep a file-level property drawer and every goal section that Celorga does not generate, such as =Plan= or working notes. Celorga regenerates only =Measures=, =Drive=, and =Machine state=.
 
-The Mac app exposes the same records under *Agent Work → Goals* and *Agent Work → Agents*. Selecting a row opens its canonical plain-text record in the detail pane. Owner, primary-goal, manager, linked-run, and default-runtime controls use the shared CLI rather than app-private profile state.
+The Mac app exposes the same records under *Agent Work → Goals* and *Agent Work → Agents*. Selecting a row opens its canonical plain-text record in the detail pane. Owner, primary-goal, manager, linked-run, and default-runtime controls use the shared CLI rather than app-private profile state. Select an active goal and choose *Drive Goal* to start a drive. The sheet sets the pass cadence, stall limit, daily budget, agent, harness, and standing permissions. Driven goal rows show what the next pass will do, the plan items waiting on you, and the last 24 hours of spend. Pause, Resume, Drive Settings, and Stop Driving run the same =celorga goal drive= commands.
 
 * Agent retrieval
 

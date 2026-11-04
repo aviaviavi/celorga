@@ -2394,6 +2394,21 @@ private struct GoalsView: View {
         surface: .approvals
       ) {
         if store.isLoadingAgentGoals { WorkspaceActivityIndicator(size: .small) }
+        if let goal = selectedGoal {
+          if goal.drive == nil {
+            Button {
+              store.presentGoalDrive(goal)
+            } label: {
+              Label("Drive Goal", systemImage: "bolt.horizontal.circle")
+            }
+            .disabled(!goal.canStartDrive || store.mutatingAgentGoalIDs.contains(goal.id))
+            .help(goal.canStartDrive
+              ? "Keep an agent working this goal's plan until it is achieved"
+              : "Only an active goal can be driven")
+          } else {
+            GoalDriveControls(goal: goal)
+          }
+        }
         Button {
           Task { await store.refreshAgentGoals(updatesStatus: true) }
         } label: {
@@ -2430,6 +2445,25 @@ private struct GoalsView: View {
                 }
                 Button("Show Linked Runs") { store.showAgentRuns(goalRef: goal.id) }
                 Divider()
+                if goal.drive == nil {
+                  Button("Drive Goal…") { store.presentGoalDrive(goal) }
+                    .disabled(!goal.canStartDrive)
+                } else {
+                  Button("Drive Settings…") { store.presentGoalDrive(goal) }
+                  if goal.drive?.isDriving == true {
+                    Button(AgentGoalDriveControl.pause.title) {
+                      Task { await store.controlAgentGoalDrive(goal, .pause) }
+                    }
+                  } else {
+                    Button(AgentGoalDriveControl.resume.title) {
+                      Task { await store.controlAgentGoalDrive(goal, .resume) }
+                    }
+                  }
+                  Button(AgentGoalDriveControl.stop.title) {
+                    Task { await store.controlAgentGoalDrive(goal, .stop) }
+                  }
+                }
+                Divider()
                 ForEach(["planned", "active", "achieved", "canceled"], id: \.self) { status in
                   if goal.status != status {
                     Button("Mark \(AgentRunItem.humanizedLabel(status))") {
@@ -2462,6 +2496,10 @@ private struct GoalsView: View {
         store.selectAgentGoal(goal)
       }
     }
+  }
+
+  private var selectedGoal: AgentGoalItem? {
+    store.selectedAgentGoalID.flatMap { id in store.agentGoals.first(where: { $0.id == id }) }
   }
 
   private func selectGoal(_ goal: AgentGoalItem) {
@@ -2519,8 +2557,107 @@ private struct AgentGoalRow: View {
       .font(.caption2.weight(.medium))
       .foregroundStyle(.tertiary)
       .lineLimit(1)
+      if let drive = goal.drive {
+        GoalDriveSummary(drive: drive, status: store.agentGoalDriveStatuses[goal.id])
+      }
     }
     .padding(.vertical, WorkspaceDesign.rowVerticalPadding)
+  }
+}
+
+/// Pause, resume, settings, and stop for a driven goal.
+private struct GoalDriveControls: View {
+  @Environment(WorkspaceStore.self) private var store
+  let goal: AgentGoalItem
+
+  var body: some View {
+    let busy = store.mutatingAgentGoalIDs.contains(goal.id)
+    if goal.drive?.isDriving == true {
+      Button {
+        Task { await store.controlAgentGoalDrive(goal, .pause) }
+      } label: {
+        Label(AgentGoalDriveControl.pause.title, systemImage: "pause.circle")
+      }
+      .disabled(busy)
+    } else {
+      Button {
+        Task { await store.controlAgentGoalDrive(goal, .resume) }
+      } label: {
+        Label(AgentGoalDriveControl.resume.title, systemImage: "play.circle")
+      }
+      .disabled(busy)
+      .help(goal.drive?.isStalled == true ? "Review the plan, then resume the drive" : "Resume the drive")
+    }
+    Menu {
+      Button("Drive Settings…") { store.presentGoalDrive(goal) }
+      Divider()
+      Button(AgentGoalDriveControl.stop.title, role: .destructive) {
+        Task { await store.controlAgentGoalDrive(goal, .stop) }
+      }
+    } label: {
+      Label("Drive", systemImage: "bolt.horizontal.circle")
+    }
+    .disabled(busy)
+    .fixedSize()
+    .help("Drive settings or stop driving")
+  }
+}
+
+/// The drive's state on a goal row: what the next pass will do and what needs you.
+private struct GoalDriveSummary: View {
+  let drive: AgentGoalDrive
+  let status: AgentGoalDriveStatus?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 3) {
+      HStack(spacing: 6) {
+        Image(systemName: icon)
+          .foregroundStyle(tint)
+        Text(label)
+          .fontWeight(.semibold)
+          .foregroundStyle(tint)
+        if let status {
+          Text(status.reason)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .help(status.reason)
+        }
+      }
+      if let status {
+        ForEach(status.needsYou.prefix(3)) { item in
+          Label("Needs you: \(item.title)", systemImage: "person.crop.circle.badge.exclamationmark")
+            .foregroundStyle(.orange)
+            .lineLimit(1)
+        }
+        Text(spendText(status.spend))
+          .foregroundStyle(.tertiary)
+      }
+    }
+    .font(.caption)
+  }
+
+  private var label: String {
+    if drive.isPaused { return "Drive paused" }
+    if drive.isStalled { return "Drive stalled" }
+    return status?.modeLabel ?? "Driving"
+  }
+
+  private var icon: String {
+    if drive.isPaused { return "pause.circle.fill" }
+    if drive.isStalled || status?.needsAttention == true { return "exclamationmark.circle.fill" }
+    return "bolt.horizontal.circle.fill"
+  }
+
+  private var tint: Color {
+    if drive.isPaused { return .secondary }
+    if drive.isStalled || status?.needsAttention == true { return .orange }
+    return .accentColor
+  }
+
+  private func spendText(_ spend: AgentGoalDriveStatus.Spend) -> String {
+    let budget = drive.dailyCostLimitUsd.map { String(format: " of $%g", $0) } ?? ""
+    let cost = String(format: "$%.2f", spend.costUsd)
+    return "Last 24h: \(spend.passes) pass\(spend.passes == 1 ? "" : "es"), \(cost)\(budget) · \(drive.passesWithoutProgress)/\(drive.stallAfter) without progress"
   }
 }
 

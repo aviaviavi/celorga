@@ -1104,6 +1104,7 @@ extension WorkspaceStore {
             isCurrentRunReviewPageRefresh(refreshContext)
       else { return }
       agentGoals = payload.goals
+      await refreshAgentGoalDriveStatuses(corpusRoot: corpusRoot)
       if let selectedAgentGoalID,
          !payload.goals.contains(where: { $0.id == selectedAgentGoalID }) {
         self.selectedAgentGoalID = nil
@@ -1223,6 +1224,80 @@ extension WorkspaceStore {
     } catch {
       errorText = error.localizedDescription
       statusText = "Goal update failed"
+    }
+  }
+
+  /// Reads `goal status` for every driven goal. A failure for one goal drops only its status.
+  func refreshAgentGoalDriveStatuses(corpusRoot: URL) async {
+    var statuses: [AgentGoalItem.ID: AgentGoalDriveStatus] = [:]
+    for goal in agentGoals where goal.drive != nil {
+      if let status: AgentGoalDriveStatus = try? await cli.runJSON([
+        "goal", "status", goal.id, "--dir", corpusRoot.path, "--json"
+      ]) {
+        statuses[goal.id] = status
+      }
+    }
+    guard !Task.isCancelled else { return }
+    agentGoalDriveStatuses = statuses
+  }
+
+  /// Opens the Drive sheet for a goal.
+  public func presentGoalDrive(_ goal: AgentGoalItem) {
+    pendingGoalDriveGoal = goal
+  }
+
+  /// Starts or reconfigures a goal drive with `celorga goal drive --apply`.
+  @discardableResult
+  public func startAgentGoalDrive(_ goal: AgentGoalItem, options: AgentGoalDriveOptions) async -> Bool {
+    guard let corpusRoot, !mutatingAgentGoalIDs.contains(goal.id) else { return false }
+    mutatingAgentGoalIDs.insert(goal.id)
+    defer { mutatingAgentGoalIDs.remove(goal.id) }
+    errorText = nil
+    do {
+      _ = try await cli.run(
+        ["goal", "drive", goal.id] + options.arguments + ["--apply", "--dir", corpusRoot.path, "--json"]
+      )
+      await refreshAgentGoals()
+      await refreshAgentWorkflows()
+      if let refreshed = agentGoals.first(where: { $0.id == goal.id }) {
+        selectAgentGoal(refreshed)
+      }
+      statusText = goal.drive == nil ? "Driving \(goal.title)" : "Updated the drive for \(goal.title)"
+      await checkDueAgentAutomations()
+      return true
+    } catch {
+      errorText = error.localizedDescription
+      statusText = "Goal drive failed"
+      return false
+    }
+  }
+
+  /// Pauses, resumes, or stops a goal drive.
+  public func controlAgentGoalDrive(_ goal: AgentGoalItem, _ control: AgentGoalDriveControl) async {
+    guard let corpusRoot, goal.drive != nil, !mutatingAgentGoalIDs.contains(goal.id) else { return }
+    mutatingAgentGoalIDs.insert(goal.id)
+    defer { mutatingAgentGoalIDs.remove(goal.id) }
+    errorText = nil
+    do {
+      _ = try await cli.run([
+        "goal", "drive", goal.id, "--\(control.rawValue)",
+        "--apply", "--dir", corpusRoot.path, "--json"
+      ])
+      await refreshAgentGoals()
+      await refreshAgentWorkflows()
+      if let refreshed = agentGoals.first(where: { $0.id == goal.id }) {
+        selectAgentGoal(refreshed)
+      }
+      switch control {
+      case .pause: statusText = "Paused the drive for \(goal.title)"
+      case .resume:
+        statusText = "Resumed the drive for \(goal.title)"
+        await checkDueAgentAutomations()
+      case .stop: statusText = "Stopped driving \(goal.title)"
+      }
+    } catch {
+      errorText = error.localizedDescription
+      statusText = "Goal drive update failed"
     }
   }
 

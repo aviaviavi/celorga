@@ -270,7 +270,7 @@ const HELP = `Agentic workspace commands:
   celorga goal list|show|create|update [--dir CORPUS] [--apply]
   celorga goal create ID --title TEXT [--description TEXT] [--status planned|active|achieved|canceled] [--parent-goal-ref ID] [--owner-agent-ref ID] [--measure TEXT]
   celorga goal drive ID [--every 15m|--schedule CRON] [--timezone TZ] [--stall-after N] [--daily-cost-limit USD] [--daily-token-limit N]
-                        [--permit TEXT ...] [--destination-ref ID] [--agent-ref ID] [--model ID] [--reasoning-effort LEVEL] [--thread THREAD_ID] [--apply]
+                        [--permit TEXT ... | --clear-permits] [--destination-ref ID] [--agent-ref ID] [--model ID] [--reasoning-effort LEVEL] [--thread THREAD_ID] [--apply]
   celorga goal drive ID --pause|--resume|--stop [--apply]
     Keeps one driver pass at a time working the goal's Plan section (child TODOs with :ACTOR: agent|human|external).
     Celorga skips a pass while the drive is paused or stalled, over its rolling 24-hour budget, or waiting on a person.
@@ -1332,7 +1332,10 @@ function goalDriveCommand(parsed: ParsedArgs, corpus: string, id: string): void 
     stallAfter: positiveNumberFlag(parsed, "stall-after", true),
     dailyCostLimitUsd: positiveNumberFlag(parsed, "daily-cost-limit", false),
     dailyTokenLimit: positiveNumberFlag(parsed, "daily-token-limit", true),
-    permissions: parsed.flags.has("permit") ? flags(parsed, "permit").map((item) => item.trim()).filter(Boolean) : undefined,
+    // --permit replaces the standing permissions; --clear-permits alone removes them all.
+    permissions: parsed.flags.has("permit") || enabled(parsed, "clear-permits")
+      ? (parsed.flags.has("permit") ? flags(parsed, "permit") : []).map((item) => item.trim()).filter((item) => item && item !== "true")
+      : undefined,
     workflowId: flag(parsed, "workflow-id"),
   });
   const drive = goal.drive!;

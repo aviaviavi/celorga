@@ -157,6 +157,10 @@ public struct ContentView: View {
         StartWorkOptionsView(request: request)
           .environment(store)
       }
+      .sheet(item: $store.pendingGoalDriveGoal) { goal in
+        GoalDriveSheet(goal: goal)
+          .environment(store)
+      }
       .sheet(item: $store.activePluginReview) { review in
         PluginProposalReviewSheet(review: review)
           .environment(store)

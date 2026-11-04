@@ -148,6 +148,10 @@ try {
   assert.equal(skippedRun.eligible, false);
   assert.equal(skippedRun.goalDriveMode, "stalled");
 
+  // --clear-permits removes standing permissions; --permit replaces them.
+  assert.deepEqual(json("goal", "drive", goal.id, "--clear-permits").goal.drive.permissions, []);
+  assert.deepEqual(json("goal", "drive", goal.id, "--permit", "Edit drafts in drafts/", "--permit", "Open pull requests").goal.drive.permissions, ["Edit drafts in drafts/", "Open pull requests"]);
+
   // Resume clears the stall. The daily budget ($0.6 spent of $1) still admits a pass.
   celorga("goal", "drive", goal.id, "--resume", "--apply");
   status = json("goal", "status", goal.id, "--now", "2030-01-02T02:00:00.000Z");

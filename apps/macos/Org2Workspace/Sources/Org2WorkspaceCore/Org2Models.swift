@@ -292,9 +292,147 @@ public struct AgentGoalItem: Identifiable, Decodable, Hashable, Sendable {
   public let parentGoalRef: String?
   public let ownerAgentRef: String?
   public let measures: [String]
+  /// Present while the goal is driven (`celorga goal drive`).
+  public let drive: AgentGoalDrive?
   public let file: String
   public let createdAt: String
   public let updatedAt: String
+
+  /// A drive can start only on an active goal that is not already driven.
+  public var canStartDrive: Bool { status == "active" && drive == nil }
+}
+
+/// The goal's drive configuration, decoded from the goal record.
+public struct AgentGoalDrive: Decodable, Hashable, Sendable {
+  public let state: String
+  public let workflowRef: String
+  public let stallAfter: Int
+  public let dailyCostLimitUsd: Double?
+  public let dailyTokenLimit: Int?
+  public let permissions: [String]
+  public let passesWithoutProgress: Int
+  public let lastCheckpointAt: String?
+  public let stalledReason: String?
+
+  public var isDriving: Bool { state == "driving" }
+  public var isPaused: Bool { state == "paused" }
+  public var isStalled: Bool { state == "stalled" }
+}
+
+/// `celorga goal status --json`: what the next driver pass will do and why.
+public struct AgentGoalDriveStatus: Decodable, Hashable, Sendable {
+  public struct PlanItem: Decodable, Hashable, Sendable, Identifiable {
+    public let title: String
+    public let state: String
+    public let actor: String
+    public let line: Int
+    public var id: String { "\(line):\(title)" }
+  }
+
+  public struct Plan: Decodable, Hashable, Sendable {
+    public let present: Bool
+    public let done: Int
+    public let open: [String: Int]
+    public let issues: [String]
+  }
+
+  public struct Spend: Decodable, Hashable, Sendable {
+    public let passes: Int
+    public let costUsd: Double
+    public let tokens: Int
+  }
+
+  public struct ActiveRun: Decodable, Hashable, Sendable {
+    public let id: String
+    public let status: String
+  }
+
+  public let goalId: String
+  public let mode: String
+  public let eligible: Bool
+  public let reason: String
+  public let plan: Plan
+  public let spend: Spend
+  public let activeRun: ActiveRun?
+  public let next: [PlanItem]
+  public let needsYou: [PlanItem]
+
+  /// A short label for the goal row.
+  public var modeLabel: String {
+    switch mode {
+    case "work": return activeRun == nil ? "Next pass ready" : "Pass running"
+    case "plan": return eligible ? "Planning" : "Plan empty"
+    case "replan": return "Replanning"
+    case "waiting": return "Waiting on you"
+    case "complete": return "Plan complete"
+    case "stalled": return "Stalled"
+    case "paused": return "Paused"
+    case "over-budget": return "Budget spent"
+    case "inactive": return "Goal inactive"
+    default: return "Not driving"
+    }
+  }
+
+  /// Modes in which a person has to act before the drive continues.
+  public var needsAttention: Bool {
+    ["waiting", "complete", "stalled"].contains(mode) || (mode == "plan" && !eligible)
+  }
+}
+
+/// Settings for starting or reconfiguring a goal drive from the app.
+public struct AgentGoalDriveOptions: Equatable, Sendable {
+  public var schedule: String
+  public var stallAfter: Int
+  public var dailyCostLimitUsd: Double?
+  public var permissions: [String]
+  public var agentRef: String
+  public var destinationID: String
+
+  public init(
+    schedule: String = "every 15m",
+    stallAfter: Int = 3,
+    dailyCostLimitUsd: Double? = nil,
+    permissions: [String] = [],
+    agentRef: String = "",
+    destinationID: String = ""
+  ) {
+    self.schedule = schedule
+    self.stallAfter = stallAfter
+    self.dailyCostLimitUsd = dailyCostLimitUsd
+    self.permissions = permissions
+    self.agentRef = agentRef
+    self.destinationID = destinationID
+  }
+
+  /// CLI arguments after `goal drive GOAL`.
+  public var arguments: [String] {
+    var arguments = ["--schedule", schedule, "--stall-after", String(max(1, stallAfter))]
+    if let dailyCostLimitUsd, dailyCostLimitUsd > 0 {
+      arguments += ["--daily-cost-limit", String(dailyCostLimitUsd)]
+    }
+    // The sheet edits the complete list, so replace earlier standing permissions.
+    arguments.append("--clear-permits")
+    for permit in permissions.map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }) where !permit.isEmpty {
+      arguments += ["--permit", permit]
+    }
+    let agentRef = agentRef.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !agentRef.isEmpty { arguments += ["--agent-ref", agentRef] }
+    let destinationID = destinationID.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !destinationID.isEmpty { arguments += ["--destination-ref", destinationID] }
+    return arguments
+  }
+}
+
+public enum AgentGoalDriveControl: String, CaseIterable, Sendable {
+  case pause, resume, stop
+
+  public var title: String {
+    switch self {
+    case .pause: return "Pause Drive"
+    case .resume: return "Resume Drive"
+    case .stop: return "Stop Driving"
+    }
+  }
 }
 
 public struct AgentProfileListPayload: Decodable, Sendable {

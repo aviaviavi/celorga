@@ -2579,6 +2579,10 @@ public final class WorkspaceStore {
   public var selectedAgentGoalID: AgentGoalItem.ID?
   public internal(set) var isLoadingAgentGoals = false
   public internal(set) var mutatingAgentGoalIDs: Set<AgentGoalItem.ID> = []
+  /// `celorga goal status` for each driven goal, keyed by goal ID.
+  public internal(set) var agentGoalDriveStatuses: [AgentGoalItem.ID: AgentGoalDriveStatus] = [:]
+  /// The goal whose Drive sheet is open.
+  public var pendingGoalDriveGoal: AgentGoalItem?
   public internal(set) var agentProfiles: [AgentProfileItem] = []
   public var selectedAgentProfileID: AgentProfileItem.ID?
   public internal(set) var isLoadingAgentProfiles = false
