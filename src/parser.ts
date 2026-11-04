@@ -40,6 +40,7 @@ import type {
   TimestampRangeNode,
 } from "./ast.js";
 import { parseTimestampRepeater, parseTimestampWarning } from "./timestampModifiers.js";
+import { orgPercentCookieValue } from "./checkboxProgress.js";
 import { documentTodoKeywords, documentTodoSequences, todoSequencesForFile, type TodoSequence, isTerminalTodoKeyword } from "./todo.js";
 
 export type ParseError = {
@@ -467,7 +468,7 @@ function parseProgressCookieAt(value: string, startIndex: number): ParsedProgres
   if (fraction) {
     const done = Number.parseInt(fraction[1] || "0", 10);
     const total = Number.parseInt(fraction[2] || "0", 10);
-    return { node: progressCookie({ raw: fraction[0], format: "fraction", done, total, percent: total > 0 ? Math.round((done / total) * 100) : 0 }), endIndex: startIndex + fraction[0].length };
+    return { node: progressCookie({ raw: fraction[0], format: "fraction", done, total, percent: orgPercentCookieValue(done, total) }), endIndex: startIndex + fraction[0].length };
   }
   const percent = /^\[(\d{1,3})%\]/.exec(rest);
   if (percent) {

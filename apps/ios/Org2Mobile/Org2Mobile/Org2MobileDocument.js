@@ -53,6 +53,13 @@ var Org2MobileDocument = (() => {
     return { mode, value, unit, raw: match[0].trim() };
   }
 
+  // src/checkboxProgress.ts
+  function orgPercentCookieValue(done, total) {
+    if (!(total > 0) || !(done > 0)) return 0;
+    const percent = Math.floor(100 * done / total);
+    return percent === 0 ? 1 : percent;
+  }
+
   // native-boundary:node:fs
   var unavailable = () => {
     throw new Error("Filesystem access is unavailable in the mobile document runtime");
@@ -608,7 +615,7 @@ var Org2MobileDocument = (() => {
     if (fraction) {
       const done = Number.parseInt(fraction[1] || "0", 10);
       const total = Number.parseInt(fraction[2] || "0", 10);
-      return { node: progressCookie({ raw: fraction[0], format: "fraction", done, total, percent: total > 0 ? Math.round(done / total * 100) : 0 }), endIndex: startIndex + fraction[0].length };
+      return { node: progressCookie({ raw: fraction[0], format: "fraction", done, total, percent: orgPercentCookieValue(done, total) }), endIndex: startIndex + fraction[0].length };
     }
     const percent = /^\[(\d{1,3})%\]/.exec(rest);
     if (percent) {

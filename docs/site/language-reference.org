@@ -136,7 +136,7 @@ Supported timestamp forms:
 - Ordered markers: =1.=, =1)=
 - Checkboxes: =[ ]=, =[X]=, =[x]=, =[-]=
 - Cycle a list checkbox with =celorga checkbox --file FILE --line N --apply=: =[ ]= → =[-]= → =[X]= → =[ ]=. The CLI and LSP code action change only the selected marker; see [[file:tooling-reference.org][Tooling reference]].
-- Checkbox progress cookies: =[n/m]= and =[p%]= may appear in headings or list items; =[/]= and =[%]= are empty placeholders. Compile output and lint compare each cookie with its innermost containing heading total. Checked items count as completed; unchecked and indeterminate items count only toward the total. =celorga checkbox fix-cookies --file FILE --apply= writes corrected values, while =celorga checkbox cycle --file FILE --line N --fix-cookies --apply= changes a marker and refreshes cookies atomically.
+- Checkbox progress cookies: =[n/m]= and =[p%]= may appear in headings or list items; =[/]= and =[%]= are empty placeholders. Compile output and lint compare each cookie with its innermost containing heading total. A percent cookie rounds down, so =[100%]= means every item is done, and it shows at least =[1%]= once any item is done (1 of 201 is =[1%]=, not =[0%]=), as in Org 10. Checked items count as completed; unchecked and indeterminate items count only toward the total. =celorga checkbox fix-cookies --file FILE --apply= writes corrected values, while =celorga checkbox cycle --file FILE --line N --fix-cookies --apply= changes a marker and refreshes cookies atomically.
 - Nested lists via indentation.
 - Counter cookies such as =[@3]= are stored separately from the written ordered-list marker.
 - Descriptive items use =term :: definition= and render as description lists.

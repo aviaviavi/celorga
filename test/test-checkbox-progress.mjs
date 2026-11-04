@@ -105,4 +105,27 @@ assert.equal(safe.checkboxProgress.total, 1);
 const opaqueLint = JSON.parse(execFileSync('node', [cli, 'lint', '--file', file, '--format', 'json'], { encoding: 'utf8' }));
 assert.equal(opaqueLint.issues.filter((issue) => issue.rule === 'checkbox-progress-cookie-stale').length, 0);
 
+// Org 10 percent rule: round down, but at least 1% once anything is done, so
+// 100% always means complete.
+const { orgPercentCookieValue, extractCheckboxProgress } = await import('../dist/checkboxProgress.js');
+assert.equal(orgPercentCookieValue(0, 201), 0);
+assert.equal(orgPercentCookieValue(1, 201), 1);
+assert.equal(orgPercentCookieValue(2, 3), 66);
+assert.equal(orgPercentCookieValue(199, 200), 99);
+assert.equal(orgPercentCookieValue(200, 200), 100);
+assert.equal(orgPercentCookieValue(0, 0), 0);
+const manyItems = ['* Big rollout [0%]', '- [X] first', ...Array.from({ length: 200 }, (_, i) => `- [ ] item ${i}`)];
+const big = extractCheckboxProgress(manyItems, 0, manyItems.length);
+assert.equal(big.percent, 1);
+assert.equal(big.cookies[0].stale, true);
+assert.equal(big.cookies[0].expectedRaw, '[1%]');
+fs.writeFileSync(file, `${manyItems.join('\n').replace('[0%]', '[1%]')}\n`);
+const bigLint = JSON.parse(execFileSync('node', [cli, 'lint', '--file', file, '--format', 'json'], { encoding: 'utf8' }));
+assert.equal(bigLint.issues.filter((issue) => issue.rule === 'checkbox-progress-cookie-stale').length, 0);
+const nearlyDone = ['* Almost [100%]', ...Array.from({ length: 199 }, (_, i) => `- [X] done ${i}`), '- [ ] last'];
+assert.equal(extractCheckboxProgress(nearlyDone, 0, nearlyDone.length).cookies[0].expectedRaw, '[99%]');
+const { parseOrgToCanonicalAst } = await import('../dist/parser.js');
+const fractionCookie = JSON.stringify(parseOrgToCanonicalAst('* Big [1/201]\n'));
+assert.match(fractionCookie, /"percent":1\b/);
+
 console.log('✓ checkbox-progress');

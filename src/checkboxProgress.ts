@@ -15,6 +15,17 @@ export type CheckboxProgressIssue = {
   total: number;
 };
 
+/**
+ * The value of an Org `[p%]` cookie for `done` of `total` items: rounded down,
+ * so 100 means every item is complete, and at least 1 once any item is done
+ * (Org 10: 1 of 101 is [1%], not [0%]).
+ */
+export function orgPercentCookieValue(done: number, total: number): number {
+  if (!(total > 0) || !(done > 0)) return 0;
+  const percent = Math.floor((100 * done) / total);
+  return percent === 0 ? 1 : percent;
+}
+
 function headingLevel(line: string): number {
   const match = /^(\*+)\s+/.exec(line);
   return match ? (match[1] || "").length : 0;
@@ -97,7 +108,7 @@ export function extractCheckboxProgress(
       const totalValue = match[2] !== undefined ? Number.parseInt(match[2] || "0", 10) : undefined;
       const percentValue = format === "percent" && match[3] !== undefined
         ? Number.parseInt(match[3] || "0", 10)
-        : (totalValue && totalValue > 0 && doneValue !== undefined ? Math.round((doneValue / totalValue) * 100) : 0);
+        : (totalValue && totalValue > 0 && doneValue !== undefined ? orgPercentCookieValue(doneValue, totalValue) : 0);
       found.push({
         raw,
         line: i + 1,
@@ -109,7 +120,7 @@ export function extractCheckboxProgress(
     }
   }
   const total = checked + unchecked;
-  const percent = total > 0 ? Math.round((checked / total) * 100) : 0;
+  const percent = orgPercentCookieValue(checked, total);
   const cookies = found.map((cookie) => {
     const expectedRaw = cookie.format === "fraction" ? `[${checked}/${total}]` : `[${percent}%]`;
     return { ...cookie, stale: cookie.raw !== expectedRaw, expectedRaw };
