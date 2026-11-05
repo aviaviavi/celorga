@@ -242,6 +242,15 @@ final class CodexAppServerClientTests: XCTestCase {
     XCTAssertTrue(openClaw.contains("ORG2_SELECTED_GOAL_REF: customer-trust"))
     XCTAssertTrue(openClaw.contains("celorga agent-profile resolve --runtime openclaw --runtime-agent-id scarf-support --dir /srv/example-corpus --json"))
     XCTAssertTrue(openClaw.contains("Never use =openclaw=, =codex=, =claude=, a model name, or a session ID as =AGENT_REF:="))
+    // OpenClaw may run on another host than the user's Celorga, so its
+    // images go through the Gateway as MEDIA: attachments, not corpus links.
+    XCTAssertTrue(openClaw.contains("OpenClaw image delivery"))
+    XCTAssertTrue(openClaw.contains("This replaces the Images rule above."))
+    XCTAssertTrue(openClaw.contains("standalone line MEDIA:/absolute/path/image.png"))
+    XCTAssertTrue(openClaw.contains("Never say an image is attached, sent, or above unless that reply contains its MEDIA: line"))
+    XCTAssertFalse(context.systemPrompt().contains("OpenClaw image delivery"))
+    XCTAssertFalse(context.systemPrompt(runtime: "bundled", runtimeAgentID: "x").contains("OpenClaw image delivery"))
+    XCTAssertFalse(AIChatWorkspaceContext.localAgentStandingInstructions.contains("OpenClaw image delivery"))
 
     let codex = context.codexSystemPrompt()
     XCTAssertTrue(codex.contains("Execution runtime: codex"))

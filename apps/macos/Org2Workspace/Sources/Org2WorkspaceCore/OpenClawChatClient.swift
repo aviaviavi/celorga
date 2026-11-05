@@ -469,6 +469,16 @@ public struct AIChatWorkspaceContext: Sendable {
   \(chatCapabilities)
   """
 
+  /// OpenClaw runs on the Gateway host, and the user's Celorga may be on
+  /// another Mac that sees corpus files only after sync, so a corpus image
+  /// link can render broken. A standalone `MEDIA:` line in the reply becomes
+  /// a managed Gateway image that Celorga downloads into the reply itself.
+  nonisolated static let openClawImageDelivery = """
+  OpenClaw image delivery
+
+  This replaces the Images rule above. Celorga may run on another Mac that sees corpus files only after sync, so a [[file:...]] image link from you can render broken. To show an image (for example a login QR code): write it as a PNG or JPEG file on your host, then put a standalone line MEDIA:/absolute/path/image.png in your reply, one line per image, with no bold, code, list marker, or Org link around it and no other text on that line. The Gateway turns it into an attachment, and Celorga downloads it into your reply, where it renders inline on any machine and survives reload. Never say an image is attached, sent, or above unless that reply contains its MEDIA: line; if a regenerated image replaces an old one, send it again the same way.
+  """
+
   /// What a chat agent can do through Celorga. Kept inside the formatting
   /// contract so every runtime prompt (OpenClaw, Codex, local CLIs, shared
   /// rooms) carries it.
@@ -564,6 +574,10 @@ public struct AIChatWorkspaceContext: Sendable {
     sections.append(Self.localAgentWorkingRules)
 
     sections.append(Self.responseFormattingContract)
+
+    if runtime == "openclaw" {
+      sections.append(Self.openClawImageDelivery)
+    }
 
     sections.append(Self.agentOperatingGuidance)
 
