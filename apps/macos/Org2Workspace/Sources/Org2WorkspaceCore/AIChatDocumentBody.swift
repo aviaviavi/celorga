@@ -104,11 +104,31 @@ enum AIChatChartInteraction {
   /// message has no charts. App-profile output escapes message HTML, so only
   /// the renderer itself emits this element.
   static func script(inRenderedHTML html: String) -> String? {
-    guard let open = html.range(of: scriptElementOpen),
+    rendererScript(in: html, elementOpen: scriptElementOpen, installFunction: installFunction)
+  }
+
+  /// The body of a renderer-emitted `<script>` element, provided it defines
+  /// `installFunction`.
+  static func rendererScript(in html: String, elementOpen: String, installFunction: String) -> String? {
+    guard let open = html.range(of: elementOpen),
           let close = html.range(of: "</script>", range: open.upperBound..<html.endIndex)
     else { return nil }
     let script = html[open.upperBound..<close.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
     return script.contains(installFunction) ? script : nil
+  }
+}
+
+/// Tables in chat get the same column resizing, sorting, and filtering as
+/// tables in documents. The host installs the renderer's shared table script,
+/// as it does for charts, because chat pages block page scripts.
+enum AIChatTableInteraction {
+  static let scriptElementOpen = "<script id=\"org2-table-interaction\">"
+  static let installFunction = "window.__org2InstallTables"
+
+  /// The table interaction script from compiler output, or `nil` when the
+  /// output does not include it.
+  static func script(inRenderedHTML html: String) -> String? {
+    AIChatChartInteraction.rendererScript(in: html, elementOpen: scriptElementOpen, installFunction: installFunction)
   }
 }
 
@@ -341,8 +361,9 @@ enum AIChatDocumentHTML {
       window.__chatHighlightMentions?.(next, next.body, mentions);
       window.__chatLinkThreads?.(next, next.body, threadLinks, 'org2-workspace', 'open-thread');
       document.body.replaceChildren(...next.body.childNodes);
-      // Charts share the document renderer's interaction script (installed by the host).
+      // Charts and tables share the document renderer's interaction scripts (installed by the host).
       if (window.__org2InstallCharts) window.__org2InstallCharts(document);
+      if (window.__org2InstallTables) window.__org2InstallTables(document);
       pending = null;
       measure();
     };
@@ -443,13 +464,25 @@ struct AIChatDocumentWebView: NSViewRepresentable {
     var openThread: ((UUID) -> Void)?
 
     var installedChartScript: String?
+    var installedTableScript: String?
 
-    func update(_ view: WKWebView) {
-      guard let html else { return }
+    /// Installs the renderer's chart and table interaction scripts that
+    /// `html` carries, once per page. Chat pages block page scripts, so the
+    /// host evaluates them; the page calls their installers after each update.
+    func installRendererScripts(from html: String, in view: WKWebView) {
       if let chartScript = AIChatChartInteraction.script(inRenderedHTML: html), chartScript != installedChartScript {
         installedChartScript = chartScript
         view.evaluateJavaScript(chartScript)
       }
+      if let tableScript = AIChatTableInteraction.script(inRenderedHTML: html), tableScript != installedTableScript {
+        installedTableScript = tableScript
+        view.evaluateJavaScript(tableScript)
+      }
+    }
+
+    func update(_ view: WKWebView) {
+      guard let html else { return }
+      installRendererScripts(from: html, in: view)
       let rewritten = OrgHTMLLocalResourceSchemeHandler.rewritingLocalImageSources(in: html)
       view.callAsyncJavaScript(
         "window.__chatUpdate(html, mentions, threads)",

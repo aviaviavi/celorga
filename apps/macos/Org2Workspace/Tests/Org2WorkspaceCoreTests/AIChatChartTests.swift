@@ -98,6 +98,63 @@ final class AIChatChartTests: XCTestCase {
     XCTAssertEqual(result?["code"] as? Int, 0, "the chart block is not shown as code")
   }
 
+  func testChatTablesAreResizableSortableAndFilterableLikeDocumentTables() async throws {
+    let reply = """
+    | Stage | Days |
+    |-------+------|
+    | Interest | 3 |
+    | Investigation | 12 |
+    | Decision | 7 |
+    """
+    let cli = Org2CLI(repoRoot: try Org2CLI.defaultRepoRoot())
+    let html = try await cli.renderAppHTML(reply, sourcePath: "/tmp/chat-table-test.org")
+    let tableScript = try XCTUnwrap(AIChatTableInteraction.script(inRenderedHTML: html))
+    XCTAssertTrue(AIChatDocumentHTML.updateScript.contains("window.__org2InstallTables(document)"))
+
+    let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 640, height: 800))
+    view.loadHTMLString("<html><head><style>\(AIChatDocumentHTML.style)</style></head><body><main></main></body></html>", baseURL: nil)
+    for _ in 0..<100 {
+      if !view.isLoading, (try? await view.evaluateJavaScript("document.readyState")) as? String == "complete" { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    try await view.evaluateJavaScript("window.webkit = {messageHandlers: {chatHeight: {postMessage: function() {}}}}; null;")
+    try await view.evaluateJavaScript(AIChatDocumentHTML.updateScript)
+    try await view.evaluateJavaScript(tableScript + "; null;")
+    view.callAsyncJavaScript("window.__chatUpdate(html)", arguments: ["html": html], in: nil, in: .page)
+    for _ in 0..<100 {
+      if (try? await view.evaluateJavaScript("document.querySelectorAll('table').length")) as? Int == 1 { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+
+    let result = try await view.evaluateJavaScript("""
+      (() => {
+        const table = document.querySelector('table');
+        const stages = () => [...table.tBodies[0].rows].map(row => row.cells[0].textContent.trim()).join(',');
+        const sort = table.tHead.rows[0].cells[1].querySelector('.org2-table-sort-button');
+        sort.click();
+        const ascending = stages();
+        sort.click();
+        const descending = stages();
+        const filter = document.querySelector('.org2-table-filter');
+        filter.value = 'inv';
+        filter.dispatchEvent(new Event('input'));
+        const filtered = stages();
+        return {
+          resizers: table.querySelectorAll('.org2-column-resizer').length,
+          resizable: table.dataset.org2Resizable,
+          ascending, descending, filtered,
+          saveHidden: document.querySelector('[data-org2-table-save="true"]').hidden
+        };
+      })()
+      """) as? [String: Any]
+    XCTAssertEqual(result?["resizable"] as? String, "true")
+    XCTAssertEqual(result?["resizers"] as? Int, 2, "every column has a resize handle")
+    XCTAssertEqual(result?["ascending"] as? String, "Interest,Decision,Investigation")
+    XCTAssertEqual(result?["descending"] as? String, "Investigation,Decision,Interest")
+    XCTAssertEqual(result?["filtered"] as? String, "Investigation")
+    XCTAssertEqual(result?["saveHidden"] as? Bool, true, "a chat message has no source table to save into")
+  }
+
   func testThemeChartPaletteMapsDistinctSeriesColorsForEveryTheme() throws {
     for theme in WorkspaceThemeCatalog.all {
       let colors = WorkspaceThemeDocumentStyle.chartSeriesColors(for: theme)

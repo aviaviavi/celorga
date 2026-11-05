@@ -88,6 +88,58 @@ final class AIChatTranscriptDocumentTests: XCTestCase {
     }
   }
 
+  func testTranscriptTablesAndChartsGetDocumentInteractions() async throws {
+    let cli = Org2CLI(repoRoot: try Org2CLI.defaultRepoRoot())
+    let html = try await cli.renderAppHTML("""
+    | Stage | Days |
+    |-------+------|
+    | Interest | 3 |
+    | Investigation | 12 |
+    | Decision | 7 |
+
+    #+begin_src chart bar
+    x: Stage
+    y: Days
+    #+end_src
+    """, sourcePath: "/tmp/chat-table.org")
+    let view = try await document()
+    view.setFrameSize(NSSize(width: 640, height: 900))
+    // The coordinator evaluates the renderer's scripts that message HTML carries.
+    try await view.evaluateJavaScript(try XCTUnwrap(AIChatTableInteraction.script(inRenderedHTML: html)) + "; null;")
+    try await view.evaluateJavaScript(try XCTUnwrap(AIChatChartInteraction.script(inRenderedHTML: html)) + "; null;")
+    try await update(view, payload([entry("table", html)]))
+    let sorted = try await view.evaluateJavaScript("""
+      (() => {
+        const table = document.querySelector('article table');
+        table.tHead.rows[0].cells[1].querySelector('.org2-table-sort-button').click();
+        return {
+          resizers: table.querySelectorAll('.org2-column-resizer').length,
+          filter: !!document.querySelector('article .org2-table-filter'),
+          order: [...table.tBodies[0].rows].map(row => row.cells[0].textContent.trim()).join(','),
+          chart: document.querySelector('article figure.org2-chart')?.dataset.org2ChartEnhanced ?? null
+        };
+      })()
+      """) as? [String: Any]
+    XCTAssertEqual(sorted?["resizers"] as? Int, 2)
+    XCTAssertEqual(sorted?["filter"] as? Bool, true)
+    XCTAssertEqual(sorted?["order"] as? String, "Interest,Decision,Investigation")
+    XCTAssertEqual(sorted?["chart"] as? String, "true")
+
+    // A status-only update keeps the message node, so the sort survives.
+    try await update(view, payload([entry("table", html)], sending: true))
+    let after = try await view.evaluateJavaScript("""
+      (() => {
+        const table = document.querySelector('article table');
+        return {
+          order: [...table.tBodies[0].rows].map(row => row.cells[0].textContent.trim()).join(','),
+          controls: document.querySelectorAll('article .org2-table-controls').length
+        };
+      })()
+      """) as? [String: Any]
+    XCTAssertEqual(after?["order"] as? String, "Interest,Decision,Investigation")
+    XCTAssertEqual(after?["controls"] as? Int, 1, "installing again does not duplicate controls")
+  }
+
   func testHTMLSnippetRunsScriptsInsideIsolatedSandboxWithSourceDisclosure() async throws {
     let cli = Org2CLI(repoRoot: try Org2CLI.defaultRepoRoot())
     let html = try await cli.renderAppHTML("""

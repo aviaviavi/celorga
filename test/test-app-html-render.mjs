@@ -169,6 +169,8 @@ assert.match(rendered.html, /h2 \{ font-size: 1\.08rem;/);
 assert.match(rendered.html, /overflow-wrap: normal;\n  word-break: normal;\n  text-wrap: wrap;/);
 assert.doesNotMatch(rendered.html, /text-wrap: balance;/);
 assert.match(rendered.html, /\.org2-headline-body > \.org2-headline\.level-2 \{ --org2-guide-inset: 0\.5rem; margin-left: 0\.35rem; padding-left: var\(--org2-guide-inset\);/);
+assert.match(rendered.html, /<script id="org2-table-interaction">[\s\S]*window\.__org2InstallTables = /);
+assert.match(rendered.html, /window\.__org2InstallTables\?\.\(document\)/);
 assert.match(rendered.html, /org2-workspace:\/\/open-link\?target=id%3Arender-target/);
 assert.match(rendered.html, /org2-workspace:\/\/open-link\?target=file%3Anotes%2Fother\.org2/);
 assert.match(rendered.html, /href="https:\/\/example\.com"/);

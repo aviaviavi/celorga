@@ -1094,6 +1094,8 @@ enum AIChatTranscriptHTML {
   #quote-selection[hidden] { display:none; }
   pre { max-height:none!important; height:auto!important; overflow-x:auto; overflow-y:hidden; white-space:pre; }
   table { max-width:100%; table-layout:fixed; }
+  /* A resized column may widen its table; the table's wrapper scrolls. */
+  .org2-table-scroll table.org2-resizable-table { max-width:none; }
   """
 
   static let script = #"""
@@ -1491,6 +1493,10 @@ enum AIChatTranscriptHTML {
         if(root.children[i]!==a) root.insertBefore(a,root.children[i]||null);
         a.classList.toggle('match',data.search===e.id);
       });
+      // Tables and charts in messages get the same interactions as in
+      // documents. The installers skip tables and charts already enhanced.
+      window.__org2InstallTables?.(root);
+      window.__org2InstallCharts?.(root);
       rememberThreadNodes(root,data.thread);
       const earlier=document.getElementById('earlier'); earlier.textContent=data.earlier||''; earlier.hidden=!data.earlier;
       const status=document.getElementById('status'); status.replaceChildren();
@@ -1669,6 +1675,7 @@ struct AIChatTranscriptWebView: NSViewRepresentable {
           return cached.object
         }
         var value=(try? JSONSerialization.jsonObject(with:JSONEncoder().encode(entry))) as? [String:Any] ?? [:]
+        installRendererScripts(from: entry.html, in: view)
         value["html"]=OrgHTMLLocalResourceSchemeHandler.rewritingLocalImageSources(in:entry.html)
         nextEntryObjects[entry.id] = (entry, value)
         return value

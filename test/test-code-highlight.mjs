@@ -67,7 +67,11 @@ assert.ok(html.includes('data-org2-start-line="260"'));
 assert.ok(!html.includes('data-org2-start-line="261"'));
 assert.ok(html.includes('<span class="org2-tok-comment"># line 27</span>'));
 assert.ok(html.includes(".org2-tok-keyword"), "Token styles ship with the app document style");
-assert.ok(!/<script(?![^>]*org2-app-document-script)/.test(html.replace(/<script id="org2-app-document-script">[\s\S]*?<\/script>/, "")), "No highlighter script is injected");
+// The app document and shared table scripts are renderer chrome, not highlighting.
+const withoutRendererScripts = html
+  .replace(/<script id="org2-app-document-script">[\s\S]*?<\/script>/, "")
+  .replace(/<script id="org2-table-interaction">[\s\S]*?<\/script>/, "");
+assert.ok(!/<script/.test(withoutRendererScripts), "No highlighter script is injected");
 
 // Org documents still render as Org; app source blocks are highlighted while
 // published HTML keeps plain code for its configured highlighter.
