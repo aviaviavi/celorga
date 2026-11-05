@@ -3595,6 +3595,9 @@ public final class WorkspaceStore {
   var aiChatSendOriginsByThreadID: [UUID: AIChatSendOrigin] = [:]
   var aiChatRequestStartedAtByThreadID: [UUID: Date] = [:]
   var openClawGatewayClientsByThreadID: [UUID: OpenClawGatewayClient] = [:]
+  /// Media an OpenClaw turn delivered, held until its reply is inserted so the
+  /// attachments are persisted with that assistant message.
+  @ObservationIgnored var aiChatReplyAttachmentsByThreadID: [UUID: [AIChatAttachment]] = [:]
   var codexAppServerClient: CodexAppServerClient?
   var codexAppServerClientsByDestinationID: [String: CodexAppServerClient] = [:]
   static let codexModelCatalogMaximumAge: TimeInterval = 15 * 60

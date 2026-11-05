@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Security
+import UniformTypeIdentifiers
 
 public enum OpenClawGatewayConnectionState: String, Sendable {
   case disconnected
@@ -320,6 +321,27 @@ public enum OpenClawGatewayRunEvent: Sendable {
   case activity(AIChatRunActivity)
   case usage(AIChatTokenUsage)
   case contextCompacted
+  /// Media the agent delivered during this turn (for example an image sent
+  /// with the `message` tool or an image block in the final reply), already
+  /// downloaded from the Gateway so it can be stored with the reply.
+  case attachments([AIChatAttachment])
+}
+
+/// One media block from an OpenClaw transcript message. Managed media is
+/// served from the Gateway host, so Celorga resolves it through
+/// `artifacts.download` instead of treating the path as local.
+struct OpenClawGatewayMediaReference: Equatable, Sendable {
+  var artifactID: String?
+  var url: String?
+  var inlineData: Data?
+  var mimeType: String
+  var fileName: String
+
+  var deduplicationKey: String {
+    if let artifactID { return "artifact:\(artifactID)" }
+    if let url { return "url:\(url)" }
+    return "inline:\(inlineData?.count ?? 0):\(inlineData?.hashValue ?? 0)"
+  }
 }
 
 public struct OpenClawAIChatSessionConfiguration: Sendable {
@@ -1151,9 +1173,24 @@ public actor OpenClawGatewayClient {
             if let usage = Self.tokenUsage(from: payload) {
               await onEvent(.usage(usage))
             }
+            let media = await deliveredMedia(
+              finalMessage: payload["message"],
+              historyCorrelationID: proposedRunID,
+              sessionKey: sessionKey,
+              agentID: agentID,
+              on: socket
+            )
             socket.cancel(with: .normalClosure, reason: nil)
-            let output = assembledText.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !output.isEmpty else { throw OpenClawGatewayError.emptyResponse }
+            let output = Self.appendingMediaFailureNotice(
+              to: assembledText.trimmingCharacters(in: .whitespacesAndNewlines),
+              failedFileNames: media.failedFileNames
+            )
+            if !media.attachments.isEmpty {
+              await onEvent(.attachments(media.attachments))
+            }
+            guard !output.isEmpty || !media.attachments.isEmpty else {
+              throw OpenClawGatewayError.emptyResponse
+            }
             return output
           } else if state == "aborted" {
             throw OpenClawGatewayError.aborted(Self.string(payload["errorMessage"]))
@@ -1833,7 +1870,7 @@ public actor OpenClawGatewayClient {
         guard Self.bool(frame["ok"]) == true else { throw Self.gatewayError(from: frame) }
         let payload = Self.dictionary(frame["payload"]) ?? [:]
         let status = Self.string(payload["status"]) ?? "timeout"
-        let reconciliation = try await loadReconciledSession(
+        let (reconciliation, mediaReferences) = try await loadReconciledSession(
           historyCorrelationID: historyCorrelationID,
           sessionKey: sessionKey,
           agentID: agentID,
@@ -1843,7 +1880,21 @@ public actor OpenClawGatewayClient {
         await onEvent(.reconciliationHeartbeat)
         switch reconciliation {
         case .completed(let reply):
-          return reply
+          let watchdog = Self.socketWatchdog(socket)
+          defer { watchdog.cancel() }
+          let media = await resolveMedia(
+            mediaReferences,
+            sessionKey: sessionKey,
+            agentID: agentID,
+            on: socket
+          )
+          if !media.attachments.isEmpty {
+            await onEvent(.attachments(media.attachments))
+          }
+          return Self.appendingMediaFailureNotice(
+            to: reply,
+            failedFileNames: media.failedFileNames
+          )
         case .failed(let message):
           throw OpenClawGatewayError.acceptedRunTerminated(message)
         case .pending(let hasActiveRun, let activeRunIDs):
@@ -1878,7 +1929,23 @@ public actor OpenClawGatewayClient {
     agentID: String,
     requestStartedAtMilliseconds: Double,
     on socket: URLSessionWebSocketTask
-  ) async throws -> OpenClawChatHistoryReconciliation {
+  ) async throws -> (OpenClawChatHistoryReconciliation, [OpenClawGatewayMediaReference]) {
+    let payload = try await loadChatHistory(sessionKey: sessionKey, agentID: agentID, on: socket)
+    return (
+      Self.chatHistoryReconciliation(
+        from: payload,
+        runID: historyCorrelationID,
+        requestStartedAtMilliseconds: requestStartedAtMilliseconds
+      ),
+      Self.runMediaReferences(from: payload, runID: historyCorrelationID)
+    )
+  }
+
+  private func loadChatHistory(
+    sessionKey: String,
+    agentID: String,
+    on socket: URLSessionWebSocketTask
+  ) async throws -> [String: Any] {
     let historyID = UUID().uuidString.lowercased()
     try await sendRequest(
       id: historyID,
@@ -1890,13 +1957,280 @@ public actor OpenClawGatewayClient {
       let frame = try await receiveObject(on: socket)
       guard Self.string(frame["type"]) == "res", Self.string(frame["id"]) == historyID else { continue }
       guard Self.bool(frame["ok"]) == true else { throw Self.gatewayError(from: frame) }
-      let payload = Self.dictionary(frame["payload"]) ?? [:]
-      return Self.chatHistoryReconciliation(
-        from: payload,
-        runID: historyCorrelationID,
-        requestStartedAtMilliseconds: requestStartedAtMilliseconds
+      return Self.dictionary(frame["payload"]) ?? [:]
+    }
+  }
+
+  // MARK: - Delivered media
+
+  struct ResolvedMedia: Sendable {
+    var attachments: [AIChatAttachment] = []
+    var failedFileNames: [String] = []
+  }
+
+  static let deliveredMediaTimeout: Duration = .seconds(60)
+
+  /// Media collection must never strand a finished reply: if the Gateway
+  /// stops answering, closing the socket ends every pending receive and the
+  /// reply is delivered with a notice for whatever did not download.
+  static func socketWatchdog(_ socket: URLSessionWebSocketTask) -> Task<Void, Never> {
+    Task {
+      do {
+        try await Task.sleep(for: deliveredMediaTimeout)
+        socket.cancel(with: .goingAway, reason: nil)
+      } catch {}
+    }
+  }
+
+  static let maximumDeliveredMediaBytes = 25 * 1_024 * 1_024
+  static let maximumDeliveredMediaCount = 8
+
+  /// Collects the media an agent delivered during this turn. The final frame
+  /// only carries the last assistant message, while an image sent with the
+  /// `message` tool lands in an earlier transcript message, so the run's
+  /// history is the authority. A history failure never fails the turn; the
+  /// final message's own media is still used.
+  private func deliveredMedia(
+    finalMessage: Any?,
+    historyCorrelationID: String,
+    sessionKey: String,
+    agentID: String,
+    on socket: URLSessionWebSocketTask
+  ) async -> ResolvedMedia {
+    let watchdog = Self.socketWatchdog(socket)
+    defer { watchdog.cancel() }
+    var references = Self.mediaReferences(in: finalMessage)
+    if let payload = try? await loadChatHistory(sessionKey: sessionKey, agentID: agentID, on: socket) {
+      references = Self.mergingMediaReferences(
+        Self.runMediaReferences(from: payload, runID: historyCorrelationID),
+        references
       )
     }
+    return await resolveMedia(references, sessionKey: sessionKey, agentID: agentID, on: socket)
+  }
+
+  private func resolveMedia(
+    _ references: [OpenClawGatewayMediaReference],
+    sessionKey: String,
+    agentID: String,
+    on socket: URLSessionWebSocketTask
+  ) async -> ResolvedMedia {
+    var resolved = ResolvedMedia()
+    for reference in references.prefix(Self.maximumDeliveredMediaCount) {
+      if let data = try? await mediaData(
+        for: reference,
+        sessionKey: sessionKey,
+        agentID: agentID,
+        on: socket
+      ), !data.isEmpty, data.count <= Self.maximumDeliveredMediaBytes {
+        resolved.attachments.append(
+          AIChatAttachment(fileName: reference.fileName, mimeType: reference.mimeType, data: data)
+        )
+      } else {
+        resolved.failedFileNames.append(reference.fileName)
+      }
+    }
+    return resolved
+  }
+
+  private func mediaData(
+    for reference: OpenClawGatewayMediaReference,
+    sessionKey: String,
+    agentID: String,
+    on socket: URLSessionWebSocketTask
+  ) async throws -> Data? {
+    if let inlineData = reference.inlineData { return inlineData }
+    if let url = reference.url, let data = Self.dataURLContents(url) { return data }
+    if let artifactID = reference.artifactID {
+      let requestID = UUID().uuidString.lowercased()
+      try await sendRequest(
+        id: requestID,
+        method: "artifacts.download",
+        params: ["sessionKey": sessionKey, "agentId": agentID, "artifactId": artifactID],
+        on: socket
+      )
+      while true {
+        let frame = try await receiveObject(on: socket)
+        guard Self.string(frame["type"]) == "res", Self.string(frame["id"]) == requestID else { continue }
+        guard Self.bool(frame["ok"]) == true else { break }
+        let payload = Self.dictionary(frame["payload"]) ?? [:]
+        if Self.string(payload["encoding"]) == "base64",
+           let encoded = Self.string(payload["data"]),
+           let data = Data(base64Encoded: encoded) {
+          return data
+        }
+        if let url = Self.string(payload["url"]) {
+          // The download URL carries a short-lived media ticket.
+          return try await fetchGatewayMedia(url, authorize: false)
+        }
+        break
+      }
+    }
+    if let url = reference.url {
+      return try await fetchGatewayMedia(url, authorize: true)
+    }
+    return nil
+  }
+
+  private func fetchGatewayMedia(_ rawURL: String, authorize: Bool) async throws -> Data? {
+    guard let url = Self.gatewayHTTPURL(for: rawURL, endpoint: settings.endpoint) else { return nil }
+    var request = URLRequest(url: url, timeoutInterval: 15)
+    // Only the Gateway's own origin may receive its bearer token.
+    if authorize,
+       let token = settings.bearerToken, !token.isEmpty,
+       Self.isSameOrigin(url, as: settings.endpoint) {
+      request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    }
+    let (data, response) = try await session.data(for: request)
+    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+      return nil
+    }
+    return data
+  }
+
+  /// Resolves a Gateway media URL (usually a root-relative path such as
+  /// `/api/chat/media/outgoing/...`) against the Gateway's HTTP origin.
+  static func gatewayHTTPURL(for rawURL: String, endpoint: URL) -> URL? {
+    guard var base = URLComponents(url: endpoint, resolvingAgainstBaseURL: false) else { return nil }
+    switch base.scheme?.lowercased() {
+    case "wss", "https": base.scheme = "https"
+    case "ws", "http": base.scheme = "http"
+    default: return nil
+    }
+    base.path = "/"
+    base.query = nil
+    base.fragment = nil
+    guard let baseURL = base.url,
+          let resolved = URL(string: rawURL, relativeTo: baseURL)?.absoluteURL,
+          let scheme = resolved.scheme?.lowercased(),
+          scheme == "http" || scheme == "https"
+    else { return nil }
+    return resolved
+  }
+
+  static func isSameOrigin(_ url: URL, as endpoint: URL) -> Bool {
+    guard let gateway = gatewayHTTPURL(for: "/", endpoint: endpoint) else { return false }
+    return url.scheme?.lowercased() == gateway.scheme?.lowercased()
+      && url.host?.lowercased() == gateway.host?.lowercased()
+      && url.port == gateway.port
+  }
+
+  static func dataURLContents(_ value: String) -> Data? {
+    guard value.lowercased().hasPrefix("data:"),
+          let comma = value.firstIndex(of: ","),
+          value[..<comma].lowercased().hasSuffix(";base64")
+    else { return nil }
+    return Data(base64Encoded: String(value[value.index(after: comma)...]))
+  }
+
+  static func appendingMediaFailureNotice(to text: String, failedFileNames: [String]) -> String {
+    guard !failedFileNames.isEmpty else { return text }
+    let names = failedFileNames.map { "=\($0)=" }.joined(separator: ", ")
+    // Celorga's Org profile does not nest emphasis, so keep the notice plain
+    // around the verbatim file names.
+    let notice = "OpenClaw sent \(failedFileNames.count == 1 ? "an attachment" : "attachments") (\(names)) that Celorga could not download from the Gateway."
+    return text.isEmpty ? notice : "\(text)\n\n\(notice)"
+  }
+
+  static func mergingMediaReferences(
+    _ first: [OpenClawGatewayMediaReference],
+    _ second: [OpenClawGatewayMediaReference]
+  ) -> [OpenClawGatewayMediaReference] {
+    var seen = Set<String>()
+    return (first + second).filter { seen.insert($0.deduplicationKey).inserted }
+  }
+
+  /// Media from every assistant message that belongs to the request marked
+  /// `runID:user`, including `message`-tool deliveries made mid-turn. Without
+  /// the marker nothing is claimed, matching text reconciliation.
+  static func runMediaReferences(
+    from payload: [String: Any],
+    runID: String
+  ) -> [OpenClawGatewayMediaReference] {
+    let messages = payload["messages"] as? [Any] ?? []
+    let requestMarker = "\(runID):user"
+    guard let requestIndex = messages.lastIndex(where: { value in
+      guard let message = dictionary(value) else { return false }
+      return requestIdempotencyKey(of: message) == requestMarker
+    }) else { return [] }
+    var references: [OpenClawGatewayMediaReference] = []
+    for value in messages.suffix(from: messages.index(after: requestIndex)) {
+      guard let message = dictionary(value) else { continue }
+      let role = string(message["role"])
+      // Another client's turn on the same session ends this run's range.
+      if role == "user",
+         let key = requestIdempotencyKey(of: message), key.hasSuffix(":user") {
+        break
+      }
+      guard role == "assistant", !isSteerAcknowledgement(message) else { continue }
+      references = mergingMediaReferences(references, mediaReferences(in: message))
+    }
+    return references
+  }
+
+  private static func requestIdempotencyKey(of message: [String: Any]) -> String? {
+    string(message["idempotencyKey"]) ?? string(dictionary(message["__openclaw"])?["idempotencyKey"])
+  }
+
+  /// Media blocks in one transcript message: managed Gateway media
+  /// (`image`/`audio`/`video` with an `artifactId`), `attachment` documents,
+  /// and inline base64 images.
+  static func mediaReferences(in value: Any?) -> [OpenClawGatewayMediaReference] {
+    guard let message = dictionary(value), let blocks = message["content"] as? [Any] else { return [] }
+    var references: [OpenClawGatewayMediaReference] = []
+    for (index, value) in blocks.enumerated() {
+      guard let block = dictionary(value) else { continue }
+      let type = string(block["type"]) ?? ""
+      let source: [String: Any]
+      let kind: String
+      switch type {
+      case "image", "audio", "video":
+        source = block
+        kind = type
+      case "attachment":
+        guard let attachment = dictionary(block["attachment"]) else { continue }
+        source = attachment
+        kind = string(attachment["kind"]) ?? "document"
+      default:
+        continue
+      }
+      let nested = dictionary(source["source"])
+      let inlineBase64 = string(source["data"]) ?? string(nested?["data"])
+      let inlineData = inlineBase64.flatMap { Data(base64Encoded: $0) }
+      let artifactID = string(source["artifactId"]).flatMap { $0.isEmpty ? nil : $0 }
+      let url = (string(source["url"]) ?? string(source["openUrl"])).flatMap { $0.isEmpty ? nil : $0 }
+      guard inlineData != nil || artifactID != nil || url != nil else { continue }
+      let mimeType = string(source["mimeType"])
+        ?? string(source["mediaType"])
+        ?? string(nested?["media_type"])
+        ?? (kind == "image" ? "image/png" : "application/octet-stream")
+      let suggestedName = string(source["fileName"])
+        ?? string(source["filename"])
+        ?? string(source["label"])
+        ?? string(source["alt"])
+      references.append(
+        OpenClawGatewayMediaReference(
+          artifactID: artifactID,
+          url: url,
+          inlineData: inlineData,
+          mimeType: mimeType,
+          fileName: mediaFileName(suggestedName, mimeType: mimeType, kind: kind, index: index)
+        )
+      )
+    }
+    return mergingMediaReferences(references, [])
+  }
+
+  static func mediaFileName(_ suggested: String?, mimeType: String, kind: String, index: Int) -> String {
+    let trimmed = (suggested ?? "")
+      .components(separatedBy: CharacterSet(charactersIn: "/\\:\n\r\t"))
+      .last?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let base = trimmed.isEmpty ? "openclaw-\(kind)-\(index + 1)" : String(trimmed.prefix(120))
+    guard (base as NSString).pathExtension.isEmpty,
+          let ext = UTType(mimeType: mimeType)?.preferredFilenameExtension
+    else { return base }
+    return "\(base).\(ext)"
   }
 
   static func chatHistoryReconciliation(
@@ -1925,7 +2259,8 @@ public actor OpenClawGatewayClient {
       if isSteerAcknowledgement(message) { continue }
       let text = messageText(message, includeThinking: false)
         .trimmingCharacters(in: .whitespacesAndNewlines)
-      if !text.isEmpty { return .completed(text) }
+      // An image-only reply is a reply; its media is collected separately.
+      if !text.isEmpty || !mediaReferences(in: message).isEmpty { return .completed(text) }
     }
 
     let sessionInfo = dictionary(payload["sessionInfo"]) ?? [:]

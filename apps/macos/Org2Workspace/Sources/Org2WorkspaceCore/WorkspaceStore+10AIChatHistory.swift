@@ -1165,6 +1165,8 @@ extension WorkspaceStore {
         transcriptURL: aiChatSendOriginsByThreadID[threadID]?.transcriptURL
           ?? aiChatTranscriptURL
       )
+      case .attachments(let attachments):
+      aiChatReplyAttachmentsByThreadID[threadID] = attachments
     }
   }
 
@@ -1225,6 +1227,7 @@ extension WorkspaceStore {
     codexStreamingItemIDByThreadID.removeValue(forKey: threadID)
     aiChatLiveState.removeReasoning(for: threadID)
     aiChatRunActivitiesByThreadID[threadID] = []
+    aiChatReplyAttachmentsByThreadID.removeValue(forKey: threadID)
   }
 
   private nonisolated static func replacingAIChatMessageContent(
@@ -1788,6 +1791,7 @@ extension WorkspaceStore {
       id: replyID ?? UUID(),
       role: .assistant,
       content: reply,
+      attachments: aiChatReplyAttachmentsByThreadID.removeValue(forKey: threadID) ?? [],
       changeSummary: changeSummary,
       responseTrace: trace.isEmpty ? nil : trace,
       authorRuntime: authorRuntime,

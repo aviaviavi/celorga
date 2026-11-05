@@ -51,7 +51,11 @@ private final class FakeOpenClawGateway: @unchecked Sendable {
           "payload": ["runId": runID, "state": "final", "message": ["role": "assistant", "content": "delivered once"]],
         ], on: connection)
       default:
-        break
+        // A real Gateway answers every request, if only with an error.
+        self.send([
+          "type": "res", "id": id, "ok": false,
+          "error": ["code": "INVALID_REQUEST", "message": "unsupported in this fake"],
+        ], on: connection)
       }
       self.receive(on: connection)
     }
