@@ -249,6 +249,38 @@ final class OrgHTMLOutlineDragTests: XCTestCase {
     XCTAssertEqual(Array(lines(reordered)[11...13]), ["1. Edit", "2. Script", "3. Record"])
   }
 
+  func testNestedHeadingGripSitsLeftOfItsGuideLineOnAnOpaqueBackground() async throws {
+    let recorder = OutlineMoveRecorder()
+    let (page, _) = try await renderedPage(recorder: recorder)
+    let result = try await page.callAsyncJavaScript(
+      """
+      return ['20', '22'].map((line) => {
+        const details = document.querySelector(`details[data-org2-start-line="${line}"]`);
+        const grip = details.querySelector(':scope > summary > .org2-drag-grip');
+        const style = getComputedStyle(details);
+        const guide = details.getBoundingClientRect().left;
+        return {
+          line,
+          hasGuide: style.borderLeftStyle === 'solid',
+          gap: guide - grip.getBoundingClientRect().right,
+          background: getComputedStyle(grip).backgroundColor,
+        };
+      });
+      """,
+      arguments: [:], in: nil, contentWorld: .page
+    ) as? [[String: Any]]
+    let rows = try XCTUnwrap(result)
+    XCTAssertEqual(rows.count, 2)
+    for row in rows {
+      let line = row["line"] as? String ?? "?"
+      XCTAssertEqual(row["hasGuide"] as? Bool, true, "heading \(line) should draw a guide line")
+      let gap = try XCTUnwrap(row["gap"] as? Double, "heading \(line)")
+      XCTAssertGreaterThanOrEqual(gap, 2, "heading \(line)'s grip overlaps its guide line")
+      let background = row["background"] as? String ?? ""
+      XCTAssertTrue(background.hasPrefix("rgb("), "heading \(line)'s grip background is translucent: \(background)")
+    }
+  }
+
   func testSubtreeViewKeepsItsRootHeadingFixed() async throws {
     let recorder = OutlineMoveRecorder()
     let text = "* Reading list\n** Book one\n** Book two\n*** Notes on two"

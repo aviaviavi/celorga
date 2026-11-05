@@ -42,6 +42,8 @@ enum OrgHTMLOutlineDrag {
           width: 16px;
           height: 22px;
           border-radius: 4px;
+          /* Opaque so an ancestor's guide line never shows through the dots. */
+          background: var(--org2-surface, #fff);
           color: var(--org2-muted, #8a8a8a);
           cursor: grab;
           opacity: 0;
@@ -54,13 +56,18 @@ enum OrgHTMLOutlineDrag {
         html.org2-outline-drag .org2-drag-grip { display: inline-flex; }
         .org2-drag-grip svg { width: 10px; height: 14px; fill: currentColor; pointer-events: none; }
         .org2-headline-summary > .org2-drag-grip { left: -20px; top: 0.12em; }
+        /* A nested heading draws its guide line --org2-guide-inset left of its
+           summary; keep the grip clear of that line instead of on top of it. */
+        .org2-headline-body > .org2-headline > .org2-headline-summary > .org2-drag-grip {
+          left: calc(-21px - var(--org2-guide-inset, 0px));
+        }
         li[data-org2-start-line] > .org2-drag-grip { left: calc(-1.35em - 18px); top: 0.05em; }
         ol > li[data-org2-start-line] > .org2-drag-grip { left: calc(-1.9em - 18px); }
         .org2-drag-hover > .org2-drag-grip,
         .org2-drag-grip:focus-visible { opacity: 1; }
         .org2-drag-grip:hover {
           color: var(--org2-text, inherit);
-          background: color-mix(in srgb, var(--org2-muted, #8a8a8a) 16%, transparent);
+          background: color-mix(in srgb, var(--org2-muted, #8a8a8a) 16%, var(--org2-surface, #fff));
         }
         html.org2-outline-dragging, html.org2-outline-dragging * { cursor: grabbing !important; }
         html.org2-outline-dragging body { -webkit-user-select: none; user-select: none; }

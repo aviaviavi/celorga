@@ -412,11 +412,13 @@ details[open] > summary::before { content: "▼"; }
 }
 .org2-headline.level-1 > .org2-headline-summary { margin-top: 0.08rem; }
 .org2-headline-body { min-width: 0; }
-.org2-headline-body > .org2-headline.level-2 { margin-left: 0.35rem; padding-left: 0.5rem; border-left: 1px solid var(--org2-rule); }
-.org2-headline-body > .org2-headline.level-3 { margin-left: 0.25rem; padding-left: 0.45rem; border-left: 1px solid var(--org2-rule); }
+/* --org2-guide-inset is the gap between a nested heading's guide line and its
+   summary; the outline drag grip uses it to sit left of the line. */
+.org2-headline-body > .org2-headline.level-2 { --org2-guide-inset: 0.5rem; margin-left: 0.35rem; padding-left: var(--org2-guide-inset); border-left: 1px solid var(--org2-rule); }
+.org2-headline-body > .org2-headline.level-3 { --org2-guide-inset: 0.45rem; margin-left: 0.25rem; padding-left: var(--org2-guide-inset); border-left: 1px solid var(--org2-rule); }
 .org2-headline-body > .org2-headline.level-4,
 .org2-headline-body > .org2-headline.level-5,
-.org2-headline-body > .org2-headline.level-6 { margin-left: 0.2rem; padding-left: 0.35rem; border-left: 1px solid var(--org2-rule); }
+.org2-headline-body > .org2-headline.level-6 { --org2-guide-inset: 0.35rem; margin-left: 0.2rem; padding-left: var(--org2-guide-inset); border-left: 1px solid var(--org2-rule); }
 h1, h2, h3, h4, h5, h6 {
   color: var(--org2-text);
   font-weight: 620;
