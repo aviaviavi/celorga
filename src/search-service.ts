@@ -12,7 +12,7 @@
 import readline from "node:readline";
 import { fileSearchServiceResponse, type FileSearchServiceRequest } from "./fileSearchService.js";
 import type { FileSearchPayload } from "./fileSearch.js";
-import { searchIndexServiceResponse, type SearchServiceRequest, type SearchServiceResponse } from "./searchService.js";
+import { flushSearchServiceSaves, searchIndexServiceResponse, type SearchServiceRequest, type SearchServiceResponse } from "./searchService.js";
 
 type WorkerRequest = SearchServiceRequest & { files?: FileSearchServiceRequest };
 type WorkerResponse = SearchServiceResponse | { id: string; files?: FileSearchPayload; error?: string };
@@ -50,3 +50,6 @@ for await (const line of input) {
   }
   respond(answer(request));
 }
+
+// Index changes are saved once the worker is idle; save any still waiting.
+flushSearchServiceSaves();

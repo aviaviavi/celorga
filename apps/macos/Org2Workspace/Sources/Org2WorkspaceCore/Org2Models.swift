@@ -1007,14 +1007,9 @@ public struct AgentRunItem: Identifiable, Decodable, Hashable, Sendable {
   }
 
   public func matchesRunFilter(_ query: String) -> Bool {
-    let terms = query
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-      .lowercased()
-      .split(whereSeparator: { $0.isWhitespace })
-      .map(String.init)
+    let terms = LowercasedSearchTerms(query: query)
     guard !terms.isEmpty else { return true }
-
-    return terms.allSatisfy { runFilterText.contains($0) }
+    return terms.allOccur(in: runFilterText)
   }
 
   var runFilterText: String {

@@ -1732,7 +1732,7 @@ public struct DataNotebookRefreshFailure: Equatable, Sendable {
   }
 }
 
-struct SearchIndexBuildPayload: Decodable {
+struct SearchIndexBuildPayload: Decodable, Sendable {
   let fileCount: Int
   let lineCount: Int
   let skippedFiles: Int

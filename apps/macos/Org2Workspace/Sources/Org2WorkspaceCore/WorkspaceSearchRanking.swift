@@ -111,6 +111,54 @@ struct WorkspaceSearchQuery: Sendable {
   }
 }
 
+/// Lower-cased search terms matched byte for byte against text that is
+/// already lower-cased, such as a run's cached filter text.
+///
+/// `String.contains(_:)` with Foundation imported bridges both strings to
+/// `NSString` on every call. Over a large run archive (about 100 MB of filter
+/// text) that took seconds per query; `memmem` over the UTF-8 bytes takes
+/// a fraction of a second.
+struct LowercasedSearchTerms: Sendable {
+  let terms: [String]
+  private let needles: [[UInt8]]
+
+  /// `terms` must already be lower-cased.
+  init(_ terms: [String]) {
+    self.terms = terms
+    needles = terms.map { Array($0.utf8) }
+  }
+
+  /// Splits `query` on whitespace and lower-cases it, like the run filter.
+  init(query: String) {
+    self.init(
+      query
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .split(whereSeparator: \.isWhitespace)
+        .map(String.init)
+    )
+  }
+
+  var isEmpty: Bool { needles.isEmpty }
+
+  /// True when every term occurs in `lowercasedText`.
+  func allOccur(in lowercasedText: String) -> Bool {
+    guard !needles.isEmpty else { return true }
+    var text = lowercasedText
+    return text.withUTF8 { haystack in
+      needles.allSatisfy { Self.occurs($0, in: haystack) }
+    }
+  }
+
+  static func occurs(_ needle: [UInt8], in haystack: UnsafeBufferPointer<UInt8>) -> Bool {
+    guard !needle.isEmpty else { return true }
+    guard haystack.count >= needle.count, let base = haystack.baseAddress else { return false }
+    return needle.withUnsafeBufferPointer { needle in
+      memmem(base, haystack.count, needle.baseAddress!, needle.count) != nil
+    }
+  }
+}
+
 /// One ranking for every kind of workspace search result: match quality plus a
 /// strong recency bias, so the best result leads regardless of its type.
 ///

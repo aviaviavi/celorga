@@ -1998,20 +1998,16 @@ extension WorkspaceStore {
     goals: [AgentGoalItem],
     profiles: [AgentProfileItem],
     query rawQuery: String,
-    limitPerCategory: Int
+    limitPerCategory: Int,
+    runFilterTextByID: [AgentRunItem.ID: String] = [:]
   ) -> [WorkspaceAgentWorkSearchResult] {
-    let terms = rawQuery
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-      .lowercased()
-      .split(whereSeparator: \.isWhitespace)
-      .map(String.init)
+    let terms = LowercasedSearchTerms(query: rawQuery)
     guard !terms.isEmpty, limitPerCategory > 0 else { return [] }
 
     func matches(_ values: [String?], _ extra: [String]...) -> Bool {
       var parts: [String] = values.compactMap { $0 }
       for list in extra { parts.append(contentsOf: list) }
-      let text = parts.joined(separator: "\n").lowercased()
-      return terms.allSatisfy(text.contains)
+      return terms.allOccur(in: parts.joined(separator: "\n").lowercased())
     }
 
     func fileLabel(_ path: String) -> String {
@@ -2026,6 +2022,8 @@ extension WorkspaceStore {
     var indexedRunApprovalKeys = Set<String>()
 
     for run in runs {
+      // Both run categories are full; later runs cannot add results.
+      if runResults.count >= limitPerCategory, approvalResults.count >= limitPerCategory { break }
       let matchingApprovals = run.approvals
         .filter { approval in
           matches([
@@ -2070,9 +2068,11 @@ extension WorkspaceStore {
         ))
       }
 
+      // The run list's cached lower-cased filter text, when it has been
+      // built, saves rebuilding every run's text on every query.
       if matchingApprovals.isEmpty,
          runResults.count < limitPerCategory,
-         run.matchesRunFilter(rawQuery) {
+         terms.allOccur(in: runFilterTextByID[run.id] ?? run.runFilterText) {
         runResults.append(WorkspaceAgentWorkSearchResult(
           id: "run:\(run.id)",
           kind: .run,

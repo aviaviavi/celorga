@@ -1635,14 +1635,14 @@ extension WorkspaceStore {
     var filteredIDSets: [AgentRunScope: Set<AgentRunItem.ID>] = [:]
     var sectionsByScope: [AgentRunScope: [RunCenterSection]] = [:]
 
+    let terms = LowercasedSearchTerms(filterTerms)
     for scope in AgentRunScope.allCases {
       if checksCancellation, Task.isCancelled { return nil }
       let entries = indexes.scopeEntries[scope] ?? []
-      let visibleEntries = filterTerms.isEmpty
+      let visibleEntries = terms.isEmpty
         ? entries
         : entries.filter { entry in
-          let text = indexes.filterTextByID[entry.id] ?? entry.run.runFilterText
-          return filterTerms.allSatisfy { text.contains($0) }
+          terms.allOccur(in: indexes.filterTextByID[entry.id] ?? entry.run.runFilterText)
         }
       filteredEntries[scope] = visibleEntries
       let visibleIDs = visibleEntries.map(\.id)
@@ -2369,8 +2369,8 @@ extension WorkspaceStore {
 
   func agentRunMatchesFilter(_ run: AgentRunItem) -> Bool {
     guard !agentRunFilterTerms.isEmpty else { return true }
-    let searchText = agentRunFilterTextByID[run.id] ?? run.runFilterText
-    return agentRunFilterTerms.allSatisfy { searchText.contains($0) }
+    return LowercasedSearchTerms(agentRunFilterTerms)
+      .allOccur(in: agentRunFilterTextByID[run.id] ?? run.runFilterText)
   }
 
   public func focusCorpusFileFilter() {

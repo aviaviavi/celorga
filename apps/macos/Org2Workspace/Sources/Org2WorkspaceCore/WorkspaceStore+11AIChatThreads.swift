@@ -460,10 +460,11 @@ extension WorkspaceStore {
     searchIndexTask?.cancel()
     searchIndexTask = Task { [cli] in
       do {
-        let payload: SearchIndexBuildPayload = try await cli.runJSON([
-          "index", "--dir", corpusRoot.path, "--recursive",
-          "--files"
-        ] + changedPaths + ["--incremental", "--format", "json"])
+        let payload = try await Self.refreshCorpusSearchIndex(
+          cli: cli,
+          corpusRoot: corpusRoot,
+          changedPaths: changedPaths
+        )
         guard !Task.isCancelled else { return }
         await MainActor.run {
           guard self.searchIndexGeneration == generation,

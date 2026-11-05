@@ -161,6 +161,11 @@ export type Org2IndexedSearchAccelerators = {
    * ascending order. Must agree with a per-line case-insensitive match.
    */
   matchingLines?: (file: Org2SearchIndexFile, needle: string) => Iterable<number>;
+  /**
+   * The current TODO configuration key for a file (see
+   * `todoConfigurationKey`), from a cache that outlives one search.
+   */
+  configurationKey?: (filePath: string) => string;
 };
 
 type SearchHeading = { line: number; level: number; title: string; todo?: string; todoTerminal?: boolean; tags: string[]; id?: string };
@@ -462,14 +467,14 @@ export function searchIndexedCorpus(
   options: Org2SearchOptions,
   accelerators?: Org2IndexedSearchAccelerators | ((file: Org2SearchIndexFile, needle: string) => boolean),
 ): Org2SearchHit[] {
-  const { mayContain, matchingLines } = typeof accelerators === "function" ? { mayContain: accelerators, matchingLines: undefined } : (accelerators ?? {});
+  const { mayContain, matchingLines, configurationKey: cachedConfigurationKey } = typeof accelerators === "function" ? { mayContain: accelerators, matchingLines: undefined, configurationKey: undefined } : (accelerators ?? {});
   const hits: Org2SearchHit[] = [];
   const matcher = literalCaseInsensitiveMatcher(options.query);
   const fileZoneFilters = options.fileZoneFilters.map((zone) => zone.toLowerCase()).filter(Boolean);
   // Files in one folder share their TODO configuration; reading celorga.json
   // once per folder instead of once per file keeps common words fast.
   const configurationByDirectory = new Map<string, string>();
-  const configurationKey = (filePath: string): string => {
+  const configurationKey = cachedConfigurationKey ?? ((filePath: string): string => {
     const directory = path.dirname(filePath);
     let key = configurationByDirectory.get(directory);
     if (key === undefined) {
@@ -477,31 +482,54 @@ export function searchIndexedCorpus(
       configurationByDirectory.set(directory, key);
     }
     return key;
-  };
+  });
+  const usesIndexedHeadings = (file: Org2SearchIndexFile): boolean =>
+    Boolean(file.headings) && index.todoWorkflowVersion === 1 && file.todoConfiguration === configurationKey(file.path);
+  const modifiedMsByFile = new Map(index.files.map((file) => [file.path, file.modifiedMs]));
   // `best` ranking needs only a few heading fields per match, so matches are
   // scored first and only the results that make the cut are built in full.
-  const ranked = normalizedSort(options.sort) === "best" && !options.subtree ? new BestCandidates(options) : null;
+  const ranked = normalizedSort(options.sort) === "best" && !options.subtree ? new BestCandidates(options, modifiedMsByFile) : null;
 
-  for (const file of index.files) {
+  const searchFile = (file: Org2SearchIndexFile, ordinal: number): void => {
     const normalizedFile = file.path.toLowerCase();
-    if (fileZoneFilters.length && !fileZoneFilters.some((zone) => normalizedFile.includes(zone))) continue;
-    if (mayContain && !mayContain(file, matcher.needle)) continue;
-    if (file.headings && index.todoWorkflowVersion === 1 && file.todoConfiguration === configurationKey(file.path)) {
+    if (fileZoneFilters.length && !fileZoneFilters.some((zone) => normalizedFile.includes(zone))) return;
+    if (mayContain && !mayContain(file, matcher.needle)) return;
+    if (usesIndexedHeadings(file)) {
       const lines = matchingLines ? matchingLines(file, matcher.needle) : undefined;
-      if (ranked) ranked.collect(file, matcher, lines);
+      if (ranked) ranked.collect(file, ordinal, matcher, lines);
       else collectSearchHitsForIndexedFile(file, matcher, options, hits, lines);
     } else {
       const before = hits.length;
       collectSearchHitsForLines(file.path, file.lines, matcher, options, hits);
       if (options.matchKind) filterHitsByMatchKind(hits, before, options.matchKind);
-      if (ranked) ranked.addHits(hits.splice(before));
+      if (ranked) ranked.addHits(hits.splice(before), ordinal);
     }
-    if (hits.length >= options.limit && normalizedSort(options.sort) === "scan") break;
+  };
+
+  if (ranked) {
+    // Visit files from the highest possible score down and stop once no
+    // remaining file can beat the current top results. A file's bound is the
+    // best quality any of its lines could get plus its newest date's recency,
+    // so common words skip most old files without changing the results.
+    const order = index.files.map((file, ordinal) => ({
+      file,
+      ordinal,
+      bound: usesIndexedHeadings(file) ? ranked.fileScoreBound(file) : Number.POSITIVE_INFINITY,
+    }));
+    order.sort((a, b) => b.bound - a.bound || a.ordinal - b.ordinal);
+    for (const { file, ordinal, bound } of order) {
+      if (bound < ranked.threshold) break;
+      searchFile(file, ordinal);
+    }
+  } else {
+    for (let ordinal = 0; ordinal < index.files.length; ordinal += 1) {
+      searchFile(index.files[ordinal]!, ordinal);
+      if (hits.length >= options.limit && normalizedSort(options.sort) === "scan") break;
+    }
   }
 
-  const modifiedMsByFile = new Map(index.files.map((file) => [file.path, file.modifiedMs]));
   const results = ranked
-    ? ranked.top(options.limit, modifiedMsByFile)
+    ? ranked.top(options.limit)
     : sortAndLimitSearchHits(hits, options.sort, options.limit, options.query, modifiedMsByFile);
   return options.maxLineLength ? results.map((hit) => shortenSearchHit(hit, options.maxLineLength!, matcher.needle)) : results;
 }
@@ -540,21 +568,97 @@ function shortenSearchHit(hit: Org2SearchHit, max: number, needle: string): Org2
   };
 }
 
+/** What bounds the `best` score of any match in one indexed file. */
+type FileScoreBoundFacts = {
+  /** Visible heading titles, lower-cased, one per line. */
+  headings: string;
+  hasActiveTodo: boolean;
+  /** Newest date a match in this file can carry, as a timestamp. */
+  newestWritten?: number;
+  /** Some match falls back to the file's modification time. */
+  hasUndated: boolean;
+};
+
+const fileScoreBoundFacts = new WeakMap<Org2SearchIndexFile, FileScoreBoundFacts>();
+
+function scoreBoundFacts(file: Org2SearchIndexFile): FileScoreBoundFacts {
+  let facts = fileScoreBoundFacts.get(file);
+  if (facts) return facts;
+  const headings = file.headings || [];
+  const fileDate = dateKeyFromFile(file.path);
+  let newestWritten: number | undefined;
+  let hasUndated = false;
+  const consider = (date: string): void => {
+    const written = date ? bestSearchWrittenTimestamp({ sortDate: date } as Org2SearchHit) : undefined;
+    if (written === undefined) hasUndated = true;
+    else if (newestWritten === undefined || written > newestWritten) newestWritten = written;
+  };
+  // Lines before the first heading carry the file's date.
+  consider(fileDate);
+  let hasActiveTodo = false;
+  const titles: string[] = [];
+  for (const heading of headings) {
+    consider(heading.date || fileDate);
+    titles.push(visibleSearchHeading(heading.title));
+    const todo = (heading.todo || "").trim().toUpperCase();
+    if (todo && !(heading.todoTerminal ?? !isActiveTodoKeyword(todo))) hasActiveTodo = true;
+  }
+  facts = { headings: titles.join("\n"), hasActiveTodo, newestWritten, hasUndated };
+  fileScoreBoundFacts.set(file, facts);
+  return facts;
+}
+
+/** Precomputes what `best` ranking needs to skip a file, so the first query does not pay for it. */
+export function warmBestSearchRanking(file: Org2SearchIndexFile): void {
+  scoreBoundFacts(file);
+}
+
+type BestCandidate = {
+  file: Org2SearchIndexFile | null;
+  line: number;
+  headingIndex: number;
+  date: string | undefined;
+  score: number;
+  /** Position of the file in the index, then of the match in the file: the scan order that breaks ties. */
+  ordinal: number;
+  sequence: number;
+  hit?: Org2SearchHit;
+};
+
+function compareBestCandidates(a: BestCandidate, b: BestCandidate): number {
+  return b.score - a.score || a.ordinal - b.ordinal || a.sequence - b.sequence;
+}
+
 /**
  * Collects `best`-ranked matches without building a full hit for each one.
  * Scores, order, and tie-breaking are identical to sorting full hits with
- * `sortAndLimitSearchHits`.
+ * `sortAndLimitSearchHits` in scan order. Only the best `limit` candidates
+ * are kept, and `threshold` is the score a new match must reach to join them.
  */
 class BestCandidates {
   private readonly needle: string;
   private readonly now = Date.now();
-  private readonly fileDate = new Map<string, string>();
+  private readonly limit: number;
   private readonly qualityByHeading = new Map<Org2SearchIndexHeading, [number, number]>();
   private readonly timestampByDate = new Map<string, number | undefined>();
-  private readonly candidates: Array<{ file: Org2SearchIndexFile | null; line: number; headingIndex: number; quality: number; date: string | undefined; hit?: Org2SearchHit }> = [];
+  private readonly boostByDate = new Map<string, number>();
+  private candidates: BestCandidate[] = [];
+  /** No match scoring below this can make the cut. */
+  threshold = Number.NEGATIVE_INFINITY;
 
-  constructor(private readonly options: Org2SearchOptions) {
+  constructor(private readonly options: Org2SearchOptions, private readonly modifiedMsByFile: ReadonlyMap<string, number>) {
     this.needle = options.query.trim().toLowerCase();
+    this.limit = Math.max(1, options.limit);
+  }
+
+  /** The highest score any match in `file` could get. */
+  fileScoreBound(file: Org2SearchIndexFile): number {
+    const facts = scoreBoundFacts(file);
+    let quality = this.needle && facts.headings.includes(this.needle) ? 50 : 10;
+    if (facts.hasActiveTodo) quality += 10;
+    let recency = facts.newestWritten === undefined ? 0 : bestRecencyBoost(facts.newestWritten, this.now);
+    if (facts.hasUndated) recency = Math.max(recency, bestRecencyBoost(file.modifiedMs, this.now) * BEST_MODIFIED_TIME_RECENCY_FACTOR);
+    return quality + recency;
   }
 
   private headingQuality(heading: Org2SearchIndexHeading | undefined, isHeadingLine: boolean): number {
@@ -569,15 +673,43 @@ class BestCandidates {
     return isHeadingLine ? cached[0] : cached[1];
   }
 
-  collect(file: Org2SearchIndexFile, matcher: LiteralCaseInsensitiveMatcher, matchingLines?: Iterable<number>): void {
+  private timestamp(date: string | undefined): number | undefined {
+    if (!date) return undefined;
+    if (this.timestampByDate.has(date)) return this.timestampByDate.get(date);
+    const value = bestSearchWrittenTimestamp({ sortDate: date } as Org2SearchHit);
+    this.timestampByDate.set(date, value);
+    return value;
+  }
+
+  private recency(date: string | undefined, filePath: string): number {
+    let recency = date === undefined ? undefined : this.boostByDate.get(date);
+    if (recency !== undefined) return recency;
+    const written = this.timestamp(date);
+    if (written === undefined) return bestRecencyBoost(this.modifiedMsByFile.get(filePath), this.now) * BEST_MODIFIED_TIME_RECENCY_FACTOR;
+    recency = bestRecencyBoost(written, this.now);
+    this.boostByDate.set(date!, recency);
+    return recency;
+  }
+
+  private push(candidate: BestCandidate): void {
+    if (candidate.score < this.threshold) return;
+    this.candidates.push(candidate);
+  }
+
+  /** Keeps only the best `limit` candidates once enough have piled up. */
+  private settle(): void {
+    if (this.candidates.length < this.limit * 2 + 256) return;
+    this.candidates.sort(compareBestCandidates);
+    this.candidates.length = this.limit;
+    this.threshold = this.candidates[this.limit - 1]!.score;
+  }
+
+  collect(file: Org2SearchIndexFile, ordinal: number, matcher: LiteralCaseInsensitiveMatcher, matchingLines?: Iterable<number>): void {
     const headings = file.headings || [];
-    let fileDate = this.fileDate.get(file.path);
-    if (fileDate === undefined) {
-      fileDate = dateKeyFromFile(file.path);
-      this.fileDate.set(file.path, fileDate);
-    }
+    const fileDate = dateKeyFromFile(file.path);
     const kind = this.options.matchKind;
     let headingIndex = -1;
+    let sequence = 0;
     const visit = (j: number): void => {
       while (headingIndex + 1 < headings.length && headings[headingIndex + 1]!.line <= j) headingIndex += 1;
       const current = headingIndex >= 0 ? headings[headingIndex] : undefined;
@@ -591,7 +723,16 @@ class BestCandidates {
       if (kind && !matchKindAccepts(kind, isHeadingLine, current?.todo, current?.todoTerminal)) return;
       const sortDate = current?.date || fileDate;
       if (!inDateWindow(sortDate, this.options.dateFrom, this.options.dateTo)) return;
-      this.candidates.push({ file, line: j, headingIndex, quality: this.headingQuality(current, isHeadingLine), date: sortDate || undefined });
+      const date = sortDate || undefined;
+      this.push({
+        file,
+        line: j,
+        headingIndex,
+        date,
+        score: this.headingQuality(current, isHeadingLine) + this.recency(date, file.path),
+        ordinal,
+        sequence: sequence++,
+      });
     };
     if (matchingLines) {
       for (const j of matchingLines) visit(j);
@@ -600,41 +741,31 @@ class BestCandidates {
         if (matchesCaseInsensitiveLiteral(file.lines[j] || "", matcher)) visit(j);
       }
     }
+    this.settle();
   }
 
-  addHits(hits: Org2SearchHit[]): void {
+  addHits(hits: Org2SearchHit[], ordinal: number): void {
+    let sequence = 0;
     for (const hit of hits) {
-      this.candidates.push({ file: null, line: hit.line - 1, headingIndex: -1, quality: bestSearchQuality(hit, this.needle), date: hit.sortDate || hit.date, hit });
+      const date = hit.sortDate || hit.date;
+      this.push({
+        file: null,
+        line: hit.line - 1,
+        headingIndex: -1,
+        date,
+        score: bestSearchQuality(hit, this.needle) + this.recency(date, hit.file),
+        ordinal,
+        sequence: sequence++,
+        hit,
+      });
     }
+    this.settle();
   }
 
-  private timestamp(date: string | undefined): number | undefined {
-    if (!date) return undefined;
-    if (this.timestampByDate.has(date)) return this.timestampByDate.get(date);
-    const value = bestSearchWrittenTimestamp({ sortDate: date } as Org2SearchHit);
-    this.timestampByDate.set(date, value);
-    return value;
-  }
-
-  top(limit: number, modifiedMsByFile: ReadonlyMap<string, number>): Org2SearchHit[] {
-    const boostByDate = new Map<string, number>();
-    const scored = this.candidates.map((candidate, index) => {
-      const filePath = candidate.file?.path ?? candidate.hit!.file;
-      let recency = candidate.date === undefined ? undefined : boostByDate.get(candidate.date);
-      if (recency === undefined) {
-        const written = this.timestamp(candidate.date);
-        recency = written !== undefined
-          ? bestRecencyBoost(written, this.now)
-          : bestRecencyBoost(modifiedMsByFile.get(filePath), this.now) * BEST_MODIFIED_TIME_RECENCY_FACTOR;
-        if (written !== undefined) boostByDate.set(candidate.date!, recency);
-      }
-      return { index, score: candidate.quality + recency };
-    });
-    scored.sort((a, b) => b.score - a.score || a.index - b.index);
-    return scored.slice(0, limit).map(({ index }) => {
-      const candidate = this.candidates[index]!;
-      return candidate.hit ?? buildIndexedSearchHit(candidate.file!, candidate.line, candidate.headingIndex, candidate.date, this.options);
-    });
+  top(limit: number): Org2SearchHit[] {
+    this.candidates.sort(compareBestCandidates);
+    return this.candidates.slice(0, limit).map((candidate) =>
+      candidate.hit ?? buildIndexedSearchHit(candidate.file!, candidate.line, candidate.headingIndex, candidate.date, this.options));
   }
 }
 
@@ -979,9 +1110,13 @@ function bestSearchScore(hit: Org2SearchHit, needle: string, now: number, modifi
   return bestSearchQuality(hit, needle) + recency;
 }
 
+/** The heading as `best` ranking compares it: visible text, not hidden link targets such as URLs. */
+function visibleSearchHeading(heading: string): string {
+  return heading.replace(/\[\[[^\]]*\]\[([^\]]*)\]\]/g, "$1").trim().toLowerCase();
+}
+
 function bestSearchQuality(hit: Org2SearchHit, needle: string): number {
-  // Match the visible heading, not hidden link targets such as URLs.
-  const heading = (hit.heading || "").replace(/\[\[[^\]]*\]\[([^\]]*)\]\]/g, "$1").trim().toLowerCase();
+  const heading = visibleSearchHeading(hit.heading || "");
   const isHeadingLine = hit.headingLine !== undefined && hit.headingLine === hit.line;
   let quality = 10;
   if (needle && heading) {

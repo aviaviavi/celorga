@@ -1464,17 +1464,8 @@ extension WorkspaceStore {
     searchIndexStatusText = "Indexing search..."
 
     searchIndexTask = Task { [cli] in
-      if cli.hasSearchService {
-        // Serve searches from the existing index while it is rebuilt.
-        Task.detached(priority: .utility) { await cli.prewarmSearchService(corpusRoot: corpusRoot) }
-      }
       do {
-        let payload: SearchIndexBuildPayload = try await cli.runJSON([
-          "index",
-          "--dir", corpusRoot.path,
-          "--recursive",
-          "--format", "json"
-        ])
+        let payload = try await Self.refreshCorpusSearchIndex(cli: cli, corpusRoot: corpusRoot)
         guard !Task.isCancelled else { return }
         await MainActor.run {
           guard self.searchIndexGeneration == generation,
@@ -1487,10 +1478,6 @@ extension WorkspaceStore {
           let skipped = payload.skippedFiles > 0 ? ", \(payload.skippedFiles) skipped" : ""
           self.searchIndexStatusText = "\(payload.fileCount) files, \(payload.lineCount) lines indexed\(skipped)"
         }
-        // Load the fresh index into the search worker now, so the first
-        // query after launch or a corpus change does not pay for it.
-        guard !Task.isCancelled, cli.hasSearchService else { return }
-        await cli.prewarmSearchService(corpusRoot: corpusRoot)
       } catch {
         guard !Task.isCancelled else { return }
         await MainActor.run {
@@ -1505,6 +1492,36 @@ extension WorkspaceStore {
         }
       }
     }
+  }
+
+  /// Brings the corpus search index up to date. The warm search worker
+  /// rereads only the files that changed and keeps the result in memory;
+  /// without it, a one-shot `celorga index` rebuilds the whole index, which
+  /// takes seconds on a large corpus.
+  nonisolated static func refreshCorpusSearchIndex(
+    cli: Org2CLI,
+    corpusRoot: URL,
+    changedPaths: [String]? = nil
+  ) async throws -> SearchIndexBuildPayload {
+    if cli.hasSearchService {
+      do {
+        return try await cli.refreshSearchServiceIndex(corpusRoot: corpusRoot)
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        // Fall back to the CLI below.
+      }
+    }
+    try Task.checkCancellation()
+    var arguments = ["index", "--dir", corpusRoot.path, "--recursive"]
+    if let changedPaths { arguments += ["--files"] + changedPaths + ["--incremental"] }
+    let payload: SearchIndexBuildPayload = try await cli.runJSON(arguments + ["--format", "json"])
+    // Load the fresh index into the search worker now, so the next query
+    // does not pay for it.
+    if cli.hasSearchService, !Task.isCancelled {
+      await cli.prewarmSearchService(corpusRoot: corpusRoot)
+    }
+    return payload
   }
 
   public func runSearch() async {
@@ -1555,6 +1572,7 @@ extension WorkspaceStore {
     let workflows = filter.searchesAgentWork ? agentWorkflows : []
     let goals = filter.searchesAgentWork ? agentGoals : []
     let profiles = filter.searchesAgentWork ? agentProfiles : []
+    let runFilterTextByID = filter.searchesAgentWork ? agentRunFilterTextByID : [:]
     let agentWorkSearchTask = Task.detached(priority: .userInitiated) {
       Self.searchAgentWorkForWorkspace(
         runs: runs,
@@ -1563,7 +1581,8 @@ extension WorkspaceStore {
         goals: goals,
         profiles: profiles,
         query: query,
-        limitPerCategory: perSourceLimit
+        limitPerCategory: perSourceLimit,
+        runFilterTextByID: runFilterTextByID
       )
     }
 

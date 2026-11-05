@@ -19,6 +19,9 @@ struct Org2SearchServiceRequest: Encodable, Sendable {
   var maxLineLength: Int? = nil
   /// Search these corpora together; `rootDir` is the one the app indexes.
   var mounts: [String]? = nil
+  /// With no query: bring the worker's index of `rootDir` up to date with
+  /// the files now, rereading only changed files.
+  var refresh: Bool? = nil
 }
 
 /// The `files` part of a worker request. Omitting `query` only loads (or
@@ -33,6 +36,7 @@ private struct Org2SearchServiceResponse: Decodable, Sendable {
   let id: String
   let payload: SearchPayload?
   let warmed: Bool?
+  let indexed: SearchIndexBuildPayload?
   let files: MacFileSearchPayload?
   let error: String?
 }
@@ -118,6 +122,26 @@ actor Org2SearchServicePool {
     return payload
   }
 
+  func refresh(corpusRoot: URL, repoRoot: URL, nodePath: String?, timeout: TimeInterval) async throws -> SearchIndexBuildPayload {
+    let response = try await worker(repoRoot: repoRoot, nodePath: nodePath).send(
+      Org2SearchServiceRequest(
+        id: UUID().uuidString.lowercased(),
+        rootDir: corpusRoot.standardizedFileURL.path,
+        query: nil,
+        limit: nil,
+        context: nil,
+        sort: nil,
+        recursive: true,
+        refresh: true
+      ),
+      timeout: timeout
+    )
+    guard let indexed = response.indexed else {
+      throw Org2CLIError.commandFailed(status: 1, message: "The search service did not refresh the index.")
+    }
+    return indexed
+  }
+
   func warm(corpusRoot: URL, mounts: [String]?, repoRoot: URL, nodePath: String?, timeout: TimeInterval) async throws {
     _ = try await worker(repoRoot: repoRoot, nodePath: nodePath).send(
       Org2SearchServiceRequest(
@@ -151,6 +175,13 @@ private final class Org2SearchServiceOperation: @unchecked Sendable {
     lock.unlock()
   }
 
+  /// True once the caller has an answer, including a cancellation.
+  var isFinished: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return result != nil
+  }
+
   @discardableResult
   func finish(_ result: Result<Org2SearchServiceResponse, Error>) -> Bool {
     lock.lock()
@@ -182,8 +213,9 @@ private final class Org2SearchServiceWorker: @unchecked Sendable {
     self.nodePath = nodePath
   }
 
-  /// A cancelled caller stops waiting at once, but the worker finishes the
-  /// request in the background: killing it would discard the warm index.
+  /// A cancelled caller stops waiting at once. A request the worker already
+  /// started finishes in the background (killing it would discard the warm
+  /// index); one still queued is dropped.
   func send(_ request: Org2SearchServiceRequest, timeout: TimeInterval) async throws -> Org2SearchServiceResponse {
     let operation = Org2SearchServiceOperation()
     return try await withTaskCancellationHandler {
@@ -203,6 +235,10 @@ private final class Org2SearchServiceWorker: @unchecked Sendable {
     timeout: TimeInterval,
     operation: Org2SearchServiceOperation
   ) {
+    // Typing supersedes queries faster than the worker answers them. A
+    // request whose caller already gave up is skipped rather than run, so
+    // the current query does not wait behind a backlog of stale ones.
+    guard !operation.isFinished else { return }
     let timeoutWork = DispatchWorkItem { [weak self] in
       if operation.finish(.failure(Org2CLIError.commandTimedOut(
         seconds: Int(max(0.01, timeout).rounded(.up))
@@ -365,6 +401,19 @@ extension Org2CLI {
       repoRoot: repoRoot,
       nodePath: runtimeNodePath,
       timeout: 60
+    )
+  }
+
+  /// Brings the corpus search index up to date in the warm search worker,
+  /// which rereads only files that changed (building the index when it is
+  /// missing) and saves it once idle. A full `celorga index` takes seconds on
+  /// a large corpus; this takes a fraction of one.
+  func refreshSearchServiceIndex(corpusRoot: URL, timeout: TimeInterval = 180) async throws -> SearchIndexBuildPayload {
+    try await Org2SearchServicePool.shared.refresh(
+      corpusRoot: corpusRoot,
+      repoRoot: repoRoot,
+      nodePath: runtimeNodePath,
+      timeout: timeout
     )
   }
 
