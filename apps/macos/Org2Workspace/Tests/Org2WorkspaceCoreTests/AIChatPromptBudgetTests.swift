@@ -71,11 +71,19 @@ final class AIChatPromptBudgetTests: XCTestCase {
     let claude = context.localAgentSystemPrompt(runtime: "claude", runtimeTitle: "Claude Code")
     let codex = CodexAppServerClient.developerInstructions(for: .clientWorkspaceTools)
       + context.codexSystemPrompt()
+    // Hosted runners can have much longer machine names than a developer's
+    // Mac. Measure a fixed long hostname so this budget is reproducible.
+    func measuredCount(_ prompt: String) -> Int {
+      prompt.replacingOccurrences(
+        of: "User's Celorga machine: \(AIChatWorkspaceContext.clientMachineName)",
+        with: "User's Celorga machine: example-workstation-with-a-long-hostname-for-prompt-budget-testing"
+      ).count
+    }
     return Sizes(
       standing: AIChatWorkspaceContext.localAgentStandingInstructions.count,
-      turn: turn.count,
-      claudeSystemPrompt: claude.count,
-      codexFirstTurn: codex.count
+      turn: measuredCount(turn),
+      claudeSystemPrompt: measuredCount(claude),
+      codexFirstTurn: measuredCount(codex)
     )
   }
 
