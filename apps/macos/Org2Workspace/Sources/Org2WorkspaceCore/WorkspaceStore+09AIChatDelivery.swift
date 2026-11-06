@@ -2500,6 +2500,10 @@ extension WorkspaceStore {
     }
 
     let client = try codexClient(forDestinationID: destinationID)
+    // A long-lived local app-server keeps plugin bridges (computer use,
+    // browser) bound to the desktop app that was running when it launched.
+    // Start each turn on a fresh one after ChatGPT/Codex restarts or updates.
+    await client.rotateIdleLocalTransportIfStale()
     let account = try await client.accountState()
     if destinationID == AIChatDestinationConfiguration.localCodexID {
       codexAccountState = account

@@ -1,3 +1,6 @@
+#if canImport(AppKit)
+import AppKit
+#endif
 import Darwin
 import Foundation
 
@@ -432,6 +435,12 @@ public actor CodexAppServerClient {
   private var ignoredCompletedTurnIDs = Set<String>()
   private var loadedThreadIDs = Set<String>()
   private var modelCatalogLoadedAt: Date?
+  /// When the current local app-server was launched, and which executable
+  /// file it was launched from. Used to retire an idle transport whose
+  /// desktop host or binary changed underneath it.
+  private var localTransportLaunchedAt: Date?
+  private var localTransportExecutable: LocalExecutableFingerprint?
+  private let desktopHostLaunchDateProvider: @Sendable (URL?) -> Date?
   private var latestStderr = ""
   private static let tokenUsageCompletionGraceNanoseconds: UInt64 = 250_000_000
 
@@ -450,9 +459,15 @@ public actor CodexAppServerClient {
     // The initialize handshake waits for the app server to start. Nil uses
     // `requestTimeoutNanoseconds`, as before.
     initializeRequestTimeoutNanoseconds: UInt64? = nil,
+    // Returns when the desktop app that hosts Codex's local plugin bridges
+    // (computer use, browser) last launched. Nil uses the running ChatGPT or
+    // Codex app.
+    desktopHostLaunchDateProvider: (@Sendable (URL?) -> Date?)? = nil,
     eventHandler: @escaping EventHandler,
     dynamicToolHandler: @escaping DynamicToolHandler
   ) {
+    self.desktopHostLaunchDateProvider = desktopHostLaunchDateProvider
+      ?? { CodexAppServerClient.desktopHostLaunchDate(executableURL: $0) }
     let resolvedExecutableResolver: (@Sendable () -> URL?)?
     if let executableResolver {
       resolvedExecutableResolver = executableResolver
@@ -1216,6 +1231,85 @@ while True:
     return CodexLoginStart(loginID: loginID, authURL: authURL)
   }
 
+  /// Retires an idle local app-server when its environment changed since it
+  /// launched: the ChatGPT or Codex desktop app restarted, or the Codex
+  /// executable was updated or relocated. The app-server starts its plugin
+  /// bridges (computer use, browser) once, so after a desktop restart they stay
+  /// bound to the old desktop process until the app-server itself restarts.
+  /// Codex threads persist on disk, so the next request relaunches and resumes.
+  @discardableResult
+  public func rotateIdleLocalTransportIfStale() -> Bool {
+    guard case .local = transport,
+          let launchedAt = localTransportLaunchedAt,
+          process?.isRunning == true,
+          pendingRequests.isEmpty,
+          pendingTurns.isEmpty,
+          startupTask == nil
+    else { return false }
+
+    let currentExecutable = executableResolver?() ?? executableURL
+    var stale = false
+    if let hostLaunchedAt = desktopHostLaunchDateProvider(currentExecutable),
+       hostLaunchedAt > launchedAt {
+      stale = true
+    }
+    if let launched = localTransportExecutable,
+       launched != LocalExecutableFingerprint(currentExecutable) {
+      stale = true
+    }
+    guard stale else { return false }
+    shutdown()
+    return true
+  }
+
+  struct LocalExecutableFingerprint: Equatable {
+    let path: String
+    let modifiedAt: Date?
+    let fileNumber: Int?
+
+    init?(_ url: URL?) {
+      guard let url else { return nil }
+      let resolved = url.resolvingSymlinksInPath()
+      let attributes = try? FileManager.default.attributesOfItem(atPath: resolved.path)
+      path = resolved.path
+      modifiedAt = attributes?[.modificationDate] as? Date
+      fileNumber = (attributes?[.systemFileNumber] as? NSNumber)?.intValue
+    }
+  }
+
+  /// Bundle identifiers of desktop apps whose restart invalidates the plugin
+  /// bridges of an already-running local Codex app-server.
+  nonisolated static let desktopHostBundleIdentifiers = ["com.openai.chat", "com.openai.codex"]
+
+  /// The outermost `.app` bundle containing the executable, if any.
+  nonisolated static func enclosingApplicationBundlePath(of executableURL: URL) -> String? {
+    var path = ""
+    for component in executableURL.standardizedFileURL.pathComponents {
+      path = component == "/" ? "/" : (path as NSString).appendingPathComponent(component)
+      if component.hasSuffix(".app") { return path }
+    }
+    return nil
+  }
+
+  nonisolated static func desktopHostLaunchDate(executableURL: URL?) -> Date? {
+    #if canImport(AppKit)
+    let hostBundlePath = executableURL.flatMap(enclosingApplicationBundlePath(of:))
+    return NSWorkspace.shared.runningApplications
+      .filter { application in
+        if let identifier = application.bundleIdentifier,
+           desktopHostBundleIdentifiers.contains(identifier) {
+          return true
+        }
+        guard let hostBundlePath, let bundleURL = application.bundleURL else { return false }
+        return bundleURL.standardizedFileURL.path == hostBundlePath
+      }
+      .compactMap(\.launchDate)
+      .max()
+    #else
+    return nil
+    #endif
+  }
+
   public func listModels(
     refreshingTransportIfOlderThan maximumAge: TimeInterval? = nil
   ) async throws -> [AIChatModelOption] {
@@ -1863,6 +1957,8 @@ while True:
     outputBuffer = Data()
     loadedThreadIDs.removeAll()
     modelCatalogLoadedAt = nil
+    localTransportLaunchedAt = nil
+    localTransportExecutable = nil
     if let processToStop, processToStop.isRunning {
       processToStop.terminate()
       // A wedged app-server can ignore SIGTERM while retaining Codex's
@@ -2152,6 +2248,10 @@ while True:
       throw CodexAppServerError.launchFailed(error.localizedDescription)
     }
     self.process = process
+    if case .local = transport {
+      localTransportLaunchedAt = Date()
+      localTransportExecutable = LocalExecutableFingerprint(launchURL)
+    }
     standardInput = input.fileHandleForWriting
     latestStderr = ""
     startReaders(

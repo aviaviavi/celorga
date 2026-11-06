@@ -1547,6 +1547,125 @@ final class CodexAppServerClientTests: XCTestCase {
     await client.shutdown()
   }
 
+  func testIdleLocalAppServerRestartsAfterDesktopHostRelaunch() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-codex-host-relaunch-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    let launchCount = temporaryDirectory.appendingPathComponent("launch-count")
+    let executable = temporaryDirectory.appendingPathComponent("fake-codex-host-relaunch")
+    try Self.installLaunchCountingFakeCodex(at: executable, launchCount: launchCount)
+
+    let hostLaunch = LockedDateBox(Date.distantPast)
+    let client = CodexAppServerClient(
+      executableURL: executable,
+      desktopHostLaunchDateProvider: { _ in hostLaunch.value },
+      eventHandler: { _ in },
+      dynamicToolHandler: { _ in
+        CodexDynamicToolResult(success: false, text: "No tools in this test.")
+      }
+    )
+
+    _ = try await client.listModels()
+    let unchanged = await client.rotateIdleLocalTransportIfStale()
+    _ = try await client.listModels()
+    XCTAssertFalse(unchanged, "An unchanged desktop host must keep the warm app-server")
+    XCTAssertEqual(try Self.launches(launchCount), 1)
+
+    hostLaunch.value = Date()
+    let rotated = await client.rotateIdleLocalTransportIfStale()
+    _ = try await client.listModels()
+    XCTAssertTrue(rotated, "A relaunched desktop host must retire the stale app-server")
+    XCTAssertEqual(try Self.launches(launchCount), 2)
+
+    let settled = await client.rotateIdleLocalTransportIfStale()
+    XCTAssertFalse(settled, "The fresh app-server postdates the desktop host launch")
+    await client.shutdown()
+  }
+
+  func testIdleLocalAppServerRestartsAfterExecutableUpdate() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-codex-binary-update-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    let launchCount = temporaryDirectory.appendingPathComponent("launch-count")
+    let executable = temporaryDirectory.appendingPathComponent("fake-codex-binary-update")
+    try Self.installLaunchCountingFakeCodex(at: executable, launchCount: launchCount)
+
+    let client = CodexAppServerClient(
+      executableURL: executable,
+      desktopHostLaunchDateProvider: { _ in nil },
+      eventHandler: { _ in },
+      dynamicToolHandler: { _ in
+        CodexDynamicToolResult(success: false, text: "No tools in this test.")
+      }
+    )
+
+    _ = try await client.listModels()
+    // An installer replaces the binary with a new file.
+    try Self.installLaunchCountingFakeCodex(at: executable, launchCount: launchCount)
+    let rotated = await client.rotateIdleLocalTransportIfStale()
+    _ = try await client.listModels()
+
+    XCTAssertTrue(rotated)
+    XCTAssertEqual(try Self.launches(launchCount), 2)
+    await client.shutdown()
+  }
+
+  func testDesktopHostBundleIsOutermostApplication() {
+    XCTAssertEqual(
+      CodexAppServerClient.enclosingApplicationBundlePath(
+        of: URL(fileURLWithPath: "/Applications/Example.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex")
+      ),
+      "/Applications/Example.app"
+    )
+    XCTAssertNil(
+      CodexAppServerClient.enclosingApplicationBundlePath(of: URL(fileURLWithPath: "/usr/local/bin/codex"))
+    )
+  }
+
+  private final class LockedDateBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Date
+    init(_ value: Date) { stored = value }
+    var value: Date {
+      get { lock.withLock { stored } }
+      set { lock.withLock { stored = newValue } }
+    }
+  }
+
+  private static func installLaunchCountingFakeCodex(at executable: URL, launchCount: URL) throws {
+    let script = #"""
+    #!/bin/sh
+    count_file='\#(launchCount.path)'
+    count=0
+    if [ -f "$count_file" ]; then
+      count=$(sed -n '1p' "$count_file")
+    fi
+    printf '%s\n' "$((count + 1))" > "$count_file"
+    while IFS= read -r line; do
+      request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+      case "$line" in
+        *'"method":"initialize"'*)
+          printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$request_id"
+          ;;
+        *'"method":"model/list"'*)
+          printf '{"id":%s,"result":{"data":[{"id":"gpt-test","displayName":"Test","isDefault":true}],"nextCursor":null}}\n' "$request_id"
+          ;;
+      esac
+    done
+    """#
+    try script.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+  }
+
+  private static func launches(_ launchCount: URL) throws -> Int {
+    Int(try String(contentsOf: launchCount, encoding: .utf8)
+      .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+  }
+
   func testInitializationTimeoutResetsTransportForRetry() async throws {
     let temporaryDirectory = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-codex-initialize-reset-\(UUID().uuidString)", isDirectory: true)
