@@ -2064,7 +2064,8 @@ extension WorkspaceStore {
       dismissCalendarRecordingPrompt()
       isMeetingRecordingPaused = false
       startMeetingInputMetering()
-      selectedSurface = .meetings
+      // Starting a recording never switches pages; the live note opens
+      // beside the meeting list only when Meetings is already showing.
       meetingStatusText = "Recording \(paths.title)"
       statusText = meetingStatusText
       await openLiveMeetingNote(paths: paths, corpusRoot: corpusRoot)
@@ -2106,13 +2107,24 @@ extension WorkspaceStore {
     else {
       return
     }
+    presentLiveMeetingNote(item)
+    markWorkspaceSurfacesDirty([.agenda, .files, .search], refreshVisible: false)
+  }
+
+  /// Adds the live meeting note to the list without leaving the current
+  /// page. On Meetings it opens beside the list; elsewhere it only becomes
+  /// the selected meeting for the next visit to Meetings.
+  func presentLiveMeetingNote(_ item: MeetingWorkspaceItem) {
     if let existingIndex = meetings.firstIndex(where: { $0.file == item.file }) {
       meetings[existingIndex] = item
     } else {
       meetings.insert(item, at: 0)
     }
-    selectMeeting(item)
-    markWorkspaceSurfacesDirty([.agenda, .files, .search], refreshVisible: false)
+    if selectedSurface == .meetings {
+      selectMeeting(item)
+    } else {
+      selectedMeetingID = item.id
+    }
   }
 
   /// Saves pending edits to a live meeting note before the finished

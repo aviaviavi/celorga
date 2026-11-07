@@ -11347,6 +11347,42 @@ final class Org2ModelsTests: XCTestCase {
   }
 
   @MainActor
+  func testStartingAMeetingRecordingNeverSwitchesPages() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-workspace-live-note-page-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let note = root.appendingPathComponent("note.org")
+    try "#+TITLE: Note\n".write(to: note, atomically: true, encoding: .utf8)
+    func liveNote(_ name: String) -> MeetingWorkspaceItem {
+      MeetingWorkspaceItem(
+        title: name, file: root.appendingPathComponent("\(name).org").path,
+        recordedAt: nil, modifiedAt: nil, audioArtifact: nil, transcriptArtifact: nil,
+        transcriptionStatus: MeetingArtifactWriter.liveRecordingStatus, idValue: name
+      )
+    }
+
+    let store = try WorkspaceStore(cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()))
+    store.setCorpusRoot(root)
+    store.selectCorpusFile(CorpusFile(
+      path: note.path, relativePath: note.lastPathComponent, modifiedAt: nil, byteCount: 0
+    ))
+    let elsewhere = liveNote("standup")
+    store.presentLiveMeetingNote(elsewhere)
+    XCTAssertEqual(store.selectedSurface, .files)
+    XCTAssertEqual(store.selectedLocation?.file, note.path)
+    XCTAssertEqual(store.meetings.first?.file, elsewhere.file)
+    XCTAssertEqual(store.selectedMeetingID, elsewhere.id)
+
+    // Already on Meetings, the live note opens beside the list.
+    store.selectMeeting(elsewhere)
+    let onMeetings = liveNote("planning")
+    store.presentLiveMeetingNote(onMeetings)
+    XCTAssertEqual(store.selectedSurface, .meetings)
+    XCTAssertEqual(store.selectedLocation?.file, onMeetings.file)
+  }
+
+  @MainActor
   func testWorkspaceNavigationBackRestoresDocumentAndOwningSurface() throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-workspace-global-back-\(UUID().uuidString)", isDirectory: true)
