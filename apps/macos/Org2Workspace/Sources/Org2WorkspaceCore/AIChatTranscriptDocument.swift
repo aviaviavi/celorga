@@ -752,6 +752,7 @@ enum AIChatTranscriptHTML {
     let activities: [Activity]
     let usage: AIChatTokenUsage?
     let context: OpenOrgContextTelemetry?
+    var duration: String? = nil
 
     init?(_ trace: AIChatResponseTrace, reasoningHTML: String? = nil) {
       self.init(
@@ -770,6 +771,7 @@ enum AIChatTranscriptHTML {
       activities = AIChatActivityFeed.items(from: trace.activities).map(Activity.init)
       usage = trace.usage
       context = trace.context
+      duration = trace.durationText
     }
   }
 
@@ -1019,6 +1021,7 @@ enum AIChatTranscriptHTML {
   .detail-block { margin-top:12px; padding-top:9px; border-top:1px solid light-dark(#dddcd7,#444642); font-size:11px; max-width:640px; }
   .detail-header { display:flex; align-items:center; gap:7px; font-weight:600; color:light-dark(#5c5c5c,#c4c4c4); }
   .detail-header .spacer { flex:1; }
+  .trace-duration { font-weight:400; color:light-dark(#8a8a8a,#9a9a9a); font-variant-numeric:tabular-nums; }
   .disclosure-button { display:inline-flex; align-items:center; justify-content:flex-start; gap:5px; flex:none; min-width:max-content; white-space:nowrap; line-height:14px; }
   .disclosure-button .glyph { flex-basis:10px; width:10px; height:14px; }
   .disclosure-button .glyph svg { width:10px; height:10px; }
@@ -1326,6 +1329,7 @@ enum AIChatTranscriptHTML {
         const trace=document.createElement('section'); trace.className='detail-block trace';
         const head=document.createElement('div'); head.className='detail-header detail-icon'; head.append(icon('clock'));
         const label=document.createElement('span'); label.textContent='How it worked'; head.append(label);
+        if(e.responseTrace.duration) { const took=document.createElement('span'); took.className='trace-duration'; took.textContent='· '+e.responseTrace.duration; took.title='Turn took '+e.responseTrace.duration; head.append(took); }
         const canExpand=e.responseTrace.activities.length>3 || (e.responseTrace.reasoning?.length||0)>240;
         if(canExpand) {
           const spacer=document.createElement('span'); spacer.className='spacer';

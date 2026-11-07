@@ -3365,17 +3365,54 @@ public struct AIChatResponseTrace: Hashable, Codable, Sendable {
   public let activities: [AIChatRunActivity]
   public let usage: AIChatTokenUsage?
   public let context: OpenOrgContextTelemetry?
+  /// Wall-clock seconds from the turn's dispatch to its reply. It is shown
+  /// beside "How it worked" and does not make an otherwise empty trace
+  /// visible.
+  public let durationSeconds: Double?
 
   public init(
     reasoning: String = "",
     activities: [AIChatRunActivity] = [],
     usage: AIChatTokenUsage? = nil,
-    context: OpenOrgContextTelemetry? = nil
+    context: OpenOrgContextTelemetry? = nil,
+    durationSeconds: Double? = nil
   ) {
     self.reasoning = reasoning
     self.activities = activities
     self.usage = usage
     self.context = context
+    self.durationSeconds = durationSeconds
+  }
+
+  /// The compact turn duration, such as `42s`, `3m 05s`, or `1h 02m`.
+  public var durationText: String? {
+    durationSeconds.flatMap(Self.durationText(seconds:))
+  }
+
+  public static func durationText(seconds: Double) -> String? {
+    guard seconds.isFinite, seconds >= 0 else { return nil }
+    let total = Int(seconds.rounded())
+    if total < 60 { return "\(total)s" }
+    if total < 3_600 { return String(format: "%dm %02ds", total / 60, total % 60) }
+    return String(format: "%dh %02dm", total / 3_600, (total % 3_600) / 60)
+  }
+
+  /// Seconds from the turn's start to `completedAt`. A durable pending turn
+  /// for this message is preferred; otherwise the live request start. The
+  /// start never precedes the triggering message, so a queued message is
+  /// not charged for time before it was written.
+  public static func turnDuration(
+    pendingTurnStartedAt: Date?,
+    requestStartedAt: Date?,
+    triggeringMessageCreatedAt: Date?,
+    completedAt: Date
+  ) -> Double? {
+    guard var start = pendingTurnStartedAt ?? requestStartedAt else { return nil }
+    if let triggeringMessageCreatedAt, triggeringMessageCreatedAt > start {
+      start = triggeringMessageCreatedAt
+    }
+    let seconds = completedAt.timeIntervalSince(start)
+    return seconds >= 0 ? seconds : nil
   }
 
   public var isEmpty: Bool {

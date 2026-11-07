@@ -583,6 +583,68 @@ final class AIChatTranscriptDocumentTests: XCTestCase {
     XCTAssertEqual(result?["details"] as? Bool, false)
   }
 
+  func testHowItWorkedShowsTheTurnDurationCompactly() async throws {
+    let trace = AIChatTranscriptHTML.Trace(AIChatResponseTrace(
+      activities: [AIChatRunActivity(
+        id: "tool-1", runID: "run", kind: .tool, title: "Read source", status: .succeeded
+      )],
+      durationSeconds: 83.4
+    ))
+    XCTAssertEqual(trace?.duration, "1m 23s")
+    let view = try await document()
+    try await update(view, payload([entry("timed", "<main><p>Done.</p></main>", trace: trace)]))
+    let header = try await view.evaluateJavaScript(
+      "document.querySelector('.trace .detail-header').innerText"
+    ) as? String
+    XCTAssertTrue(header?.contains("How it worked") == true)
+    XCTAssertTrue(header?.contains("· 1m 23s") == true)
+
+    let untimed = AIChatTranscriptHTML.Trace(AIChatResponseTrace(reasoning: "Checked it."))
+    try await update(view, payload([entry("untimed", "<main><p>Done.</p></main>", trace: untimed)]))
+    let count = try await view.evaluateJavaScript(
+      "document.querySelectorAll('.trace-duration').length"
+    ) as? Int
+    XCTAssertEqual(count, 0)
+  }
+
+  func testTurnDurationFormattingAndStartSelection() throws {
+    XCTAssertEqual(AIChatResponseTrace.durationText(seconds: 4.4), "4s")
+    XCTAssertEqual(AIChatResponseTrace.durationText(seconds: 59.6), "1m 00s")
+    XCTAssertEqual(AIChatResponseTrace.durationText(seconds: 185), "3m 05s")
+    XCTAssertEqual(AIChatResponseTrace.durationText(seconds: 3_725), "1h 02m")
+    XCTAssertNil(AIChatResponseTrace.durationText(seconds: -1))
+
+    let base = Date(timeIntervalSince1970: 1_000)
+    // A durable pending turn wins over the live request start.
+    XCTAssertEqual(AIChatResponseTrace.turnDuration(
+      pendingTurnStartedAt: base, requestStartedAt: base.addingTimeInterval(5),
+      triggeringMessageCreatedAt: nil, completedAt: base.addingTimeInterval(30)
+    ), 30)
+    // A queued message is not charged for time before it was written.
+    XCTAssertEqual(AIChatResponseTrace.turnDuration(
+      pendingTurnStartedAt: nil, requestStartedAt: base,
+      triggeringMessageCreatedAt: base.addingTimeInterval(10), completedAt: base.addingTimeInterval(30)
+    ), 20)
+    XCTAssertNil(AIChatResponseTrace.turnDuration(
+      pendingTurnStartedAt: nil, requestStartedAt: nil,
+      triggeringMessageCreatedAt: base, completedAt: base
+    ))
+
+    // Transcripts saved before durations existed still decode, and the
+    // duration alone does not make a trace visible.
+    let legacy = try JSONDecoder().decode(
+      AIChatResponseTrace.self,
+      from: Data(#"{"reasoning":"","activities":[]}"#.utf8)
+    )
+    XCTAssertNil(legacy.durationSeconds)
+    XCTAssertTrue(AIChatResponseTrace(durationSeconds: 12).isEmpty)
+    let roundTrip = try JSONDecoder().decode(
+      AIChatResponseTrace.self,
+      from: JSONEncoder().encode(AIChatResponseTrace(reasoning: "x", durationSeconds: 12))
+    )
+    XCTAssertEqual(roundTrip.durationText, "12s")
+  }
+
   func testTurnChangeMarkerRendersAboveItsUserMessageAndClearsWhenRemoved() async throws {
     let view = try await document()
     var switched = entry("switched", AIChatDocumentHTML.plain("Try again"), role: "user")

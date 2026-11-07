@@ -625,6 +625,8 @@ extension WorkspaceStore {
         break
       }
       aiChatDispatchSentAtByThreadID[threadID] = userMessage.createdAt
+      // Each queued message is its own turn; time it from its own dispatch.
+      aiChatRequestStartedAtByThreadID[threadID] = Date()
       AIChatDispatchTiming.record("drain", threadID: threadID, sentAt: userMessage.createdAt)
       var dispatchDestinationID = chatThread.isSharedRoom
         ? (userMessage.targetDestinationID

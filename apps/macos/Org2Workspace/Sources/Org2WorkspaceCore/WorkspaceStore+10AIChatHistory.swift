@@ -1785,7 +1785,14 @@ extension WorkspaceStore {
       reasoning: aiChatLiveState.reasoning(for: threadID),
       activities: aiChatRunActivitiesByThreadID[threadID] ?? [],
       usage: aiChatUsageByDestinationTurn.removeValue(forKey: telemetryKey),
-      context: aiChatContextByDestinationTurn.removeValue(forKey: telemetryKey)
+      context: aiChatContextByDestinationTurn.removeValue(forKey: telemetryKey),
+      durationSeconds: AIChatResponseTrace.turnDuration(
+        pendingTurnStartedAt: aiChatThread(threadID, transcriptURL: targetTranscriptURL)?
+          .pendingTurn.flatMap { $0.userMessageID == userMessageID ? $0.startedAt : nil },
+        requestStartedAt: aiChatRequestStartedAtByThreadID[threadID],
+        triggeringMessageCreatedAt: triggeringMessage?.createdAt,
+        completedAt: Date()
+      )
     )
     let assistantMessage = AIChatMessage(
       id: replyID ?? UUID(),

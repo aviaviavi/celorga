@@ -1742,7 +1742,8 @@ struct ChatBubbleView: View {
             activities: responseTrace.activities,
             compact: compact,
             isLive: false,
-            presentedItems: cachedPresentation.activityFeedItems
+            presentedItems: cachedPresentation.activityFeedItems,
+            durationText: responseTrace.durationText
           )
         }
         if message.role == .assistant, let changeSummary = message.changeSummary {
@@ -6127,6 +6128,8 @@ private struct AIChatProgressFeedView: View {
   /// Set by a live card that owns a single combined disclosure; the feed then
   /// follows it and draws no toggle of its own.
   let liveExpansion: Bool?
+  /// The completed turn's compact duration, shown beside "How it worked".
+  let durationText: String?
 
   @State private var ownExpansion = false
 
@@ -6140,9 +6143,11 @@ private struct AIChatProgressFeedView: View {
     presentedItems: [AIChatActivityFeedItem]? = nil,
     reasoningHasOmittedPrefix: Bool = false,
     presentedReasoning: String? = nil,
-    liveExpansion: Bool? = nil
+    liveExpansion: Bool? = nil,
+    durationText: String? = nil
   ) {
     self.liveExpansion = liveExpansion
+    self.durationText = durationText
     self.reasoning = reasoning
     self.activities = activities
     self.compact = compact
@@ -6198,6 +6203,12 @@ private struct AIChatProgressFeedView: View {
           Label("How it worked", systemImage: "clock.arrow.circlepath")
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
+          if let durationText {
+            Text("· \(durationText)")
+              .font(.caption.monospacedDigit())
+              .foregroundStyle(.tertiary)
+              .help("Turn took \(durationText)")
+          }
           Spacer(minLength: 8)
           if canExpand {
             expansionButton
