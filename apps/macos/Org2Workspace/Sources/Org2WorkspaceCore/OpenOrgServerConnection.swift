@@ -450,6 +450,7 @@ public final class OpenOrgServerConnection {
   @ObservationIgnored private let defaults: UserDefaults
   @ObservationIgnored private let credentials: OpenOrgServerCredentialStoring
   @ObservationIgnored private let transport: OpenOrgServerTransport
+  @ObservationIgnored private var cachedToken: (deviceID: UUID, token: String)?
 
   public init(
     defaults: UserDefaults,
@@ -554,6 +555,7 @@ public final class OpenOrgServerConnection {
       timeout: 5
     )
     credentials.removeToken(for: pairing.deviceID)
+    cachedToken = nil
     self.pairing = nil
     serverStatus = nil
     reachability = .unknown
@@ -590,6 +592,20 @@ public final class OpenOrgServerConnection {
     } catch {
       reachability = .offline(error.localizedDescription)
     }
+  }
+
+  // MARK: Live presence
+
+  /// Sends this Mac's running turns and their latest messages to the server,
+  /// which shows them to paired phones before file sync delivers them.
+  public func pushLivePresence(_ push: AIChatLivePresencePush) async throws {
+    let body = try MobileRemoteProtocol.encoder().encode(push)
+    let _: MobileRemoteLivePresenceResponse = try await authorizedSend(
+      method: "POST",
+      path: "/v1/live-presence",
+      body: body,
+      timeout: 10
+    )
   }
 
   // MARK: Thread links
@@ -756,20 +772,32 @@ public final class OpenOrgServerConnection {
   ) async throws -> Response {
     guard let pairing else { throw OpenOrgServerError.notPaired }
     let deviceID = pairing.deviceID
-    let credentials = credentials
-    // Keychain reads can block; keep them off the main actor.
-    let token = await Task.detached(priority: .userInitiated) {
-      credentials.token(for: deviceID)
-    }.value
-    guard let token else { throw OpenOrgServerError.notPaired }
-    return try await send(
-      endpoint: pairing.endpoint,
-      method: method,
-      path: path,
-      token: token,
-      body: body,
-      timeout: timeout
-    )
+    let token: String
+    if let cachedToken, cachedToken.deviceID == deviceID {
+      token = cachedToken.token
+    } else {
+      let credentials = credentials
+      // Keychain reads can block; keep them off the main actor.
+      guard let stored = await Task.detached(priority: .userInitiated, operation: {
+        credentials.token(for: deviceID)
+      }).value else { throw OpenOrgServerError.notPaired }
+      token = stored
+      // Live presence is sent every few seconds; read the Keychain once.
+      cachedToken = (deviceID, stored)
+    }
+    do {
+      return try await send(
+        endpoint: pairing.endpoint,
+        method: method,
+        path: path,
+        token: token,
+        body: body,
+        timeout: timeout
+      )
+    } catch OpenOrgServerError.server(let message, let statusCode) where statusCode == 401 {
+      cachedToken = nil
+      throw OpenOrgServerError.server(message, statusCode: statusCode)
+    }
   }
 
   private func send<Response: Decodable>(

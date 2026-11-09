@@ -2451,6 +2451,9 @@ extension WorkspaceStore {
     }
     let record = currentAIChatLiveRecord()
     let now = Date()
+    // File sync can lag or disconnect; phones paired with the server should
+    // still follow this desktop's turns.
+    forwardAIChatLivePresenceIfNeeded(record: record, force: force, now: now)
     let contentChanged = lastPublishedAIChatLiveRecord.map { !$0.hasSameContent(as: record) } ?? true
     let heartbeatDue = lastPublishedAIChatLiveRecord.map {
       now.timeIntervalSince($0.updatedAt) >= aiChatLiveHeartbeatInterval

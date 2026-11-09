@@ -2314,6 +2314,19 @@ public final class WorkspaceStore {
   @ObservationIgnored var lastPublishedAIChatLiveTranscriptURL: URL?
   @ObservationIgnored var aiChatLiveRefreshTask: Task<Void, Never>?
   @ObservationIgnored var aiChatLiveRefreshNeeded = false
+  /// Live state that paired desktops sent straight to this host (see
+  /// ``AIChatLivePresencePush``), keyed by writer ID. Display-only: it never
+  /// drives routing or hand-offs and is never persisted.
+  @ObservationIgnored var aiChatPushedLivePresence: [String: AIChatReceivedLivePresence] = [:]
+  /// Desktop side of the push: the last state sent, the request in flight,
+  /// and threads whose turn ended here recently.
+  @ObservationIgnored var lastForwardedAIChatLivePresence: AIChatLivePresencePush?
+  @ObservationIgnored var aiChatLivePresenceForwardTask: Task<Void, Never>?
+  @ObservationIgnored var aiChatLivePresenceForwardRetryAt: Date?
+  @ObservationIgnored var aiChatRecentlyFinishedLiveThreads: [UUID: Date] = [:]
+  @ObservationIgnored var aiChatLastForwardedLiveTurnThreadIDs: Set<UUID> = []
+  /// Sends a push to the paired OpenOrg server; replaced in tests.
+  @ObservationIgnored var aiChatLivePresenceForwarder: (@MainActor (AIChatLivePresencePush) async throws -> Void)?
   @ObservationIgnored var aiChatHandoffHydrationRequests: Set<UUID> = []
   /// Imported `sending` messages that another host owns. They label the
   /// conversation as busy but are never dispatched by this host's queue.

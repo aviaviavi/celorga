@@ -618,6 +618,15 @@ public struct MobileRemoteMutationResponse: Codable, Hashable, Sendable {
   }
 }
 
+/// The server's reply to `POST /v1/live-presence`.
+public struct MobileRemoteLivePresenceResponse: Codable, Hashable, Sendable {
+  public let accepted: Bool
+
+  public init(accepted: Bool) {
+    self.accepted = accepted
+  }
+}
+
 /// Appearance a client asks the host to use for a shared thread page, so a
 /// link hosted elsewhere still looks like the sharer's OpenOrg.
 public struct MobileRemoteThreadShareRequest: Codable, Hashable, Sendable {

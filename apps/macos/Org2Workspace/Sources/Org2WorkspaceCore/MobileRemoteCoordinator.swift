@@ -417,7 +417,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
         threadCount: threads.count,
         runningThreadCount: threads.filter {
           store.isAIChatThreadRunningOnCurrentHost($0.id)
-            || store.aiChatRemoteLiveTurn(for: $0.id) != nil
+            || store.aiChatObservedRemoteLiveTurn(for: $0.id) != nil
         }.count,
         aiChatDestinations: store.enabledAIChatDestinations.map {
           MobileRemoteAIDestination(
@@ -430,6 +430,17 @@ public final class MobileRemoteCoordinator: ObservableObject {
         pushNotificationsSupported: true,
         pushNotificationsConfigured: pushProviderConfigured
       ))
+    }
+
+    if request.method == "POST", path == "/v1/live-presence" {
+      // A paired Mac's running turns, sent directly so phones see them even
+      // while file sync is slow or disconnected. Display-only state.
+      guard let payload = try? request.decode(AIChatLivePresencePush.self),
+            store.acceptPushedAIChatLivePresence(payload)
+      else {
+        return .error("The live presence could not be read.", statusCode: 400)
+      }
+      return .json(MobileRemoteLivePresenceResponse(accepted: true))
     }
 
     if request.method == "POST", path == "/v1/push-registration" {
@@ -531,7 +542,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
       // Mac between filesystem callbacks. Reconcile at the request boundary so
       // iOS never receives an avoidably stale thread list.
       await refreshSyncedAIChatTranscriptForRequest(store: store)
-      let threads = store.aiChatThreads
+      let threads = store.aiChatThreadsPresentedToRemoteClients()
       return await backgroundWork.threadListResponse(
         threads: threads,
         context: threadProjectionContext(for: threads, store: store),
@@ -753,9 +764,20 @@ public final class MobileRemoteCoordinator: ObservableObject {
       return .error("This Celorga host does not support \(request.method) \(path). Update Celorga on this Mac.", statusCode: 404)
     }
     guard components.count >= 3,
-          let threadID = UUID(uuidString: components[2]),
-          let thread = store.aiChatThreads.first(where: { $0.id == threadID })
+          let threadID = UUID(uuidString: components[2])
     else {
+      return .error("Thread not found.", statusCode: 404)
+    }
+    guard let thread = store.aiChatThreads.first(where: { $0.id == threadID }) else {
+      // A conversation another Mac started and pushed before file sync
+      // delivered it: show it read-only until it arrives.
+      if request.method == "GET", components.count == 3,
+         let pushed = store.aiChatPushedThreadsMissingLocally().first(where: { $0.id == threadID }) {
+        return await backgroundWork.threadDetailResponse(
+          thread: pushed,
+          context: threadDetailProjectionContext(for: pushed, store: store)
+        )
+      }
       return .error("Thread not found.", statusCode: 404)
     }
 
@@ -763,9 +785,10 @@ public final class MobileRemoteCoordinator: ObservableObject {
       guard let hydratedThread = await store.hydratedAIChatThreadForDetail(threadID) else {
         return .error("This conversation could not be loaded.", statusCode: 503)
       }
+      let presented = store.aiChatThreadPresentedToRemoteClients(hydratedThread)
       return await backgroundWork.threadDetailResponse(
-        thread: hydratedThread,
-        context: threadDetailProjectionContext(for: hydratedThread, store: store)
+        thread: presented,
+        context: threadDetailProjectionContext(for: presented, store: store)
       )
     }
     if request.method == "GET", components.count == 4, components[3] == "outputs" {
@@ -1324,7 +1347,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
       if store.isAIChatThreadRunningOnCurrentHost(thread.id) {
         runningThreadIDs.insert(thread.id)
         executionHostNames[thread.id] = store.aiChatHostIdentity.name
-      } else if let remote = store.aiChatRemoteLiveTurn(for: thread.id) {
+      } else if let remote = store.aiChatObservedRemoteLiveTurn(for: thread.id) {
         // A turn another host runs looks the same from every paired host.
         runningThreadIDs.insert(thread.id)
         executionHostNames[thread.id] = remote.host.name
@@ -1362,7 +1385,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
     let activeDestinationName = store.aiChatActiveDestinationID(for: thread.id)
       .map(store.aiChatDestinationTitle)
     if !store.isAIChatThreadRunningOnCurrentHost(thread.id),
-       let remote = store.aiChatRemoteLiveTurn(for: thread.id) {
+       let remote = store.aiChatObservedRemoteLiveTurn(for: thread.id) {
       return MobileRemoteThreadDetailProjectionContext(
         threads: threadProjectionContext(for: [thread], store: store),
         activeDestinationName: remote.turn.destinationName ?? activeDestinationName,
