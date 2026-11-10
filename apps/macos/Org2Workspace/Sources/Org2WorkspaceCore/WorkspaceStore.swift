@@ -1726,6 +1726,8 @@ public struct DataNotebookRefreshFailure: Equatable, Sendable {
   public let kind: DataNotebookRefreshFailureKind
   public let title: String
   public let message: String
+  /// The underlying error text, kept for "Ask AI to Fix".
+  public var detail: String? = nil
 
   public var needsCredentialUpdate: Bool {
     kind == .authentication || kind == .configuration

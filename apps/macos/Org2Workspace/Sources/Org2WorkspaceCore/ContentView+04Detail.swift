@@ -251,6 +251,24 @@ struct DetailHeader: View {
       }
 
       Button {
+        let file = store.selectedEntrySource?.file ?? store.selectedLocation?.file
+        Task {
+          await store.askAIToDiagnoseError(
+            failure.detail ?? failure.message,
+            title: failure.title,
+            action: "refresh this data notebook",
+            file: file
+          )
+        }
+      } label: {
+        Label("Ask AI to Fix", systemImage: "sparkles")
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+      .help("Start an AI thread that diagnoses this refresh error and fixes it when it can")
+      .disabled(!store.canAskAIToDiagnoseError)
+
+      Button {
         Task { await store.refreshSelectedDataNotebook() }
       } label: {
         Label("Retry Refresh", systemImage: "arrow.clockwise")

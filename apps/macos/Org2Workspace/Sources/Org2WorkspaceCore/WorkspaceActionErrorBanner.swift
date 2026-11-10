@@ -3,6 +3,8 @@ import SwiftUI
 /// A shared, nonmodal destination for failures reported by workspace actions.
 struct WorkspaceActionErrorBanner: View {
   let error: String
+  /// Starts an AI thread that diagnoses the error; nil hides the button.
+  var askAI: (() -> Void)? = nil
   let dismiss: () -> Void
   @State private var expanded = false
 
@@ -21,6 +23,14 @@ struct WorkspaceActionErrorBanner: View {
             .buttonStyle(.link)
             .font(.caption)
         }
+      }
+      if let askAI {
+        Button(action: askAI) {
+          Label("Ask AI to Fix", systemImage: "sparkles")
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .help("Start an AI thread that diagnoses this error and fixes it when it can")
       }
       Button(action: dismiss) { Image(systemName: "xmark") }
         .buttonStyle(.plain)

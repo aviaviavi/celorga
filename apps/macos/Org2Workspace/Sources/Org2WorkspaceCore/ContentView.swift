@@ -124,7 +124,13 @@ public struct ContentView: View {
       }
       .safeAreaInset(edge: .top, spacing: 0) {
         if let error = store.errorText, !error.isEmpty {
-          WorkspaceActionErrorBanner(error: error) { store.errorText = nil }
+          WorkspaceActionErrorBanner(
+            error: error,
+            askAI: store.canAskAIToDiagnoseError ? {
+              store.errorText = nil
+              Task { await store.askAIToDiagnoseError(error) }
+            } : nil
+          ) { store.errorText = nil }
         }
       }
       .toolbarBackground(WorkspaceDesign.barBackground, for: .windowToolbar)

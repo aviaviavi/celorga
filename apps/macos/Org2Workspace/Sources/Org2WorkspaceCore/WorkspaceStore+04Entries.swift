@@ -2159,7 +2159,8 @@ extension WorkspaceStore {
         : "Refreshed \(result.changedResultCount) of \(result.resultCount) data results"
     } catch {
       let message = error.localizedDescription
-      let failure = Self.dataNotebookRefreshFailure(for: message)
+      var failure = Self.dataNotebookRefreshFailure(for: message)
+      failure.detail = message
       dataNotebookRefreshFailure = failure
       errorText = message
       statusText = failure.title

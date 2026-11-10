@@ -339,6 +339,8 @@ The *Assist* menu has three helpers. *Upcoming Meetings* briefs the next week's 
 
 With Celorga, Org documents can connect notes to CSV, Parquet, JSON, ClickHouse, or Metabase data, define SQL views, materialize results, and render charts. Refresh is explicit: opening a note never runs a remote query. Results retain source and freshness information so readers can see where the numbers came from.
 
+When a refresh fails, its error banner offers *Ask AI to Fix*, as does the workspace error banner for other failed actions. One click starts a new AI thread on the selected destination with the affected file attached as context and sends the error, asking the agent to find the cause and, when the fix is a small safe change in the corpus, make it through the usual preview and retry the action. Otherwise the reply explains the cause and the next step, such as updating a credential.
+
 * Privacy and security
 
 Your corpus is an ordinary folder on your Mac. Celorga does not upload it to a Celorga service. Information leaves the Mac only when you use a destination or source provider you configured, so its retention and data-use policy still applies.
