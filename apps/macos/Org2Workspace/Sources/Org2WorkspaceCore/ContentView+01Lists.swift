@@ -1776,6 +1776,9 @@ struct KeyboardShortcutsView: View {
 
           ShortcutSection(title: "AI Chat", shortcuts: [
             ShortcutHelpItem(keys: "⌘N", action: "New AI thread"),
+            ShortcutHelpItem(keys: "⌃⌘1–9", action: "Choose the chat's runtime"),
+            ShortcutHelpItem(keys: "⌃⌘[ / ⌃⌘]", action: "Previous / next model"),
+            ShortcutHelpItem(keys: "⌃⌘− / ⌃⌘=", action: "Less / more reasoning"),
             ShortcutHelpItem(keys: "Return", action: "Send; queue while a turn is running"),
             ShortcutHelpItem(keys: "⇧Return", action: "Insert newline"),
             ShortcutHelpItem(keys: "⌘Return", action: "Queue behind running turn; send when idle"),

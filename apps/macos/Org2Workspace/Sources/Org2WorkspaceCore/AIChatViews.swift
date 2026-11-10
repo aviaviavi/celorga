@@ -3881,7 +3881,7 @@ struct AIChatComposerView: View {
     .accessibilityLabel("Assistant: \(agentName), runtime: \(store.selectedAIChatDestination.title)")
     .disabled(!canChangeAssistant)
     .task { await store.refreshAgentProfiles() }
-    .help("Choose the agent identity, instructions, and runtime")
+    .help("Choose the agent identity, instructions, and runtime (⌃⌘1–9 picks a runtime)")
   }
 
   /// Adds a brand-new chat to projects before its first message, so the
@@ -4187,7 +4187,7 @@ struct AIChatComposerView: View {
     .disabled(!store.canChangeSelectedAIChatConfiguration)
     .accessibilityIdentifier("ai-chat-configuration-picker")
     .accessibilityLabel("Model: \(store.selectedAIChatModelLabel), effort: \(store.selectedAIChatReasoningLabel)")
-    .help("Choose model and reasoning effort")
+    .help("Choose model and reasoning effort (⌃⌘[ / ⌃⌘] model, ⌃⌘− / ⌃⌘= reasoning)")
     .popover(isPresented: $showsModelConfiguration, arrowEdge: .bottom) {
       VStack(spacing: 16) {
         modelPicker

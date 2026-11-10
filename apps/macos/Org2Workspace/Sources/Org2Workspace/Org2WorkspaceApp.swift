@@ -278,6 +278,7 @@ struct Org2WorkspaceApp: App {
         .keyboardShortcut("w", modifiers: [.command, .option])
       }
 
+
       CommandMenu("Block") {
         Button("Select Previous Block") {
           store.selectAdjacentBlock(.up)
@@ -461,33 +462,40 @@ struct Org2WorkspaceApp: App {
         .disabled(!store.isEditingEntry)
       }
 
-      CommandMenu("Encryption") {
-        Button("View Decrypted Subtree") {
-          Task { await store.peekOrgCrypt() }
+      // SwiftUI's commands builder takes at most ten direct children.
+      Group {
+        CommandMenu("Chat") {
+          AIChatQuickConfigurationCommands(store: store)
         }
-        .disabled(store.selectedLocation == nil && store.selectedEntrySource == nil)
 
-        Divider()
+        CommandMenu("Encryption") {
+          Button("View Decrypted Subtree") {
+            Task { await store.peekOrgCrypt() }
+          }
+          .disabled(store.selectedLocation == nil && store.selectedEntrySource == nil)
 
-        Button("Decrypt Subtree in File") {
-          Task { await store.runOrgCrypt(.decrypt) }
-        }
-        .disabled(store.selectedLocation == nil)
+          Divider()
 
-        Button("Encrypt Subtree") {
-          Task { await store.runOrgCrypt(.encrypt) }
-        }
-        .disabled(store.selectedLocation == nil)
+          Button("Decrypt Subtree in File") {
+            Task { await store.runOrgCrypt(.decrypt) }
+          }
+          .disabled(store.selectedLocation == nil)
 
-        Button("Re-encrypt Subtree") {
-          Task { await store.runOrgCrypt(.reencrypt) }
-        }
-        .disabled(store.selectedLocation == nil)
+          Button("Encrypt Subtree") {
+            Task { await store.runOrgCrypt(.encrypt) }
+          }
+          .disabled(store.selectedLocation == nil)
 
-        Divider()
+          Button("Re-encrypt Subtree") {
+            Task { await store.runOrgCrypt(.reencrypt) }
+          }
+          .disabled(store.selectedLocation == nil)
 
-        Button("Encryption Settings...") {
-          store.presentOrgCryptConfiguration()
+          Divider()
+
+          Button("Encryption Settings...") {
+            store.presentOrgCryptConfiguration()
+          }
         }
       }
     }
@@ -839,5 +847,46 @@ private enum SmokeTest {
     }
 
     var errorDescription: String? { message }
+  }
+}
+
+/// Keyboard-driven runtime, model, and reasoning choices for the selected chat.
+private struct AIChatQuickConfigurationCommands: View {
+  let store: WorkspaceStore
+
+  var body: some View {
+    Menu("Runtime") {
+      ForEach(Array(store.enabledAIChatDestinations.prefix(AIChatQuickConfiguration.maximumNumberedDestinations).enumerated()), id: \.element.id) { offset, destination in
+        Button(destination.title) {
+          store.selectAIChatQuickDestination(number: offset + 1)
+        }
+        .keyboardShortcut(KeyEquivalent(Character(String(offset + 1))), modifiers: [.command, .control])
+      }
+    }
+    .disabled(!store.canChangeSelectedAIChatRuntime)
+
+    Button("Next Model") {
+      store.stepAIChatModel(by: 1)
+    }
+    .keyboardShortcut("]", modifiers: [.command, .control])
+    .disabled(!store.canStepAIChatModel)
+
+    Button("Previous Model") {
+      store.stepAIChatModel(by: -1)
+    }
+    .keyboardShortcut("[", modifiers: [.command, .control])
+    .disabled(!store.canStepAIChatModel)
+
+    Button("More Reasoning") {
+      store.stepAIChatReasoningEffort(by: 1)
+    }
+    .keyboardShortcut("=", modifiers: [.command, .control])
+    .disabled(!store.canStepAIChatReasoningEffort)
+
+    Button("Less Reasoning") {
+      store.stepAIChatReasoningEffort(by: -1)
+    }
+    .keyboardShortcut("-", modifiers: [.command, .control])
+    .disabled(!store.canStepAIChatReasoningEffort)
   }
 }
