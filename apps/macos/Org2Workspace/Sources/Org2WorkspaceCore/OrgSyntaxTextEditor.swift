@@ -2642,7 +2642,8 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
           requestedSelection: requestedSelection,
           currentSelection: currentSelection,
           isFirstResponder: textView.window?.firstResponder === textView,
-          didApplyProgrammaticText: appliedProgrammaticText
+          didApplyProgrammaticText: appliedProgrammaticText,
+          pendingPublishedSelection: context.coordinator.pendingDeferredCaretPublishRange
         ) {
         textView.setSelectedRange(requestedSelection)
         if focusedVisibleOriginBeforeProgrammaticText == nil {
@@ -2779,6 +2780,8 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
     private var deferredTextPublishTask: Task<Void, Never>?
     private var deferredTextPublishGeneration = 0
     private var deferredCaretPublishRange: NSRange?
+    /// The caret waiting to be published to the selection binding, if any.
+    var pendingDeferredCaretPublishRange: NSRange? { deferredCaretPublishRange }
     private var deferredCaretPublishTask: Task<Void, Never>?
     private var deferredCaretPublishGeneration = 0
     private var lastPublishedSelectionSnapshot: OrgSyntaxTextEditorSelectionSnapshot?
@@ -5627,17 +5630,26 @@ struct OrgSyntaxTextEditor: NSViewRepresentable {
     static let selectionInlineSyntaxRadius = 512
     static let selectionSnapshotLookbehindUTF16Length = 4_096
 
+    /// - Parameter pendingPublishedSelection: a caret the editor has not yet
+    ///   published to the binding. While it is pending the binding still holds
+    ///   the selection it replaced, so re-applying the binding would undo the
+    ///   collapse (for example, Vim's Escape out of Visual mode re-selecting
+    ///   the text and re-entering Visual mode when Prose mode re-renders).
     static func shouldApplyExternalSelection(
       requestedSelection: NSRange,
       currentSelection: NSRange,
       isFirstResponder: Bool,
-      didApplyProgrammaticText: Bool
+      didApplyProgrammaticText: Bool,
+      pendingPublishedSelection: NSRange? = nil
     ) -> Bool {
       if didApplyProgrammaticText {
         return true
       }
       if !isFirstResponder {
         return true
+      }
+      if let pendingPublishedSelection, pendingPublishedSelection == currentSelection {
+        return false
       }
       return requestedSelection.length > 0 || currentSelection.length > 0
     }

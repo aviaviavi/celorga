@@ -9679,6 +9679,22 @@ final class Org2ModelsTests: XCTestCase {
       isFirstResponder: true,
       didApplyProgrammaticText: true
     ))
+    // A collapse the editor has not yet published (Vim Escape out of Visual
+    // mode) must not be undone by re-applying the stale ranged binding.
+    XCTAssertFalse(OrgSyntaxTextEditor.Coordinator.shouldApplyExternalSelection(
+      requestedSelection: NSRange(location: 2, length: 5),
+      currentSelection: NSRange(location: 6, length: 0),
+      isFirstResponder: true,
+      didApplyProgrammaticText: false,
+      pendingPublishedSelection: NSRange(location: 6, length: 0)
+    ))
+    XCTAssertTrue(OrgSyntaxTextEditor.Coordinator.shouldApplyExternalSelection(
+      requestedSelection: NSRange(location: 2, length: 5),
+      currentSelection: NSRange(location: 6, length: 0),
+      isFirstResponder: true,
+      didApplyProgrammaticText: false,
+      pendingPublishedSelection: NSRange(location: 1, length: 0)
+    ))
 
     XCTAssertEqual(
       OrgSyntaxTextEditor.Coordinator.preferredSelectionAfterProgrammaticTextUpdate(
@@ -9977,9 +9993,15 @@ final class Org2ModelsTests: XCTestCase {
       NSRange(location: 4, length: 3),
       "Replacing a selection must not synchronously invalidate the source-editor view tree"
     )
+    XCTAssertEqual(
+      coordinator.pendingDeferredCaretPublishRange,
+      NSRange(location: 7, length: 0),
+      "The pending collapse tells updateNSView that the ranged binding is stale"
+    )
     try await waitForCondition {
       selection == NSRange(location: 7, length: 0)
     }
+    XCTAssertNil(coordinator.pendingDeferredCaretPublishRange)
   }
 
   @MainActor
