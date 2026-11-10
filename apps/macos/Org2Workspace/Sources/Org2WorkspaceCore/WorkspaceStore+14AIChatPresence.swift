@@ -1030,8 +1030,17 @@ extension WorkspaceStore {
 
     if let source = selectedEntrySource {
       let kind = source.isSubtree ? "selected entry" : "selected page"
-      let fallbackTitle = selectedLocation?.title ?? Self.titleFromFileStem(URL(fileURLWithPath: source.file).deletingPathExtension().lastPathComponent)
-      let title = aiChatContextDisplayTitle(for: source, fallback: fallbackTitle, generic: source.isSubtree ? "Selected entry" : "Selected page")
+      let fileTitle = Self.titleFromFileStem(URL(fileURLWithPath: source.file).deletingPathExtension().lastPathComponent)
+      let title: String
+      if source.isSubtree {
+        title = aiChatContextDisplayTitle(
+          for: source,
+          fallback: selectedLocation?.title ?? fileTitle,
+          generic: "Selected entry"
+        )
+      } else {
+        title = aiChatPageContextDisplayTitle(for: source, fileTitle: fileTitle)
+      }
       return AIChatContextPointer(
         kind: kind,
         displayTitle: title,
@@ -1160,6 +1169,28 @@ extension WorkspaceStore {
       return aiChatReadableContextTitle(heading, file: source.file, generic: generic)
     }
     return aiChatReadableContextTitle(fallback, file: source.file, generic: generic)
+  }
+
+  /// A whole page is named by its `#+TITLE:` keyword or, failing that, its file
+  /// name, never by whichever heading happens to come first in the body.
+  func aiChatPageContextDisplayTitle(for source: EntrySource, fileTitle: String) -> String {
+    for line in source.text.split(separator: "\n", omittingEmptySubsequences: false).prefix(400) {
+      let trimmed = line.trimmingCharacters(in: .whitespaces)
+      if trimmed.hasPrefix("*") { break }
+      guard trimmed.uppercased().hasPrefix("#+TITLE:") else { continue }
+      let title = Org2Display.cleanInline(
+        String(trimmed.dropFirst("#+TITLE:".count)).trimmingCharacters(in: .whitespaces)
+      )
+      if !title.isEmpty {
+        return aiChatReadableContextTitle(title, file: source.file, generic: "Selected page")
+      }
+    }
+    if source.startLine > 1 {
+      return aiChatContextDisplayTitle(for: source, fallback: fileTitle, generic: "Selected page")
+    }
+    let stem = URL(fileURLWithPath: source.file).deletingPathExtension().lastPathComponent
+    let isDatedStem = stem.range(of: #"^\d{4}-\d{2}-\d{2}"#, options: .regularExpression) != nil
+    return aiChatReadableContextTitle(isDatedStem ? stem : fileTitle, file: source.file, generic: "Selected page")
   }
 
   private func aiChatReadableContextTitle(_ rawTitle: String, file _: String, generic: String) -> String {

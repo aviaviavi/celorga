@@ -8326,6 +8326,50 @@ final class Org2ModelsTests: XCTestCase {
   }
 
   @MainActor
+  func testAskAIChatAboutWholePageNamesThePageNotItsFirstHeading() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-workspace-page-ai-context-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let suiteName = "org2-workspace-page-ai-context-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    func pageTitle(file: String, text: String) throws -> (thread: String?, context: String?) {
+      let store = WorkspaceStore(
+        defaults: defaults,
+        aiChatTranscriptURL: root.appendingPathComponent("chat-\(UUID().uuidString).json"),
+        legacyDefaultsDomains: []
+      )
+      store.corpusRoot = root
+      store.selectedEntrySource = EntrySource(
+        file: root.appendingPathComponent(file).path,
+        startLine: 1,
+        endLineExclusive: 10,
+        text: text,
+        isSubtree: false
+      )
+      store.askAIChatAboutCurrentSelection()
+      return (
+        store.aiChatThreads.first?.title,
+        AIChatContextPresentation(store.aiChatDraft).contexts.first?.title
+      )
+    }
+
+    let titled = try pageTitle(
+      file: "launch-plan.org",
+      text: "#+TITLE: Launch Plan\n\n* Investor update\nBody\n"
+    )
+    XCTAssertEqual(titled.context, "Launch Plan")
+    XCTAssertEqual(titled.thread, "Ask: Launch Plan")
+
+    let untitled = try pageTitle(file: "launch-plan.org", text: "* Investor update\nBody\n")
+    XCTAssertEqual(untitled.context, "launch plan")
+
+    let daily = try pageTitle(file: "2026-03-04.org", text: "* 2026-03-04\n** Standup\n")
+    XCTAssertEqual(daily.context, "2026-03-04")
+  }
+
+  @MainActor
   func testAskAIChatAboutMultipleEntriesReusesEmptyContextThread() throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-workspace-multiple-ai-context-\(UUID().uuidString)", isDirectory: true)
