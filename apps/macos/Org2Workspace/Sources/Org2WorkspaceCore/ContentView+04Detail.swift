@@ -1524,7 +1524,10 @@ private struct OrgSourceEditorWithLinkTools: View {
   @State private var dateMentionState = WorkspaceDateMentionCompletionState()
   @State private var slashCommandState = WorkspaceSlashCommandCompletionState()
   @StateObject private var prose = OrgProseEditorController()
-  @State private var showsProseSidebar = true
+  @State private var proseSidebar = OrgProseSidebarVisibility()
+  /// The Prose column's measured width. It decides whether the side panel
+  /// docks and whether the toolbar shows titles.
+  @State private var proseColumnWidth: CGFloat = .infinity
 
   private var isProse: Bool { store.sourceEditorPresentation == .prose }
 
@@ -1582,23 +1585,45 @@ private struct OrgSourceEditorWithLinkTools: View {
     }
   }
 
+  private var proseSidebarBinding: Binding<Bool> {
+    Binding(
+      get: { proseSidebar.isVisible(columnWidth: proseColumnWidth) },
+      set: { proseSidebar.setVisible($0, columnWidth: proseColumnWidth) }
+    )
+  }
+
   private var proseColumn: some View {
-    HStack(spacing: 0) {
-      ZStack {
-        // Clicking the empty prose margin collapses the selection so the
-        // highlight never feels stuck; clicks on text stay with the editor.
-        Color.clear
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
-          .contentShape(Rectangle())
-          .onTapGesture { prose.clearSelectionKeepingCaret() }
-        sourceEditor(prose: true)
-          .frame(maxWidth: OrgProsePresentation.measure)
+    GeometryReader { proxy in
+      let width = proxy.size.width
+      let placement = proseSidebar.placement(columnWidth: width)
+      HStack(spacing: 0) {
+        ZStack {
+          // Clicking the empty prose margin collapses the selection so the
+          // highlight never feels stuck; clicks on text stay with the editor.
+          Color.clear
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture { prose.clearSelectionKeepingCaret() }
+          sourceEditor(prose: true)
+            .frame(maxWidth: OrgProsePresentation.measure)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(WorkspaceDesign.surfaceBackground)
+        .overlay(alignment: .trailing) {
+          if placement == .overlay {
+            OrgProseSidebar(
+              controller: prose,
+              width: min(OrgProsePresentation.sidebarWidth, max(160, width - 48))
+            )
+            .shadow(color: .black.opacity(0.18), radius: 10, x: -2)
+          }
+        }
+        if placement == .docked {
+          OrgProseSidebar(controller: prose)
+        }
       }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(WorkspaceDesign.surfaceBackground)
-      if showsProseSidebar {
-        OrgProseSidebar(controller: prose)
-      }
+      .onAppear { proseColumnWidth = width }
+      .onChange(of: width) { _, next in proseColumnWidth = next }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -1984,7 +2009,12 @@ private struct OrgSourceEditorWithLinkTools: View {
     @Bindable var store = store
     return HStack(spacing: 8) {
       if isProse {
-        OrgProseToolbar(controller: prose, showsSidebar: $showsProseSidebar)
+        OrgProseToolbar(
+          controller: prose,
+          showsSidebar: proseSidebarBinding,
+          showsTitles: OrgProsePresentation.toolbarShowsTitles(columnWidth: proseColumnWidth)
+        )
+        .layoutPriority(1)
       } else {
       HStack(spacing: 6) {
         Menu {

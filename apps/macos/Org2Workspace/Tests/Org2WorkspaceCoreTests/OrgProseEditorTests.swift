@@ -459,4 +459,86 @@ final class OrgProseEditorTests: XCTestCase {
     XCTAssertEqual(range.length, 0)
     XCTAssertLessThanOrEqual(range.location, mounted.textView.string.count)
   }
+
+  // MARK: Caret height and narrow columns
+
+  /// AppKit's caret spans the whole line fragment. Prose adds line spacing
+  /// below each line, so the unfitted caret hung below the text.
+  func testProseCaretCoversTheLineTextAndNotTheSpacingBelowIt() throws {
+    let mounted = try mount("Dear team,\nThank you for all the help you gave this quarter, truly\n")
+    let textView = mounted.textView
+    XCTAssertTrue(textView.fitsInsertionPointToText)
+    let storage = try XCTUnwrap(textView.textStorage)
+    OrgSyntaxHighlighter.apply(to: storage, monospaced: false, prose: true)
+    let layoutManager = try XCTUnwrap(textView.layoutManager)
+    let container = try XCTUnwrap(textView.textContainer)
+    layoutManager.ensureLayout(for: container)
+    let origin = textView.textContainerOrigin
+
+    let location = (textView.string as NSString).range(of: "truly").location + 5
+    textView.setSelectedRange(NSRange(location: location, length: 0))
+    mounted.controller.selectionDidChange()
+    let font = try XCTUnwrap(textView.typingAttributes[.font] as? NSFont)
+    let paragraph = try XCTUnwrap(storage.attribute(.paragraphStyle, at: location - 1, effectiveRange: nil) as? NSParagraphStyle)
+    XCTAssertGreaterThan(paragraph.lineSpacing, 0, "Prose spaces its lines")
+
+    let glyph = layoutManager.glyphIndexForCharacter(at: location - 1)
+    let line = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+    // What AppKit proposes: the line fragment, line spacing included.
+    let proposed = NSRect(x: origin.x + 120, y: origin.y + line.minY, width: 1, height: line.height)
+    let fitted = textView.textFittedInsertionPointRect(for: proposed)
+    let baseline = origin.y + line.minY + layoutManager.location(forGlyphAt: glyph).y
+    XCTAssertEqual(fitted.minX, proposed.minX)
+    XCTAssertEqual(fitted.width, proposed.width)
+    XCTAssertGreaterThanOrEqual(fitted.minY, proposed.minY)
+    XCTAssertLessThanOrEqual(fitted.maxY, baseline - font.descender + 1, "the caret stops at the descender")
+    XCTAssertLessThanOrEqual(proposed.maxY - fitted.maxY, proposed.height)
+    XCTAssertGreaterThanOrEqual(proposed.maxY - fitted.maxY, paragraph.lineSpacing - 1, "line spacing is trimmed")
+    XCTAssertEqual(fitted.height, font.ascender - font.descender, accuracy: 2)
+
+    // The empty line after the final newline uses the same text height.
+    let extra = layoutManager.extraLineFragmentRect
+    XCTAssertFalse(extra.isEmpty)
+    let proposedExtra = NSRect(x: origin.x, y: origin.y + extra.minY, width: 1, height: extra.height)
+    let fittedExtra = textView.textFittedInsertionPointRect(for: proposedExtra)
+    XCTAssertEqual(fittedExtra.height, font.ascender - font.descender, accuracy: 2)
+    XCTAssertGreaterThanOrEqual(fittedExtra.minY, proposedExtra.minY)
+
+    // Source mode keeps AppKit's caret.
+    mounted.controller.detach(from: textView)
+    XCTAssertFalse(textView.fitsInsertionPointToText)
+    XCTAssertEqual(textView.textFittedInsertionPointRect(for: proposed), proposed)
+  }
+
+  func testNarrowProseColumnHidesThePanelUntilAskedAndThenFloatsIt() {
+    let wide = OrgProsePresentation.minimumTextWidth + OrgProsePresentation.sidebarWidth
+    let narrow = wide - 1
+    var visibility = OrgProseSidebarVisibility()
+
+    XCTAssertEqual(visibility.placement(columnWidth: 1_200), .docked)
+    XCTAssertEqual(visibility.placement(columnWidth: wide), .docked)
+    // A narrow column keeps the text readable instead of docking the panel.
+    XCTAssertEqual(visibility.placement(columnWidth: narrow), .hidden)
+    XCTAssertFalse(visibility.isVisible(columnWidth: narrow))
+
+    visibility.setVisible(true, columnWidth: narrow)
+    XCTAssertEqual(visibility.placement(columnWidth: narrow), .overlay)
+    // Widening the window returns to the docked choice.
+    XCTAssertEqual(visibility.placement(columnWidth: 1_200), .docked)
+
+    visibility.setVisible(false, columnWidth: narrow)
+    XCTAssertEqual(visibility.placement(columnWidth: narrow), .hidden)
+
+    visibility.setVisible(false, columnWidth: 1_200)
+    XCTAssertEqual(visibility.placement(columnWidth: 1_200), .hidden)
+    XCTAssertEqual(visibility.placement(columnWidth: narrow), .hidden)
+    visibility.setVisible(true, columnWidth: 1_200)
+    XCTAssertEqual(visibility.placement(columnWidth: 1_200), .docked)
+  }
+
+  func testNarrowProseToolbarDropsTitles() {
+    XCTAssertTrue(OrgProsePresentation.toolbarShowsTitles(columnWidth: 1_200))
+    XCTAssertTrue(OrgProsePresentation.toolbarShowsTitles(columnWidth: .infinity))
+    XCTAssertFalse(OrgProsePresentation.toolbarShowsTitles(columnWidth: 420))
+  }
 }

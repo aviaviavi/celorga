@@ -1359,7 +1359,15 @@ final class OrgSyntaxTextView: NSTextView {
     onWindowAttachmentChanged?(self)
   }
 
+  /// Prose mode spaces lines and paragraphs apart. AppKit's caret spans the
+  /// whole line fragment, spacing included, so it hung below the text; when
+  /// this is set the caret covers only the line's text height.
+  var fitsInsertionPointToText = false
+
   override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+    // Turning the caret off repaints AppKit's full rect, which contains the
+    // fitted one, so only the drawn caret changes.
+    let rect = flag ? textFittedInsertionPointRect(for: rect) : rect
     guard let block = vimCursorRect(for: rect) else {
       super.drawInsertionPoint(in: rect, color: color, turnedOn: flag)
       return
@@ -1370,6 +1378,40 @@ final class OrgSyntaxTextView: NSTextView {
     }
     color.withAlphaComponent(vimState?.engine.mode == .replace ? 1 : 0.45).setFill()
     block.fill(using: .sourceOver)
+  }
+
+  /// `rect`, AppKit's caret for a line, trimmed to that line's text: from the
+  /// typing font's ascender above the line's baseline to its descender below.
+  /// Returns `rect` unchanged when fitting is off or the line is not found.
+  func textFittedInsertionPointRect(for rect: NSRect) -> NSRect {
+    guard fitsInsertionPointToText,
+          let layoutManager,
+          let textContainer,
+          let caretFont = (typingAttributes[.font] as? NSFont) ?? font
+    else { return rect }
+    let origin = textContainerOrigin
+    let probeY = rect.midY - origin.y
+    let baseline: CGFloat
+    let extra = layoutManager.extraLineFragmentRect
+    if !extra.isEmpty, extra.minY <= probeY, probeY <= extra.maxY {
+      // The empty line after a final newline has no glyphs.
+      baseline = extra.minY + layoutManager.defaultBaselineOffset(for: caretFont)
+    } else {
+      guard layoutManager.numberOfGlyphs > 0 else { return rect }
+      let glyphIndex = layoutManager.glyphIndex(
+        for: NSPoint(x: max(0, rect.midX - origin.x), y: probeY),
+        in: textContainer
+      )
+      let line = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+      guard line.minY <= probeY, probeY <= line.maxY else { return rect }
+      baseline = line.minY + layoutManager.location(forGlyphAt: glyphIndex).y
+    }
+    let top = origin.y + baseline - caretFont.ascender
+    let bottom = origin.y + baseline - caretFont.descender
+    var fitted = rect
+    fitted.origin.y = max(rect.minY, top.rounded(.down))
+    fitted.size.height = min(rect.maxY, bottom.rounded(.up)) - fitted.origin.y
+    return fitted.height >= 4 ? fitted : rect
   }
 
   override func setNeedsDisplay(_ invalidRect: NSRect, avoidAdditionalLayout flag: Bool) {

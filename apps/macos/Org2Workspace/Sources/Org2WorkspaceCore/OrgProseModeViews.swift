@@ -5,6 +5,21 @@ enum OrgProsePresentation {
   /// The readable measure for the Prose column, in points.
   static let measure: CGFloat = 720
   static let sidebarWidth: CGFloat = 288
+  /// The narrowest the text gets beside a docked side panel. A narrower
+  /// column gives the text its whole width.
+  static let minimumTextWidth: CGFloat = 380
+  /// Below this column width the toolbar drops its button titles. It covers
+  /// the titled Prose controls plus the presentation picker beside them.
+  static let titledToolbarMinimumWidth: CGFloat = 860
+
+  /// Whether a column `width` points wide fits the text and a docked panel.
+  static func docksSidebar(columnWidth width: CGFloat) -> Bool {
+    width >= minimumTextWidth + sidebarWidth
+  }
+
+  static func toolbarShowsTitles(columnWidth width: CGFloat) -> Bool {
+    width >= titledToolbarMinimumWidth
+  }
 
   static func failureDescription(_ failure: OrgProseResolutionFailure) -> String {
     switch failure {
@@ -36,14 +51,80 @@ enum OrgProsePresentation {
   }
 }
 
+/// Where the Prose side panel (Overflow, Ghosts, Alternatives) appears. A
+/// wide column docks it beside the text and remembers whether it is shown. A
+/// narrow column keeps the text readable: the panel is hidden until asked
+/// for, then floats over the text's trailing edge.
+struct OrgProseSidebarVisibility: Equatable {
+  enum Placement: Equatable {
+    case hidden
+    case docked
+    case overlay
+  }
+
+  var showsDocked = true
+  var showsOverlay = false
+
+  func placement(columnWidth: CGFloat) -> Placement {
+    if OrgProsePresentation.docksSidebar(columnWidth: columnWidth) {
+      return showsDocked ? .docked : .hidden
+    }
+    return showsOverlay ? .overlay : .hidden
+  }
+
+  func isVisible(columnWidth: CGFloat) -> Bool {
+    placement(columnWidth: columnWidth) != .hidden
+  }
+
+  /// The panel toggle. It changes the docked choice in a wide column and the
+  /// floating panel in a narrow one, so opening the panel on a narrow window
+  /// never squeezes the text once the window widens again.
+  mutating func setVisible(_ visible: Bool, columnWidth: CGFloat) {
+    if OrgProsePresentation.docksSidebar(columnWidth: columnWidth) {
+      showsDocked = visible
+      showsOverlay = false
+    } else {
+      showsOverlay = visible
+    }
+  }
+}
+
 struct OrgProseToolbar: View {
   @ObservedObject var controller: OrgProseEditorController
   @Binding var showsSidebar: Bool
+  /// Narrow columns show icons only; the help tags keep the names.
+  var showsTitles = true
   @Environment(WorkspaceStore.self) private var store
 
   var body: some View {
-    let selection = controller.selectionState
     HStack(spacing: 8) {
+      // A window too narrow even for the icons scrolls the controls instead
+      // of squeezing their labels into one-letter columns.
+      ScrollView(.horizontal, showsIndicators: false) {
+        controls
+          .padding(.vertical, 1)
+      }
+      .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+      .defaultScrollAnchor(.leading)
+      .fixedSize(horizontal: false, vertical: true)
+
+      if let message = controller.message {
+        Text(message)
+          .font(.caption)
+          .foregroundStyle(controller.messageIsError ? Color.orange : Color.secondary)
+          .lineLimit(1)
+          .truncationMode(.tail)
+          .help(message)
+      }
+    }
+    .buttonStyle(.borderless)
+    .toggleStyle(.button)
+    .controlSize(.small)
+  }
+
+  private var controls: some View {
+    let selection = controller.selectionState
+    return HStack(spacing: 8) {
       Button {
         controller.beginAddAlternative()
       } label: {
@@ -102,10 +183,13 @@ struct OrgProseToolbar: View {
       .disabled(selection.alternativeCount < 2)
       .fixedSize()
 
-      Text("⌃⌥[ / ⌃⌥]")
-        .font(.caption2)
-        .foregroundStyle(.tertiary)
-        .help("Step through versions with Control-Option-[ and Control-Option-]")
+      if showsTitles {
+        Text("⌃⌥[ / ⌃⌥]")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+          .fixedSize()
+          .help("Step through versions with Control-Option-[ and Control-Option-]")
+      }
 
       if let index = selection.alternativeIndex {
         HStack(spacing: 3) {
@@ -164,19 +248,21 @@ struct OrgProseToolbar: View {
       .toggleStyle(.button)
       .labelStyle(.iconOnly)
       .help("Show or hide the Overflow panel")
-
-      if let message = controller.message {
-        Text(message)
-          .font(.caption)
-          .foregroundStyle(controller.messageIsError ? Color.orange : Color.secondary)
-          .lineLimit(1)
-          .truncationMode(.tail)
-          .help(message)
-      }
     }
-    .buttonStyle(.borderless)
-    .toggleStyle(.button)
-    .controlSize(.small)
+    .modifier(OrgProseToolbarLabelStyle(showsTitles: showsTitles))
+    .fixedSize()
+  }
+}
+
+private struct OrgProseToolbarLabelStyle: ViewModifier {
+  let showsTitles: Bool
+
+  func body(content: Content) -> some View {
+    if showsTitles {
+      content.labelStyle(.titleAndIcon)
+    } else {
+      content.labelStyle(.iconOnly)
+    }
   }
 }
 
@@ -422,6 +508,7 @@ struct OrgProseRevisionPopover: View {
 
 struct OrgProseSidebar: View {
   @ObservedObject var controller: OrgProseEditorController
+  var width: CGFloat = OrgProsePresentation.sidebarWidth
   @State private var dismissingAlternativeID: String?
 
   var body: some View {
@@ -473,7 +560,7 @@ struct OrgProseSidebar: View {
       }
       .padding(14)
     }
-    .frame(width: OrgProsePresentation.sidebarWidth)
+    .frame(width: width)
     .background(WorkspaceDesign.panelFill)
     .overlay(alignment: .leading) {
       Rectangle().fill(WorkspaceDesign.hairline).frame(width: 1)

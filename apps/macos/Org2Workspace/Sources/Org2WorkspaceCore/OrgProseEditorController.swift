@@ -112,6 +112,7 @@ final class OrgProseEditorController: NSObject, ObservableObject, NSMenuItemVali
     detachCurrent()
     self.textView = textView
     textView.layoutManager?.delegate = glyphHider
+    (textView as? OrgSyntaxTextView)?.fitsInsertionPointToText = true
     refreshNow()
   }
 
@@ -124,6 +125,7 @@ final class OrgProseEditorController: NSObject, ObservableObject, NSMenuItemVali
   private func detachCurrent() {
     refreshTask?.cancel()
     abandonRevision()
+    (textView as? OrgSyntaxTextView)?.fitsInsertionPointToText = false
     if let layoutManager = textView?.layoutManager {
       clearPresentation(in: layoutManager)
       if layoutManager.delegate === glyphHider { layoutManager.delegate = nil }
