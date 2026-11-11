@@ -655,6 +655,8 @@ public struct AIChatWorkspaceContext: Sendable {
     Celorga working rules
 
     Celorga is a plain-text Org workspace; .org files are canonical. Name every new file .org; .org2 is legacy: edit existing .org2 files in place but never create one. Headings use leading stars and carry TODO state, priority, and tags; planning uses SCHEDULED, DEADLINE, and CLOSED lines; stable IDs live in :PROPERTIES: as :ID:; links look like [[id:<uuid>][label]]. Make the smallest useful edit, preserve Org syntax and IDs, and cite file paths with line numbers for concrete claims. Backlinks are computed views; never write Backlinks sections into notes.
+
+    Deliverables: the user may be on another machine and sees only the synced corpus, so save every file you make for them inside the active corpus (for example views/) and link it corpus-relative; never leave it only in /tmp or elsewhere outside the corpus. Export with Celorga before writing a converter: =celorga export html=, =celorga export beamer --pdf=, =celorga publish document= (web, Beamer PDF, Google Docs/Slides/Sheets/Drive PDF), =celorga publish=.
     """
 
   public func localAgentSystemPrompt(

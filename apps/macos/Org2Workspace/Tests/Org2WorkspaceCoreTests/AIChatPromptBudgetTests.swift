@@ -92,11 +92,13 @@ final class AIChatPromptBudgetTests: XCTestCase {
     print("PROMPT-SIZE standing=\(sizes.standing) turn=\(sizes.turn) opencode-total=\(sizes.openCodeTotal) claude-system=\(sizes.claudeSystemPrompt) codex-first-turn=\(sizes.codexFirstTurn)")
     // Budgets sit a little above the measured sizes. Raise one only for
     // instructions the agent cannot get from `celorga agent capabilities`
-    // or by reading the corpus.
-    XCTAssertLessThanOrEqual(sizes.standing, 6_600, "standing instructions grew")
+    // or by reading the corpus. The deliverables rule (keep outputs in the
+    // corpus, use Celorga's exporters) added about 460 characters: agents
+    // kept leaving files where the user's machine cannot reach them.
+    XCTAssertLessThanOrEqual(sizes.standing, 7_000, "standing instructions grew")
     XCTAssertLessThanOrEqual(sizes.turn, 4_100, "per-turn snapshot grew")
-    XCTAssertLessThanOrEqual(sizes.openCodeTotal, 10_500)
-    XCTAssertLessThanOrEqual(sizes.claudeSystemPrompt, 10_200)
-    XCTAssertLessThanOrEqual(sizes.codexFirstTurn, 12_200)
+    XCTAssertLessThanOrEqual(sizes.openCodeTotal, 11_000)
+    XCTAssertLessThanOrEqual(sizes.claudeSystemPrompt, 10_700)
+    XCTAssertLessThanOrEqual(sizes.codexFirstTurn, 12_700)
   }
 }

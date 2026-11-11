@@ -282,6 +282,13 @@ final class CodexAppServerClientTests: XCTestCase {
       XCTAssertTrue(prompt.contains("https://github.com/aviaviavi/celorga/issues"))
       XCTAssertTrue(prompt.contains("Do not publish an issue or private corpus content"))
       XCTAssertTrue(prompt.contains("If shell execution is unavailable, use the exposed tools"))
+      // The user may read the reply on another machine, so deliverables
+      // belong in the corpus and Celorga's own exporters come first.
+      XCTAssertTrue(prompt.contains("the user may be on another machine and sees only the synced corpus"))
+      XCTAssertTrue(prompt.contains("never leave it only in /tmp or elsewhere outside the corpus"))
+      XCTAssertTrue(prompt.contains("Export with Celorga before writing a converter"))
+      XCTAssertTrue(prompt.contains("=celorga publish document="))
+      XCTAssertTrue(prompt.contains("=celorga export html="))
     }
     XCTAssertTrue(claude.contains("Execution runtime: claude"))
     XCTAssertTrue(claude.contains("running locally through the installed Claude Code CLI"))
