@@ -204,6 +204,52 @@ final class AIChatLargePasteTests: XCTestCase {
     XCTAssertEqual(AIChatContextPresentation(stored.content).contexts.map(\.isReply), [true])
   }
 
+  func testReactionsReachTheAgentWithTheNextMessageOnce() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("reaction-send-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let received = CapturedPasteMessages()
+    let store = try WorkspaceStore(
+      cli: Org2CLI(repoRoot: Org2CLI.defaultRepoRoot()),
+      aiChatTranscriptURL: root.appendingPathComponent("chat.json"),
+      aiChatSendHandler: { messages, _, _, _ in
+        await received.set(messages)
+        return "Option B uses less memory, @codex."
+      }
+    )
+    store.aiChatDraft = "Compare option A and option B"
+    await store.sendAIChatMessage()
+    let answer = try XCTUnwrap(store.aiChatMessages.last(where: { $0.role == .assistant }))
+
+    // Adding and removing a reaction leaves nothing to deliver.
+    store.toggleAIChatReaction("🎉", on: answer.id)
+    store.toggleAIChatReaction("🎉", on: answer.id)
+    store.toggleAIChatReaction("👍", on: answer.id)
+    store.toggleAIChatReaction("not-offered", on: answer.id)
+    XCTAssertEqual(store.aiChatMessages.first(where: { $0.id == answer.id })?.reactions.map(\.emoji), ["👍"])
+
+    store.aiChatDraft = "Go with B"
+    await store.sendAIChatMessage()
+    let afterReaction = await received.messages
+    let outbound = try XCTUnwrap(afterReaction.last(where: { $0.role == .user }))
+    let presentation = AIChatContextPresentation(outbound.content)
+    XCTAssertEqual(presentation.userText, "Go with B")
+    XCTAssertEqual(presentation.contexts.map(\.isReaction), [true])
+    XCTAssertEqual(presentation.contexts.first?.title, "👍 OpenClaw: Option B uses less memory, @\u{2060}codex.")
+    XCTAssertEqual(presentation.contexts.first?.reference, "ai-chat-message:\(answer.id.uuidString.lowercased())")
+    let prompt = try XCTUnwrap(presentation.contexts.first?.automaticPrompt)
+    XCTAssertTrue(prompt.contains("👍 on this message from OpenClaw:\n#+begin_quote\nOption B uses less memory, @\u{2060}codex.\n#+end_quote"), prompt)
+    XCTAssertTrue(prompt.contains("not as a new request"), prompt)
+
+    // The reaction stays on the message and is not delivered again.
+    XCTAssertEqual(store.aiChatMessages.first(where: { $0.id == answer.id })?.reactions.map(\.emoji), ["👍"])
+    store.aiChatDraft = "Thanks"
+    await store.sendAIChatMessage()
+    let afterThanks = await received.messages
+    let next = try XCTUnwrap(afterThanks.last(where: { $0.role == .user }))
+    XCTAssertEqual(next.content, "Thanks")
+  }
+
   func testRestoredMegabyteDraftSizingRemainsBounded() {
     let draft = String(repeating: "long trace line with symbols \n", count: 40000)
     let start = Date()

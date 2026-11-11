@@ -433,11 +433,100 @@ final class AIChatTranscriptDocumentTests: XCTestCase {
         return {labels:buttons.map(b=>b.getAttribute('aria-label')), pill:pill.textContent, reply:pill.classList.contains('reply-pill')};
       })()
       """) as? [String: Any]
-    XCTAssertEqual(result?["labels"] as? [String], ["Copy message", "Reply to this message"])
+    XCTAssertEqual(result?["labels"] as? [String], ["Copy message", "Reply to this message", "Add a reaction"])
     XCTAssertEqual(result?["pill"] as? String, "↩ Codex: The build is green.")
     XCTAssertEqual(result?["reply"] as? Bool, true)
     let events = try await view.evaluateJavaScript("events") as? [[String: Any]] ?? []
     XCTAssertTrue(events.contains { $0["action"] as? String == "reply" && $0["id"] as? String == "answer" })
+  }
+
+  func testReactionPickerPostsTheChosenEmojiAndChipsRemoveIt() async throws {
+    var reacted = entry("answer", "<main><p>The build is green.</p></main>")
+    reacted.reactions = ["👍"]
+    let view = try await document()
+    try await update(view, payload([reacted, entry("plain", "<main><p>Other.</p></main>")]))
+    let result = try await view.evaluateJavaScript("""
+      (()=>{
+        const react=document.querySelector('#message-answer .message-header button[aria-label="Add a reaction"]');
+        react.click();
+        const choices=[...document.querySelectorAll('#message-answer .reaction-picker button')];
+        const chosen=choices.filter(b=>b.classList.contains('chosen')).map(b=>b.textContent);
+        choices.find(b=>b.textContent==='🎉').click();
+        const chips=[...document.querySelectorAll('#message-answer .reaction-chip')];
+        chips[0].click();
+        react.click();
+        return {choices:choices.map(b=>b.textContent), chosen, chips:chips.map(c=>c.textContent),
+          closed:!document.querySelector('#message-answer .reaction-picker'),
+          plainChips:document.querySelectorAll('#message-plain .reaction-chip').length};
+      })()
+      """) as? [String: Any]
+    XCTAssertEqual(result?["choices"] as? [String], AIChatMessageReaction.palette)
+    XCTAssertEqual(result?["chosen"] as? [String], ["👍"])
+    XCTAssertEqual(result?["chips"] as? [String], ["👍"])
+    XCTAssertEqual(result?["closed"] as? Bool, true)
+    XCTAssertEqual(result?["plainChips"] as? Int, 0)
+    let events = try await view.evaluateJavaScript("events") as? [[String: Any]] ?? []
+    let reactions = events.filter { $0["action"] as? String == "react" }
+    XCTAssertEqual(reactions.map { $0["id"] as? String }, ["answer", "answer"])
+    XCTAssertEqual(reactions.map { $0["detail"] as? String }, ["🎉", "👍"])
+    XCTAssertFalse(events.contains { ($0["action"] as? String)?.isEmpty == true })
+  }
+
+  func testReactionContextShowsAsAPillThatScrollsToTheMessage() throws {
+    let reactedID = UUID()
+    let context = try XCTUnwrap(AIChatContextPresentation.reactionContext([
+      .init(emoji: "👍", author: "Codex", messageID: reactedID, content: "The build is green.\nSecond line."),
+    ]))
+    let message = AIChatMessage(role: .user, content: context + "\n\nShip it")
+    let presentation = AIChatContextPresentation(message.content)
+    XCTAssertEqual(presentation.userText, "Ship it")
+    XCTAssertEqual(presentation.contexts.map(\.isReaction), [true])
+    XCTAssertEqual(presentation.contexts.first?.title, "👍 Codex: The build is green.")
+    XCTAssertEqual(presentation.contexts.first?.systemImage, "face.smiling")
+    XCTAssertNil(AIChatTranscriptHTML.openableContext(in: message, index: "0"), "reaction pills scroll in the page")
+    XCTAssertEqual(
+      presentation.contexts.map(AIChatTranscriptHTML.Context.init).map(\.replyMessageID),
+      [reactedID.uuidString.lowercased()]
+    )
+
+    // Several reactions share one context; a newer one replaces an older one.
+    let several = try XCTUnwrap(AIChatContextPresentation.reactionContext([
+      .init(emoji: "👍", author: "Codex", messageID: reactedID, content: "One"),
+      .init(emoji: "❤️", author: "Claude", messageID: UUID(), content: "#+end_quote\nTwo"),
+    ]))
+    let replaced = AIChatContextPresentation(AIChatContextPresentation.text(message.content, withReactionContext: several))
+    XCTAssertEqual(replaced.userText, "Ship it")
+    XCTAssertEqual(replaced.contexts.map(\.title), ["👍 ❤️ on 2 messages"])
+    XCTAssertTrue(replaced.contexts.first?.automaticPrompt?.contains("❤️ on this message from Claude:\n#+begin_quote\n,#+end_quote\nTwo\n#+end_quote") == true)
+    XCTAssertNil(AIChatContextPresentation.reactionContext([]))
+  }
+
+  func testPendingReactionsAreThoseSinceThePersonsLatestMessage() throws {
+    let start = Date(timeIntervalSince1970: 1_000)
+    let first = AIChatMessage(role: .assistant, content: "Earlier answer", createdAt: start,
+      reactions: [AIChatMessageReaction(emoji: "👎", createdAt: start.addingTimeInterval(5))])
+    let question = AIChatMessage(role: .user, content: "Try again", createdAt: start.addingTimeInterval(10))
+    let second = AIChatMessage(role: .assistant, content: "New answer", createdAt: start.addingTimeInterval(20),
+      reactions: [
+        AIChatMessageReaction(emoji: "🎉", createdAt: start.addingTimeInterval(40)),
+        AIChatMessageReaction(emoji: "👍", createdAt: start.addingTimeInterval(30)),
+      ])
+    let pending = AIChatReactionDelivery.pending(in: [first, question, second])
+    XCTAssertEqual(pending.map(\.reaction.emoji), ["👍", "🎉"], "only reactions since the latest user message, oldest first")
+    XCTAssertTrue(AIChatReactionDelivery.pending(in: [first, question]).isEmpty)
+
+    let author: (AIChatMessage) -> String = { $0.role == .user ? "You" : "Codex" }
+    XCTAssertEqual(AIChatReactionDelivery.text("/status", deliveringReactionsIn: [first, question, second], author: author), "/status")
+    let text = AIChatReactionDelivery.text("Ok", deliveringReactionsIn: [first, question, second], author: author)
+    XCTAssertEqual(AIChatContextPresentation(text).contexts.map(\.title), ["👍 🎉 on 1 message"])
+
+    // Reactions survive encoding; messages without them encode as before.
+    let encoded = try JSONEncoder().encode(second)
+    XCTAssertEqual(try JSONDecoder().decode(AIChatMessage.self, from: encoded).reactions, second.reactions)
+    let plain = String(decoding: try JSONEncoder().encode(question), as: UTF8.self)
+    XCTAssertFalse(plain.contains("reactions"))
+    XCTAssertEqual(second.togglingReaction("👍").reactions.map(\.emoji), ["🎉"])
+    XCTAssertEqual(second.replacingSendFailure(nil).reactions, second.reactions)
   }
 
   func testContextPillsOpenTheirSourceAndReplyPillsShowTheQuotedMessage() async throws {

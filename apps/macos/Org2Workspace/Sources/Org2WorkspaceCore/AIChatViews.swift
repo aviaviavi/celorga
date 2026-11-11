@@ -91,8 +91,19 @@ struct AIChatPresentedContext: Identifiable, Hashable, Sendable {
     kind == AIChatContextPresentation.replyKind
   }
 
+  var isReaction: Bool {
+    kind == AIChatContextPresentation.reactionKind
+  }
+
+  /// Reply and reaction pills point at another message in the same chat
+  /// rather than at a corpus source.
+  var referencesChatMessage: Bool {
+    isReply || isReaction
+  }
+
   var systemImage: String {
     if isReply { return "arrowshape.turn.up.left" }
+    if isReaction { return "face.smiling" }
     if automaticPrompt != nil { return "sparkles" }
     switch kind.lowercased() {
     case let value where value.contains("block"):
@@ -199,16 +210,7 @@ struct AIChatContextPresentation: Equatable, Sendable {
     let title = snippet.isEmpty
       ? author
       : isPassage ? "\(author): ‘\(snippet)’" : "\(author): \(snippet)"
-    let excerpt = truncated(text, limit: replyExcerptLimit)
-      .split(separator: "\n", omittingEmptySubsequences: false)
-      .map { line -> String in
-        // Escape Org block syntax so the quote cannot close its container.
-        let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
-        return trimmed.hasPrefix("#+") || trimmed.hasPrefix(",#+") || trimmed.hasPrefix("*")
-          ? ",\(line)"
-          : String(line)
-      }
-      .joined(separator: "\n")
+    let excerpt = quotable(truncated(text, limit: replyExcerptLimit))
     let lead: String
     if isPassage {
       let source = author == "You" ? "their own earlier message" : "an earlier message from \(author)"
@@ -237,6 +239,82 @@ struct AIChatContextPresentation: Equatable, Sendable {
     let kept = presentation.contexts.filter { !$0.isReply }
     let rest = serialize(contexts: kept, userText: presentation.userText)
     return rest.isEmpty ? replyContext : replyContext + "\n\n" + rest
+  }
+
+  static let reactionKind = "reaction"
+  static let reactionExcerptLimit = 300
+
+  /// One reaction for ``reactionContext(_:)``: the emoji and the message it
+  /// was added to.
+  struct Reaction: Equatable, Sendable {
+    let emoji: String
+    let author: String
+    let messageID: UUID
+    let content: String
+  }
+
+  /// A context telling the agent which messages the person reacted to since
+  /// their previous message. The transcript shows it as a pill that scrolls
+  /// to the (first) reacted message.
+  static func reactionContext(_ reactions: [Reaction]) -> String? {
+    guard let first = reactions.first else { return nil }
+    let title: String
+    if reactions.count == 1 {
+      let text = AIChatContextPresentation(first.content).userText
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      let firstLine = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+      let snippet = truncated(firstLine.trimmingCharacters(in: .whitespaces), limit: replyTitleLimit)
+        .replacingOccurrences(of: "@", with: "@\u{2060}")
+      title = snippet.isEmpty ? "\(first.emoji) \(first.author)" : "\(first.emoji) \(first.author): \(snippet)"
+    } else {
+      let emoji = reactions.map(\.emoji).joined(separator: " ")
+      let messageCount = Set(reactions.map(\.messageID)).count
+      title = "\(emoji) on \(messageCount) message\(messageCount == 1 ? "" : "s")"
+    }
+    var lines = [
+      "Since the user's previous message, they reacted to earlier messages in this chat. Take the reactions as feedback on those messages, not as a new request:",
+    ]
+    for reaction in reactions {
+      let source = reaction.author == "You" ? "their own message" : "this message from \(reaction.author)"
+      let text = AIChatContextPresentation(reaction.content).userText
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      // The person did not write this quote, so its @mentions must not
+      // address agents in a shared room; a word joiner breaks them.
+      let excerpt = quotable(truncated(text, limit: reactionExcerptLimit))
+        .replacingOccurrences(of: "@", with: "@\u{2060}")
+      lines.append("\(reaction.emoji) on \(source):")
+      lines.append("#+begin_quote")
+      lines.append(excerpt.isEmpty ? "(no text)" : excerpt)
+      lines.append("#+end_quote")
+    }
+    return automaticContext(
+      kind: reactionKind,
+      title: title,
+      reference: "ai-chat-message:\(first.messageID.uuidString.lowercased())",
+      prompt: lines.joined(separator: "\n")
+    )
+  }
+
+  /// Puts `reactionContext` first in `text`, replacing an earlier reaction
+  /// context, for example one restored by editing a queued message.
+  static func text(_ text: String, withReactionContext reactionContext: String) -> String {
+    let presentation = AIChatContextPresentation(text)
+    let kept = presentation.contexts.filter { !$0.isReaction }
+    let rest = serialize(contexts: kept, userText: presentation.userText)
+    return rest.isEmpty ? reactionContext : reactionContext + "\n\n" + rest
+  }
+
+  /// Escapes Org block syntax so quoted text cannot close its container.
+  private static func quotable(_ text: String) -> String {
+    text
+      .split(separator: "\n", omittingEmptySubsequences: false)
+      .map { line -> String in
+        let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
+        return trimmed.hasPrefix("#+") || trimmed.hasPrefix(",#+") || trimmed.hasPrefix("*")
+          ? ",\(line)"
+          : String(line)
+      }
+      .joined(separator: "\n")
   }
 
   private static func truncated(_ text: String, limit: Int) -> String {

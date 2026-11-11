@@ -1258,7 +1258,8 @@ extension WorkspaceStore {
       targetDestinationID: message.targetDestinationID,
       isRoomDispatchCopy: message.isRoomDispatchCopy,
       roomRoundID: message.roomRoundID,
-      provenance: message.provenance
+      provenance: message.provenance,
+      reactions: message.reactions
     )
   }
 
@@ -2305,7 +2306,8 @@ extension WorkspaceStore {
       isRoomDispatchCopy: message.isRoomDispatchCopy,
       // Guidance joins the running turn; it no longer opens its own round.
       roomRoundID: nil,
-      provenance: message.provenance
+      provenance: message.provenance,
+      reactions: message.reactions
     )
     replaceAIChatMessages(messages, for: threadID, shouldPersist: true)
     syncSelectedAIChatSendState()
@@ -2359,6 +2361,36 @@ extension WorkspaceStore {
       ?? message.authorDestinationID.map(aiChatDestinationTitle)
       ?? message.authorRuntime?.title
       ?? (message.role == .system ? WorkspaceProductIdentity.displayName : selectedAIChatDestinationTitle)
+  }
+
+  /// Adds `emoji` to a message in the selected chat, or removes it when it is
+  /// already there. The agent sees the reaction with the person's next
+  /// message in that chat.
+  public func toggleAIChatReaction(_ emoji: String, on messageID: UUID) {
+    guard AIChatMessageReaction.palette.contains(emoji),
+          let threadID = selectedAIChatThreadID,
+          aiChatThreadID(containing: messageID) == threadID
+    else { return }
+    var messages = aiChatMessages(for: threadID)
+    guard let index = messages.firstIndex(where: { $0.id == messageID }),
+          messages[index].role != .system
+    else { return }
+    let removes = messages[index].reactions.contains { $0.emoji == emoji }
+    messages[index] = messages[index].togglingReaction(emoji)
+    replaceAIChatMessages(messages, for: threadID, shouldPersist: true)
+    aiChatStatusText = removes
+      ? "Removed \(emoji)"
+      : "Reacted \(emoji). The agent sees it with your next message."
+  }
+
+  /// `text` with a context naming the reactions added in `threadID` since
+  /// the person's previous message, so the agent sees them with this one.
+  func aiChatTextDeliveringPendingReactions(_ text: String, in threadID: UUID) -> String {
+    AIChatReactionDelivery.text(
+      text,
+      deliveringReactionsIn: aiChatMessages(for: threadID),
+      author: aiChatReplyAuthor(for:)
+    )
   }
 
   public func editQueuedAIChatMessage(_ messageID: UUID) {

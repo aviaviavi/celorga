@@ -2933,6 +2933,21 @@ public struct AIChatTurnSettings: Hashable, Codable, Sendable {
   }
 }
 
+/// An emoji the person added to a chat message. The agent learns of it with
+/// the person's next message in that chat (see `AIChatReactionDelivery`).
+public struct AIChatMessageReaction: Hashable, Codable, Sendable {
+  public let emoji: String
+  public let createdAt: Date
+
+  public init(emoji: String, createdAt: Date = Date()) {
+    self.emoji = emoji
+    self.createdAt = createdAt
+  }
+
+  /// The reactions the transcript offers.
+  public static let palette = ["👍", "👎", "❤️", "😂", "🎉", "🤔"]
+}
+
 public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
   public enum Role: String, Codable, Sendable {
     case user
@@ -2986,6 +3001,11 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
   public let isRoomDispatchCopy: Bool
   public let roomRoundID: UUID?
   public let provenance: AIChatMessageProvenance?
+  /// Stored only when present, so messages without reactions encode as before.
+  private let storedReactions: [AIChatMessageReaction]?
+
+  /// The person's reactions to this message, oldest first.
+  public var reactions: [AIChatMessageReaction] { storedReactions ?? [] }
 
   public init(
     id: UUID = UUID(),
@@ -3011,7 +3031,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     targetDestinationID: String? = nil,
     isRoomDispatchCopy: Bool = false,
     roomRoundID: UUID? = nil,
-    provenance: AIChatMessageProvenance? = nil
+    provenance: AIChatMessageProvenance? = nil,
+    reactions: [AIChatMessageReaction] = []
   ) {
     self.id = id
     self.role = role
@@ -3037,6 +3058,7 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     self.isRoomDispatchCopy = role == .user && isRoomDispatchCopy
     self.roomRoundID = roomRoundID
     self.provenance = provenance?.isEmpty == true ? nil : provenance
+    self.storedReactions = reactions.isEmpty ? nil : reactions
   }
 
   enum CodingKeys: String, CodingKey {
@@ -3064,6 +3086,7 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
     case isRoomDispatchCopy
     case roomRoundID
     case provenance
+    case storedReactions = "reactions"
   }
 
   public init(from decoder: Decoder) throws {
@@ -3124,6 +3147,49 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       : false
     roomRoundID = try container.decodeIfPresent(UUID.self, forKey: .roomRoundID)
     provenance = try? container.decodeIfPresent(AIChatMessageProvenance.self, forKey: .provenance)
+    let decodedReactions = (try? container.decodeIfPresent([AIChatMessageReaction].self, forKey: .storedReactions)) ?? nil
+    storedReactions = decodedReactions?.isEmpty == true ? nil : decodedReactions
+  }
+
+  /// This message with `emoji` added, or removed when it is already there.
+  public func togglingReaction(_ emoji: String, at date: Date = Date()) -> AIChatMessage {
+    var next = reactions
+    if let index = next.firstIndex(where: { $0.emoji == emoji }) {
+      next.remove(at: index)
+    } else {
+      next.append(AIChatMessageReaction(emoji: emoji, createdAt: date))
+    }
+    return replacingReactions(next)
+  }
+
+  public func replacingReactions(_ nextReactions: [AIChatMessageReaction]) -> AIChatMessage {
+    AIChatMessage(
+      id: id,
+      role: role,
+      content: content,
+      attachments: attachments,
+      createdAt: createdAt,
+      changeSummary: changeSummary,
+      responseTrace: responseTrace,
+      sendFailure: sendFailure,
+      deliveryStatus: deliveryStatus,
+      deliveryKind: deliveryKind,
+      deliveryAttemptID: deliveryAttemptID,
+      deliveryAttemptState: deliveryAttemptState,
+      authorRuntime: authorRuntime,
+      authorLabel: authorLabel,
+      authorAgentRef: authorAgentRef,
+      source: source,
+      audience: audience,
+      targetRuntime: targetRuntime,
+      authorDestinationID: authorDestinationID,
+      audienceDestinationIDs: audienceDestinationIDs,
+      targetDestinationID: targetDestinationID,
+      isRoomDispatchCopy: isRoomDispatchCopy,
+      roomRoundID: roomRoundID,
+      provenance: provenance,
+      reactions: nextReactions
+    )
   }
 
   public func replacingSendFailure(_ nextSendFailure: String?) -> AIChatMessage {
@@ -3151,7 +3217,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       targetDestinationID: targetDestinationID,
       isRoomDispatchCopy: isRoomDispatchCopy,
       roomRoundID: roomRoundID,
-      provenance: provenance
+      provenance: provenance,
+      reactions: reactions
     )
   }
 
@@ -3183,7 +3250,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       targetDestinationID: targetDestinationID,
       isRoomDispatchCopy: isRoomDispatchCopy,
       roomRoundID: roomRoundID,
-      provenance: provenance
+      provenance: provenance,
+      reactions: reactions
     )
   }
 
@@ -3212,7 +3280,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       targetDestinationID: targetDestinationID,
       isRoomDispatchCopy: isRoomDispatchCopy,
       roomRoundID: roomRoundID,
-      provenance: provenance
+      provenance: provenance,
+      reactions: reactions
     )
   }
 
@@ -3241,7 +3310,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       targetDestinationID: targetDestinationID,
       isRoomDispatchCopy: isRoomDispatchCopy,
       roomRoundID: roomRoundID,
-      provenance: nextProvenance
+      provenance: nextProvenance,
+      reactions: reactions
     )
   }
 
@@ -3270,7 +3340,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       targetDestinationID: targetDestinationID,
       isRoomDispatchCopy: isRoomDispatchCopy,
       roomRoundID: roomRoundID,
-      provenance: provenance
+      provenance: provenance,
+      reactions: reactions
     )
   }
 
@@ -3304,7 +3375,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       targetDestinationID: targetDestinationID,
       isRoomDispatchCopy: isRoomDispatchCopy,
       roomRoundID: roomRoundID,
-      provenance: provenance
+      provenance: provenance,
+      reactions: reactions
     )
   }
 
@@ -3355,7 +3427,8 @@ public struct AIChatMessage: Identifiable, Hashable, Codable, Sendable {
       targetDestinationID: targetDestinationID,
       isRoomDispatchCopy: isRoomDispatchCopy,
       roomRoundID: roomRoundID,
-      provenance: provenance
+      provenance: provenance,
+      reactions: reactions
     )
   }
 }

@@ -317,7 +317,8 @@ struct AIChatTranscriptDocument: View {
         usageLimit: message.sendFailure == nil ? nil : AIChatTranscriptHTML.UsageLimit(
           failure: message.sendFailure,
           resendDestinations: store.aiChatResendDestinations(forUsageLimitedMessage: message.id)
-        )
+        ),
+        reactions: message.reactions.map(\.emoji)
       )
     }
     AIChatTranscriptWebView(
@@ -647,6 +648,9 @@ struct AIChatTranscriptDocument: View {
     case "delete": store.deleteQueuedAIChatMessage(uuid)
     case "steer": Task { await store.steerQueuedAIChatMessage(uuid) }
     case "reply": store.beginAIChatReply(to: uuid)
+    case "react":
+      guard let detail else { return }
+      store.toggleAIChatReaction(detail, on: uuid)
     case "quote":
       guard let detail, !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
       store.beginAIChatReply(to: uuid, quoting: detail)
@@ -693,7 +697,7 @@ enum AIChatTranscriptHTML {
   static func openableContext(in message: AIChatMessage, index: String?) -> AIChatPresentedContext? {
     guard let index = index.flatMap(Int.init) else { return nil }
     let contexts = AIChatContextPresentation(message.content).contexts
-    guard contexts.indices.contains(index), !contexts[index].isReply else { return nil }
+    guard contexts.indices.contains(index), !contexts[index].referencesChatMessage else { return nil }
     return contexts[index]
   }
 
@@ -701,8 +705,9 @@ enum AIChatTranscriptHTML {
     let title: String
     let kind: String
     let isAutomatic: Bool
-    /// The transcript message a reply pill quotes, so clicking it scrolls
-    /// there. Other pills open their source through the `context` action.
+    /// The transcript message a reply or reaction pill refers to, so clicking
+    /// it scrolls there. Other pills open their source through the `context`
+    /// action.
     let replyMessageID: String?
 
     init(_ context: AIChatPresentedContext) {
@@ -710,7 +715,7 @@ enum AIChatTranscriptHTML {
       kind = context.kind
       isAutomatic = context.automaticPrompt != nil
       let replyPrefix = "ai-chat-message:"
-      replyMessageID = context.isReply && context.reference.hasPrefix(replyPrefix)
+      replyMessageID = context.referencesChatMessage && context.reference.hasPrefix(replyPrefix)
         ? String(context.reference.dropFirst(replyPrefix.count))
         : nil
     }
@@ -892,6 +897,8 @@ enum AIChatTranscriptHTML {
     var turnChange: String? = nil
     /// A usage-limit failure, shown as its own state with resend actions.
     var usageLimit: UsageLimit? = nil
+    /// The person's reactions to this message, oldest first.
+    var reactions: [String] = []
   }
   struct StartWork: Codable, Equatable {
     let title: String
@@ -926,6 +933,8 @@ enum AIChatTranscriptHTML {
     var mentions: [String] = []
     /// A turn the chat counts as running with no live progress to stream.
     var stalled: Stalled? = nil
+    /// The emoji the React button offers.
+    var reactionPalette: [String] = AIChatMessageReaction.palette
   }
 
   struct Stalled: Codable, Equatable {
@@ -991,6 +1000,11 @@ enum AIChatTranscriptHTML {
   .glyph svg,.icon-button svg,.detail-icon svg,.activity-icon svg,.change-icon svg { width:14px; height:14px; }
   .context-pills { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:6px; }
   .context-pill:hover { text-decoration:underline; }
+  .reactions { display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; }
+  .reaction-chip { padding:1px 7px; border-radius:999px; font-size:12px; line-height:18px; border:1px solid light-dark(#cfdcec,#3c4c60); background:light-dark(#eef4fb,#26303c); }
+  .reaction-picker { display:flex; flex-wrap:wrap; gap:2px; margin:-2px 0 6px; padding:3px; width:fit-content; border:1px solid light-dark(#d8d8d3,#424442); border-radius:8px; background:light-dark(#fff,#2c2e2c); box-shadow:0 2px 6px #0001; }
+  .reaction-picker button { font-size:16px; line-height:20px; padding:2px 5px; }
+  .reaction-picker button.chosen { background:light-dark(#dfeafa,#2f4258); }
   .context-pill.reply-pill { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:light-dark(#555,#bbb); background:light-dark(#f2f2f2,#2c2c2e); border-color:light-dark(#ddd,#444); }
   .context-pill { padding:3px 7px; border-radius:999px; font-size:10px; line-height:normal; cursor:pointer; color:light-dark(#2773bd,#83bafa); background:light-dark(#eaf3fc,#27394b); border:1px solid light-dark(#bdd8f0,#34516b); }
   .message-placeholder { display:flex; align-items:center; gap:9px; min-width:215px; height:23px; padding:4px 0; color:light-dark(#777,#aaa); }
@@ -1134,6 +1148,7 @@ enum AIChatTranscriptHTML {
         copy:'<rect x="8" y="7" width="11" height="13" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/>',
         check:'<path d="m5 12 4 4L19 6"/>',
         reply:'<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+        smile:'<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/><path d="M9 9.5h.01M15 9.5h.01"/>',
         sparkle:'<path d="M12 2c.7 4.7 2.9 6.9 7.5 7.5C14.9 10.1 12.7 12.3 12 17c-.7-4.7-2.9-6.9-7.5-7.5C9.1 8.9 11.3 6.7 12 2Z"/><path d="M19 15c.3 2.1 1.3 3.1 3 3.5-1.7.3-2.7 1.3-3 3.5-.3-2.2-1.3-3.2-3-3.5 1.7-.4 2.7-1.4 3-3.5Z"/>',
         person:'<circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/>',
         gear:'<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A8 8 0 0 0 15 6l-.3-2.6h-4L10.4 6A8 8 0 0 0 8.8 7L6.5 6l-2 3.4 2 1.5a7 7 0 0 0 0 2.1l-2 1.5 2 3.4 2.3-1a8 8 0 0 0 1.6 1l.3 2.6h4L15 18a8 8 0 0 0 1.6-1l2.3 1 2-3.4-2-1.5a7 7 0 0 0 .1-1Z"/>',
@@ -1254,15 +1269,34 @@ enum AIChatTranscriptHTML {
       if(e.queued) { const q=document.createElement('span'); q.className='queued-badge'; q.textContent='Queued'; header.append(q); }
       header.append(time,iconButton(e.copied?'check':'copy',e.copied?'Copied':'Copy message','copy',e.id,e.copied));
       if(!e.queued && !e.preparing && e.role!=='system') { header.append(iconButton('reply','Reply to this message','reply',e.id)); a.dataset.replyable='true'; }
+      let picker=null;
+      if(!e.queued && !e.preparing && e.role!=='system') {
+        // The picker opens in the page; choosing an emoji posts it.
+        const react=document.createElement('button'); react.className='icon-button reaction-button';
+        react.setAttribute('aria-label','Add a reaction'); react.append(icon('smile'));
+        react.title='Add a reaction. The agent sees it with your next message.';
+        react.setAttribute('aria-haspopup','true'); react.setAttribute('aria-expanded','false');
+        react.addEventListener('click',()=>{
+          if(picker) { picker.remove(); picker=null; react.setAttribute('aria-expanded','false'); return; }
+          picker=document.createElement('div'); picker.className='reaction-picker'; picker.setAttribute('role','group'); picker.setAttribute('aria-label','Reactions');
+          for(const emoji of (current?.reactionPalette||[])) {
+            const choice=button(emoji,'react',e.id,emoji); choice.setAttribute('aria-label','React '+emoji);
+            if((e.reactions||[]).includes(emoji)) { choice.classList.add('chosen'); choice.setAttribute('aria-pressed','true'); }
+            picker.append(choice);
+          }
+          header.after(picker); react.setAttribute('aria-expanded','true');
+        });
+        header.append(react);
+      }
       card.append(header);
       if(e.contexts.length && !e.startWork) {
         const pills=document.createElement('div'); pills.className='context-pills';
         e.contexts.forEach((context,index)=>{
-          const pill=document.createElement('button'); const reply=context.kind==='reply to message';
-          pill.className='context-pill'+(reply?' reply-pill':''); pill.textContent=(reply?'↩ ':context.isAutomatic?'✦ ':'')+context.title;
-          pill.title=reply?'Show the quoted message':'Open '+context.title; pill.setAttribute('aria-label',pill.title);
+          const pill=document.createElement('button'); const reply=context.kind==='reply to message', reaction=context.kind==='reaction';
+          pill.className='context-pill'+(reply||reaction?' reply-pill':''); pill.textContent=(reply?'↩ ':reaction?'':context.isAutomatic?'✦ ':'')+context.title;
+          pill.title=reply?'Show the quoted message':reaction?'Show the message you reacted to':'Open '+context.title; pill.setAttribute('aria-label',pill.title);
           pill.addEventListener('click',()=>{
-            if(!reply) { post('context',e.id,String(index)); return; }
+            if(!reply && !reaction) { post('context',e.id,String(index)); return; }
             const target=context.replyMessageID && document.getElementById('message-'+context.replyMessageID);
             if(!target) return;
             target.scrollIntoView({block:'center',behavior:'smooth'});
@@ -1298,6 +1332,14 @@ enum AIChatTranscriptHTML {
           b.append(preview,name); attachments.append(b);
         }
         card.append(attachments);
+      }
+      if(e.reactions && e.reactions.length) {
+        const row=document.createElement('div'); row.className='reactions';
+        for(const emoji of e.reactions) {
+          const chip=button(emoji,'react',e.id,emoji); chip.className='reaction-chip';
+          chip.title='Remove '+emoji; chip.setAttribute('aria-label','Remove reaction '+emoji); row.append(chip);
+        }
+        card.append(row);
       }
       if(e.queued) {
         const actions=document.createElement('div'); actions.className='queued-actions';

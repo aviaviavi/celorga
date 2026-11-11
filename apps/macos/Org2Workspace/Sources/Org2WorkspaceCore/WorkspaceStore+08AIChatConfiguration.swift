@@ -2697,6 +2697,9 @@ extension WorkspaceStore {
     // un-mentioned message goes to that agent (not the room's default), and a
     // message naming exactly that agent does too. Anything else is queued.
     repairOrphanedAIChatSends(in: threadID)
+    // Reactions added since the person's previous message reach the agent
+    // with this one.
+    let text = aiChatTextDeliveringPendingReactions(text, in: threadID)
     let steeringThread = aiChatThread(withID: threadID)
     let roomSteerTargets = delivery == .steer && steeringThread?.isSharedRoom == true
       ? steeringThread.map { thread in
