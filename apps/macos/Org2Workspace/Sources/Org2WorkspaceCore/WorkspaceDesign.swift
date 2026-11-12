@@ -258,7 +258,11 @@ struct WorkspaceQuietPressStyle: ButtonStyle {
 }
 
 enum WorkspaceSidebarLayout {
-  static let minimumWidth: CGFloat = 180
+  // Wide enough for the header (brand mark, "Celorga", the ⌘ shortcut badge,
+  // and the Help and Search buttons) and for a row's title beside its ⌘
+  // shortcut badge, so neither wraps onto extra lines. A sidebar plus the
+  // two-pane main area must still fit a half-screen snap.
+  static let minimumWidth: CGFloat = 240
 
   static func defaultWidth(for containerWidth: CGFloat) -> CGFloat {
     maximumWidth(for: containerWidth)
@@ -414,6 +418,8 @@ struct KeyboardShortcutBadge: View {
   var body: some View {
     Text(text)
       .font(.caption2.monospaced().weight(.medium))
+      .lineLimit(1)
+      .fixedSize()
       .foregroundStyle(.tertiary)
       .padding(.horizontal, 5)
       .padding(.vertical, 1)

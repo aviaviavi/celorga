@@ -3100,6 +3100,7 @@ private struct SidebarAgentWorkPageRow: View {
     HStack(spacing: 8) {
       Label(title, systemImage: systemImage)
         .font(.callout.weight(.medium))
+        .lineLimit(1)
       Spacer(minLength: 0)
       if notificationCount > 0 {
         Text("\(notificationCount)")
@@ -3236,6 +3237,8 @@ private struct SidebarHeader: View {
       Text(WorkspaceProductIdentity.displayName)
         .font(.system(size: 16, weight: .semibold))
         .tracking(-0.4)
+        .lineLimit(1)
+        .fixedSize()
 
       Spacer(minLength: 0)
 
@@ -3420,6 +3423,7 @@ private struct SidebarSurfaceRow: View {
     HStack(spacing: 8) {
       Label(surface.title, systemImage: surface.systemImage)
         .font(.callout.weight(.medium))
+        .lineLimit(1)
       Spacer(minLength: 0)
       if notificationCount > 0 && !showsCommandShortcut {
         Text(notificationCount > 99 ? "99+" : "\(notificationCount)")

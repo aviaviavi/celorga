@@ -13433,9 +13433,22 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertLessThanOrEqual(WorkspaceWindowLayout.minimumHeight, 1_080 / 2)
   }
 
+  func testSidebarMinimumWidthKeepsHeaderAndShortcutRowsOnOneLine() {
+    // At 180 points the "Celorga" header title wrapped one syllable per line
+    // and row titles truncated beside their ⌘ shortcut badges (2026-11-11).
+    // The header needs 13 + 32 (mark) + ~60 (title) + ~40 (⌘⇧F badge)
+    // + 2 × 26 (Help, Search) + 4 × 7 spacing + 10 ≈ 235 points.
+    XCTAssertGreaterThanOrEqual(WorkspaceSidebarLayout.minimumWidth, 236)
+    XCTAssertGreaterThanOrEqual(
+      WorkspaceSidebarLayout.maximumWidth(for: 0),
+      WorkspaceSidebarLayout.minimumWidth
+    )
+  }
+
   func testSidebarStartsAtItsOneQuarterMaximumWidth() {
     XCTAssertEqual(WorkspaceSidebarLayout.maximumWidth(for: 1_400), 350)
-    XCTAssertEqual(WorkspaceSidebarLayout.maximumWidth(for: 800), 200)
+    XCTAssertEqual(WorkspaceSidebarLayout.maximumWidth(for: 1_000), 250)
+    XCTAssertEqual(WorkspaceSidebarLayout.maximumWidth(for: 800), WorkspaceSidebarLayout.minimumWidth)
     XCTAssertEqual(WorkspaceSidebarLayout.maximumWidth(for: 600), WorkspaceSidebarLayout.minimumWidth)
     XCTAssertEqual(
       WorkspaceSidebarLayout.defaultWidth(for: 1_400),
