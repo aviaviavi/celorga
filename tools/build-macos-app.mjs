@@ -563,6 +563,8 @@ ${usesLocalizedDisplayName ? `  <key>LSHasLocalizedDisplayName</key>
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>${xmlEscape(displayName)} connects your local AI agent to computer-control helpers for browser and desktop tasks you request.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>${xmlEscape(displayName)} serves document links that you explicitly publish to your local network.</string>
   <key>NSMicrophoneUsageDescription</key>

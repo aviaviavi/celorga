@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { requestAppQuit } from "../tools/macos-app-quit.mjs";
 import { installStagedAppBundle } from "../tools/atomic-app-bundle.mjs";
 
@@ -26,6 +27,65 @@ const packageJSON = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf
 const workspaceStoreSource = readFileSync(join(
   repoRoot, "apps", "macos", "Org2Workspace", "Sources", "Org2WorkspaceCore", "WorkspaceStore.swift"
 ), "utf8");
+
+// Exercise the actual bundle writer without building or replacing an app.
+// macOS attributes agent subprocesses' Apple Events to the containing app;
+// without both declarations the computer-control helper cannot ask for consent.
+{
+  const appEntitlements = readFileSync(join(
+    repoRoot, "apps", "macos", "Org2Workspace", "OpenOrg.entitlements"
+  ), "utf8");
+  assert.match(appEntitlements,
+    /<key>com\.apple\.security\.automation\.apple-events<\/key>\s*<true\/>/);
+  const writerStart = macAppBuildSource.indexOf("function writeInfoPlist(bundlePath) {");
+  const writerEnd = macAppBuildSource.indexOf("\nfunction copySparkleFramework(", writerStart);
+  const xmlEscapeSource = macAppBuildSource.match(/function xmlEscape\(value\) \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(writerStart >= 0 && writerEnd > writerStart && xmlEscapeSource);
+  for (const displayName of ["Celorga", "Celorga Preview & Test"]) {
+    const outputs = new Map();
+    runInNewContext(`${xmlEscapeSource}\n${macAppBuildSource.slice(writerStart, writerEnd)}
+writeInfoPlist("/fixture/Test.app");`, {
+      join, displayName, bundleFileName: "Test", usesLocalizedDisplayName: true,
+      executableName: "Test", bundleIdentifier: "org.example.test",
+      packageVersion: "1.0.0", swiftBuildConfiguration: "release",
+      googleOAuthClientID: "", googleOAuthClientSecret: "",
+      sparkleUpdateConfiguration: () => ({ enabled: false }),
+      mkdirSync: () => {},
+      writeFileSync: (path, text) => outputs.set(path, text),
+    });
+    const plist = outputs.get("/fixture/Test.app/Contents/Info.plist");
+    assert.match(plist, /<key>NSAppleEventsUsageDescription<\/key>\s*<string>[^<]+<\/string>/);
+    assert.match(plist, /connects your local AI agent to computer-control helpers/);
+    if (displayName.includes("&")) assert.match(plist, /Preview &amp; Test connects/);
+    if (process.platform === "darwin") {
+      const lint = spawnSync("plutil", ["-lint", "-"], { input: plist, encoding: "utf8" });
+      assert.equal(lint.status, 0, lint.stderr || lint.stdout);
+      if (displayName === "Celorga") {
+        const scratch = mkdtempSync(join(tmpdir(), "celorga-automation-permissions-"));
+        try {
+          const bundle = join(scratch, "Test.app");
+          mkdirSync(join(bundle, "Contents", "MacOS"), { recursive: true });
+          writeFileSync(join(bundle, "Contents", "Info.plist"), plist);
+          writeFileSync(join(bundle, "Contents", "MacOS", "Test"), readFileSync("/usr/bin/true"), { mode: 0o755 });
+          for (const args of [
+            ["--force", "--sign", "-", "--options", "runtime", "--entitlements",
+              join(repoRoot, "apps", "macos", "Org2Workspace", "OpenOrg.entitlements"), bundle],
+            ["--verify", "--strict", bundle],
+          ]) {
+            const signed = spawnSync("codesign", args, { encoding: "utf8" });
+            assert.equal(signed.status, 0, signed.stderr || signed.stdout);
+          }
+          const signedEntitlements = spawnSync("codesign", ["-d", "--entitlements", ":-", bundle], { encoding: "utf8" });
+          assert.equal(signedEntitlements.status, 0, signedEntitlements.stderr);
+          assert.match(signedEntitlements.stdout,
+            /<key>com\.apple\.security\.automation\.apple-events<\/key>\s*<true\/>/);
+        } finally {
+          rmSync(scratch, { recursive: true, force: true });
+        }
+      }
+    }
+  }
+}
 
 // Observation serializes the enclosing declaration for each attached member
 // macro. Putting the entire workspace implementation inside the class made
