@@ -99,6 +99,25 @@ try {
   ], { encoding: "utf8" });
   assert.equal(clearedProfile.status, 0, clearedProfile.stderr || clearedProfile.stdout);
   assert.equal(loadAgentProfileSnapshot(root, supportAgent.id).value.defaultRuntime, undefined);
+  // The app's Default Runtime menu lists the configured AI chat destinations
+  // (such as a second Codex destination, @scarf-codex) and every runtime it
+  // offers, including Pi and OpenCode.
+  const destinationProfile = spawnSync(process.execPath, [
+    path.resolve("dist/cli.js"), "agent-profile", "update", supportAgent.id,
+    "--default-runtime", "opencode", "--default-destination", "@Scarf-Codex", "--apply", "--json", "--dir", root,
+  ], { encoding: "utf8" });
+  assert.equal(destinationProfile.status, 0, destinationProfile.stderr || destinationProfile.stdout);
+  const destinationSnapshot = loadAgentProfileSnapshot(root, supportAgent.id);
+  assert.equal(destinationSnapshot.value.defaultRuntime, "opencode");
+  assert.equal(destinationSnapshot.value.defaultDestination, "scarf-codex");
+  assert.match(destinationSnapshot.raw, /^:DEFAULT_DESTINATION: scarf-codex$/m);
+  const clearedDestination = spawnSync(process.execPath, [
+    path.resolve("dist/cli.js"), "agent-profile", "update", supportAgent.id,
+    "--default-runtime", "none", "--default-destination", "none", "--apply", "--json", "--dir", root,
+  ], { encoding: "utf8" });
+  assert.equal(clearedDestination.status, 0, clearedDestination.stderr || clearedDestination.stdout);
+  assert.equal(loadAgentProfileSnapshot(root, supportAgent.id).value.defaultDestination, undefined);
+  assert.doesNotMatch(loadAgentProfileSnapshot(root, supportAgent.id).raw, /DEFAULT_DESTINATION/);
 
   let run = createAgentRun({
     id: "board-brief", goal: "Prepare a cited board briefing",

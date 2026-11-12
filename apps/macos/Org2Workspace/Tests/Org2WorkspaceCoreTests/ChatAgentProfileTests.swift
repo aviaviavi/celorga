@@ -76,4 +76,52 @@ final class ChatAgentProfileTests: XCTestCase {
     XCTAssertEqual(store.selectedAIChatDestination.id, AIChatDestinationConfiguration.localCodexID)
     XCTAssertEqual(store.selectedChatAgentRef, profile.id)
   }
+
+  @MainActor
+  func testDefaultRuntimeMenuOffersConfiguredDestinationsAndSelectingAgentUsesNamedOne() throws {
+    // 2026-11-11: the menu listed generic adapters (OpenClaw, Codex, …) and
+    // omitted a configured destination such as @scarf-codex.
+    let suiteName = "ChatAgentProfileTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let transcript = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-agent-profile-destination-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let store = WorkspaceStore(defaults: defaults, aiChatTranscriptURL: transcript, legacyDefaultsDomains: [])
+    let scarfCodex = AIChatDestinationConfiguration(
+      id: "scarf-codex-destination",
+      name: "Scarf Codex",
+      mention: "scarf-codex",
+      adapter: AIChatDestinationConfiguration.defaults
+        .first(where: { $0.id == AIChatDestinationConfiguration.localCodexID })!.adapter
+    )
+    store.aiChatDestinations.append(scarfCodex)
+    XCTAssertTrue(store.agentProfileDefaultDestinationOptions.contains(where: { $0.id == scarfCodex.id }))
+    XCTAssertFalse(store.agentProfileDefaultDestinationOptions.contains(where: { !$0.isEnabled }))
+
+    store.createAIChatThread(destinationID: AIChatDestinationConfiguration.localCodexID)
+    let profile = AgentProfileItem(
+      schema: "org2:agent-profile:v1", id: "scarf-engineering-operator", name: "Scarf Engineering Operator",
+      description: "", status: "active", responsibilities: [], capabilities: [], skills: [],
+      defaultRuntime: "codex", runtimeBindings: [], goalRefs: [], primaryGoalRef: nil, reportsToAgentRef: nil,
+      file: "/tmp/scarf-engineering-operator.org", createdAt: "today", updatedAt: "today",
+      defaultDestination: "@Scarf-Codex"
+    )
+    XCTAssertTrue(store.isAgentProfileDefaultDestination(profile, scarfCodex))
+    XCTAssertEqual(store.agentProfileDefaultTitle(profile), "Scarf Codex")
+    XCTAssertNil(store.unavailableAgentProfileDefaultDestination(profile))
+
+    store.setSelectedChatAgent(profile)
+    XCTAssertEqual(store.selectedAIChatDestination.id, scarfCodex.id)
+
+    // A Mac without that destination falls back to the runtime kind.
+    let elsewhere = AgentProfileItem(
+      schema: profile.schema, id: profile.id, name: profile.name, description: "", status: "active",
+      responsibilities: [], capabilities: [], skills: [], defaultRuntime: "codex", runtimeBindings: [],
+      goalRefs: [], primaryGoalRef: nil, reportsToAgentRef: nil, file: profile.file,
+      createdAt: "today", updatedAt: "today", defaultDestination: "missing-destination"
+    )
+    XCTAssertEqual(store.unavailableAgentProfileDefaultDestination(elsewhere), "missing-destination")
+    XCTAssertEqual(store.preferredAIChatDestination(for: elsewhere)?.id, AIChatDestinationConfiguration.localCodexID)
+  }
 }

@@ -45,7 +45,7 @@ If a native operation appears missing or broken, check the installed version, ca
 
 Celorga separates the outcome, worker, and execution mechanism. A goal is a portable =celorga:goal:v1= record under =goals/=. A named worker such as /Customer Support/ or /Product Research/ is an =celorga:agent-profile:v1= record under =agent-profiles/=. OpenClaw, Codex, Claude Code, Pi, and OpenCode are runtimes: they execute work, but they are not themselves =AGENT_REF= values.
 
-Profiles contain responsibilities, capabilities, skills, goal refs, an optional default runtime, and non-secret runtime bindings. =defaultRuntime= is a portable starting preference such as =openclaw= or =codex=; a person can still choose another runtime for a new chat. A binding such as =openclaw:customer-support= instead connects the configured OpenClaw agent ID to the portable =customer-support= profile for reverse identity resolution. Credentials, model selection, session IDs, destinations, and machine paths remain outside the profile.
+Profiles contain responsibilities, capabilities, skills, goal refs, an optional default runtime, and non-secret runtime bindings. =defaultRuntime= is a portable starting preference such as =openclaw= or =codex=; a person can still choose another runtime for a new chat. A binding such as =openclaw:customer-support= instead connects the configured OpenClaw agent ID to the portable =customer-support= profile for reverse identity resolution. An optional =defaultDestination= names a configured AI chat destination by its mention, such as =scarf-codex=. Credentials, model selection, session IDs, destination configuration, and machine paths remain outside the profile.
 
 #+begin_src sh
 celorga goal create customer-trust --title "Earn customer trust" \

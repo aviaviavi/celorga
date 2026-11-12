@@ -3907,7 +3907,7 @@ struct AIChatComposerView: View {
           Button {
             store.setSelectedChatAgent(profile)
           } label: {
-            let defaultSuffix = profile.preferredChatRuntime.map { " · defaults to \($0.title)" } ?? ""
+            let defaultSuffix = store.agentProfileDefaultTitle(profile).map { " · defaults to \($0)" } ?? ""
             Label(
               "\(profile.name)\(defaultSuffix)",
               systemImage: profile.id == store.selectedChatAgentRef ? "checkmark" : "person.crop.circle"

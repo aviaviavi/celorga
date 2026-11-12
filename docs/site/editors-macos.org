@@ -446,7 +446,11 @@ The composer shows agent and runtime as separate controls. Choosing an agent
 stores the profile's stable ID on the thread and supplies its role,
 responsibilities, skills, and goal context on subsequent turns. On an empty
 thread, a profile with a default runtime adopts that runtime as its starting
-choice; the adjacent runtime control remains visible and can override it. An
+choice; the adjacent runtime control remains visible and can override it. In
+*Agent Work → Agents*, a profile's *Default Runtime* menu lists the runtimes
+configured in *Settings → AI Chat*, by name and mention, so a second Codex
+destination such as =@scarf-codex= can be chosen directly. A Mac without that
+destination falls back to the profile's runtime kind. An
 agent can change between turns, while the runtime remains fixed once a
 conversation starts. Choosing Default assistant removes the explicit profile.
 Profile selection does not import other chats or grant additional corpus access.

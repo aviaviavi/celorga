@@ -139,6 +139,7 @@ import {
 } from "./workLedger.js";
 import {
   AGENT_PROFILE_DEFAULT_RUNTIMES,
+  normalizeAgentDefaultDestination,
   AGENT_PROFILE_STATUSES,
   GOAL_STATUSES,
   agentProfilePath,
@@ -280,8 +281,8 @@ const HELP = `Agentic workspace commands:
   celorga goal checkpoint ID --run RUN_ID [--apply]
     Ends a driver pass. A pass that leaves the plan unchanged counts toward --stall-after; reaching it stalls the drive.
   celorga agent-profile list|show|create|update|resolve [--dir CORPUS] [--apply]
-  celorga agent-profile create ID --name TEXT [--default-runtime openclaw|codex|claude] [--binding RUNTIME:AGENT_ID] [--goal-ref ID] [--primary-goal-ref ID] [--responsibility TEXT] [--capability ID] [--skill ID]
-  celorga agent-profile update ID [--default-runtime openclaw|codex|claude|none]
+  celorga agent-profile create ID --name TEXT [--default-runtime openclaw|codex|claude|pi|opencode] [--default-destination MENTION] [--binding RUNTIME:AGENT_ID] [--goal-ref ID] [--primary-goal-ref ID] [--responsibility TEXT] [--capability ID] [--skill ID]
+  celorga agent-profile update ID [--default-runtime openclaw|codex|claude|pi|opencode|none] [--default-destination MENTION|none]
   celorga agent-profile resolve --runtime openclaw|codex --runtime-agent-id ID [--json]
   celorga run create [--title TEXT] --goal TEXT [--goal-ref ID] [--agent-ref ID] [--thread AI_CHAT_THREAD_ID] [--destination-ref ID] [--accept TEXT] [--risk CLASS] [--owner NAME] [--capability ID] [--dir CORPUS]
     --thread links the run to the AI chat that created it (use ORG2_AI_CHAT_THREAD_ID); resuming the run returns to that chat's agent.
@@ -1498,6 +1499,7 @@ function agentProfileCommand(parsed: ParsedArgs): void {
       capabilities: flags(parsed, "capability"),
       skills: flags(parsed, "skill"),
       defaultRuntime: agentProfileDefaultRuntime(flag(parsed, "default-runtime")),
+      defaultDestination: flag(parsed, "default-destination"),
       runtimeBindings: runtimeBindings(parsed),
       goalRefs: flags(parsed, "goal-ref"),
       primaryGoalRef: flag(parsed, "primary-goal-ref"),
@@ -1521,6 +1523,7 @@ function agentProfileCommand(parsed: ParsedArgs): void {
       ...(parsed.flags.has("capability") ? { capabilities: flags(parsed, "capability") } : {}),
       ...(parsed.flags.has("skill") ? { skills: flags(parsed, "skill") } : {}),
       ...(parsed.flags.has("default-runtime") ? { defaultRuntime: agentProfileDefaultRuntime(flag(parsed, "default-runtime")) } : {}),
+      ...(parsed.flags.has("default-destination") ? { defaultDestination: normalizeAgentDefaultDestination(flag(parsed, "default-destination")) } : {}),
       ...(parsed.flags.has("binding") ? { runtimeBindings: runtimeBindings(parsed) } : {}),
       goalRefs: [...new Set([...goalRefs, ...(primaryGoalRef ? [primaryGoalRef] : [])])],
       ...(primaryGoalRef !== undefined ? { primaryGoalRef } : {}),

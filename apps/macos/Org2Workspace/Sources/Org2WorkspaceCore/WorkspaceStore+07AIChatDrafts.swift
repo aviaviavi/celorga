@@ -2513,15 +2513,63 @@ extension WorkspaceStore {
 
   func setSelectedChatAgent(_ profile: AgentProfileItem?) {
     guard canChangeChatAgent else { return }
-    if let runtime = profile?.preferredChatRuntime,
+    if let profile,
        canChangeSelectedAIChatRuntime,
-       let destination = preferredAIChatDestination(for: runtime),
+       let destination = preferredAIChatDestination(for: profile),
        destination.id != selectedAIChatDestination.id {
       setSelectedAIChatDestination(destination.id)
     }
     guard let index = aiChatThreads.firstIndex(where: { $0.id == selectedAIChatThreadID }) else { return }
     aiChatThreads[index] = aiChatThreads[index].replacingAIChatMetadata(agentRef: .some(profile?.id))
     persistAIChatTranscript()
+  }
+
+  /// The enabled destination an agent prefers: its configured default
+  /// destination when this machine has it, otherwise the preferred
+  /// destination for its default runtime.
+  func preferredAIChatDestination(for profile: AgentProfileItem) -> AIChatDestinationConfiguration? {
+    if let mention = profile.preferredChatDestinationMention,
+       let destination = enabledAIChatDestinations.first(where: {
+         AIChatDestinationConfiguration.normalizedMention($0.mention) == mention
+       }) {
+      return destination
+    }
+    return profile.preferredChatRuntime.flatMap(preferredAIChatDestination(for:))
+  }
+
+  /// The choices for an agent's Default Runtime menu: the destinations
+  /// configured in Settings › AI Chat, in the user's order.
+  public var agentProfileDefaultDestinationOptions: [AIChatDestinationConfiguration] {
+    enabledAIChatDestinations
+  }
+
+  /// Whether `destination` is the agent's recorded default. A profile with
+  /// only a runtime default matches the destination that runtime resolves to.
+  public func isAgentProfileDefaultDestination(
+    _ profile: AgentProfileItem,
+    _ destination: AIChatDestinationConfiguration
+  ) -> Bool {
+    guard profile.hasChatDefault else { return false }
+    return preferredAIChatDestination(for: profile)?.id == destination.id
+  }
+
+  /// A recorded default destination that is not configured on this machine.
+  public func unavailableAgentProfileDefaultDestination(_ profile: AgentProfileItem) -> String? {
+    guard let mention = profile.preferredChatDestinationMention,
+          !enabledAIChatDestinations.contains(where: {
+            AIChatDestinationConfiguration.normalizedMention($0.mention) == mention
+          })
+    else { return nil }
+    return mention
+  }
+
+  /// "Defaults to …" text for an agent: the destination it resolves to here,
+  /// else its recorded mention or runtime.
+  public func agentProfileDefaultTitle(_ profile: AgentProfileItem) -> String? {
+    guard profile.hasChatDefault else { return nil }
+    if let destination = preferredAIChatDestination(for: profile) { return destination.title }
+    if let mention = profile.preferredChatDestinationMention { return "@\(mention)" }
+    return profile.preferredChatRuntime?.title
   }
 
   func preferredAIChatDestination(for runtime: AIChatRuntime) -> AIChatDestinationConfiguration? {

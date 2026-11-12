@@ -1326,9 +1326,12 @@ extension WorkspaceStore {
     }
   }
 
-  public func setAgentProfileDefaultRuntime(
+  /// Records a configured AI chat destination as the agent's default. The
+  /// destination's runtime is stored too, so a machine without that
+  /// destination still picks the same kind of runtime.
+  public func setAgentProfileDefaultDestination(
     _ profile: AgentProfileItem,
-    runtime: AIChatRuntime?
+    destination: AIChatDestinationConfiguration?
   ) async {
     guard let corpusRoot,
           !mutatingAgentProfileIDs.contains(profile.id) else { return }
@@ -1337,7 +1340,10 @@ extension WorkspaceStore {
     do {
       _ = try await cli.run([
         "agent-profile", "update", profile.id,
-        "--default-runtime", runtime?.agentProfileValue ?? "none",
+        "--default-runtime", destination?.runtime.agentProfileValue ?? "none",
+        "--default-destination", destination.map {
+          AIChatDestinationConfiguration.normalizedMention($0.mention)
+        } ?? "none",
         "--apply",
         "--dir", corpusRoot.path,
         "--json"
@@ -1346,7 +1352,7 @@ extension WorkspaceStore {
       if let refreshed = agentProfiles.first(where: { $0.id == profile.id }) {
         selectAgentProfile(refreshed)
       }
-      statusText = "\(profile.name): \(runtime.map { "defaults to \($0.title)" } ?? "no default runtime")"
+      statusText = "\(profile.name): \(destination.map { "defaults to \($0.title)" } ?? "no default runtime")"
     } catch {
       errorText = error.localizedDescription
       statusText = "Agent update failed"
@@ -1789,8 +1795,8 @@ extension WorkspaceStore {
       }
     }
     if let agentRef = run.agentRef,
-       let runtime = agentProfiles.first(where: { $0.id == agentRef })?.preferredChatRuntime,
-       let destination = preferredAIChatDestination(for: runtime) {
+       let profile = agentProfiles.first(where: { $0.id == agentRef }),
+       let destination = preferredAIChatDestination(for: profile) {
       return destination
     }
     return defaultRunDestination

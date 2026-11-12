@@ -464,9 +464,25 @@ public struct AgentProfileItem: Identifiable, Decodable, Hashable, Sendable {
   public let file: String
   public let createdAt: String
   public let updatedAt: String
+  /// The configured AI chat destination this agent prefers, named by its
+  /// mention without "@" (for example "scarf-codex"). A machine without that
+  /// destination falls back to `defaultRuntime`.
+  public var defaultDestination: String? = nil
 
   public var preferredChatRuntime: AIChatRuntime? {
     defaultRuntime.flatMap(AIChatRuntime.init(agentProfileValue:))
+  }
+
+  /// The normalized default destination mention, if one is recorded.
+  public var preferredChatDestinationMention: String? {
+    guard let raw = defaultDestination?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !raw.isEmpty
+    else { return nil }
+    return AIChatDestinationConfiguration.normalizedMention(raw)
+  }
+
+  public var hasChatDefault: Bool {
+    preferredChatDestinationMention != nil || preferredChatRuntime != nil
   }
 }
 

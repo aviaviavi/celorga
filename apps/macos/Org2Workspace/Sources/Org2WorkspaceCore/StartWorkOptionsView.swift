@@ -175,8 +175,8 @@ struct StartWorkOptionsView: View {
     .onChange(of: agentRef) { oldValue, newValue in
       // Like the chat composer, an agent with a preferred runtime picks it.
       guard oldValue != newValue, newValue != initialAgentRef, !usesExistingThread,
-            let runtime = store.agentProfiles.first(where: { $0.id == newValue })?.preferredChatRuntime,
-            let destination = store.enabledAIChatDestinations.first(where: { $0.runtime == runtime })
+            let profile = store.agentProfiles.first(where: { $0.id == newValue }),
+            let destination = store.preferredAIChatDestination(for: profile)
       else { return }
       destinationID = destination.id
     }

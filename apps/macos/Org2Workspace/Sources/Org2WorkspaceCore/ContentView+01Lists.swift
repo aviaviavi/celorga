@@ -2715,16 +2715,32 @@ private struct AgentsView: View {
                 }
                 Button("Show Linked Runs") { store.showAgentRuns(agentRef: profile.id) }
                 Menu("Default Runtime") {
-                  Button("No Default") {
-                    Task { await store.setAgentProfileDefaultRuntime(profile, runtime: nil) }
+                  Button {
+                    Task { await store.setAgentProfileDefaultDestination(profile, destination: nil) }
+                  } label: {
+                    Label("No Default", systemImage: profile.hasChatDefault ? "circle.slash" : "checkmark")
                   }
                   Divider()
-                  ForEach(AIChatRuntime.allCases) { runtime in
+                  // The runtimes configured in Settings › AI Chat, not the
+                  // generic adapter list, so named destinations appear.
+                  ForEach(store.agentProfileDefaultDestinationOptions) { destination in
                     Button {
-                      Task { await store.setAgentProfileDefaultRuntime(profile, runtime: runtime) }
+                      Task { await store.setAgentProfileDefaultDestination(profile, destination: destination) }
                     } label: {
-                      Label(runtime.title, systemImage: profile.preferredChatRuntime == runtime ? "checkmark" : runtime.systemImage)
+                      Label(
+                        "\(destination.title) (@\(destination.mention))",
+                        systemImage: store.isAgentProfileDefaultDestination(profile, destination)
+                          ? "checkmark"
+                          : destination.runtime.systemImage
+                      )
                     }
+                  }
+                  if let missing = store.unavailableAgentProfileDefaultDestination(profile) {
+                    Divider()
+                    Label("@\(missing) (not configured on this Mac)", systemImage: "exclamationmark.triangle")
+                  }
+                  if store.agentProfileDefaultDestinationOptions.isEmpty {
+                    Text("Turn on a runtime in Settings › AI Chat")
                   }
                 }
                 Divider()
@@ -2811,8 +2827,8 @@ private struct AgentProfileRow: View {
           Label("\(linkedRunCount) run\(linkedRunCount == 1 ? "" : "s")", systemImage: "play.circle")
         }
         .buttonStyle(.plain)
-        if let runtime = profile.preferredChatRuntime {
-          Label("Defaults to \(runtime.title)", systemImage: runtime.systemImage)
+        if let title = store.agentProfileDefaultTitle(profile) {
+          Label("Defaults to \(title)", systemImage: profile.preferredChatRuntime?.systemImage ?? "point.3.connected.trianglepath.dotted")
         }
         if let binding = profile.runtimeBindings.first {
           Label("\(binding.runtime):\(binding.runtimeAgentId)", systemImage: "link")
