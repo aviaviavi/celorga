@@ -535,17 +535,34 @@ extension WorkspaceStore {
   private func applyRefreshedApprovalRuns(_ refreshedRuns: [AgentRunItem]) {
     guard !refreshedRuns.isEmpty else { return }
     var nextRuns = agentRuns
+    var indexByID: [String: Int] = [:]
+    for (index, run) in nextRuns.enumerated() where indexByID[run.id] == nil {
+      indexByID[run.id] = index
+    }
+    var inserted: [AgentRunItem] = []
+    var changed = false
     for refreshedRun in refreshedRuns {
-      if let index = nextRuns.firstIndex(where: { $0.id == refreshedRun.id }) {
+      if let index = indexByID[refreshedRun.id] {
         // Keep a newer local copy (for example, the run returned by a decision
         // that landed while this scan was reading older files).
-        guard !Self.isAgentRun(nextRuns[index], newerThan: refreshedRun) else { continue }
+        guard !Self.isAgentRun(nextRuns[index], newerThan: refreshedRun),
+              nextRuns[index] != refreshedRun
+        else { continue }
         nextRuns[index] = refreshedRun
+        changed = true
+      } else if let index = inserted.firstIndex(where: { $0.id == refreshedRun.id }) {
+        guard !Self.isAgentRun(inserted[index], newerThan: refreshedRun) else { continue }
+        inserted[index] = refreshedRun
       } else {
-        nextRuns.insert(refreshedRun, at: 0)
+        inserted.append(refreshedRun)
       }
     }
-    if nextRuns != agentRuns {
+    if !inserted.isEmpty {
+      // Same order as inserting each new run at the front in turn.
+      nextRuns.insert(contentsOf: inserted.reversed(), at: 0)
+      changed = true
+    }
+    if changed {
       agentRuns = nextRuns
     }
 
@@ -759,10 +776,12 @@ extension WorkspaceStore {
       guard !Task.isCancelled,
             isCurrentRunReviewPageRefresh(refreshContext)
       else { return }
-      let nextRuns = mergingNewerLocalRuns(into: nextRunsFromList)
+      // Merging and comparing every run is linear in the run history, which
+      // reaches tens of thousands of runs; keep both off the main actor.
       let currentRuns = agentRuns
-      let runsChanged = await Task.detached(priority: .utility) {
-        currentRuns != nextRuns
+      let (nextRuns, runsChanged) = await Task.detached(priority: .utility) {
+        let merged = Self.mergingNewerLocalRuns(currentRuns, into: nextRunsFromList)
+        return (merged, currentRuns != merged)
       }.value
       guard !Task.isCancelled,
             isCurrentRunReviewPageRefresh(refreshContext)

@@ -3,6 +3,17 @@ import XCTest
 @testable import Org2WorkspaceCore
 
 final class AIChatTranscriptStoreTests: XCTestCase {
+  /// Manifests list thousands of merged commit IDs, so each one is validated
+  /// as a plain file name without querying the file system.
+  func testCommitIDValidationAcceptsOnlyPlainFileNames() {
+    for valid in ["0003ae23-bb8b-43d6-8168-a6b2cb483630", "recovered-1", "~", "a b", "x.json"] {
+      XCTAssertTrue(AIChatTranscriptStore.isCommitFileName(valid), valid)
+    }
+    for invalid in ["", ".", "..", "/", "a/b", "abc/", "/abc", "../x"] {
+      XCTAssertFalse(AIChatTranscriptStore.isCommitFileName(invalid), invalid)
+    }
+  }
+
   func testShardedStorePreservesLegacyAndLoadsAttachmentBlobsLazily() throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-ai-chat-shards-\(UUID().uuidString)", isDirectory: true)

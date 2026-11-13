@@ -1988,21 +1988,25 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     let mergedCommitIDs = manifest.mergedCommitIDs ?? []
     guard CelorgaNames.schemaMatches(manifest.schema, Manifest.schemaValue),
           manifest.version == 2,
-          !manifest.commitID.isEmpty,
-          manifest.commitID == URL(fileURLWithPath: manifest.commitID).lastPathComponent,
+          isCommitFileName(manifest.commitID),
           ancestorCommitIDs.count <= manifestAncestryLimit,
           Set(ancestorCommitIDs).count == ancestorCommitIDs.count,
-          ancestorCommitIDs.allSatisfy({
-            !$0.isEmpty && $0 == URL(fileURLWithPath: $0).lastPathComponent
-          }),
+          ancestorCommitIDs.allSatisfy(isCommitFileName),
           Set(mergedCommitIDs).count == mergedCommitIDs.count,
-          mergedCommitIDs.allSatisfy({
-            !$0.isEmpty && $0 == URL(fileURLWithPath: $0).lastPathComponent
-          }),
+          mergedCommitIDs.allSatisfy(isCommitFileName),
           manifest.selectedThreadID == nil
             || manifest.threads.contains(where: { $0.metadata.id == manifest.selectedThreadID })
     else { return false }
     return Set(manifest.threads.map { $0.metadata.id }).count == manifest.threads.count
+  }
+
+  /// A commit ID names one file in the manifests directory: non-empty, not
+  /// `.` or `..`, and with no path separator. This replaces comparing the ID
+  /// with `URL(fileURLWithPath:).lastPathComponent`, which also queries the
+  /// file system. Manifests accumulate thousands of merged IDs, so that check
+  /// made every manifest load issue thousands of file system calls.
+  static func isCommitFileName(_ value: String) -> Bool {
+    !value.isEmpty && value != "." && value != ".." && !value.contains("/")
   }
 
   /// A manifest is a usable commit only when every immutable shard it names

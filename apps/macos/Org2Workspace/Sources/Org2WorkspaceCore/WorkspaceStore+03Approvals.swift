@@ -1101,17 +1101,13 @@ extension WorkspaceStore {
   }
 
   nonisolated static func isAgentRun(_ lhs: AgentRunItem, newerThan rhs: AgentRunItem) -> Bool {
-    guard let lhsDate = agentRunTimestamp(lhs.updatedAt),
-          let rhsDate = agentRunTimestamp(rhs.updatedAt)
+    // Nearly every run in a refreshed list is unchanged. Equal stamps are
+    // never newer, so skip parsing them.
+    guard lhs.updatedAt != rhs.updatedAt,
+          let lhsDate = ApprovalItem.parseTimestamp(lhs.updatedAt),
+          let rhsDate = ApprovalItem.parseTimestamp(rhs.updatedAt)
     else { return false }
     return lhsDate > rhsDate
-  }
-
-  nonisolated private static func agentRunTimestamp(_ value: String) -> Date? {
-    let fractional = ISO8601DateFormatter()
-    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = fractional.date(from: value) { return date }
-    return ISO8601DateFormatter().date(from: value)
   }
 
   /// Keeps local runs that are newer than a refreshed list. A list scan can
@@ -1119,10 +1115,18 @@ extension WorkspaceStore {
   /// run inspector would briefly (or until the next scan) show the decided
   /// approval as pending again.
   func mergingNewerLocalRuns(into refreshedRuns: [AgentRunItem]) -> [AgentRunItem] {
-    guard !agentRuns.isEmpty else { return refreshedRuns }
-    let localByID = Dictionary(agentRuns.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    Self.mergingNewerLocalRuns(agentRuns, into: refreshedRuns)
+  }
+
+  /// Runs off the main actor: a corpus can hold tens of thousands of runs.
+  nonisolated static func mergingNewerLocalRuns(
+    _ localRuns: [AgentRunItem],
+    into refreshedRuns: [AgentRunItem]
+  ) -> [AgentRunItem] {
+    guard !localRuns.isEmpty else { return refreshedRuns }
+    let localByID = Dictionary(localRuns.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     return refreshedRuns.map { refreshed in
-      guard let local = localByID[refreshed.id], Self.isAgentRun(local, newerThan: refreshed) else {
+      guard let local = localByID[refreshed.id], isAgentRun(local, newerThan: refreshed) else {
         return refreshed
       }
       return local
