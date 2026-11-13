@@ -1435,7 +1435,12 @@ also exposes an independently fallible <code>projects</code> section.</p>
 <p>The metadata is <code>#+CELORGA_KIND: project</code>, <code>#+TITLE:</code>, <code>#+PROJECT_COLOR:</code>,
 <code>#+PROJECT_THREADS:</code> (space-separated chat UUIDs), and a file-level properties
 drawer containing <code>:ID:</code>. All remaining content uses normal Org headings,
-TODOs, tags, planning, and links. There is no separate project database.</p>
+TODOs, tags, planning, and links. There is no separate project database.
+<code>project create</code> also adds an empty <code>#+begin: project-threads</code> / <code>#+end:</code>
+dynamic block; adoption leaves the note's layout alone. The block carries no
+data and is excluded from the brief. HTML renderers list the linked chats in
+it, and the Mac reader replaces that list with a live, sortable table of chat
+status and activity.</p>
 <p>Property views validate source projections against canonical AST ranges: headings and property drawers in examples do not become editable rows. Malformed source notes are omitted with per-file <code>diagnostics</code> in query results, also shown in the Mac view.</p>
 <p>Raw captures remain immutable: graph reads may include them, but unlinked-mention actions exclude <code>raw/</code> and the mutation command rejects raw source edits.</p>
 </section>

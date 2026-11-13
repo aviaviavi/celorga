@@ -1652,6 +1652,11 @@ The metadata is =#+CELORGA_KIND: project=, =#+TITLE:=, =#+PROJECT_COLOR:=,
 =#+PROJECT_THREADS:= (space-separated chat UUIDs), and a file-level properties
 drawer containing =:ID:=. All remaining content uses normal Org headings,
 TODOs, tags, planning, and links. There is no separate project database.
+=project create= also adds an empty =#+begin: project-threads= / =#+end:=
+dynamic block; adoption leaves the note's layout alone. The block carries no
+data and is excluded from the brief. HTML renderers list the linked chats in
+it, and the Mac reader replaces that list with a live, sortable table of chat
+status and activity.
 
 Property views validate source projections against canonical AST ranges: headings and property drawers in examples do not become editable rows. Malformed source notes are omitted with per-file =diagnostics= in query results, also shown in the Mac view.
 

@@ -420,6 +420,15 @@ linked elsewhere. Use a chat's Projects menu to add or remove membership.
 Until a new chat's first message is sent, its composer also shows a project
 picker beside the assistant, so the first turn already gets the project note.
 A chat can belong to several projects.
+
+A project note shows its chats in a live table wherever it contains an empty
+=#+begin: project-threads= / =#+end:= block; new projects include one. The table
+lists each linked chat with its status, assistant, message count, last
+activity, and creation time, newest activity first. Filter it, sort any
+column, and click a title to open the chat. The reader updates the rows as
+chats change and keeps your filter and sort. Nothing is written to the note:
+membership stays in =#+PROJECT_THREADS:=, and other renderers list the linked
+chats as plain links.
 Right-click a project and choose Choose color to use the full picker, or select a quick color. Refresh projects reloads note edits.
 
 Only explicit chat membership supplies project context; expanding a

@@ -6,6 +6,7 @@ import { loadConfig, resolveFilesFromDir } from "./config.js";
 import { guardedContentRevision, guardedWriteFile } from "./guardedFile.js";
 import type { Node } from "./ast.js";
 import { configFilePath, isBrandName } from "./brandNames.js";
+import { isProjectThreadsBlock, PROJECT_THREADS_BLOCK_SOURCE } from "./projectThreadsView.js";
 
 export const PROJECT_COLORS = ["blue", "teal", "green", "orange", "red", "purple", "gray"] as const;
 export interface ProjectNote {
@@ -54,7 +55,8 @@ export function parseProjectNote(root: string, file: string, raw: string): Proje
   if (threadIDs.some(x => !uuid.test(x))) throw new Error("PROJECT_THREADS must contain stable Celorga thread UUIDs");
   const lines = raw.replace(/\r\n?/g, "\n").split("\n");
   const metadataLines = new Set<number>();
-  for (const node of doc.children) if (node.type === "PropertyDrawer" || node.type === "KeywordLine") {
+  // The live chat table block is presentation, not part of the brief.
+  for (const node of doc.children) if (node.type === "PropertyDrawer" || node.type === "KeywordLine" || isProjectThreadsBlock(node)) {
     const range = (node as Node & { sourceRange?: { startLine: number; endLine: number } }).sourceRange;
     if (range) for (let i = range.startLine; i <= range.endLine; i++) metadataLines.add(i);
   }
@@ -133,7 +135,9 @@ export function createProjectNote(root: string, input: { title: string; descript
   if (kind) throw new Error("This note already declares an ORG2_KIND");
   const description = (input.description ?? "").trim();
   if (Buffer.byteLength(description) > maxBytes / 2) throw new Error("Project description is too long");
-  let content = ensureID(input.adopt ? previous : description ? description + "\n" : "", id);
+  // A new note shows its chats in a live table; an adopted note keeps its layout.
+  const fresh = PROJECT_THREADS_BLOCK_SOURCE + "\n" + (description ? "\n" + description + "\n" : "");
+  let content = ensureID(input.adopt ? previous : fresh, id);
   content = setKeyword(content, "TITLE", input.title.trim());
   content = setKeyword(content, "ORG2_KIND", "project");
   if (input.color && input.color !== "none") content = setKeyword(content, "PROJECT_COLOR", input.color);

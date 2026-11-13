@@ -16,6 +16,8 @@ try {
   const created = createProjectNote(root, {title: 'Launch', color: 'purple', id: preview.project.id, file: preview.project.relativePath, apply: true});
   assert.equal(created.content, preview.content);
   assert.equal(created.project.brief, '');
+  // New notes show their chats in a live table that stays out of the brief.
+  assert.match(created.content, /^#\+begin: project-threads\n#\+end:$/m);
   assert.doesNotMatch(created.project.brief, /PROJECT_COLOR|:PROPERTIES:/);
   assert.equal(listProjectNotes(root).projects.length, 1);
   const actions = queryNodeActions(compileCorpus([created.project.file], {rootDir: root}), {object: `id:${created.project.id}`});

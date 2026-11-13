@@ -160,7 +160,7 @@ assert.match(rendered.html, /className = "org2-table-filter"/);
 assert.match(rendered.html, /Save view to source/);
 assert.match(rendered.html, /visibleBodyRowIndices/);
 assert.match(rendered.html, /Intl\.Collator/);
-assert.match(rendered.html, /initialVisibleRowLimit = 100/);
+assert.match(rendered.html, /requestedLimit > 0 \? requestedLimit : 100/);
 assert.match(rendered.html, /body\.replaceChildren\(\.\.\.currentRows\.slice\(0, renderedCount\)\.map\(renderedRow\)\)/);
 assert.match(rendered.html, /org2TableShowMore/);
 assert.match(rendered.html, /\.org2-table-controls \{/);
@@ -514,6 +514,31 @@ never closed
   assert.match(html, /\.org2-encrypted \{/);
   const plain = renderOrgDocumentToAppHtml(parseOrgToCanonicalAst("Plain text.\n", { sourceRanges: true })).html;
   assert.doesNotMatch(plain, /<div class="org2-encrypted"/);
+}
+
+// A project note's chat table: membership comes from #+PROJECT_THREADS:, the
+// block itself carries no data, and only documents using it load its script.
+{
+  const ids = ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"];
+  const source = `#+TITLE: Demo\n#+ORG2_KIND: project\n#+PROJECT_THREADS: ${ids.join(" ")} ${ids[0].toUpperCase()}\n#+begin: project-threads\n#+end:\n\n* Notes\n`;
+  const html = renderOrgDocumentToAppHtml(parseOrgToCanonicalAst(source, { sourceRanges: true })).html;
+  assert.match(html, /<section class="celorga-project-threads" data-celorga-project-threads="true" data-org2-start-line="4" data-org2-end-line="5">/);
+  assert.match(html, /<span class="celorga-project-threads-count">2<\/span>/);
+  assert.deepEqual([...html.matchAll(/href="org2-workspace:\/\/open-thread\?id=([0-9a-f-]+)"/g)].map((m) => m[1]), ids);
+  assert.match(html, /<table data-org2-live-table="project-threads" data-org2-initial-row-limit="25">/);
+  assert.doesNotMatch(html, /org2-dynamic-block/);
+  const script = html.match(/<script id="celorga-project-threads">\n([\s\S]*?)\n<\/script>/)?.[1];
+  assert.ok(script, "project notes carry the live table script");
+  new Function(script);
+  assert.match(script, /window\.__celorgaSetProjectThreads = /);
+  const empty = renderOrgDocumentToAppHtml(parseOrgToCanonicalAst("#+begin: project-threads\n#+end:\n")).html;
+  assert.match(empty, /No chats in this project yet\./);
+  const other = renderOrgDocumentToAppHtml(parseOrgToCanonicalAst("#+begin: clocktable\n#+end:\n")).html;
+  assert.match(other, /org2-dynamic-block/);
+  assert.doesNotMatch(other, /celorga-project-threads/);
+  const tableScript = html.match(/<script id="org2-table-interaction">\n([\s\S]*?)\n<\/script>/)?.[1];
+  assert.match(tableScript, /if \(live\) controls\.append\(filter, count, showMore, reset\);/);
+  assert.match(tableScript, /table\.dataset\.org2InitialRowLimit/);
 }
 
 console.log("app HTML renderer tests: ok");

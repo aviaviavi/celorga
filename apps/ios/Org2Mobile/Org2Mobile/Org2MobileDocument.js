@@ -95,6 +95,9 @@ var Org2MobileDocument = (() => {
     }
     return result;
   }
+  function isBrandName(candidate, name) {
+    return nameAliases(name).includes(candidate.toUpperCase()) || nameAliases(name).includes(candidate);
+  }
   function configFileIn(dir) {
     for (const name of [CONFIG_FILE, LEGACY_CONFIG_FILE]) {
       const candidate = node_path_default.join(dir, name);
@@ -2142,10 +2145,14 @@ figure.org2-chart[data-org2-chart-interactive="true"] svg.org2-chart-svg { touch
   }
 
   function installInteractiveTables(scope) {
-    const initialVisibleRowLimit = 100;
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
     scope.querySelectorAll(".org2-table-scroll table").forEach((table) => {
       if (table.dataset.org2Interactive === "true") return;
+      // A live table is generated from app data, not source rows, so it has
+      // nothing to save or recalculate.
+      const live = Boolean(table.dataset.org2LiveTable);
+      const requestedLimit = Number(table.dataset.org2InitialRowLimit);
+      const initialVisibleRowLimit = Number.isInteger(requestedLimit) && requestedLimit > 0 ? requestedLimit : 100;
       const body = table.tBodies && table.tBodies[0];
       const originalRows = body ? Array.from(body.rows) : [];
       if (!body || originalRows.length === 0) return;
@@ -2204,7 +2211,8 @@ figure.org2-chart[data-org2-chart-interactive="true"] svg.org2-chart-svg { touch
       recalculate.hidden = !window.__org2TablePersistenceEnabled || Number(table.dataset.org2FormulaCount || 0) === 0;
       recalculate.dataset.org2TableFormula = "true";
 
-      controls.append(filter, count, showMore, reset, recalculate, save);
+      if (live) controls.append(filter, count, showMore, reset);
+      else controls.append(filter, count, showMore, reset, recalculate, save);
       wrapper.insertBefore(controls, table);
 
       let sortColumn = null;
@@ -2341,6 +2349,145 @@ figure.org2-chart[data-org2-chart-interactive="true"] svg.org2-chart-svg { touch
     const scope = root || document;
     installTableResizers(scope);
     installInteractiveTables(scope);
+  };
+})();`;
+
+  // src/projectThreadsView.ts
+  var PROJECT_THREADS_BLOCK_NAME = "project-threads";
+  function isProjectThreadsBlock(node) {
+    return node.type === "DynamicBlock" && node.nameRaw.trim().toLowerCase() === PROJECT_THREADS_BLOCK_NAME;
+  }
+  function documentHasProjectThreadsBlock(nodes) {
+    return nodes.some((node) => isProjectThreadsBlock(node) || node.type === "Headline" && documentHasProjectThreadsBlock(node.children));
+  }
+  var threadUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  function projectThreadIDsFromDocument(doc) {
+    const ids = [];
+    for (const node of doc.children) {
+      if (node.type !== "KeywordLine" || !isBrandName(node.keyRaw.trim().toUpperCase(), "PROJECT_THREADS")) continue;
+      for (const raw of node.valueRaw.split(/\s+/)) {
+        const id = raw.toLowerCase();
+        if (threadUUID.test(id) && !ids.includes(id)) ids.push(id);
+      }
+    }
+    return ids;
+  }
+  var PROJECT_THREADS_BLOCK_SOURCE = `#+begin: ${PROJECT_THREADS_BLOCK_NAME}
+#+end:`;
+  var PROJECT_THREADS_STYLE = `.celorga-project-threads { margin: 0.8rem 0 1.4rem; }
+.celorga-project-threads-header { display: flex; align-items: baseline; gap: 0.45rem; font-weight: 650; }
+.celorga-project-threads-count { color: var(--org2-muted); font-weight: 500; font-size: 0.85em; }
+.celorga-project-threads-empty { color: var(--org2-muted); }
+.celorga-thread-status { display: inline-block; padding: 0.05rem 0.45rem; border-radius: 999px; font-size: 0.8em; font-weight: 600; white-space: nowrap;
+  color: var(--org2-muted); background: color-mix(in srgb, var(--org2-muted) 12%, transparent); }
+.celorga-thread-status.state-active { color: var(--org2-accent); background: color-mix(in srgb, var(--org2-accent) 11%, transparent); }
+.celorga-thread-status.state-working { color: var(--org2-success); background: color-mix(in srgb, var(--org2-success) 12%, transparent); }
+.celorga-thread-status.state-attention { color: var(--org2-warning); background: color-mix(in srgb, var(--org2-warning) 13%, transparent); }
+.celorga-thread-status.state-missing { color: var(--org2-danger); background: color-mix(in srgb, var(--org2-danger) 10%, transparent); }
+.celorga-project-threads td.celorga-thread-number { text-align: right; font-variant-numeric: tabular-nums; }
+.celorga-project-threads td.celorga-thread-date { white-space: nowrap; font-variant-numeric: tabular-nums; }`;
+  var PROJECT_THREADS_SCRIPT = `(() => {
+  const columns = [
+    ["title", "Chat"], ["status", "Status"], ["agent", "Agent"],
+    ["messages", "Messages"], ["updated", "Updated"], ["created", "Created"]
+  ];
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const kinds = new Set(["active", "working", "attention", "settled", "missing"]);
+
+  function viewState(section) {
+    const filter = section.querySelector(".org2-table-filter");
+    const buttons = Array.from(section.querySelectorAll(".org2-table-sort-button"));
+    const sorted = buttons.findIndex((button) => button.getAttribute("aria-pressed") === "true");
+    return {
+      filter: filter ? filter.value : "",
+      sortColumn: sorted,
+      descending: sorted >= 0 && buttons[sorted].parentElement?.getAttribute("aria-sort") === "descending"
+    };
+  }
+
+  function restore(section, state) {
+    const buttons = Array.from(section.querySelectorAll(".org2-table-sort-button"));
+    const button = state.sortColumn >= 0 ? buttons[state.sortColumn] : null;
+    if (button) {
+      button.click();
+      if (state.descending) button.click();
+    }
+    const filter = section.querySelector(".org2-table-filter");
+    if (filter && state.filter) {
+      filter.value = state.filter;
+      filter.dispatchEvent(new Event("input"));
+    }
+  }
+
+  function cell(row, key) {
+    const td = document.createElement("td");
+    const value = row[key] === undefined || row[key] === null ? "" : String(row[key]);
+    if (key === "title") {
+      const id = String(row.id || "");
+      if (uuid.test(id)) {
+        const link = document.createElement("a");
+        link.href = "org2-workspace://open-thread?id=" + id.toLowerCase();
+        link.textContent = value || id;
+        link.title = "Open this chat";
+        td.appendChild(link);
+      } else {
+        td.textContent = value;
+      }
+    } else if (key === "status") {
+      const pill = document.createElement("span");
+      const kind = kinds.has(row.statusKind) ? row.statusKind : "settled";
+      pill.className = "celorga-thread-status state-" + kind;
+      pill.textContent = value;
+      td.appendChild(pill);
+    } else {
+      td.textContent = value;
+      if (key === "messages") td.className = "celorga-thread-number";
+      if (key === "updated" || key === "created") td.className = "celorga-thread-date";
+    }
+    return td;
+  }
+
+  function table(rows) {
+    const scroll = document.createElement("div");
+    scroll.className = "org2-table-scroll";
+    const element = document.createElement("table");
+    element.dataset.org2LiveTable = "project-threads";
+    element.dataset.org2InitialRowLimit = "25";
+    const head = element.createTHead().insertRow();
+    columns.forEach(([, label]) => {
+      const th = document.createElement("th");
+      th.textContent = label;
+      head.appendChild(th);
+    });
+    const body = element.createTBody();
+    rows.forEach((row) => {
+      const tr = body.insertRow();
+      columns.forEach(([key]) => tr.appendChild(cell(row, key)));
+    });
+    scroll.appendChild(element);
+    return scroll;
+  }
+
+  window.__celorgaSetProjectThreads = (rows) => {
+    if (!Array.isArray(rows)) return;
+    document.querySelectorAll("[data-celorga-project-threads]").forEach((section) => {
+      const holder = section.querySelector(".celorga-project-threads-body");
+      if (!holder) return;
+      const state = viewState(section);
+      if (rows.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "celorga-project-threads-empty";
+        empty.textContent = "No chats in this project yet.";
+        holder.replaceChildren(empty);
+      } else {
+        holder.replaceChildren(table(rows));
+        window.__org2InstallTables?.(holder);
+        restore(section, state);
+      }
+      const count = section.querySelector(".celorga-project-threads-count");
+      if (count) count.textContent = String(rows.length);
+      section.dataset.celorgaProjectThreadsLive = "true";
+    });
   };
 })();`;
 
@@ -5782,6 +5929,7 @@ ${childrenHtml}
       chartsByTableLine: void 0,
       chartsByBlockLine: void 0,
       pluginRendersByBlockLine: void 0,
+      projectThreadIDs: projectThreadIDsFromDocument(result.document),
       linkAbbreviations: mergeLinkAbbreviations([context.linkAbbreviations ?? /* @__PURE__ */ new Map(), collectLinkAbbreviationsFromDoc(result.document)])
     };
     let body = renderNodes(result.document.children, childContext);
@@ -5793,6 +5941,21 @@ ${childrenHtml}
     const frame = `<!doctype html><html><head><meta charset="utf-8"><base target="_top"><style>${APP_DOCUMENT_STYLE} body { padding: 12px; } .org2-live-embed { margin: 8px 0; }</style></head><body>${body}</body></html>`;
     return shell(`<iframe class="org2-live-embed-frame" title="${escapeAttr(result.title)}" sandbox="allow-same-origin allow-top-navigation-by-user-activation" srcdoc="${escapeAttr(frame)}"></iframe>`);
   }
+  function renderProjectThreads(node, context) {
+    const ids = context.projectThreadIDs ?? [];
+    const rows = ids.map((id) => `<tr><td>${renderInlineChildren(parseInlinesFromText(`[[org2-chat:${id}][${id}]]`), context)}</td></tr>`);
+    const body = rows.length ? `<div class="org2-table-scroll">
+<table data-org2-live-table="project-threads" data-org2-initial-row-limit="25">
+<thead>
+<tr><th>Chat</th></tr>
+</thead>
+<tbody>
+${rows.join("\n")}
+</tbody>
+</table>
+</div>` : `<p class="celorga-project-threads-empty">No chats in this project yet.</p>`;
+    return `<section class="celorga-project-threads" data-celorga-project-threads="true"${renderSourceAttributes(node, context)}><header class="celorga-project-threads-header">Chats <span class="celorga-project-threads-count">${ids.length}</span></header><div class="celorga-project-threads-body">${body}</div></section>`;
+  }
   function renderNode(node, context) {
     if (node.type === "Headline") return renderHeadline(node, context);
     if (node.type === "Paragraph") return renderParagraph(node, context);
@@ -5803,6 +5966,7 @@ ${childrenHtml}
     if (node.type === "SrcBlock") return renderSrcBlock(node, context);
     if (node.type === "Block") return renderBlock(node, context);
     if (node.type === "DynamicBlock") {
+      if (isProjectThreadsBlock(node)) return renderProjectThreads(node, context);
       const body = escapeHtml2(node.bodyRaw.replace(/\n$/, ""));
       return `<section class="org2-dynamic-block" data-org2-dynamic-block="${escapeAttr(node.nameRaw)}"${renderSourceAttributes(node, context)}><header>${escapeHtml2(node.nameRaw)}</header><pre>${body}</pre></section>`;
     }
@@ -5993,6 +6157,7 @@ ${rows}
       // no filesystem. Only a supplied resolver needs a canonical cycle key.
       embedStack: opts.embedResolver && opts.sourcePath ? [opts.embedResolver.sourceKey ?? `${node_path_default.resolve(opts.sourcePath)}:1`] : [],
       embedBudget: { remaining: 32, bytes: 1024 * 1024 },
+      projectThreadIDs: projectThreadIDsFromDocument(doc),
       // Precedence: built-ins < config < document-local #+LINK
       linkAbbreviations: mergeLinkAbbreviations([builtIns, configAbbreviations, documentAbbreviations])
     };
@@ -6127,6 +6292,7 @@ ${DOCUMENT_CHART_STYLE}
     const customStyle = customCss ? `<style id="org2-app-user-style">
 ${customCss.replace(/<\/style/gi, "<\\/style")}
 </style>` : "";
+    const projectThreads = documentHasProjectThreadsBlock(doc.children);
     const rendered = renderOrgDocumentToHtml(doc, {
       title: opts.title,
       sourcePath: opts.sourcePath,
@@ -6151,6 +6317,12 @@ ${APP_DOCUMENT_SCRIPT}
 <\/script>`,
         opts.charts?.length ? `<script id="org2-chart-interaction">
 ${CHART_INTERACTION_SCRIPT}
+<\/script>` : "",
+        projectThreads ? `<style id="celorga-project-threads-style">
+${PROJECT_THREADS_STYLE}
+</style>` : "",
+        projectThreads ? `<script id="celorga-project-threads">
+${PROJECT_THREADS_SCRIPT}
 <\/script>` : "",
         customStyle
       ].filter(Boolean),

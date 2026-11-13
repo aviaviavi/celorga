@@ -258,7 +258,7 @@ Recognized block forms include:
 - Center blocks: =#+begin_center ... #+end_center=
 - Comment blocks: =#+begin_comment ... #+end_comment=
 - Arbitrary special blocks: =#+begin_NAME ... #+end_NAME=
-- Dynamic blocks: =#+begin: NAME ... #+end:= (parsed and preserved; Celorga does not execute dynamic-block writers)
+- Dynamic blocks: =#+begin: NAME ... #+end:= (parsed and preserved; Celorga does not execute dynamic-block writers). An empty =project-threads= block in a project note renders the linked chats as a live table instead of its body.
 - LaTeX environments: =\begin{equation} ... \end{equation}=
 - Fixed-width lines beginning with a colon followed by one space
 - Horizontal rules of five or more hyphens

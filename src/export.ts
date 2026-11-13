@@ -1,9 +1,11 @@
 import { CHART_INTERACTION_SCRIPT, CHART_INTERACTION_STYLE } from "./chartInteraction.js";
 import { TABLE_INTERACTION_SCRIPT } from "./tableInteraction.js";
+import { documentHasProjectThreadsBlock, isProjectThreadsBlock, projectThreadIDsFromDocument, PROJECT_THREADS_SCRIPT, PROJECT_THREADS_STYLE } from "./projectThreadsView.js";
 import path from "node:path";
 import type {
   BlockNode,
   DocumentNode,
+  DynamicBlockNode,
   EmphasisNode,
   HeadlineNode,
   InlineNode,
@@ -846,6 +848,8 @@ type RenderContext = {
   embeddedAnchorLines?: Map<string, number>;
   /** The document is a single code file shown as one highlighted source block. */
   codeFile?: boolean;
+  /** Member chats from the document's #+PROJECT_THREADS: keyword. */
+  projectThreadIDs?: string[];
 };
 
 export type OrgEmbeddedChart = {
@@ -2015,6 +2019,7 @@ function renderLiveEmbed(target: string, context: RenderContext): string {
     embedStack: [...(context.embedStack ?? []), result.key],
     headlineIds: undefined, headlineSlugIds: undefined, headlineNumbers: undefined,
     chartsByTableLine: undefined, chartsByBlockLine: undefined, pluginRendersByBlockLine: undefined,
+    projectThreadIDs: projectThreadIDsFromDocument(result.document),
     linkAbbreviations: mergeLinkAbbreviations([context.linkAbbreviations ?? new Map(), collectLinkAbbreviationsFromDoc(result.document)]),
   };
   let body = renderNodes(result.document.children, childContext);
@@ -2030,6 +2035,19 @@ function renderLiveEmbed(target: string, context: RenderContext): string {
   return shell(`<iframe class="org2-live-embed-frame" title="${escapeAttr(result.title)}" sandbox="allow-same-origin allow-top-navigation-by-user-activation" srcdoc="${escapeAttr(frame)}"></iframe>`);
 }
 
+/**
+ * The live chat table of a project note. Static output lists the member chats;
+ * the Mac reader replaces the list with current thread metadata.
+ */
+function renderProjectThreads(node: DynamicBlockNode, context: RenderContext): string {
+  const ids = context.projectThreadIDs ?? [];
+  const rows = ids.map((id) => `<tr><td>${renderInlineChildren(parseInlinesFromText(`[[org2-chat:${id}][${id}]]`), context)}</td></tr>`);
+  const body = rows.length
+    ? `<div class="org2-table-scroll">\n<table data-org2-live-table="project-threads" data-org2-initial-row-limit="25">\n<thead>\n<tr><th>Chat</th></tr>\n</thead>\n<tbody>\n${rows.join("\n")}\n</tbody>\n</table>\n</div>`
+    : `<p class="celorga-project-threads-empty">No chats in this project yet.</p>`;
+  return `<section class="celorga-project-threads" data-celorga-project-threads="true"${renderSourceAttributes(node, context)}><header class="celorga-project-threads-header">Chats <span class="celorga-project-threads-count">${ids.length}</span></header><div class="celorga-project-threads-body">${body}</div></section>`;
+}
+
 function renderNode(node: Node, context: RenderContext): string {
   if (node.type === "Headline") return renderHeadline(node, context);
   if (node.type === "Paragraph") return renderParagraph(node, context);
@@ -2040,6 +2058,7 @@ function renderNode(node: Node, context: RenderContext): string {
   if (node.type === "SrcBlock") return renderSrcBlock(node, context);
   if (node.type === "Block") return renderBlock(node, context);
   if (node.type === "DynamicBlock") {
+    if (isProjectThreadsBlock(node)) return renderProjectThreads(node, context);
     const body = escapeHtml(node.bodyRaw.replace(/\n$/, ""));
     return `<section class="org2-dynamic-block" data-org2-dynamic-block="${escapeAttr(node.nameRaw)}"${renderSourceAttributes(node, context)}><header>${escapeHtml(node.nameRaw)}</header><pre>${body}</pre></section>`;
   }
@@ -2285,6 +2304,7 @@ function buildDocumentRenderContext(
     // no filesystem. Only a supplied resolver needs a canonical cycle key.
     embedStack: opts.embedResolver && opts.sourcePath ? [opts.embedResolver.sourceKey ?? `${path.resolve(opts.sourcePath)}:1`] : [],
     embedBudget: { remaining: 32, bytes: 1024 * 1024 },
+    projectThreadIDs: projectThreadIDsFromDocument(doc),
     // Precedence: built-ins < config < document-local #+LINK
     linkAbbreviations: mergeLinkAbbreviations([builtIns, configAbbreviations, documentAbbreviations]),
   };
@@ -2499,6 +2519,7 @@ export function renderOrgDocumentToAppHtml(
   const customStyle = customCss
     ? `<style id="org2-app-user-style">\n${customCss.replace(/<\/style/gi, "<\\/style")}\n</style>`
     : "";
+  const projectThreads = documentHasProjectThreadsBlock(doc.children);
   const rendered = renderOrgDocumentToHtml(doc, {
     title: opts.title,
     sourcePath: opts.sourcePath,
@@ -2514,6 +2535,8 @@ export function renderOrgDocumentToAppHtml(
       `<script id="org2-table-interaction">\n${TABLE_INTERACTION_SCRIPT}\n</script>`,
       `<script id="org2-app-document-script">\n${APP_DOCUMENT_SCRIPT}\n</script>`,
       opts.charts?.length ? `<script id="org2-chart-interaction">\n${CHART_INTERACTION_SCRIPT}\n</script>` : "",
+      projectThreads ? `<style id="celorga-project-threads-style">\n${PROJECT_THREADS_STYLE}\n</style>` : "",
+      projectThreads ? `<script id="celorga-project-threads">\n${PROJECT_THREADS_SCRIPT}\n</script>` : "",
       customStyle,
     ].filter(Boolean),
     linkAbbreviations: opts.linkAbbreviations,

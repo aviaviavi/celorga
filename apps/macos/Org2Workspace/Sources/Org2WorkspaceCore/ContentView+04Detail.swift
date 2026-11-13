@@ -944,7 +944,8 @@ private struct OrgRenderedDocumentPreview: View {
             startWorkAtHeading: startWorkAction,
             openWorkAtHeading: { store.openWork(onHeadingAt: $0) },
             headingWorkBadges: store.headingWorkBadges(for: source),
-            entryEffects: store.renderedEntryEffects
+            entryEffects: store.renderedEntryEffects,
+            projectThreadRows: store.projectThreadTableRows(for: source)
           )
           .frame(maxHeight: .infinity)
         }
@@ -1952,7 +1953,8 @@ private struct OrgSourceEditorWithLinkTools: View {
             peekEncryptedText: { line in Task { await store.peekOrgCrypt(line: line) } },
             allowsEntryContextMenu: false,
             reportStatus: { store.statusText = $0 },
-            reportViewportSourceLine: { store.recordDocumentViewportSourceLine($0, for: source) }
+            reportViewportSourceLine: { store.recordDocumentViewportSourceLine($0, for: source) },
+            projectThreadRows: store.projectThreadTableRows(for: source)
           )
         } else if let error = store.sourceEditorPreviewError {
           OrgHTMLRenderFailureView(message: error)

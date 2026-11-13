@@ -223,7 +223,9 @@ Use =celorga project list --dir CORPUS --json= to discover project notes and
 revision. Projects are ordinary files marked =#+CELORGA_KIND: project= with a
 file-level =:ID:=, optional =#+PROJECT_COLOR:=, and =#+PROJECT_THREADS:=
 containing space-separated Celorga chat UUIDs. Their body holds normal actions,
-decisions, and links. They are independent of agent profiles and goals.
+decisions, and links. An empty =#+begin: project-threads= / =#+end:= dynamic
+block renders a live table of the linked chats in the Mac reader; never write
+rows into it or replace it with a copied table. They are independent of agent profiles and goals.
 
 =celorga project create --title NAME --dir CORPUS --json= previews a new note.
 Add =--description TEXT= for a starting brief; empty sections and tasks are not generated.

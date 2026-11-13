@@ -48,6 +48,107 @@ enum WorkspaceProjectContext {
   }
 }
 
+/// Rows for the live chat table of a project note.
+///
+/// A project note asks for the table with an empty `#+begin: project-threads`
+/// dynamic block. The note only lists membership in `#+PROJECT_THREADS:`; the
+/// reader fills the table from the chat store and refreshes it as threads
+/// change, so the table is never written to the note.
+enum WorkspaceProjectThreadTable {
+  struct Row: Encodable, Equatable, Sendable {
+    let id: String
+    let title: String
+    let status: String
+    let statusKind: String
+    let agent: String
+    let messages: Int?
+    let updated: String
+    let created: String
+  }
+
+  /// Whether `text` contains the table block. Matches the block name the
+  /// runtime renders (`src/projectThreadsView.ts`).
+  static func requestsTable(_ text: String) -> Bool {
+    text.range(of: #"(?im)^[ \t]*#\+begin:[ \t]+project-threads(?:[ \t].*)?$"#, options: .regularExpression) != nil
+  }
+
+  static func rows(
+    threadIDs: [String],
+    thread: (UUID) -> AIChatThread?,
+    isRunning: (UUID) -> Bool,
+    agentTitle: (AIChatThread) -> String,
+    timeZone: TimeZone = .current
+  ) -> [Row] {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.timeZone = timeZone
+    formatter.dateFormat = "yyyy-MM-dd HH:mm"
+    var seen = Set<UUID>()
+    var known: [(AIChatThread, Row)] = []
+    var missing: [Row] = []
+    for raw in threadIDs {
+      guard let id = UUID(uuidString: raw), seen.insert(id).inserted else { continue }
+      let lowercased = id.uuidString.lowercased()
+      guard let chat = thread(id) else {
+        missing.append(Row(id: lowercased, title: lowercased, status: "Missing", statusKind: "missing",
+          agent: "", messages: nil, updated: "", created: ""))
+        continue
+      }
+      let (status, kind): (String, String) = if isRunning(id) {
+        ("Working", "working")
+      } else if chat.latestDeliveryNeedsAttention {
+        ("Needs attention", "attention")
+      } else if chat.isSettled {
+        ("Settled", "settled")
+      } else if chat.unreadMessageCount > 0 {
+        ("Active · \(chat.unreadMessageCount) unread", "active")
+      } else {
+        ("Active", "active")
+      }
+      let title = chat.title.trimmingCharacters(in: .whitespacesAndNewlines)
+      known.append((chat, Row(
+        id: lowercased,
+        title: title.isEmpty ? "Untitled chat" : title,
+        status: status,
+        statusKind: kind,
+        agent: chat.isSharedRoom ? "Shared room" : agentTitle(chat),
+        messages: chat.messageCount,
+        updated: formatter.string(from: chat.updatedAt),
+        created: formatter.string(from: chat.createdAt)
+      )))
+    }
+    // Most recent activity first; chats this Mac doesn't know come last.
+    let ordered = known.enumerated().sorted { lhs, rhs in
+      if lhs.element.0.updatedAt != rhs.element.0.updatedAt {
+        return lhs.element.0.updatedAt > rhs.element.0.updatedAt
+      }
+      return lhs.offset < rhs.offset
+    }
+    return ordered.map(\.element.1) + missing
+  }
+}
+
+extension WorkspaceStore {
+  /// Live rows for a project note's chat table, or `nil` when `source` is not
+  /// a project note that asks for one.
+  func projectThreadTableRows(for source: EntrySource) -> [WorkspaceProjectThreadTable.Row]? {
+    guard !projectNotes.isEmpty else { return nil }
+    let file = OrgHTMLDocumentView.sourceFileURL(source, corpusRoot: corpusRoot)
+    let resolved = file.resolvingSymlinksInPath().path
+    guard let project = projectNotes.first(where: { project in
+      let candidate = URL(fileURLWithPath: project.file).standardizedFileURL
+      return candidate.path == file.path || candidate.resolvingSymlinksInPath().path == resolved
+    }), WorkspaceProjectThreadTable.requestsTable(source.text) else { return nil }
+    return WorkspaceProjectThreadTable.rows(
+      threadIDs: project.threadIDs,
+      thread: { aiChatThread(withID: $0) },
+      isRunning: { isAIChatThreadRunning($0) },
+      agentTitle: { aiChatDestinationTitle($0.destinationID) }
+    )
+  }
+}
+
 enum AIChatNewThreadProjectPicker {
   /// The composer offers a project picker until the chat's first message.
   static func isVisible(

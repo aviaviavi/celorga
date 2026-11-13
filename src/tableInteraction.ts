@@ -79,10 +79,14 @@ export const TABLE_INTERACTION_SCRIPT = `(() => {
   }
 
   function installInteractiveTables(scope) {
-    const initialVisibleRowLimit = 100;
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
     scope.querySelectorAll(".org2-table-scroll table").forEach((table) => {
       if (table.dataset.org2Interactive === "true") return;
+      // A live table is generated from app data, not source rows, so it has
+      // nothing to save or recalculate.
+      const live = Boolean(table.dataset.org2LiveTable);
+      const requestedLimit = Number(table.dataset.org2InitialRowLimit);
+      const initialVisibleRowLimit = Number.isInteger(requestedLimit) && requestedLimit > 0 ? requestedLimit : 100;
       const body = table.tBodies && table.tBodies[0];
       const originalRows = body ? Array.from(body.rows) : [];
       if (!body || originalRows.length === 0) return;
@@ -141,7 +145,8 @@ export const TABLE_INTERACTION_SCRIPT = `(() => {
       recalculate.hidden = !window.__org2TablePersistenceEnabled || Number(table.dataset.org2FormulaCount || 0) === 0;
       recalculate.dataset.org2TableFormula = "true";
 
-      controls.append(filter, count, showMore, reset, recalculate, save);
+      if (live) controls.append(filter, count, showMore, reset);
+      else controls.append(filter, count, showMore, reset, recalculate, save);
       wrapper.insertBefore(controls, table);
 
       let sortColumn = null;

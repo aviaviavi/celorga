@@ -619,6 +619,8 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
   var headingWorkBadges: [HeadingWorkBadge] = []
   /// Provisional heading changes to show before the re-render arrives.
   var entryEffects: [OrgHTMLEntryEffect] = []
+  /// Live rows for a project note's chat table; `nil` keeps the static list.
+  var projectThreadRows: [WorkspaceProjectThreadTable.Row]? = nil
 
   func makeCoordinator() -> Coordinator {
     Coordinator()
@@ -781,6 +783,12 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     if headingWorkChanged, coordinator.renderID == renderID, !webView.isLoading {
       coordinator.applyHeadingWork(to: webView)
     }
+    if coordinator.projectThreadRows != projectThreadRows {
+      coordinator.projectThreadRows = projectThreadRows
+      if coordinator.renderID == renderID, !webView.isLoading {
+        coordinator.applyProjectThreads(to: webView)
+      }
+    }
   }
 
   static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -895,6 +903,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     var startWorkAtHeading: (@MainActor (Int) -> Void)?
     var openWorkAtHeading: @MainActor (Int) -> Void = { _ in }
     var headingWorkBadges: [HeadingWorkBadge] = []
+    var projectThreadRows: [WorkspaceProjectThreadTable.Row]?
     var startWorkEnabled = false
     var performEntryAction: @MainActor (OrgHTMLRenderedEntryAction, Int) -> Void = { _, _ in }
     var peekEncryptedText: (@MainActor (Int) -> Void)?
@@ -1149,6 +1158,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       webView.evaluateJavaScript(Self.encryptedPeekInstallationScript)
       webView.evaluateJavaScript(OrgLinkHoverPreview.installationScript)
       applyHeadingWork(to: webView)
+      applyProjectThreads(to: webView)
       applySearch(to: webView, backwards: false)
       let preservedScrollY = self.preservedScrollY
       self.preservedScrollY = nil
@@ -1253,6 +1263,13 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       let script = OrgHTMLHeadingWorkScript.installation
         + "\nwindow.__org2InstallStartWork?.(\(startWorkEnabled));"
         + "\nwindow.__org2SetWorkBadges?.(\(OrgHTMLHeadingWorkScript.badgesPayload(headingWorkBadges)));"
+      webView.evaluateJavaScript(script)
+    }
+
+    func applyProjectThreads(to webView: WKWebView) {
+      guard let projectThreadRows,
+            let script = OrgHTMLProjectThreadsScript.update(projectThreadRows)
+      else { return }
       webView.evaluateJavaScript(script)
     }
 
@@ -2179,5 +2196,15 @@ enum OrgHTMLLinkTarget {
   private static func searchLine(_ search: String, in url: URL) -> Int? {
     guard let source = try? String(contentsOf: url, encoding: .utf8) else { return nil }
     return OrgLinkSearchOption.line(for: search, in: source)
+  }
+}
+
+enum OrgHTMLProjectThreadsScript {
+  /// Replaces the page's project chat tables with `rows`.
+  static func update(_ rows: [WorkspaceProjectThreadTable.Row]) -> String? {
+    guard let data = try? JSONEncoder().encode(rows),
+          let json = String(data: data, encoding: .utf8)
+    else { return nil }
+    return "window.__celorgaSetProjectThreads?.(\(json)); true;"
   }
 }

@@ -244,7 +244,9 @@ celorga lint --dir ~/notes --recursive --format json</code></pre>
 revision. Projects are ordinary files marked <code>#+CELORGA_KIND: project</code> with a
 file-level <code>:ID:</code>, optional <code>#+PROJECT_COLOR:</code>, and <code>#+PROJECT_THREADS:</code>
 containing space-separated Celorga chat UUIDs. Their body holds normal actions,
-decisions, and links. They are independent of agent profiles and goals.</p>
+decisions, and links. An empty <code>#+begin: project-threads</code> / <code>#+end:</code> dynamic
+block renders a live table of the linked chats in the Mac reader; never write
+rows into it or replace it with a copied table. They are independent of agent profiles and goals.</p>
 <p><code>celorga project create --title NAME --dir CORPUS --json</code> previews a new note.
 Add <code>--description TEXT</code> for a starting brief; empty sections and tasks are not generated.
 Apply the reviewed result with its <code>--id</code> and <code>--file</code> plus <code>--apply</code>.
