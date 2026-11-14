@@ -749,20 +749,29 @@ final class AIChatCrossHostTests: XCTestCase {
     await store.waitForAIChatTranscriptLoadForTesting()
 
     let send = Task { @MainActor in await store.sendAIChatMessage(text: "Fix it and finish.") }
-    for _ in 0..<300 where !store.isAIChatThreadRunningOnCurrentHost(thread.id) {
+    // The thread counts as running before dispatch records which prompt the
+    // turn answers; only then can presence carry the prompt. On a loaded
+    // machine that gap can outlast a short fixed wait.
+    let deadline = Date().addingTimeInterval(30)
+    while Date() < deadline,
+          !store.isAIChatThreadRunningOnCurrentHost(thread.id)
+            || store.activeAIChatUserMessageIDByThreadID[thread.id] == nil {
       try await Task.sleep(nanoseconds: 10_000_000)
     }
     XCTAssertTrue(store.isAIChatThreadRunningOnCurrentHost(thread.id))
     let promptID = try XCTUnwrap(store.aiChatMessages.last(where: { $0.role == .user })?.id)
+    XCTAssertEqual(store.activeAIChatUserMessageIDByThreadID[thread.id], promptID)
 
-    store.publishAIChatLivePresenceIfNeeded(force: true)
+    // Presence files are written off the main actor, so an earlier periodic
+    // write can land after this one. Republish until the prompt is on disk.
     var turn: AIChatLiveTurnRecord?
-    for _ in 0..<300 {
+    while Date() < deadline {
+      store.publishAIChatLivePresenceIfNeeded(force: true)
+      try await Task.sleep(nanoseconds: 20_000_000)
       turn = AIChatLiveHostDirectory.readAll(transcriptURL: transcriptURL, excludingWriterID: nil)
         .flatMap(\.turns)
         .first(where: { $0.threadID == thread.id && $0.userMessage != nil })
       if turn != nil { break }
-      try await Task.sleep(nanoseconds: 10_000_000)
     }
     let published = try XCTUnwrap(turn)
     XCTAssertEqual(published.userMessageID, promptID)
