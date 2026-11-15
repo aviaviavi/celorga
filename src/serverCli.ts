@@ -50,6 +50,8 @@ export interface ServerConfiguration {
   chatRepairIntervalSeconds: number;
   localAgentFilesystemAccess: "readOnly" | "workspaceWrite" | "fullAccess";
   mcp: ServerMcpConfiguration;
+  /** "lan" also serves share links on the local network; read by OpenOrgServer. */
+  shareLinkListen?: "tailscale" | "lan";
 }
 
 function localAgentFilesystemAccess(value: unknown): ServerConfiguration["localAgentFilesystemAccess"] {

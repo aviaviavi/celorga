@@ -17,6 +17,10 @@ private struct ServerConfiguration: Decodable {
   let schedulesEnabled: Bool
   let chatRepairIntervalSeconds: Double?
   let localAgentFilesystemAccess: String?
+  /// `"lan"` also accepts share-link connections on this Mac's local network.
+  /// Links still advertise the Tailscale address; the paired-client API stays
+  /// on Tailscale only.
+  let shareLinkListen: String?
 }
 
 /// Turns off Keychain user-interaction prompts for this process.
@@ -60,6 +64,7 @@ struct OpenOrgServer {
             !config.hostRef.isEmpty,
             MobileRemoteCoordinator.isTailscaleIPv4(config.bindHost),
             config.port > 0,
+            config.shareLinkListen == nil || ["tailscale", "lan"].contains(config.shareLinkListen!),
             CelorgaNames.hasConfigFile(in: URL(fileURLWithPath: config.corpusRoot)) else {
         throw CocoaError(.fileReadCorruptFile)
       }
@@ -99,7 +104,7 @@ struct OpenOrgServer {
       // and persist beside the private configuration so URLs survive restarts.
       let bindHost = config.bindHost
       let publicationHost = LocalDocumentPublicationHost(
-        bindHost: bindHost,
+        bindHost: config.shareLinkListen == "lan" ? "0.0.0.0" : bindHost,
         advertisedHost: bindHost,
         preferredAdvertisedHost: { bindHost },
         storageDirectory: stateDirectory.appendingPathComponent(
