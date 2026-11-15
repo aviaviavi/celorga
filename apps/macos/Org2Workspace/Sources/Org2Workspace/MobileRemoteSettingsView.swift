@@ -396,21 +396,29 @@ private struct DocumentSettingsView: View {
 private struct SharingSettingsView: View {
   @Environment(WorkspaceStore.self) private var store
   @State private var isConfirmingStopAll = false
+  @State private var publicationError: String?
 
   var body: some View {
     Form {
       OpenOrgServerSettingsSection()
 
-      if !store.openOrgServer.sortedThreadShares.isEmpty {
+      if !store.openOrgServer.sortedThreadShares.isEmpty || !store.openOrgServer.documentPublications.isEmpty {
         Section {
+          ForEach(store.openOrgServer.documentPublications) { share in
+            publicationRow(share.publication, onServer: true)
+          }
           ForEach(store.openOrgServer.sortedThreadShares) { share in
             serverShareRow(share)
           }
         } header: {
           Label("Links Hosted by \(store.openOrgServer.serverName)", systemImage: "server.rack")
         } footer: {
-          SettingsFooterText("The server renders these pages from its own synced copy of the corpus, so they stay live while this Mac sleeps.")
+          SettingsFooterText("The server hosts sealed document exports and renders live chats from its synced corpus. These links stay available while this Mac sleeps.")
         }
+      }
+
+      if let publicationError {
+        Text(publicationError).foregroundStyle(.red)
       }
 
       Section {
@@ -453,6 +461,7 @@ private struct SharingSettingsView: View {
     .frame(minHeight: 460)
     .task {
       await store.refreshLocalDocumentPublicationURLs()
+      await store.openOrgServer.refreshDocumentPublications()
     }
     .confirmationDialog(
       "Stop hosting every local publication?",
@@ -467,7 +476,7 @@ private struct SharingSettingsView: View {
     }
   }
 
-  private func publicationRow(_ publication: LocalDocumentPublication) -> some View {
+  private func publicationRow(_ publication: LocalDocumentPublication, onServer: Bool = false) -> some View {
     HStack(alignment: .top, spacing: 12) {
       Image(systemName: publication.chatThreadID != nil ? "text.bubble" : publication.format?.systemImage ?? "doc")
         .font(.title3)
@@ -526,7 +535,14 @@ private struct SharingSettingsView: View {
         .help("Copy link")
 
         Button(role: .destructive) {
-          store.revokeLocalDocumentPublication(publication.id)
+          if onServer {
+            Task {
+              do { try await store.revokeServerDocumentPublication(publication.id) }
+              catch { publicationError = error.localizedDescription }
+            }
+          } else {
+            store.revokeLocalDocumentPublication(publication.id)
+          }
         } label: {
           Image(systemName: "stop.circle")
         }
@@ -687,7 +703,7 @@ private struct OpenOrgServerSettingsSection: View {
         }
       }
 
-      Picker("Share new thread links from", selection: Binding(
+      Picker("Share new links from", selection: Binding(
         get: { server.effectiveDefaultShareLocation },
         set: { server.setDefaultShareLocation($0) }
       )) {
@@ -700,7 +716,7 @@ private struct OpenOrgServerSettingsSection: View {
       Label("Celorga Server", systemImage: "server.rack")
     } footer: {
       SettingsFooterText(server.isPaired
-        ? "The server hosts thread links from its synced copy of the corpus on its Tailscale address. You can still pick a location each time you share."
+        ? "The server hosts sealed document exports and live thread links on its Tailscale address. You can still pick a location each time you share."
         : "Run “celorga server pair” on the server, then paste the pairing link or enter its address and code here. Both machines must be on the same tailnet. The access token is stored in this Mac’s Keychain.")
     }
     .task {
@@ -717,7 +733,7 @@ private struct OpenOrgServerSettingsSection: View {
       }
       Button("Cancel", role: .cancel) {}
     } message: {
-      Text("Celorga stops the thread links this server hosts, revokes this Mac’s access on the server when it is reachable, and removes the pairing.")
+      Text("Celorga stops this Mac’s shared thread links, revokes its access on the server when reachable, and removes the pairing. Document links remain hosted; stop them in Sharing before forgetting the server.")
     }
   }
 

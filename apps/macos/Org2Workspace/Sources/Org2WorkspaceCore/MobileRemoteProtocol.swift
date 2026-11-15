@@ -34,6 +34,8 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
   public let supportsClientThreadIDs: Bool?
   /// The host can publish a live read-only link for a thread it stores.
   public let supportsThreadSharing: Bool?
+  /// The host can persist and serve sealed document exports from paired clients.
+  public let supportsDocumentPublishing: Bool?
   /// The host serves `GET /v1/threads/ID/outputs`.
   public let supportsThreadOutputs: Bool?
   /// The host accepts external-source credentials from a paired client
@@ -61,6 +63,7 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
     pushNotificationsConfigured: Bool? = nil,
     supportsClientThreadIDs: Bool? = true,
     supportsThreadSharing: Bool? = true,
+    supportsDocumentPublishing: Bool? = true,
     supportsThreadOutputs: Bool? = true,
     supportsSourceCredentials: Bool? = true,
     supportsThreadDestinationChange: Bool? = true,
@@ -72,6 +75,7 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
     self.supportsThreadOutputs = supportsThreadOutputs
     self.supportsClientThreadIDs = supportsClientThreadIDs
     self.supportsThreadSharing = supportsThreadSharing
+    self.supportsDocumentPublishing = supportsDocumentPublishing
     self.protocolVersion = protocolVersion
     self.serverName = serverName
     self.hostRef = hostRef

@@ -312,6 +312,16 @@ extension WorkspaceStore {
       case .googleDocs, .googleSlides, .googleSheets:
         throw DocumentPublishingError.unsupportedFormat
       }
+      let location = request.host ?? openOrgServer.effectiveDefaultShareLocation
+      if location == .server {
+        let publication = try await openOrgServer.publishDocument(MobileRemoteDocumentPublishRequest(
+          stableKey: Self.localDocumentPublicationStableKey(sourceFile: sourceFile, request: request),
+          title: result.artifact.title, format: request.format.rawValue,
+          sourcePath: result.source.file, data: data
+        ))
+        statusText = "Published \(result.artifact.title) from \(openOrgServer.serverName)"
+        return .serverLink(publication: publication, result: result)
+      }
       let hostedPublication = try await localDocumentPublicationHost.publish(
         data: data,
         title: result.artifact.title,
@@ -414,6 +424,11 @@ extension WorkspaceStore {
         result: result
       )
     }
+  }
+
+  public func revokeServerDocumentPublication(_ publicationID: String) async throws {
+    try await openOrgServer.stopHostingDocument(publicationID)
+    statusText = "Server publication revoked"
   }
 
   public func revokeLocalDocumentPublication(_ publicationID: String) {

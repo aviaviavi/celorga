@@ -93,16 +93,19 @@ public struct DocumentPublishRequest: Hashable, Sendable {
   public let format: DocumentPublishFormat
   public let line: Int?
   public let googleFolderID: String?
+  public let host: ChatThreadShareLocation?
 
   public init(
     destination: DocumentPublishDestination,
     format: DocumentPublishFormat,
     line: Int? = nil,
-    googleFolderID: String? = nil
+    googleFolderID: String? = nil,
+    host: ChatThreadShareLocation? = nil
   ) {
     self.destination = destination
     self.format = format
     self.line = line
+    self.host = host
     let normalizedFolderID = googleFolderID?.trimmingCharacters(in: .whitespacesAndNewlines)
     self.googleFolderID = normalizedFolderID?.isEmpty == false ? normalizedFolderID : nil
   }
@@ -477,6 +480,7 @@ public struct LocalDocumentPublication: Identifiable, Hashable, Sendable {
 
 public enum DocumentPublishOutcome: Sendable {
   case localLink(publication: LocalDocumentPublication, result: DocumentPublishCLIResult)
+  case serverLink(publication: LocalDocumentPublication, result: DocumentPublishCLIResult)
   case googleDrive(
     format: DocumentPublishFormat,
     url: URL,

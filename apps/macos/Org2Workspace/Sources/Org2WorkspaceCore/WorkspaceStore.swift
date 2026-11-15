@@ -4270,6 +4270,7 @@ public final class WorkspaceStore {
     legacyDefaultsDomains: [String]? = nil,
     automaticStarterCorpusURL: URL? = nil,
     localDocumentPublicationHost: LocalDocumentPublicationHost? = nil,
+    openOrgServerConnection: OpenOrgServerConnection? = nil,
     openClawDeviceIdentityFileURL: URL? = nil,
     usageLogURL: URL? = nil
   ) {
@@ -4325,7 +4326,7 @@ public final class WorkspaceStore {
     }
     aiChatPreferredExecutionHostRef = defaults.string(forKey: Self.aiChatPreferredExecutionHostKey)
     defaultRunDestinationID = defaults.string(forKey: Self.defaultRunDestinationKey)
-    openOrgServer = OpenOrgServerConnection(
+    openOrgServer = openOrgServerConnection ?? OpenOrgServerConnection(
       defaults: defaults,
       credentials: NSClassFromString("XCTestCase") == nil
         ? OpenOrgServerKeychainCredentials()

@@ -7,6 +7,7 @@ struct DocumentPublishSheet: View {
   @Environment(\.dismiss) private var dismiss
 
   @State private var destination: DocumentPublishDestination = .localLink
+  @State private var host: ChatThreadShareLocation?
   @State private var format: DocumentPublishFormat = .html
   @State private var scope: DocumentPublishScope = .document
   @State private var googleFolderID = ""
@@ -64,6 +65,7 @@ struct DocumentPublishSheet: View {
       restoreGoogleCredential()
       restoreLinkedGoogleDestination()
       await previewPublication()
+      await store.openOrgServer.refreshDocumentPublications()
     }
     .onChange(of: destination) { _, newDestination in
       if !newDestination.formats.contains(format) {
@@ -72,6 +74,7 @@ struct DocumentPublishSheet: View {
       invalidatePreview()
     }
     .onChange(of: format) { _, _ in invalidatePreview() }
+    .onChange(of: host) { _, _ in invalidatePreview() }
     .onChange(of: scope) { _, _ in invalidatePreview() }
     .onChange(of: googleFolderID) { _, _ in invalidatePreview() }
   }
@@ -143,12 +146,20 @@ struct DocumentPublishSheet: View {
     switch destination {
     case .localLink:
       VStack(alignment: .leading, spacing: 8) {
+        Picker("Host", selection: Binding(
+          get: { selectedHost }, set: { host = $0 }
+        )) {
+          Text("This Mac").tag(ChatThreadShareLocation.thisMac)
+          Text(store.openOrgServer.isPaired ? store.openOrgServer.serverName : "Celorga Server")
+            .tag(ChatThreadShareLocation.server)
+            .selectionDisabled(!store.openOrgServer.isPaired)
+        }
         Label("Secret local-network link · \(format.title)", systemImage: "network")
           .font(.headline)
         Text(localFormatDescription)
           .font(.callout)
           .foregroundStyle(.secondary)
-        Text("Celorga serves the sealed output from this Mac. Anyone on a network that can reach this Mac and receives the unguessable link can open it.")
+        Text("Celorga serves the sealed output from \(selectedHostName). Anyone on a network that can reach that host and receives the unguessable link can open it.")
           .font(.callout)
           .foregroundStyle(.secondary)
         Label("Celorga must be running for links to be reachable. Active links resume automatically after relaunch. The first version uses unencrypted HTTP, so use it only on a trusted local or private network.", systemImage: "lock.open.trianglebadge.exclamationmark")
@@ -159,11 +170,11 @@ struct DocumentPublishSheet: View {
         }
         .controlSize(.small)
 
-        if !store.localDocumentPublications.isEmpty {
+        if !hostedPublications.isEmpty {
           Divider()
           Text("Hosted now")
             .font(.subheadline.weight(.semibold))
-          ForEach(store.localDocumentPublications) { publication in
+          ForEach(hostedPublications) { publication in
             HStack(spacing: 8) {
               VStack(alignment: .leading, spacing: 2) {
                 Text(publication.title)
@@ -190,7 +201,14 @@ struct DocumentPublishSheet: View {
               .buttonStyle(.borderless)
               .help("Copy link")
               Button(role: .destructive) {
-                store.revokeLocalDocumentPublication(publication.id)
+                if selectedHost == .server {
+                  Task {
+                    do { try await store.revokeServerDocumentPublication(publication.id) }
+                    catch { errorText = error.localizedDescription }
+                  }
+                } else {
+                  store.revokeLocalDocumentPublication(publication.id)
+                }
               } label: {
                 Image(systemName: "stop.circle")
               }
@@ -393,15 +411,17 @@ struct DocumentPublishSheet: View {
   @ViewBuilder
   private func outcomeView(_ outcome: DocumentPublishOutcome) -> some View {
     switch outcome {
-    case .localLink(let publication, let result):
+    case .localLink(let publication, let result), .serverLink(let publication, let result):
+      let isServer: Bool = { if case .serverLink = outcome { return true }; return false }()
+      let hostName = isServer ? store.openOrgServer.serverName : "this Mac"
       VStack(alignment: .leading, spacing: 18) {
         resultHeader(
-          title: "Published on this Mac",
-          detail: "Available while Celorga is running",
+          title: "Published on \(hostName)",
+          detail: isServer ? "Available while the server is running, even when this Mac sleeps" : "Available while Celorga is running",
           systemImage: "checkmark.circle.fill"
         )
         publicationLink(publication.url)
-        Text("Anyone on a network that can reach this Mac and has this secret link can view the sealed \(result.artifact.selection). The source corpus remains inaccessible.")
+        Text("Anyone on a network that can reach \(hostName) and has this secret link can view the sealed \(result.artifact.selection). The source corpus remains inaccessible.")
           .font(.callout)
           .foregroundStyle(.secondary)
         Text("You can reopen, copy, or stop this link later in Settings → Sharing.")
@@ -415,8 +435,16 @@ struct DocumentPublishSheet: View {
             copy(publication.url.absoluteString)
           }
           Button("Stop Hosting", role: .destructive) {
-            store.revokeLocalDocumentPublication(publication.id)
-            dismiss()
+            Task {
+              do {
+                if isServer {
+                  try await store.revokeServerDocumentPublication(publication.id)
+                } else {
+                  store.revokeLocalDocumentPublication(publication.id)
+                }
+                dismiss()
+              } catch { errorText = error.localizedDescription }
+            }
           }
         }
       }
@@ -500,8 +528,23 @@ struct DocumentPublishSheet: View {
       destination: destination,
       format: format,
       line: scope == .subtree ? store.currentDocumentPublishSubtreeLine : nil,
-      googleFolderID: destination == .googleDrive ? googleFolderID : nil
+      googleFolderID: destination == .googleDrive ? googleFolderID : nil,
+      host: destination == .localLink ? selectedHost : nil
     )
+  }
+
+  private var hostedPublications: [LocalDocumentPublication] {
+    selectedHost == .server
+      ? store.openOrgServer.documentPublications.map(\.publication)
+      : store.localDocumentPublications
+  }
+
+  private var selectedHost: ChatThreadShareLocation {
+    host ?? store.openOrgServer.effectiveDefaultShareLocation
+  }
+
+  private var selectedHostName: String {
+    selectedHost == .server ? store.openOrgServer.serverName : "this Mac"
   }
 
   private var canPublish: Bool {

@@ -531,6 +531,10 @@ public final class MobileRemoteCoordinator: ObservableObject {
       return .json(MobileRemoteMutationResponse(accepted: true))
     }
 
+    if path == "/v1/document-publications" || path.hasPrefix("/v1/document-publications/") {
+      return await handleDocumentPublication(request, path: path, store: store)
+    }
+
     if path == "/v1/sources/credentials" || path.hasPrefix("/v1/sources/") {
       if let response = await handleSourceRequest(request, path: path, store: store) {
         return response

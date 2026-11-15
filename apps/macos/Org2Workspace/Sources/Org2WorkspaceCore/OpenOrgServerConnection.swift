@@ -5,7 +5,7 @@ import Security
 
 // MARK: - Share location
 
-/// Where a new live thread link is hosted.
+/// Where a new document or live thread link is hosted.
 public enum ChatThreadShareLocation: String, CaseIterable, Identifiable, Sendable {
   /// This Mac's local publication server. The link works while this Mac is awake.
   case thisMac = "mac"
@@ -216,6 +216,7 @@ public enum OpenOrgServerError: LocalizedError, Equatable, Sendable {
   case malformedResponse
   case server(String, statusCode: Int)
   case unsupported
+  case documentPublishingUnsupported
   case sourcesUnsupported
   case threadNotOnServer(String)
   case keychain(OSStatus)
@@ -236,6 +237,8 @@ public enum OpenOrgServerError: LocalizedError, Equatable, Sendable {
       message
     case .unsupported:
       "This Celorga server cannot host thread links yet. Update and restart it, then try again."
+    case .documentPublishingUnsupported:
+      "This Celorga server cannot host document links yet. Update and restart it, then try again."
     case .sourcesUnsupported:
       "This Celorga server cannot receive source sign-ins or run source syncs yet. Update and restart it, then try again."
     case .threadNotOnServer(let server):
@@ -440,6 +443,7 @@ public final class OpenOrgServerConnection {
   public private(set) var serverStatus: MobileRemoteServerStatus?
   public private(set) var isPairing = false
   public private(set) var threadShares: [UUID: OpenOrgServerThreadShare] = [:]
+  public private(set) var documentPublications: [MobileRemoteDocumentPublication] = []
   public private(set) var busyThreadIDs: Set<UUID> = []
   public private(set) var defaultShareLocation: ChatThreadShareLocation
 
@@ -536,6 +540,7 @@ public final class OpenOrgServerConnection {
     }
     if previous?.endpoint != record.endpoint {
       threadShares = [:]
+      documentPublications = []
       persistShares()
     }
     await refreshStatus()
@@ -557,6 +562,7 @@ public final class OpenOrgServerConnection {
     credentials.removeToken(for: pairing.deviceID)
     cachedToken = nil
     self.pairing = nil
+    documentPublications = []
     serverStatus = nil
     reachability = .unknown
     threadShares = [:]
@@ -700,6 +706,54 @@ public final class OpenOrgServerConnection {
       persistShares()
     }
     return share
+  }
+
+  // MARK: Document links
+
+  public func publishDocument(_ request: MobileRemoteDocumentPublishRequest) async throws -> LocalDocumentPublication {
+    guard isPaired else { throw OpenOrgServerError.notPaired }
+    if serverStatus == nil { await refreshStatus() }
+    if let serverStatus, serverStatus.supportsDocumentPublishing != true {
+      throw OpenOrgServerError.documentPublishingUnsupported
+    }
+    guard request.data.count <= MobileRemoteDocumentPublishRequest.maximumArtifactBytes else {
+      throw OpenOrgServerError.connection("The sealed document exceeds the server's 8 MB limit.")
+    }
+    let response: MobileRemoteDocumentPublication = try await authorizedSend(
+      method: "POST", path: "/v1/document-publications",
+      body: try MobileRemoteProtocol.encoder().encode(request), timeout: 60
+    )
+    guard response.url.scheme == "http", !response.id.isEmpty else {
+      throw OpenOrgServerError.malformedResponse
+    }
+    documentPublications.removeAll { $0.id == response.id }
+    documentPublications.insert(response, at: 0)
+    return response.publication
+  }
+
+  public func refreshDocumentPublications() async {
+    guard isPaired else { return }
+    if serverStatus == nil { await refreshStatus() }
+    guard serverStatus?.supportsDocumentPublishing == true else { return }
+    if let response: [MobileRemoteDocumentPublication] = try? await authorizedSend(
+      method: "GET", path: "/v1/document-publications", body: nil, timeout: 15
+    ) {
+      documentPublications = response
+    }
+  }
+
+  public func stopHostingDocument(_ publicationID: String) async throws {
+    guard !publicationID.isEmpty,
+          publicationID.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })
+    else { throw OpenOrgServerError.malformedResponse }
+    do {
+      let _: MobileRemoteMutationResponse = try await authorizedSend(
+        method: "DELETE", path: "/v1/document-publications/\(publicationID)", body: nil, timeout: 15
+      )
+    } catch OpenOrgServerError.server(_, let statusCode) where statusCode == 404 {
+      // Another client may already have stopped this link.
+    }
+    documentPublications.removeAll { $0.id == publicationID }
   }
 
   // MARK: Source credentials and syncs
