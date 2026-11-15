@@ -712,7 +712,9 @@ public final class OpenOrgServerConnection {
 
   public func publishDocument(_ request: MobileRemoteDocumentPublishRequest) async throws -> LocalDocumentPublication {
     guard isPaired else { throw OpenOrgServerError.notPaired }
-    if serverStatus == nil { await refreshStatus() }
+    // A status cached before the server was updated can predate document
+    // publishing, so re-check before reporting the server as unsupported.
+    if serverStatus?.supportsDocumentPublishing != true { await refreshStatus() }
     if let serverStatus, serverStatus.supportsDocumentPublishing != true {
       throw OpenOrgServerError.documentPublishingUnsupported
     }
@@ -733,7 +735,7 @@ public final class OpenOrgServerConnection {
 
   public func refreshDocumentPublications() async {
     guard isPaired else { return }
-    if serverStatus == nil { await refreshStatus() }
+    if serverStatus?.supportsDocumentPublishing != true { await refreshStatus() }
     guard serverStatus?.supportsDocumentPublishing == true else { return }
     if let response: [MobileRemoteDocumentPublication] = try? await authorizedSend(
       method: "GET", path: "/v1/document-publications", body: nil, timeout: 15
