@@ -42,6 +42,7 @@ import {
   isDefaultIgnoredSyncArtifactPath,
   isOrgLikeFileName,
   listOrgLikeFiles,
+  reportHiddenOrgDirectories,
 } from "./corpusFiles.js";
 import { resolvePublishHeadIncludes } from "./publish-defaults.js";
 import { documentTodoSequences, todoSequencesForFile, todoConfigurationKey, todoKeywordInWorkflow, type TodoSequence, assignTodoInText, formatOrgTimestamp, isActiveTodoKeyword, isTerminalTodoKeyword, normalizeTodoKeyword, TODO_KEYWORDS, updateTodoInText, type TodoStatus } from "./todo.js";
@@ -15543,7 +15544,11 @@ Flags:
   process.stdout.write(output);
 }
 
-main().catch((err) => {
+main().then(() => {
+  // A corpus kept inside a hidden folder (such as .crucible/) looks empty
+  // from the folder above it; say where the Org files are.
+  reportHiddenOrgDirectories();
+}).catch((err) => {
   console.error("Error:", err instanceof Error ? err.message : err);
   process.exit(1);
 });

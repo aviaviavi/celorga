@@ -1,3 +1,4 @@
+import { findHiddenOrgDirectories, hiddenOrgDirectoriesHint } from "./corpusFiles.js";
 import { createProjectNote, listProjectNotes, updateProjectNote } from "./project.js";
 import { workspaceAgentState, workspaceRunList, workspaceWorkflowList, workspaceGoalList, workspaceProfileList } from "./workspaceAgentState.js";
 import { continueWorkspaceOffer, coordinateWorkspace, renderWorkspaceCoordinationText } from "./workspaceCoordinator.js";
@@ -719,9 +720,12 @@ function corpusCommand(parsed: ParsedArgs): void {
   const corpus = root(parsed);
   if (action === "show" || action === "validate") {
     const status = corpusIdentityStatus(corpus);
-    output(parsed, status, status.valid
+    // Corpus scans skip hidden folders; name any that hold the Org files.
+    const hiddenOrgDirectories = findHiddenOrgDirectories(corpus);
+    const hint = hiddenOrgDirectories.length ? `\n${hiddenOrgDirectoriesHint(corpus, hiddenOrgDirectories)}` : "";
+    output(parsed, hiddenOrgDirectories.length ? { ...status, hiddenOrgDirectories } : status, (status.valid
       ? `${status.identity!.name}\n${status.identity!.id}\t${status.identity!.kind}\n${status.root}`
-      : status.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
+      : status.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n")) + hint);
     if (action === "validate" && !status.valid) process.exitCode = 1;
     return;
   }
