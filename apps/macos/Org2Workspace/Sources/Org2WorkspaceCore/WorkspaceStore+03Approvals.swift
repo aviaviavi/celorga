@@ -2814,6 +2814,8 @@ extension WorkspaceStore {
       Task { await peekOrgCrypt(line: block.startLine) }
     case .copy:
       copyRenderedEntry(block)
+    case .copyPlainText:
+      copyRenderedEntry(block, asPlainText: true)
     case .cut:
       Task { await cutRenderedEntry(block) }
     case .copyReference:
@@ -3370,16 +3372,17 @@ extension WorkspaceStore {
     statusText = "Opened entry view"
   }
 
-  private func copyRenderedEntry(_ block: OrgEditableBlock) {
+  private func copyRenderedEntry(_ block: OrgEditableBlock, asPlainText: Bool = false) {
     guard let source = selectedEntrySource else {
       statusText = "No source loaded"
       return
     }
     do {
-      let text = try Self.renderedEntrySubtreeText(for: block, in: source)
+      let orgText = try Self.renderedEntrySubtreeText(for: block, in: source)
+      let text = asPlainText ? OrgPlainText.convert(orgText) : orgText
       NSPasteboard.general.clearContents()
       NSPasteboard.general.setString(text, forType: .string)
-      statusText = "Copied entry"
+      statusText = asPlainText ? "Copied entry as plain text" : "Copied entry"
     } catch {
       errorText = error.localizedDescription
       statusText = "Copy failed"

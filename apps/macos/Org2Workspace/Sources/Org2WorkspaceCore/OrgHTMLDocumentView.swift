@@ -493,6 +493,7 @@ enum OrgHTMLRenderedEntryAction: Sendable {
   case decrypt
   case viewDecrypted
   case copy
+  case copyPlainText
   case cut
   case copyReference
   case delete
@@ -529,6 +530,7 @@ private enum EntryContextMenuTag: Int {
   case startWork
   case viewDecrypted
   case archive
+  case copyPlainText
 
   var action: OrgHTMLRenderedEntryAction? {
     switch self {
@@ -562,12 +564,13 @@ private enum EntryContextMenuTag: Int {
     case .startWork: .startWork
     case .viewDecrypted: .viewDecrypted
     case .archive: .archive
+    case .copyPlainText: .copyPlainText
     }
   }
 
   var requiresEditableSource: Bool {
     switch self {
-    case .entryView, .askAI, .copy, .copyReference, .viewDecrypted:
+    case .entryView, .askAI, .copy, .copyPlainText, .copyReference, .viewDecrypted:
       false
     case .edit, .refile, .archive, .startWork,
          .scheduleToday, .scheduleTomorrow, .scheduleNextMonday, .scheduleNextMonth,
@@ -1396,6 +1399,14 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
 
       menu.addItem(.separator())
       menu.addItem(contextMenuItem("Copy", symbol: "doc.on.doc", tag: .copy))
+      menu.addItem(submenuItem(
+        "Copy As",
+        symbol: "doc.on.clipboard",
+        items: [
+          contextMenuItem("Plain Text", tag: .copyPlainText),
+          contextMenuItem("Org Source", tag: .copy),
+        ]
+      ))
       menu.addItem(contextMenuItem("Cut", symbol: "scissors", tag: .cut))
       menu.addItem(contextMenuItem("Copy Reference", symbol: "link", tag: .copyReference))
       menu.addItem(.separator())
