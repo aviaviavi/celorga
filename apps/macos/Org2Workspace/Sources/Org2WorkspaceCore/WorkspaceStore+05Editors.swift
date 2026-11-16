@@ -132,6 +132,12 @@ extension WorkspaceStore {
     currentOrgSourceFile != nil && !isExportingSlides && !isSavingEntry && !isSavingBlock
   }
 
+  /// Slide export and publishing actions appear only while the current
+  /// document is shown as slides.
+  public var showsSlideActions: Bool {
+    documentPreviewKind == .slides && canPreviewSlides
+  }
+
   public var canExportCurrentDocumentPDF: Bool {
     currentOrgSourceFile != nil
       && !isExportingCurrentDocumentPDF

@@ -51,11 +51,14 @@ final class SlideExportTests: XCTestCase {
     XCTAssertEqual(store.documentPreviewPreference, .automatic)
     XCTAssertEqual(store.documentPreviewKind, .slides)
 
+    XCTAssertTrue(store.showsSlideActions)
+
     store.selectedEntrySource = note
     store.updateInferredDocumentPreviewKind(
       from: #"<meta name="org2-document-kind" content="document" />"#
     )
     XCTAssertEqual(store.documentPreviewKind, .document)
+    XCTAssertFalse(store.showsSlideActions)
 
     store.selectedEntrySource = talk
     XCTAssertEqual(store.documentPreviewKind, .slides)

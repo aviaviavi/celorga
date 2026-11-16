@@ -20,6 +20,7 @@ struct DocumentPublishSheet: View {
   @State private var outcome: DocumentPublishOutcome?
   @State private var isWorking = false
   @State private var errorText: String?
+  @State private var restoredLinkedSlides = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -68,7 +69,7 @@ struct DocumentPublishSheet: View {
       await store.openOrgServer.refreshDocumentPublications()
     }
     .onChange(of: destination) { _, newDestination in
-      if !newDestination.formats.contains(format) {
+      if !newDestination.formats(showingSlides: showsSlideFormats).contains(format) {
         format = newDestination.defaultFormat
       }
       invalidatePreview()
@@ -124,7 +125,7 @@ struct DocumentPublishSheet: View {
 
       LabeledContent("Format") {
         Picker("Format", selection: $format) {
-          ForEach(destination.formats) { availableFormat in
+          ForEach(destination.formats(showingSlides: showsSlideFormats)) { availableFormat in
             Label(availableFormat.title, systemImage: availableFormat.systemImage)
               .tag(availableFormat)
           }
@@ -649,7 +650,14 @@ struct DocumentPublishSheet: View {
       }
     guard let linked else { return }
     destination = .googleDrive
+    restoredLinkedSlides = linked.format.isSlides
     format = linked.format
+  }
+
+  /// Slide formats are offered while the document is shown as slides, or
+  /// when this document is already linked to a Google Slides deck to update.
+  private var showsSlideFormats: Bool {
+    store.showsSlideActions || restoredLinkedSlides
   }
 
   @MainActor

@@ -27,6 +27,25 @@ final class DocumentPublishingTests: XCTestCase {
     XCTAssertNil(DocumentPublishFormat.beamerSlides.googleCLIDestination)
   }
 
+  func testSlideFormatsAppearOnlyWhileViewingSlides() {
+    XCTAssertEqual(
+      DocumentPublishDestination.localLink.formats(showingSlides: false),
+      [.html, .pdf]
+    )
+    XCTAssertEqual(
+      DocumentPublishDestination.googleDrive.formats(showingSlides: false),
+      [.googleDocs, .googleSheets, .pdf]
+    )
+    XCTAssertEqual(
+      DocumentPublishDestination.localLink.formats(showingSlides: true),
+      DocumentPublishDestination.localLink.formats
+    )
+    XCTAssertEqual(
+      DocumentPublishDestination.googleDrive.formats(showingSlides: true),
+      DocumentPublishDestination.googleDrive.formats
+    )
+  }
+
   func testGoogleDisclosurePreviewDoesNotReceiveLocalOutputArguments() {
     let arguments = WorkspaceStore.documentPublishArguments(
       sourceFile: URL(fileURLWithPath: "/tmp/recipes.org2"),

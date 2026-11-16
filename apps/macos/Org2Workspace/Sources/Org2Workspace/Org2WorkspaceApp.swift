@@ -236,17 +236,19 @@ struct Org2WorkspaceApp: App {
         }
         .disabled(!store.canExportCurrentDocumentPDF)
 
-        Divider()
+        if store.showsSlideActions {
+          Divider()
 
-        Button("Export Slides as PDF...") {
-          Task { await store.exportSlides(format: .pdf) }
-        }
-        .disabled(!store.canExportSlides)
+          Button("Export Slides as PDF...") {
+            Task { await store.exportSlides(format: .pdf) }
+          }
+          .disabled(!store.canExportSlides)
 
-        Button("Export Slides as LaTeX...") {
-          Task { await store.exportSlides(format: .latex) }
+          Button("Export Slides as LaTeX...") {
+            Task { await store.exportSlides(format: .latex) }
+          }
+          .disabled(!store.canExportSlides)
         }
-        .disabled(!store.canExportSlides)
       }
 
       CommandMenu("Pane") {

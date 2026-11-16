@@ -520,21 +520,23 @@ struct DetailHeader: View {
         }
         .disabled(!store.canExportCurrentDocumentPDF)
 
-        Divider()
+        if store.showsSlideActions {
+          Divider()
 
-        Button {
-          Task { await store.exportSlides(format: .pdf) }
-        } label: {
-          Label("Export Slides as PDF…", systemImage: "rectangle.on.rectangle")
-        }
-        .disabled(!store.canExportSlides)
+          Button {
+            Task { await store.exportSlides(format: .pdf) }
+          } label: {
+            Label("Export Slides as PDF…", systemImage: "rectangle.on.rectangle")
+          }
+          .disabled(!store.canExportSlides)
 
-        Button {
-          Task { await store.exportSlides(format: .latex) }
-        } label: {
-          Label("Export Slides as LaTeX…", systemImage: "doc.plaintext")
+          Button {
+            Task { await store.exportSlides(format: .latex) }
+          } label: {
+            Label("Export Slides as LaTeX…", systemImage: "doc.plaintext")
+          }
+          .disabled(!store.canExportSlides)
         }
-        .disabled(!store.canExportSlides)
 
         Divider()
 

@@ -29,6 +29,12 @@ public enum DocumentPublishDestination: String, CaseIterable, Identifiable, Send
   public var defaultFormat: DocumentPublishFormat {
     formats[0]
   }
+
+  /// Formats to offer in the publish sheet. Slide formats appear only while
+  /// the document is shown as slides, so an ordinary note never offers them.
+  public func formats(showingSlides: Bool) -> [DocumentPublishFormat] {
+    showingSlides ? formats : formats.filter { !$0.isSlides }
+  }
 }
 
 public enum DocumentPublishFormat: String, CaseIterable, Hashable, Identifiable, Sendable {
@@ -60,6 +66,13 @@ public enum DocumentPublishFormat: String, CaseIterable, Hashable, Identifiable,
     case .googleDocs: "doc.text"
     case .googleSlides: "rectangle.on.rectangle"
     case .googleSheets: "tablecells"
+    }
+  }
+
+  public var isSlides: Bool {
+    switch self {
+    case .beamerSlides, .googleSlides: true
+    case .html, .pdf, .googleDocs, .googleSheets: false
     }
   }
 
