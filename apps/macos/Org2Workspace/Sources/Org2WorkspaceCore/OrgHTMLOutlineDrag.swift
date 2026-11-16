@@ -571,8 +571,11 @@ enum OrgHTMLOutlineDrag {
           choice.domTarget.parentNode.insertBefore(entry, choice.domTarget);
         }
         entry.classList.add('org2-drag-pending');
+        // The next render replaces the moved entry outright.
+        entry.setAttribute('data-org2-provisional', '');
         window.__org2OutlineMoveRestore = () => {
           entry.classList.remove('org2-drag-pending');
+          entry.removeAttribute('data-org2-provisional');
           if (restore.parent) restore.parent.insertBefore(entry, restore.next);
         };
         window.webkit?.messageHandlers?.\#(messageHandlerName)?.postMessage(choice.payload);

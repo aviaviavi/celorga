@@ -145,6 +145,10 @@ assert.match(rendered.html, /\.org2-table-scroll \{[^}]*min-width: 0;[^}]*overfl
 assert.match(rendered.html, /id="org2-app-document-script"/);
 assert.match(rendered.html, /className = "org2-heading-ai-action"/);
 assert.match(rendered.html, /org2-workspace:\/\/ask-ai\?line=/);
+// The app re-runs the heading actions after it patches entries in place, and
+// the action reads its line when clicked because a patch renumbers the page.
+assert.match(rendered.html, /window\.__org2InstallHeadingActions = installHeadingActions;/);
+assert.match(rendered.html, /container\.closest\("\[data-org2-start-line\]"\)/);
 // The per-section Ask AI action stays hidden until the heading is hovered or focused.
 assert.match(rendered.html, /\.org2-heading-ai-action \{[^}]*opacity: 0;[^}]*pointer-events: none;/);
 assert.match(rendered.html, /\.org2-headline-summary:hover > \.org2-heading-ai-action,[^{]*\.org2-heading-ai-action:focus-visible \{[^}]*opacity: 1;[^}]*pointer-events: auto;/);

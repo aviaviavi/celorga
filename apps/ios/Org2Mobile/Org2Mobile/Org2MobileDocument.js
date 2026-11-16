@@ -4882,7 +4882,8 @@ body.org2-resizing-column { cursor: col-resize; user-select: none; }
 }`;
   var APP_DOCUMENT_SCRIPT = `(() => {
   function appendAIAction(container, line) {
-    if (!container || !line || container.querySelector(":scope > .org2-heading-ai-action")) return;
+    if (!container || !line) return;
+    if (container.querySelector(":scope > .org2-heading-ai-action:not(.org2-heading-start-work)")) return;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "org2-heading-ai-action";
@@ -4892,7 +4893,10 @@ body.org2-resizing-column { cursor: col-resize; user-select: none; }
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      window.location.href = "org2-workspace://ask-ai?line=" + encodeURIComponent(line);
+      // Read the line on click: an in-place update renumbers the page.
+      const anchor = container.closest("[data-org2-start-line]");
+      const current = (anchor && anchor.dataset.org2StartLine) || line;
+      window.location.href = "org2-workspace://ask-ai?line=" + encodeURIComponent(current);
     });
     container.appendChild(button);
   }
@@ -4915,6 +4919,8 @@ body.org2-resizing-column { cursor: col-resize; user-select: none; }
       appendAIAction(paragraph, paragraph.dataset.org2StartLine);
     });
   }
+  // The app calls this again after it updates entries in place.
+  window.__org2InstallHeadingActions = installHeadingActions;
 
   // Live HTML previews report their content height; only the frame that sent
   // the message, and only one that asked for automatic sizing, is resized.

@@ -674,6 +674,11 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       injectionTime: .atDocumentStart,
       forMainFrameOnly: true
     ))
+    configuration.userContentController.addUserScript(WKUserScript(
+      source: OrgHTMLDocumentPatch.installationScript,
+      injectionTime: .atDocumentStart,
+      forMainFrameOnly: true
+    ))
     configuration.setURLSchemeHandler(
       context.coordinator.localResourceHandler,
       forURLScheme: OrgHTMLLocalResourceSchemeHandler.scheme
@@ -1017,12 +1022,66 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       )
       loadedSourceFile = sourceFile
       scrollRequestIDAtPreservedLoad = scrollRequestID
+      let presentedHTML = self.presentedHTML
+      self.presentedHTML = html
       guard style == .preservingFrame else {
         preservedScrollY = nil
         removeFreezeFrame(animated: false)
         webView.loadHTMLString(html, baseURL: baseURL)
         return
       }
+      // A new render of the page on screen changes only the entries that
+      // differ, so the rest of the page (scroll offset, opened and folded
+      // sections, table filters) stays exactly as it is.
+      if let presentedHTML, OrgHTMLDocumentPatch.sharesDocumentShell(presentedHTML, html) {
+        patchInPlace(html: html, baseURL: baseURL, generation: generation, in: webView)
+        return
+      }
+      reloadPreservingFrame(html: html, baseURL: baseURL, generation: generation, in: webView)
+    }
+
+    /// The HTML of the page on screen, or of the load in progress.
+    private var presentedHTML: String?
+
+    private func patchInPlace(html: String, baseURL: URL, generation: UInt64, in webView: WKWebView) {
+      webView.callAsyncJavaScript(
+        OrgHTMLDocumentPatch.invocation,
+        arguments: ["html": html],
+        in: nil,
+        in: .page
+      ) { [weak self, weak webView] result in
+        MainActor.assumeIsolated {
+          guard let self, let webView else { return }
+          let outcome = (try? result.get()).flatMap { $0 as? String }
+            .flatMap(OrgHTMLDocumentPatch.Outcome.init(rawValue:)) ?? .reload
+          switch outcome {
+          case .patched:
+            self.finishInPlacePatch(in: webView)
+          case .unchanged:
+            break
+          case .reload:
+            guard generation == self.loadGeneration else { return }
+            self.reloadPreservingFrame(html: html, baseURL: baseURL, generation: generation, in: webView)
+          }
+        }
+      }
+    }
+
+    /// Re-applies what the app adds to a loaded page to the entries the
+    /// patch replaced. Each step skips what is already in place.
+    private func finishInPlacePatch(in webView: WKWebView) {
+      applyCheckboxMutations(to: webView)
+      applyOutlineMoves(to: webView)
+      applyHeadingWork(to: webView)
+      applyProjectThreads(to: webView)
+      Self.evaluateWithoutResult("window.__org2ReportViewportSourceLine?.();", in: webView)
+      if scrollRequestID != scrollRequestIDAtPreservedLoad, let scrollRequest {
+        scrollRequestIDAtPreservedLoad = scrollRequestID
+        applyScrollRequest(scrollRequest, to: webView)
+      }
+    }
+
+    private func reloadPreservingFrame(html: String, baseURL: URL, generation: UInt64, in webView: WKWebView) {
       // Capture the exact scroll offset and the current frame, cover the web
       // view with that frame, then load. didFinish restores the offset and
       // removes the cover once the new page has painted.

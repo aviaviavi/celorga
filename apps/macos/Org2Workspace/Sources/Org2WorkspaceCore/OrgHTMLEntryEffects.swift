@@ -417,6 +417,9 @@ enum OrgHTMLEntryEffectScript {
     window.__org2ApplyEntryEffect = (payload) => {
       const entry = entryAt(payload.line);
       if (!entry) return false;
+      // The next render replaces this entry outright instead of patching
+      // around the provisional change.
+      if (payload.kind !== 'settle') entry.setAttribute('data-org2-provisional', '');
       const h = headingOf(entry);
       const animate = !reduceMotion();
       entry.classList.remove('org2-effect-pending');
