@@ -338,9 +338,9 @@ extension WorkspaceStore {
     if let cachedHTML {
       renderedHTMLCacheOrder.removeAll { $0 == renderKey }
       renderedHTMLCacheOrder.append(renderKey)
-      selectedEntryHTML = cachedHTML
-      liveEmbedSourceID = LiveEmbedPresentation.containsEmbeds(cachedHTML) ? source.id : nil
       selectedEntryHTMLRenderKey = renderKey
+      presentEntryHTML(cachedHTML, renderKey: renderKey, file: source.file)
+      liveEmbedSourceID = LiveEmbedPresentation.containsEmbeds(cachedHTML) ? source.id : nil
     }
 
     let renderIdleDelay = cachedHTML == nil && selectedSurface == .agenda
@@ -443,7 +443,7 @@ extension WorkspaceStore {
               expanded: self.propertyDrawersExpandedByDefault
             )
             self.cacheRenderedHTML(presentedHTML, key: renderKey)
-            self.selectedEntryHTML = presentedHTML
+            self.presentEntryHTML(presentedHTML, renderKey: renderKey, file: source.file)
             self.liveEmbedSourceID = LiveEmbedPresentation.containsEmbeds(presentedHTML) ? source.id : nil
             self.selectedEntryRenderError = nil
           case .html(.failure(let error)):
@@ -638,12 +638,33 @@ extension WorkspaceStore {
     let renderKey = entryHTMLRenderKey(for: source)
     guard selectedEntryHTMLRenderKey != renderKey else { return }
     entryHTMLRenderGeneration += 1
-    selectedEntryHTML = nil
     selectedEntryRenderError = nil
     selectedEntryHTMLRenderKey = renderKey
+    // A new revision of the file already on screen keeps its page until the
+    // new render arrives. Dropping it tore down the web view, so marking one
+    // entry DONE showed a loading view and rebuilt the whole page.
+    if Self.keepsDisplayedEntryHTML(
+      displayedFile: selectedEntryHTML == nil ? nil : displayedEntryHTMLFile,
+      nextFile: source.file
+    ) {
+      return
+    }
+    selectedEntryHTML = nil
     selectedRenderedBlocks = []
     isSelectedRenderedBlocksReady = false
     selectedBlockID = nil
+  }
+
+  nonisolated static func keepsDisplayedEntryHTML(displayedFile: String?, nextFile: String) -> Bool {
+    guard let displayedFile else { return false }
+    return displayedFile == URL(fileURLWithPath: nextFile).standardizedFileURL.path
+  }
+
+  /// Shows a finished render and records which render and file it shows.
+  func presentEntryHTML(_ html: String, renderKey: String, file: String) {
+    selectedEntryHTML = html
+    displayedEntryHTMLRenderKey = renderKey
+    displayedEntryHTMLFile = URL(fileURLWithPath: file).standardizedFileURL.path
   }
 
   private func workspaceCacheBox<Value: Sendable>(

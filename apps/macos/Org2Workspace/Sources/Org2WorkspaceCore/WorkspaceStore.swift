@@ -3184,10 +3184,17 @@ public final class WorkspaceStore {
   public internal(set) var selectedFileIsDataNotebook = false
   public internal(set) var selectedEntryHTML: String? {
     didSet {
+      if selectedEntryHTML == nil {
+        displayedEntryHTMLRenderKey = nil
+        displayedEntryHTMLFile = nil
+      }
       updateInferredDocumentPreviewKind(from: selectedEntryHTML)
     }
   }
-  public var selectedEntryHTMLRenderIdentity: String? { selectedEntryHTMLRenderKey }
+  /// Identifies the page in `selectedEntryHTML`. While an edited file
+  /// re-renders, the previous page stays on screen under its own identity;
+  /// `selectedEntryHTMLRenderKey` already names the render in flight.
+  public var selectedEntryHTMLRenderIdentity: String? { displayedEntryHTMLRenderKey }
   public internal(set) var selectedEntryRenderError: String?
   public var renderedDocumentWidth: RenderedDocumentWidth = .comfortable {
     didSet {
@@ -4095,6 +4102,9 @@ public final class WorkspaceStore {
   var renderedHTMLCacheOrder: [String] = []
   var liveEmbedSourceID: String?
   var selectedEntryHTMLRenderKey: String?
+  var displayedEntryHTMLRenderKey: String?
+  /// Standardized path of the file whose page is in `selectedEntryHTML`.
+  var displayedEntryHTMLFile: String?
   var entrySourceRenderIdentities: [String: String] = [:]
   var nextSelectedEntrySourceRenderIdentity: String?
   var nextSelectedEntrySourceModifiedAt: Date?
