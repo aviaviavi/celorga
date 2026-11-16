@@ -163,6 +163,7 @@ inline-item =
   | bracket-link
   | angle-link
   | plain-url
+  | plain-citation-link
   | emphasis
   | inline-text-char ;
 
@@ -231,6 +232,14 @@ angle-link-target = ? one or more non-whitespace characters other than angle
 
 plain-url = ? http:// or https:// followed by one or more non-whitespace
               characters, with trailing common punctuation excluded ? ;
+
+plain-citation-link = ? an org-ref citation link type (cite, citep, citet,
+                        citealp, citealt, citeauthor, citeyear, citeyearpar,
+                        citenum, or citetext, optionally capitalized or
+                        starred), a colon, and citation keys separated by
+                        commas or semicolons, each optionally prefixed with &;
+                        not preceded by a letter, digit, or key character, and
+                        with trailing . , ; : excluded ? ;
 
 emphasis = emphasis-marker, emphasis-body, emphasis-marker ;
 emphasis-marker = asterisk | slash | underscore | plus | equals | tilde

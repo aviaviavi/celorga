@@ -315,8 +315,33 @@ function parseAngleLinkAt(value: string, startIndex: number): ParsedLinkAt | nul
   };
 }
 
+// org-ref's natbib-style citation links, written without brackets, such as
+// `citep:smith2024` or `cite:&doe2024;&roe2025`. Other link types need brackets.
+const PLAIN_CITATION_LINK = /(?:[Cc]ite(?:p|t|alp|alt|author|year|yearpar|num|text)?\*?):&?[A-Za-z0-9_:.+\-/]+(?:[,;]&?[A-Za-z0-9_:.+\-/]+)*/y;
+
+function parsePlainCitationLinkAt(value: string, startIndex: number): ParsedLinkAt | null {
+  const first = value[startIndex];
+  if (first !== "c" && first !== "C") return null;
+  const previous = startIndex > 0 ? value[startIndex - 1]! : "";
+  if (previous && /[A-Za-z0-9_&:/.\-]/.test(previous)) return null;
+  PLAIN_CITATION_LINK.lastIndex = startIndex;
+  const match = PLAIN_CITATION_LINK.exec(value);
+  if (!match) return null;
+  let raw = match[0];
+  // A sentence may end right after the last key.
+  while (/[.,;:]$/.test(raw)) raw = raw.slice(0, -1);
+  if (!/:&?[A-Za-z0-9_+\-/]/.test(raw)) return null;
+  return {
+    node: link({ format: "plain", raw, targetRaw: raw }),
+    endIndex: startIndex + raw.length,
+  };
+}
+
 function parseLinkAt(value: string, startIndex: number): ParsedLinkAt | null {
-  return parseBracketLinkAt(value, startIndex) ?? parseAngleLinkAt(value, startIndex) ?? parsePlainUrlAt(value, startIndex);
+  return parseBracketLinkAt(value, startIndex)
+    ?? parseAngleLinkAt(value, startIndex)
+    ?? parsePlainUrlAt(value, startIndex)
+    ?? parsePlainCitationLinkAt(value, startIndex);
 }
 
 function parseTargetAt(value: string, startIndex: number): ParsedInlineAt | null {
@@ -483,6 +508,7 @@ function parseProgressCookieAt(value: string, startIndex: number): ParsedProgres
 const INLINE_START_MARKERS = new Set([
   ...EMPHASIS_MARKERS.map(({ marker }) => marker),
   "<", "[", "@", "$", "\\", "^", "h", // targets, timestamps, objects, and http(s)
+  "c", "C", // org-ref citation links such as citep:KEY
 ]);
 
 export function parseInlinesFromText(value: string): InlineNode[] {

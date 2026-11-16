@@ -1,3 +1,4 @@
+import { citationFromLinkTarget, citationFromNode, type CitationLookup, type ParsedCitation } from "./citationSyntax.js";
 import { CHART_INTERACTION_SCRIPT, CHART_INTERACTION_STYLE } from "./chartInteraction.js";
 import { TABLE_INTERACTION_SCRIPT } from "./tableInteraction.js";
 import { documentHasProjectThreadsBlock, isProjectThreadsBlock, projectThreadIDsFromDocument, PROJECT_THREADS_SCRIPT, PROJECT_THREADS_STYLE } from "./projectThreadsView.js";
@@ -481,6 +482,9 @@ li:has(> input[type="checkbox"]:checked) > p { color: var(--org2-muted); text-de
 .org2-headline .org2-headline-done { color: color-mix(in srgb, var(--org2-text) 58%, transparent); }
 .org2-headline .org2-headline-canceled { color: color-mix(in srgb, var(--org2-text) 42%, transparent); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--org2-text) 35%, transparent); }
 .org2-progress-cookie, .org2-latex-fragment, .org2-citation, .org2-export-snippet { font-family: var(--org2-font-mono); }
+.org2-citation-key[title] { text-decoration: underline dotted; text-underline-offset: 0.18em; }
+a.org2-citation-key { color: inherit; }
+.org2-citation-unresolved { text-decoration: underline wavy color-mix(in srgb, currentColor 45%, transparent); }
 .org2-latex-fragment { color: var(--org2-accent); }
 .org2-footnote-definition { margin: 0.7rem 0; padding-top: 0.45rem; border-top: 1px solid var(--org2-rule); color: var(--org2-muted); font-size: 0.86rem; }
 .org2-description-list { display: grid; grid-template-columns: max-content 1fr; gap: 0.32rem 0.8rem; }
@@ -856,6 +860,8 @@ type RenderContext = {
   codeFile?: boolean;
   /** Member chats from the document's #+PROJECT_THREADS: keyword. */
   projectThreadIDs?: string[];
+  /** Resolves citation keys against the note's bibliography. */
+  citationLookup?: CitationLookup;
 };
 
 export type OrgEmbeddedChart = {
@@ -1476,8 +1482,45 @@ function appLinkTooltip(rawTarget: string, expandedTarget: string): string {
   return `File\n${expandedTarget}`;
 }
 
+function renderCitationKey(key: string, context: RenderContext): string {
+  const label = escapeHtml(`@${key}`);
+  if (!context.citationLookup) return label;
+  const info = context.citationLookup(key);
+  if (!info.resolved) {
+    return `<span class="org2-citation-key org2-citation-unresolved" data-org2-citation-key="${escapeAttr(key)}" title="${escapeAttr(`${key} is not in the bibliography`)}">${label}</span>`;
+  }
+  const title = escapeAttr(info.title || key);
+  if (info.sourceTarget) {
+    let href = "";
+    if (context.profile === "app") href = appLinkHref(info.sourceTarget, info.sourceTarget, context);
+    else if (/\.(org|org2)$/i.test(info.sourceTarget)) href = rewriteOrgFileHrefForHtml(info.sourceTarget);
+    if (href) return `<a class="org2-citation-key" data-org2-citation-key="${escapeAttr(key)}" href="${escapeAttr(href)}" title="${title}">${label}</a>`;
+  }
+  return `<span class="org2-citation-key" data-org2-citation-key="${escapeAttr(key)}" title="${title}">${label}</span>`;
+}
+
+/** org-cite and org-ref citations render alike; keys link to their sources when resolved. */
+function renderCitation(citation: ParsedCitation, context: RenderContext, around: Array<string | undefined> = [], description?: string): string {
+  const style = escapeAttr(citation.style || "");
+  if (description) {
+    const keys = citation.references.map((reference) => reference.key);
+    const titles = context.citationLookup ? keys.map((key) => context.citationLookup!(key).title || key) : keys;
+    return `<cite class="org2-citation" data-org2-citation-style="${style}" title="${escapeAttr(titles.join("\n"))}">${escapeHtml(description)}</cite>`;
+  }
+  const references = citation.references.map((reference) => [
+    reference.prefix ? escapeHtml(reference.prefix) : "",
+    renderCitationKey(reference.key, context),
+    reference.suffix ? escapeHtml(reference.suffix) : "",
+  ].filter(Boolean).join(" ")).join("; ");
+  const [prefix, suffix] = around;
+  const content = [prefix ? escapeHtml(prefix) : "", references, suffix ? escapeHtml(suffix) : ""].filter(Boolean).join(" ");
+  return `<cite class="org2-citation" data-org2-citation-style="${style}">${content}</cite>`;
+}
+
 function renderLink(node: LinkNode, context: RenderContext): string {
   const hrefRaw = String(node.targetRaw || "").trim();
+  const citation = citationFromLinkTarget(hrefRaw);
+  if (citation) return renderCitation(citation, context, [], String(node.descriptionRaw || "").trim() || undefined);
   const colorBinding = node.descriptionRaw !== undefined
     ? parseOrgColorBindingTarget(hrefRaw)
     : null;
@@ -1619,11 +1662,9 @@ function renderInline(node: InlineNode, context: RenderContext): string {
     return `<sup class="org2-footnote-reference"><a href="#${escapeAttr(id)}">${escapeHtml(label)}</a></sup>`;
   }
   if (node.type === "Citation") {
-    const references = node.references.map((reference) =>
-      [reference.prefixRaw, `@${reference.keyRaw}`, reference.suffixRaw].filter(Boolean).join(" "),
-    ).join("; ");
-    const content = [node.prefixRaw, references, node.suffixRaw].filter(Boolean).join(" ");
-    return `<cite class="org2-citation" data-org2-citation-style="${escapeAttr(node.styleRaw || "")}">${escapeHtml(content)}</cite>`;
+    const citation = citationFromNode(node);
+    if (!citation) return escapeHtml(node.raw);
+    return renderCitation(citation, context, [node.prefixRaw, node.suffixRaw]);
   }
   if (node.type === "Target") {
     const id = normalizeAnchorId(node.valueRaw) || "target";
@@ -2290,6 +2331,7 @@ function buildDocumentRenderContext(
     pluginRenders?: Org2PluginRender[];
     embedResolver?: LiveEmbedResolver;
     codeFile?: boolean;
+    citationLookup?: CitationLookup;
   },
 ): { context: RenderContext; tocItems: TocItem[] } {
   let tocItems: TocItem[] = [];
@@ -2306,6 +2348,7 @@ function buildDocumentRenderContext(
     embedResolver: opts.embedResolver,
     sourcePath: opts.sourcePath,
     codeFile: opts.codeFile,
+    citationLookup: opts.citationLookup,
     // Reference-only clients (including the mobile JavaScriptCore bundle) have
     // no filesystem. Only a supplied resolver needs a canonical cycle key.
     embedStack: opts.embedResolver && opts.sourcePath ? [opts.embedResolver.sourceKey ?? `${path.resolve(opts.sourcePath)}:1`] : [],
@@ -2448,6 +2491,7 @@ export function renderOrgDocumentToHtml(
     pluginRenders?: Org2PluginRender[];
     embedResolver?: LiveEmbedResolver;
     codeFile?: boolean;
+    citationLookup?: CitationLookup;
   } = {},
 ): { html: string; title: string; metadata: OrgExportMetadata } {
   const title = resolveTitle(doc, opts.title, opts.sourcePath);
@@ -2468,6 +2512,7 @@ export function renderOrgDocumentToHtml(
     pluginRenders: opts.pluginRenders,
     embedResolver: opts.embedResolver,
     codeFile: opts.codeFile,
+    citationLookup: opts.citationLookup,
   });
 
   const mainBody = renderMainBody({
@@ -2519,6 +2564,7 @@ export function renderOrgDocumentToAppHtml(
     pluginRenders?: Org2PluginRender[];
     embedResolver?: LiveEmbedResolver;
     codeFile?: boolean;
+    citationLookup?: CitationLookup;
   } = {},
 ): { html: string; title: string; metadata: OrgExportMetadata } {
   const customCss = String(opts.customCss || "").trim();
@@ -2553,6 +2599,7 @@ export function renderOrgDocumentToAppHtml(
     pluginRenders: opts.pluginRenders,
     embedResolver: opts.embedResolver,
     codeFile: opts.codeFile,
+    citationLookup: opts.citationLookup,
   });
   return { ...rendered, html: collapseAppPgpArmorParagraphs(rendered.html) };
 }

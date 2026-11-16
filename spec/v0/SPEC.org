@@ -587,6 +587,10 @@ A *plain URL* is recognized when it begins with =http://= or =https://= and exte
 
 To reduce accidental captures, the reference parser trims common trailing punctuation characters from the URL.
 
+** Plain citation links
+
+org-ref citation links may also be written without brackets, for example =citep:doe2024,roe2025= or =cite:&doe2024=. =PARSING.org= lists the recognized link types and key characters. They produce ordinary =Link= nodes with =format: "plain"=. Bracketed forms such as =[[citep:&doe2024][Doe]]= are ordinary bracket links. Renderers and tools treat both, and =[cite:@KEY]= =Citation= nodes, as citations.
+
 ** Color bindings
 
 Org2 reserves the custom bracket-link type =color:= for explicit, non-navigating color presentation. This is additive Org2 behavior over the ordinary =Link= node; the canonical AST and printer preserve the original bracket-link bytes.

@@ -90,6 +90,11 @@ async function main(): Promise<void> {
     await runPropertyViewsCommand(args.slice(1));
     return;
   }
+  if (args[0] === "research") {
+    const { runResearchCommand } = await import("./researchCli.js");
+    await runResearchCommand(args.slice(1));
+    return;
+  }
   if (args[0] === "crm") {
     const { runCrmCommand } = await import("./crmCli.js");
     await runCrmCommand(args.slice(1));

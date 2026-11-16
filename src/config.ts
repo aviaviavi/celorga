@@ -154,7 +154,16 @@ export interface Org2Config {
   apps?: Org2AppsConfig;
   /** People & Companies preferences; see `celorga crm`. */
   crm?: Org2CrmConfig;
+  /** Bibliographies and source folders for `celorga research`. */
+  research?: Org2ResearchConfig;
 }
+
+export type Org2ResearchConfig = {
+  /** Corpus-relative .bib files used by every note. Default: references.bib or bibliography.bib at the corpus root. */
+  bibliography?: string[];
+  /** Corpus-relative folders holding sources to distill. Default: raw, sources. */
+  sourceDirs?: string[];
+};
 
 export type Org2AppsConfig = {
   /** App IDs turned on for this corpus, such as `crm` or `plugin:PLUGIN_ID`. */

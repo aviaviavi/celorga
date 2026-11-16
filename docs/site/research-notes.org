@@ -1,0 +1,72 @@
+#+TITLE: Research notes: citations, sources, and concepts
+
+Celorga can keep a research wiki in ordinary Org files: articles cite their sources, quotes are checked against the cited text, sources waiting for an article are listed, and notes are grouped by concept. Everything is computed from the files on each run; there is no database to sync, and generated output is an ordinary Org file under =views/=.
+
+This works with notes written for other tools. Citations use org-cite or org-ref syntax, bibliographies are BibTeX files, and a crucible-style =:SOURCE_KEYS:= property counts as a citation.
+
+* Citations
+
+Celorga reads three citation forms:
+
+- org-cite: =[cite:@doe2024]=, =[cite/t:@doe2024; see @roe2025 p. 4]=
+- org-ref links without brackets: =cite:doe2024=, =citep:doe2024,roe2025=, =citet:&doe2024;&roe2025=, and the other natbib types (=citealp=, =citealt=, =citeauthor=, =citeyear=, =citeyearpar=, =citenum=, =citetext=, capitalized or starred)
+- org-ref links in brackets: =[[citep:&doe2024][Doe (2024)]]=, which also accept biblatex types such as =parencite= and =textcite=
+
+Keys resolve against these bibliographies. When two define the same key, the first one wins:
+
+1. =#+BIBLIOGRAPHY: refs.bib= keywords, or org-ref =bibliography:refs.bib= links, in the note itself (relative to the note)
+2. =research.bibliography= in =celorga.json=, a list of corpus-relative =.bib= files; without it, =references.bib= or =bibliography.bib= at the corpus root
+
+In the rendered view and in HTML exports, a resolved key shows its author, year, and title on hover. When the BibTeX entry has a =file= field, the key links to that file; =file= accepts a plain path or the JabRef and Zotero =Description:path:Type= form, relative to the =.bib= file, a folder above it, or the corpus root. A key that isn't in the bibliography is underlined. Without a bibliography, citations show their keys.
+
+#+begin_src sh
+celorga research citations --dir ~/wiki          # every citation and quote, resolved
+celorga research check --dir ~/wiki              # only problems; exits 1 when there are any
+#+end_src
+
+=celorga lint= reports the same problems as =unresolved-citation= and =quote-not-in-source= warnings.
+
+* Checking quotes against sources
+
+A quote is checked when it is cited:
+
+- a =#+begin_quote= block, cited inside the block or in the paragraph right after it (an attribution line such as =-- citep:doe2024=)
+- a passage of five or more words in double quotes with a citation or file: link right after it (at most four words between them, as in ="…" (p. 4) citep:doe2024=), or else right before it. A link elsewhere in the paragraph is taken to support a different claim
+
+The source is the cited key's =file=, or a file: link such as =[[file:raw/interview.org::88-94][interview]]=. A link ending in =::N= or =::N-M= limits the check to those lines. PDFs aren't read directly: put a text export beside the file (=paper.txt=, =paper.md=, =paper.org=, or =paper.html= next to =paper.pdf=) and Celorga compares against that.
+
+The comparison ignores case, punctuation, line breaks, and Org markup. An ellipsis (=...= or =…=) or a bracketed insertion such as =[sic]= splits the quote into parts, which must appear in order; a word cut by an ellipsis may be partial. When a quote cites lines that no longer hold it but the file does, the warning names the line it moved to. A quote is listed as not checked, rather than as a problem, when any of its sources has no readable text.
+
+* Sources waiting for an article
+
+#+begin_src sh
+celorga research queue --dir ~/wiki              # sources no note distills yet
+celorga research queue --dir ~/wiki --all        # also list distilled sources and their notes
+#+end_src
+
+Sources are the files under =research.sourceDirs= in =celorga.json= (default =raw/= and =sources/=) plus BibTeX entries without a =file=. A source and its text exports, such as =paper.pdf= and =paper.txt=, count as one. A source is distilled when a note outside the source folders cites its key, links to the file, or names the key or file name (without extension) in a =:SOURCE_KEYS:= property. BibTeX entries are listed first, then files, oldest first.
+
+* Concepts and related notes
+
+#+begin_src sh
+celorga research concepts --dir ~/wiki           # preview the index
+celorga research concepts --dir ~/wiki --apply   # write views/concepts.org
+celorga research related --dir ~/wiki --file wiki/concepts/activation-energy.org
+#+end_src
+
+The concept index groups notes by their =#+FILETAGS:= and heading tags, largest concept first, with the tags each concept most often appears with. Notes link by =id:= when they have a file-level ID. Pass =--out= to write somewhere other than =views/concepts.org=; the file is regenerated in full each time.
+
+=related= ranks notes against one note: each shared tag counts 1, each shared cited source 2, and a link in either direction 3. Backlinks, unlinked mentions, and link suggestions are covered by =celorga backlinks=, =celorga roam connections=, =celorga roam linkify=, and =celorga ai suggest-links=; see the [[file:tooling-reference.org][tooling reference]].
+
+* Corpora in a hidden folder
+
+Corpus scans skip hidden folders such as =.git/=. A wiki kept entirely inside one, like a crucible project's =.crucible/=, therefore looks empty from the project folder. Celorga says so when it happens: a command that scans the project folder prints a note naming the hidden folder, and =celorga corpus show= lists it under =hiddenOrgDirectories=.
+
+To use such a wiki, point commands at the hidden folder, or make it a corpus and open that folder in the app (in the macOS open panel, press =Shift-Command-.= to show hidden folders):
+
+#+begin_src sh
+celorga corpus init --dir ~/project/.crucible --id my-wiki --name "My wiki" --apply
+celorga research queue --dir ~/project/.crucible
+#+end_src
+
+A crucible project's =references.bib= sits at the root of =.crucible/=, so its keys resolve with no configuration, and its =file= paths, which are relative to the project folder, resolve too.

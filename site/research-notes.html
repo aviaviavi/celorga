@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Research notes: citations, sources, and concepts</title>
+<link rel="icon" type="image/png" href="assets/favicon.png" />
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+<script type="module" src="assets/shiki-vscode.js"></script>
+<script defer src="assets/nav.js"></script>
+<meta name="description" content="Celorga can keep a research wiki in ordinary Org files: articles cite their sources, quotes are checked against the cited text, sources waiting for an article are listed, and notes are grouped by…" />
+<link rel="canonical" href="https://celorga.io/research-notes.html" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Celorga" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:title" content="Research notes: citations, sources, and concepts" />
+<meta property="og:description" content="Celorga can keep a research wiki in ordinary Org files: articles cite their sources, quotes are checked against the cited text, sources waiting for an article are listed, and notes are grouped by…" />
+<meta property="og:url" content="https://celorga.io/research-notes.html" />
+<meta property="og:image" content="https://celorga.io/assets/og/research-notes.png" />
+<meta property="og:image:secure_url" content="https://celorga.io/assets/og/research-notes.png" />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Research notes: citations, sources, and concepts: Celorga can keep a research wiki in ordinary Org files: articles cite their sources, quotes are checked against the cited text, sources waiting for an article are listed, and notes are grouped by…" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Research notes: citations, sources, and concepts" />
+<meta name="twitter:description" content="Celorga can keep a research wiki in ordinary Org files: articles cite their sources, quotes are checked against the cited text, sources waiting for an article are listed, and notes are grouped by…" />
+<meta name="twitter:url" content="https://celorga.io/research-notes.html" />
+<meta name="twitter:image" content="https://celorga.io/assets/og/research-notes.png" />
+<meta name="twitter:image:alt" content="Research notes: citations, sources, and concepts: Celorga can keep a research wiki in ordinary Org files: articles cite their sources, quotes are checked against the cited text, sources waiting for an article are listed, and notes are grouped by…" />
+<link rel="stylesheet" href="assets/site.css" />
+<style>
+:root { color-scheme: light dark; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem auto; max-width: 860px; padding: 0 1rem; line-height: 1.5; }
+main { display: grid; gap: 0.75rem; }
+section.org2-headline { margin: 0.5rem 0 1rem; }
+h1,h2,h3,h4,h5,h6 { margin: 1rem 0 0.5rem; line-height: 1.25; }
+.org2-todo { display: inline-block; font-size: 0.8em; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; opacity: 0.9; }
+.org2-headline .org2-headline-done { opacity: 0.65; }
+.org2-headline .org2-headline-canceled { opacity: 0.45; text-decoration: line-through; }
+.org2-tags { font-size: 0.8em; opacity: 0.8; }
+.org2-tag { border: 1px solid currentColor; border-radius: 999px; padding: 0 0.35em; }
+.org2-planning { font-size: 0.95em; opacity: 0.9; }
+.org2-planning-kind { font-weight: 600; }
+.org2-properties { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 0.75rem; margin: 0.5rem 0; }
+.org2-properties dt { font-weight: 600; }
+.org2-properties dd { margin: 0; }
+.org2-src, .org2-example, .org2-verse, .org2-comment, .org2-directive, pre { overflow-x: auto; padding: 0.75rem; border-radius: 0.5rem; background: rgba(127,127,127,0.12); }
+.org2-center { text-align: center; }
+.org2-underline { text-decoration: underline; }
+table { border-collapse: collapse; width: 100%; margin: 0.5rem 0 1rem; }
+th, td { border: 1px solid rgba(127,127,127,0.35); padding: 0.35rem 0.5rem; text-align: left; }
+thead th { background: rgba(127,127,127,0.16); }
+a { text-decoration-thickness: 0.08em; text-underline-offset: 0.15em; }
+</style>
+<style>
+#content { max-width: 60em; margin: auto; line-height: 1.35; }
+#content li > p { margin: 0; }
+#content li + li { margin-top: 0.2rem; }
+</style>
+</head>
+<body>
+<div id="content" class="content">
+<main class="org2-document">
+<div class="celorga-nav"><details class="celorga-nav-menu" open><summary>Menu</summary><nav aria-label="Celorga"><a href="index.html">Celorga</a><a href="features.html">How it works</a><a href="getting-started.html">Getting started</a><a href="downloads.html">Downloads</a><a href="architecture.html">Architecture</a><details class="celorga-nav-dropdown"><summary>Developer docs</summary><div class="celorga-nav-dropdown-menu"><a href="reference.html">Overview</a><a href="corpus-flow.html">Corpus flow</a><a href="language-reference.html">Language reference</a><a href="tooling-reference.html">Tooling reference</a><a href="mcp-and-skills.html">MCP and agent skills</a><a href="maintenance-workflows.html">Maintenance and health</a><a href="research-notes.html">Research notes</a><a href="agent-quickstart.html">Agents and models</a><a href="semantics-status.html">Semantics and status</a><a href="migration.html">Practical migration</a></div></details><details class="celorga-nav-dropdown"><summary>Editors</summary><div class="celorga-nav-dropdown-menu"><a href="editors.html">Overview</a><a href="editors-macos.html">Celorga for macOS</a><a href="editors-vscode.html">VS Code</a><a href="editors-vim.html">Vim / Neovim</a><a href="editors-emacs.html">Emacs</a></div></details><details class="celorga-nav-dropdown"><summary>Compare</summary><div class="celorga-nav-dropdown-menu"><a href="celorga-vs-org-mode.html">For Org mode users</a><a href="celorga-vs-obsidian.html">vs Obsidian</a><a href="celorga-vs-markdown.html">vs Markdown</a></div></details><a class="celorga-nav-github" href="https://github.com/aviaviavi/celorga" target="_blank" rel="noopener noreferrer"><svg class="celorga-nav-github-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8a8.013 8.013 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.57 7.57 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.19 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg> GitHub</a><form class="celorga-site-search" role="search"><button class="celorga-site-search-toggle" type="button" aria-label="Open site search" aria-expanded="false">⌕</button><label class="sr-only" for="celorga-site-search-input">Search Celorga docs</label><input id="celorga-site-search-input" type="search" placeholder="Search docs" autocomplete="off" aria-label="Search Celorga docs" aria-expanded="false"/><div class="celorga-site-search-results" hidden></div></form></nav></details></div>
+<header class="org2-document-header">
+<h1 class="org2-document-title">Research notes: citations, sources, and concepts</h1>
+</header>
+<p>Celorga can keep a research wiki in ordinary Org files: articles cite their sources, quotes are checked against the cited text, sources waiting for an article are listed, and notes are grouped by concept. Everything is computed from the files on each run; there is no database to sync, and generated output is an ordinary Org file under <code>views/</code>.</p>
+<p>This works with notes written for other tools. Citations use org-cite or org-ref syntax, bibliographies are BibTeX files, and a crucible-style <code>:SOURCE_KEYS:</code> property counts as a citation.</p>
+<section class="org2-headline level-1">
+<h1 id="citations">Citations</h1>
+<p>Celorga reads three citation forms:</p>
+<ul>
+<li><p>org-cite: <code>[cite:@doe2024]</code>, <code>[cite/t:@doe2024; see @roe2025 p. 4]</code></p></li>
+<li><p>org-ref links without brackets: <code>cite:doe2024</code>, <code>citep:doe2024,roe2025</code>, <code>citet:&amp;doe2024;&amp;roe2025</code>, and the other natbib types (<code>citealp</code>, <code>citealt</code>, <code>citeauthor</code>, <code>citeyear</code>, <code>citeyearpar</code>, <code>citenum</code>, <code>citetext</code>, capitalized or starred)</p></li>
+<li><p>org-ref links in brackets: <code>[[citep:&amp;doe2024][Doe (2024)]]</code>, which also accept biblatex types such as <code>parencite</code> and <code>textcite</code></p></li>
+</ul>
+<p>Keys resolve against these bibliographies. When two define the same key, the first one wins:</p>
+<ol>
+<li><p><code>#+BIBLIOGRAPHY: refs.bib</code> keywords, or org-ref <code>bibliography:refs.bib</code> links, in the note itself (relative to the note)</p></li>
+<li><p><code>research.bibliography</code> in <code>celorga.json</code>, a list of corpus-relative <code>.bib</code> files; without it, <code>references.bib</code> or <code>bibliography.bib</code> at the corpus root</p></li>
+</ol>
+<p>In the rendered view and in HTML exports, a resolved key shows its author, year, and title on hover. When the BibTeX entry has a <code>file</code> field, the key links to that file; <code>file</code> accepts a plain path or the JabRef and Zotero <code>Description:path:Type</code> form, relative to the <code>.bib</code> file, a folder above it, or the corpus root. A key that isn't in the bibliography is underlined. Without a bibliography, citations show their keys.</p>
+<pre class="org2-src language-sh" style="padding: 0.9rem 1rem; border: 1px solid rgba(127,127,127,0.28); border-radius: 0.6rem; background: rgba(127,127,127,0.11); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 0.92rem; line-height: 1.28;"><code class="language-sh">celorga research citations --dir ~/wiki          # every citation and quote, resolved
+celorga research check --dir ~/wiki              # only problems; exits 1 when there are any</code></pre>
+<p><code>celorga lint</code> reports the same problems as <code>unresolved-citation</code> and <code>quote-not-in-source</code> warnings.</p>
+</section>
+<section class="org2-headline level-1">
+<h1 id="checking-quotes-against-sources">Checking quotes against sources</h1>
+<p>A quote is checked when it is cited:</p>
+<ul>
+<li><p>a <code>#+begin_quote</code> block, cited inside the block or in the paragraph right after it (an attribution line such as <code>-- citep:doe2024</code>)</p></li>
+<li><p>a passage of five or more words in double quotes with a citation or file: link right after it (at most four words between them, as in <code>&quot;…&quot; (p. 4) citep:doe2024</code>), or else right before it. A link elsewhere in the paragraph is taken to support a different claim</p></li>
+</ul>
+<p>The source is the cited key's <code>file</code>, or a file: link such as <code>[[file:raw/interview.org::88-94][interview]]</code>. A link ending in <code>::N</code> or <code>::N-M</code> limits the check to those lines. PDFs aren't read directly: put a text export beside the file (<code>paper.txt</code>, <code>paper.md</code>, <code>paper.org</code>, or <code>paper.html</code> next to <code>paper.pdf</code>) and Celorga compares against that.</p>
+<p>The comparison ignores case, punctuation, line breaks, and Org markup. An ellipsis (<code>...</code> or <code>…</code>) or a bracketed insertion such as <code>[sic]</code> splits the quote into parts, which must appear in order; a word cut by an ellipsis may be partial. When a quote cites lines that no longer hold it but the file does, the warning names the line it moved to. A quote is listed as not checked, rather than as a problem, when any of its sources has no readable text.</p>
+</section>
+<section class="org2-headline level-1">
+<h1 id="sources-waiting-for-an-article">Sources waiting for an article</h1>
+<pre class="org2-src language-sh" style="padding: 0.9rem 1rem; border: 1px solid rgba(127,127,127,0.28); border-radius: 0.6rem; background: rgba(127,127,127,0.11); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 0.92rem; line-height: 1.28;"><code class="language-sh">celorga research queue --dir ~/wiki              # sources no note distills yet
+celorga research queue --dir ~/wiki --all        # also list distilled sources and their notes</code></pre>
+<p>Sources are the files under <code>research.sourceDirs</code> in <code>celorga.json</code> (default <code>raw/</code> and <code>sources/</code>) plus BibTeX entries without a <code>file</code>. A source and its text exports, such as <code>paper.pdf</code> and <code>paper.txt</code>, count as one. A source is distilled when a note outside the source folders cites its key, links to the file, or names the key or file name (without extension) in a <code>:SOURCE_KEYS:</code> property. BibTeX entries are listed first, then files, oldest first.</p>
+</section>
+<section class="org2-headline level-1">
+<h1 id="concepts-and-related-notes">Concepts and related notes</h1>
+<pre class="org2-src language-sh" style="padding: 0.9rem 1rem; border: 1px solid rgba(127,127,127,0.28); border-radius: 0.6rem; background: rgba(127,127,127,0.11); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 0.92rem; line-height: 1.28;"><code class="language-sh">celorga research concepts --dir ~/wiki           # preview the index
+celorga research concepts --dir ~/wiki --apply   # write views/concepts.org
+celorga research related --dir ~/wiki --file wiki/concepts/activation-energy.org</code></pre>
+<p>The concept index groups notes by their <code>#+FILETAGS:</code> and heading tags, largest concept first, with the tags each concept most often appears with. Notes link by <code>id:</code> when they have a file-level ID. Pass <code>--out</code> to write somewhere other than <code>views/concepts.org</code>; the file is regenerated in full each time.</p>
+<p><code>related</code> ranks notes against one note: each shared tag counts 1, each shared cited source 2, and a link in either direction 3. Backlinks, unlinked mentions, and link suggestions are covered by <code>celorga backlinks</code>, <code>celorga roam connections</code>, <code>celorga roam linkify</code>, and <code>celorga ai suggest-links</code>; see the <a href="tooling-reference.html">tooling reference</a>.</p>
+</section>
+<section class="org2-headline level-1">
+<h1 id="corpora-in-a-hidden-folder">Corpora in a hidden folder</h1>
+<p>Corpus scans skip hidden folders such as <code>.git/</code>. A wiki kept entirely inside one, like a crucible project's <code>.crucible/</code>, therefore looks empty from the project folder. Celorga says so when it happens: a command that scans the project folder prints a note naming the hidden folder, and <code>celorga corpus show</code> lists it under <code>hiddenOrgDirectories</code>.</p>
+<p>To use such a wiki, point commands at the hidden folder, or make it a corpus and open that folder in the app (in the macOS open panel, press <code>Shift-Command-.</code> to show hidden folders):</p>
+<pre class="org2-src language-sh" style="padding: 0.9rem 1rem; border: 1px solid rgba(127,127,127,0.28); border-radius: 0.6rem; background: rgba(127,127,127,0.11); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 0.92rem; line-height: 1.28;"><code class="language-sh">celorga corpus init --dir ~/project/.crucible --id my-wiki --name &quot;My wiki&quot; --apply
+celorga research queue --dir ~/project/.crucible</code></pre>
+<p>A crucible project's <code>references.bib</code> sits at the root of <code>.crucible/</code>, so its keys resolve with no configuration, and its <code>file</code> paths, which are relative to the project folder, resolve too.</p>
+</section>
+</main>
+</div>
+<footer class="celorga-footer"><div class="celorga-footer-incubator"><span>Incubated at</span><a href="https://scarf.sh" target="_blank" rel="noopener noreferrer"><img class="celorga-footer-scarf-logo" src="assets/scarf-logo.svg" alt="Scarf" /></a></div><p class="celorga-footer-tagline">Build your knowledge locally and put it to work.</p><img referrerpolicy="no-referrer-when-downgrade" src="https://static.scarf.sh/a.png?x-pxid=e39e0a38-773e-4446-b8b0-804f923e3dc3" alt="" /></footer>
+</body>
+</html>

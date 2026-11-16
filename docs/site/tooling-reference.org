@@ -250,6 +250,8 @@ celorga corpus init --dir ~/team-notes --id team-notes --name "Team Notes" --kin
 
 =corpus init= previews by default, preserves unrelated =celorga.json= settings, creates standard corpus zones when applied, and refuses to silently replace a different existing identity. See [[file:collaboration.org][Shared corpora and collaboration]].
 
+Corpus scans skip hidden folders. =corpus show= lists hidden folders directly under the root that hold Org files as =hiddenOrgDirectories=, and a command that finds no Org files under a root, or finds a =.crucible/= folder beside them, prints a note on stderr naming the folder. To use a wiki kept in a hidden folder, pass that folder as =--dir= or run =corpus init= on it; see [[file:research-notes.org][Research notes]].
+
 * Batched workspace agent state
 
 =celorga workspace agent-state --dir CORPUS --json= reads runs, workflows, goals, and agent profiles in one process. Its =celorga:workspace-agent-state:v1= response has =runs=, =workflows=, =goals=, and =profiles= sections. Each contains the existing list envelope under =value=, or a section-local =error= string, plus =elapsedMilliseconds=. Clients must check each section for errors; a successful process exit does not mean every section succeeded.
@@ -1291,6 +1293,7 @@ Current checks include:
 - duplicate IDs and unresolved provenance references
 - stale generated artifacts when provenance file mtimes or =CELORGA_SOURCE_HASHES= no longer match
 - unresolved =id:= links, unresolved wiki links, and ambiguous wiki links/aliases using the same graph index as roam workflows
+- citation keys missing from the note's BibTeX bibliography (=unresolved-citation=) and cited quotes that don't appear in their source (=quote-not-in-source=); see [[file:research-notes.org][Research notes]]
 - headline priority cookies outside the file's =#+PRIORITIES:= range (default =A= to =C=), invalid cookies such as =[#AA]= or =[#-1]=, unclosed cookies such as =[#A=, and an invalid =#+PRIORITIES:= line. Editors receive the same checks as LSP warnings.
 - conventional corpus-flow checks when you organize notes as =raw/= -> =notes/= -> =compiled/= -> =views/= -> =publish/=
 
@@ -1459,6 +1462,17 @@ Each exact mention includes its source file, one-based line, zero-based UTF-16 =
 
 =mention-link= requires one occurrence key, an explicit destination ID, and the source's =--if-revision=. It rechecks the occurrence and current target index, refuses duplicate target IDs and stale source, and previews the resulting source. =--apply= makes one atomic revision-guarded write preserving line endings and file mode. It never batch-links ambiguous text or publishes a corpus. Celorga's Context → Graph panel consumes these same commands.
 
+* Research notes
+
+#+begin_src sh
+celorga research citations --dir ~/wiki --format json
+celorga research check --dir ~/wiki
+celorga research queue --dir ~/wiki --all
+celorga research concepts --dir ~/wiki --apply
+celorga research related --dir ~/wiki --file wiki/concepts/activation-energy.org
+#+end_src
+
+=citations= returns =celorga:research-citations:v1=: every org-cite or org-ref citation with its file, line, keys, and =unresolvedKeys=, plus every cited quote with =status= =verified=, =mismatch=, or =unverifiable= and the sources it was compared with. =check= keeps only problems and exits 1 when a key is unresolved or a quote doesn't appear in its source. =queue= returns =celorga:research-queue:v1= with =pending= sources (and =distilled= ones with =--all=). =concepts= previews an Org concept index and writes it to =--out= (default =views/concepts.org=) with =--apply=. =related= returns =celorga:research-related:v1=. Bibliographies come from =#+BIBLIOGRAPHY:= keywords, =research.bibliography= in =celorga.json=, or =references.bib= at the corpus root; source folders from =research.sourceDirs= (default =raw/=, =sources/=). See [[file:research-notes.org][Research notes]].
 
 * Org-crypt
 

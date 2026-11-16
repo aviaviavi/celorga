@@ -288,6 +288,24 @@
           }
         ]
       }
+    },
+    {
+      "id": "org-ref-citation-plain-link",
+      "source": "As citep:doe2024,roe2025 showed; excite:no and cite: none.\n",
+      "expectedAst": {
+        "type": "Document",
+        "version": "0",
+        "children": [
+          {
+            "type": "Paragraph",
+            "children": [
+              { "type": "Text", "value": "As " },
+              { "type": "Link", "format": "plain", "raw": "citep:doe2024,roe2025", "targetRaw": "citep:doe2024,roe2025" },
+              { "type": "Text", "value": " showed; excite:no and cite: none." }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

@@ -230,7 +230,7 @@ The root =celorga.json= may identify the corpus independently of its local path:
 Celorga also parses the everyday publishing and scholarly inline objects used by Org:
 
 - Footnote references: =[fn:label]=, =[fn:label:inline definition]=, and =[fn::anonymous definition]=
-- Citations: =[cite:@key]= and multi-reference/style forms such as =[cite/t:@doe; see @roe p. 4]=
+- Citations: =[cite:@key]= and multi-reference/style forms such as =[cite/t:@doe; see @roe p. 4]=, plus org-ref citation links such as =citep:doe2024,roe2025= or =[[citet:&doe2024][Doe]]= (see [[file:research-notes.org][Research notes]] for resolving them against BibTeX)
 - Entities: =\alpha=, =\copy=, =\rarr=, and other common Org entities
 - LaTeX fragments: =$x_2$=, =$$x = y$$=, =\(...\)=, and =\[...\]=
 - Export snippets: =@@html:<mark>highlighted</mark>@@=

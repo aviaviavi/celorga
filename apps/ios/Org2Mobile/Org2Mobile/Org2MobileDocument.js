@@ -414,8 +414,25 @@ var Org2MobileDocument = (() => {
       endIndex: startIndex + raw.length
     };
   }
+  var PLAIN_CITATION_LINK = /(?:[Cc]ite(?:p|t|alp|alt|author|year|yearpar|num|text)?\*?):&?[A-Za-z0-9_:.+\-/]+(?:[,;]&?[A-Za-z0-9_:.+\-/]+)*/y;
+  function parsePlainCitationLinkAt(value, startIndex) {
+    const first = value[startIndex];
+    if (first !== "c" && first !== "C") return null;
+    const previous = startIndex > 0 ? value[startIndex - 1] : "";
+    if (previous && /[A-Za-z0-9_&:/.\-]/.test(previous)) return null;
+    PLAIN_CITATION_LINK.lastIndex = startIndex;
+    const match = PLAIN_CITATION_LINK.exec(value);
+    if (!match) return null;
+    let raw = match[0];
+    while (/[.,;:]$/.test(raw)) raw = raw.slice(0, -1);
+    if (!/:&?[A-Za-z0-9_+\-/]/.test(raw)) return null;
+    return {
+      node: link({ format: "plain", raw, targetRaw: raw }),
+      endIndex: startIndex + raw.length
+    };
+  }
   function parseLinkAt(value, startIndex) {
-    return parseBracketLinkAt(value, startIndex) ?? parseAngleLinkAt(value, startIndex) ?? parsePlainUrlAt(value, startIndex);
+    return parseBracketLinkAt(value, startIndex) ?? parseAngleLinkAt(value, startIndex) ?? parsePlainUrlAt(value, startIndex) ?? parsePlainCitationLinkAt(value, startIndex);
   }
   function parseTargetAt(value, startIndex) {
     if (value[startIndex] !== "<") return null;
@@ -635,8 +652,11 @@ var Org2MobileDocument = (() => {
     "$",
     "\\",
     "^",
-    "h"
+    "h",
     // targets, timestamps, objects, and http(s)
+    "c",
+    "C"
+    // org-ref citation links such as citep:KEY
   ]);
   function parseInlinesFromText(value) {
     const out = [];
@@ -1910,6 +1930,50 @@ var Org2MobileDocument = (() => {
       if (popped) finalizeHeadline(popped, documentEndLine);
     }
     return doc;
+  }
+
+  // src/citationSyntax.ts
+  var CITATION_LINK_TYPE = /^(?:[Cc]ite(?:p|t|alp|alt|author|year|yearpar|num|text|url)?|(?:[Pp]aren|[Tt]ext|[Aa]uto|[Ff]oot|[Ff]ull|[Ss]mart|[Ss]uper|no)cites?)\*?$/;
+  function isCitationLinkType(type) {
+    return CITATION_LINK_TYPE.test(type);
+  }
+  function citationFromLinkTarget(target) {
+    const separator = target.indexOf(":");
+    if (separator <= 0) return null;
+    const type = target.slice(0, separator);
+    if (!isCitationLinkType(type)) return null;
+    const body = target.slice(separator + 1).trim();
+    if (!body) return null;
+    const references = [];
+    if (body.includes("&")) {
+      for (const segment of body.split(";")) {
+        const match = /^(.*?)&([^\s;,&]+)(.*)$/.exec(segment);
+        if (!match) continue;
+        const prefix = (match[1] ?? "").trim();
+        const suffix = (match[3] ?? "").trim();
+        references.push({ key: match[2], ...prefix ? { prefix } : {}, ...suffix ? { suffix } : {} });
+      }
+    } else {
+      for (const key of body.split(",")) {
+        const trimmed = key.trim();
+        if (trimmed) references.push({ key: trimmed });
+      }
+    }
+    return references.length ? { syntax: "org-ref", style: type, references } : null;
+  }
+  function citationFromNode(node) {
+    if (node.type === "Citation") {
+      return {
+        syntax: "org-cite",
+        ...node.styleRaw ? { style: node.styleRaw } : {},
+        references: node.references.map((reference) => ({
+          key: reference.keyRaw,
+          ...reference.prefixRaw ? { prefix: reference.prefixRaw } : {},
+          ...reference.suffixRaw ? { suffix: reference.suffixRaw } : {}
+        }))
+      };
+    }
+    return citationFromLinkTarget(String(node.targetRaw || "").trim());
   }
 
   // src/chartInteraction.ts
@@ -4636,6 +4700,9 @@ li:has(> input[type="checkbox"]:checked) > p { color: var(--org2-muted); text-de
 .org2-headline .org2-headline-done { color: color-mix(in srgb, var(--org2-text) 58%, transparent); }
 .org2-headline .org2-headline-canceled { color: color-mix(in srgb, var(--org2-text) 42%, transparent); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--org2-text) 35%, transparent); }
 .org2-progress-cookie, .org2-latex-fragment, .org2-citation, .org2-export-snippet { font-family: var(--org2-font-mono); }
+.org2-citation-key[title] { text-decoration: underline dotted; text-underline-offset: 0.18em; }
+a.org2-citation-key { color: inherit; }
+.org2-citation-unresolved { text-decoration: underline wavy color-mix(in srgb, currentColor 45%, transparent); }
 .org2-latex-fragment { color: var(--org2-accent); }
 .org2-footnote-definition { margin: 0.7rem 0; padding-top: 0.45rem; border-top: 1px solid var(--org2-rule); color: var(--org2-muted); font-size: 0.86rem; }
 .org2-description-list { display: grid; grid-template-columns: max-content 1fr; gap: 0.32rem 0.8rem; }
@@ -5494,8 +5561,42 @@ ${rawTarget}`;
     return `File
 ${expandedTarget}`;
   }
+  function renderCitationKey(key, context) {
+    const label = escapeHtml2(`@${key}`);
+    if (!context.citationLookup) return label;
+    const info = context.citationLookup(key);
+    if (!info.resolved) {
+      return `<span class="org2-citation-key org2-citation-unresolved" data-org2-citation-key="${escapeAttr(key)}" title="${escapeAttr(`${key} is not in the bibliography`)}">${label}</span>`;
+    }
+    const title = escapeAttr(info.title || key);
+    if (info.sourceTarget) {
+      let href = "";
+      if (context.profile === "app") href = appLinkHref(info.sourceTarget, info.sourceTarget, context);
+      else if (/\.(org|org2)$/i.test(info.sourceTarget)) href = rewriteOrgFileHrefForHtml(info.sourceTarget);
+      if (href) return `<a class="org2-citation-key" data-org2-citation-key="${escapeAttr(key)}" href="${escapeAttr(href)}" title="${title}">${label}</a>`;
+    }
+    return `<span class="org2-citation-key" data-org2-citation-key="${escapeAttr(key)}" title="${title}">${label}</span>`;
+  }
+  function renderCitation(citation, context, around = [], description) {
+    const style = escapeAttr(citation.style || "");
+    if (description) {
+      const keys = citation.references.map((reference) => reference.key);
+      const titles = context.citationLookup ? keys.map((key) => context.citationLookup(key).title || key) : keys;
+      return `<cite class="org2-citation" data-org2-citation-style="${style}" title="${escapeAttr(titles.join("\n"))}">${escapeHtml2(description)}</cite>`;
+    }
+    const references = citation.references.map((reference) => [
+      reference.prefix ? escapeHtml2(reference.prefix) : "",
+      renderCitationKey(reference.key, context),
+      reference.suffix ? escapeHtml2(reference.suffix) : ""
+    ].filter(Boolean).join(" ")).join("; ");
+    const [prefix, suffix] = around;
+    const content = [prefix ? escapeHtml2(prefix) : "", references, suffix ? escapeHtml2(suffix) : ""].filter(Boolean).join(" ");
+    return `<cite class="org2-citation" data-org2-citation-style="${style}">${content}</cite>`;
+  }
   function renderLink(node, context) {
     const hrefRaw = String(node.targetRaw || "").trim();
+    const citation = citationFromLinkTarget(hrefRaw);
+    if (citation) return renderCitation(citation, context, [], String(node.descriptionRaw || "").trim() || void 0);
     const colorBinding = node.descriptionRaw !== void 0 ? parseOrgColorBindingTarget(hrefRaw) : null;
     if (colorBinding) {
       return renderColorBinding(node.descriptionRaw || "", colorBinding, false);
@@ -5609,11 +5710,9 @@ ${expandedTarget}`;
       return `<sup class="org2-footnote-reference"><a href="#${escapeAttr(id)}">${escapeHtml2(label)}</a></sup>`;
     }
     if (node.type === "Citation") {
-      const references = node.references.map(
-        (reference) => [reference.prefixRaw, `@${reference.keyRaw}`, reference.suffixRaw].filter(Boolean).join(" ")
-      ).join("; ");
-      const content = [node.prefixRaw, references, node.suffixRaw].filter(Boolean).join(" ");
-      return `<cite class="org2-citation" data-org2-citation-style="${escapeAttr(node.styleRaw || "")}">${escapeHtml2(content)}</cite>`;
+      const citation = citationFromNode(node);
+      if (!citation) return escapeHtml2(node.raw);
+      return renderCitation(citation, context, [node.prefixRaw, node.suffixRaw]);
     }
     if (node.type === "Target") {
       const id = normalizeAnchorId(node.valueRaw) || "target";
@@ -6159,6 +6258,7 @@ ${rows}
       embedResolver: opts.embedResolver,
       sourcePath: opts.sourcePath,
       codeFile: opts.codeFile,
+      citationLookup: opts.citationLookup,
       // Reference-only clients (including the mobile JavaScriptCore bundle) have
       // no filesystem. Only a supplied resolver needs a canonical cycle key.
       embedStack: opts.embedResolver && opts.sourcePath ? [opts.embedResolver.sourceKey ?? `${node_path_default.resolve(opts.sourcePath)}:1`] : [],
@@ -6257,7 +6357,8 @@ ${compatClose}${postambleSection}</body>
       charts: opts.charts,
       pluginRenders: opts.pluginRenders,
       embedResolver: opts.embedResolver,
-      codeFile: opts.codeFile
+      codeFile: opts.codeFile,
+      citationLookup: opts.citationLookup
     });
     const mainBody = renderMainBody({
       doc,
@@ -6339,7 +6440,8 @@ ${PROJECT_THREADS_SCRIPT}
       charts: opts.charts,
       pluginRenders: opts.pluginRenders,
       embedResolver: opts.embedResolver,
-      codeFile: opts.codeFile
+      codeFile: opts.codeFile,
+      citationLookup: opts.citationLookup
     });
     return { ...rendered, html: collapseAppPgpArmorParagraphs(rendered.html) };
   }

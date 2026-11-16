@@ -31,6 +31,10 @@ Celorga reference is split into two detailed sections:
   - VS Code installation
   - complete default keyboard shortcut map
   - Vim/Neovim filetype support and Emacs coexistence notes
+- [[file:research-notes.org][Research notes]]
+  - org-cite and org-ref citations resolved against BibTeX
+  - quotes checked against their cited sources
+  - the queue of sources awaiting an article, and a concept index
 - [[file:maintenance-workflows.org][Maintenance and health workflows]]
   - compiler-style lint, health, and repair passes
   - trust boundaries for generated artifacts

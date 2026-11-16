@@ -238,7 +238,7 @@ MUST try candidates in this order:
 8. Hard line break.
 9. Progress cookie.
 10. Timestamp, extended to a timestamp range when possible.
-11. Bracket link, then angle link, then plain HTTP(S) URL.
+11. Bracket link, then angle link, then plain HTTP(S) URL, then plain citation link.
 12. Emphasis.
 13. Text fallback.
 
@@ -285,6 +285,17 @@ brackets.
 A plain link begins with lowercase =http://= or =https://= and extends to
 whitespace. Trailing =)=, comma, period, exclamation mark, question mark,
 semicolon, and colon are removed from the recognized URL and remain text.
+
+A plain citation link is an org-ref citation written without brackets, such
+as =citep:doe2024= or =cite:&doe2024;&roe2025=. It begins with one of the
+link types =cite=, =citep=, =citet=, =citealp=, =citealt=, =citeauthor=,
+=citeyear=, =citeyearpar=, =citenum=, or =citetext= (the first letter may be
+uppercase, and a trailing =*= is allowed), followed by a colon and one or
+more keys of letters, digits, and =_:.+-/=, separated by commas or
+semicolons and each optionally prefixed with =&=. It is not recognized when
+the preceding character is a letter, digit, or one of =_&:/.-=. A trailing
+period, comma, semicolon, or colon remains text. It produces a =Link= node
+with =format: "plain"=; resolving it as a citation is a semantic module.
 
 ** Other inline objects
 

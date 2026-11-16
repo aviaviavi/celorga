@@ -7,6 +7,7 @@ import { parseOrgToCanonicalAst } from "./parser.js";
 import { renderPluginSourceBlocks } from "./pluginRuntime.js";
 import { createLiveEmbedResolver } from "./liveEmbeds.js";
 import { codeLanguageForPath } from "./codeHighlight.js";
+import { citationLookupForDocument } from "./research.js";
 import type { DocumentNode, SrcBlockNode } from "./ast.js";
 
 export interface AppHTMLRenderOptions {
@@ -100,6 +101,7 @@ export function renderAppHTML(input: string, options: AppHTMLRenderOptions): str
     pluginRenders,
     linkAbbreviations,
     linearTeam,
+    citationLookup: citationLookupForDocument(renderInput, sourcePath, options.corpusRoot),
     embedResolver: sourcePath && !options.referenceEmbeds
       ? createLiveEmbedResolver({ sourcePath, rootDir: options.corpusRoot })
       : undefined,

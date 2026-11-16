@@ -227,6 +227,12 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
         writes: "mixed",
       },
       {
+        id: "research-notes",
+        purpose: "Resolve org-cite and org-ref citations (cite:, citep:, citet:) against BibTeX bibliographies, check that quoted passages appear in their cited source files, list sources no note distills yet, write a tag-based concept index under views/, and rank related notes by shared tags, sources, and links. Corpora kept in a hidden folder such as .crucible/ are reported, since scans skip hidden folders.",
+        commands: ["celorga research citations", "celorga research check", "celorga research queue", "celorga research concepts", "celorga research related"],
+        writes: "preview-by-default",
+      },
+      {
         id: "file-search",
         purpose: "Find files and folders anywhere under this Mac's indexed folders by name and folder, newest first, with repeat downloads and copies grouped; the index and folder config are machine-local, never in a corpus.",
         commands: ["celorga files search", "celorga files index", "celorga files status", "celorga files config"],

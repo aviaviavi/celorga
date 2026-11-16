@@ -45,6 +45,7 @@ import {
   reportHiddenOrgDirectories,
 } from "./corpusFiles.js";
 import { resolvePublishHeadIncludes } from "./publish-defaults.js";
+import { citationLookupForDocument, researchLintIssues } from "./research.js";
 import { documentTodoSequences, todoSequencesForFile, todoConfigurationKey, todoKeywordInWorkflow, type TodoSequence, assignTodoInText, formatOrgTimestamp, isActiveTodoKeyword, isTerminalTodoKeyword, normalizeTodoKeyword, TODO_KEYWORDS, updateTodoInText, type TodoStatus } from "./todo.js";
 import { lintPriorityCookies } from "./priorityLint.js";
 import { fileEntryInDatetree, parseDatetreeLevels, type DatetreeLevel } from "./datetree.js";
@@ -9482,6 +9483,7 @@ Roam / IDs:
   celorga property-view list|query|save|edit --dir CORPUS [--help]
   celorga view list|create|show|refresh|state|action|undo|bridge --dir CORPUS [--help]
   celorga crm list|show|resolve|set|follow-up|create|link|upcoming|schedule --dir CORPUS [--help]
+  celorga research citations|check|queue|concepts|related [--dir CORPUS] [--help]
   celorga apps list|enable|disable|render --dir CORPUS [--help]
   celorga query-data (--file FILE|--stdin) [--results NAME|--line N] [--out FILE|--apply] [--format org|json]
   celorga table recalculate --file FILE [--line N] [--formula-index N] [--apply] [--format text|diff|json]
@@ -11207,6 +11209,7 @@ Flags:
       const outputRelativePathPosix = outputRelativePath.split(path.sep).join("/");
 
       const firstPass = renderOrgDocumentToHtml(sourceAst, {
+        citationLookup: citationLookupForDocument(sourceRaw, sourcePath),
         sourcePath: toDisplayPath(sourcePath),
         stylesheets: project.stylesheets,
         includeDefaultStyle: project.includeDefaultStyle,
@@ -11332,6 +11335,7 @@ Flags:
       ].filter((item) => String(item || "").trim().length > 0);
 
       const rendered = renderOrgDocumentToHtml(sourceAst, {
+        citationLookup: citationLookupForDocument(sourceRaw, sourcePath),
         sourcePath: toDisplayPath(sourcePath),
         stylesheets: project.stylesheets,
         includeDefaultStyle: project.includeDefaultStyle,
@@ -11785,6 +11789,7 @@ Flags:
         const sourceCharts = embeddedChartsForSource(sourceRaw, sourcePath);
         const sourcePluginRenders = await pluginRendersForDocument(sourceAst, sourcePath);
         const rendered = renderOrgDocumentToHtml(sourceAst, {
+          citationLookup: citationLookupForDocument(sourceRaw, sourcePath),
           sourcePath: toDisplayPath(sourcePath),
           stylesheets: exportStylesheetsNormalized,
           includeDefaultStyle: exportIncludeDefaultStyle,
@@ -11922,6 +11927,7 @@ Flags:
     const sourceCharts = embeddedChartsForSource(sourceRaw, sourcePath);
     const sourcePluginRenders = await pluginRendersForDocument(sourceAst, sourcePath);
     const rendered = renderOrgDocumentToHtml(sourceAst, {
+      citationLookup: citationLookupForDocument(sourceRaw, sourcePath),
       title: exportTitle || undefined,
       sourcePath: sourcePathInput,
       stylesheets: exportStylesheetsNormalized,
@@ -13628,6 +13634,7 @@ Flags:
     }
 
     appendRoamGraphLintIssues(files, issues);
+    issues.push(...researchLintIssues(files, fileContents, dir || undefined));
 
     issues.sort((a, b) => {
       const fileCmp = a.file.localeCompare(b.file);
