@@ -2363,7 +2363,9 @@ extension WorkspaceStore {
 
   public var selectedAIChatModelLabel: String {
     let model = selectedAIChatModel ?? aiChatEffectiveModel
-    guard let model else { return "Model" }
+    // A harness such as Claude Code does not report which model its default
+    // is; say so rather than implying a specific model.
+    guard let model else { return aiChatModelOptions.isEmpty ? "Model" : "Default model" }
     return aiChatModelOptions.first(where: { $0.id == model })?.label
       ?? model.split(separator: "/").last.map(String.init)
       ?? model
@@ -3130,7 +3132,8 @@ extension WorkspaceStore {
       }
       let cached = aiChatConfigurationCatalogCache[thread.destinationID]
       let displayedModels = models.isEmpty ? cached?.models ?? [] : models
-      let displayedEffectiveModel = effectiveModel ?? cached?.effectiveModel
+      let displayedEffectiveModel = effectiveModel
+        ?? cached?.effectiveModel(forRequestedModel: thread.model)
       let canUseCachedReasoning = cached?.requestedModel == thread.model
       let displayedReasoningOptions = resolvedReasoningConfiguration
         ? reasoningOptions

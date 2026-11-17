@@ -75,7 +75,7 @@ extension WorkspaceStore {
       return false
     }
     aiChatModelOptions = cached.models
-    aiChatEffectiveModel = thread.model ?? cached.effectiveModel
+    aiChatEffectiveModel = cached.effectiveModel(forRequestedModel: thread.model)
 
     let selectedModel = thread.model.flatMap { selected in
       cached.models.first(where: { $0.id == selected })

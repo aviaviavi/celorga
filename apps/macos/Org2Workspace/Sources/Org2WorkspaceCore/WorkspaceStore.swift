@@ -716,6 +716,15 @@ struct AIChatConfigurationCatalogCacheEntry: Codable, Equatable, Sendable {
   let effectiveModel: String?
   let reasoningOptions: [AIChatReasoningOption]
   let defaultReasoningEffort: String?
+
+  /// The model a chat requesting `requested` runs. The cached effective
+  /// model describes only the request it was resolved for: another chat's
+  /// explicit choice says nothing about what this destination's default is.
+  func effectiveModel(forRequestedModel requested: String?) -> String? {
+    requested
+      ?? (requestedModel == nil ? effectiveModel : nil)
+      ?? models.first(where: \.isDefault)?.id
+  }
 }
 
 struct CanonicalDocumentCacheEntry: Sendable {
