@@ -944,6 +944,7 @@ private struct OrgRenderedDocumentPreview: View {
             recalculateTableFormulas: { store.requestRecalculateRenderedTableFormulas(at: $0) },
             reportViewportSourceLine: reportViewportSourceLine,
             startWorkAtHeading: startWorkAction,
+            allowsMarkDone: source.isEditable,
             openWorkAtHeading: { store.openWork(onHeadingAt: $0) },
             headingWorkBadges: store.headingWorkBadges(for: source),
             entryEffects: store.renderedEntryEffects,

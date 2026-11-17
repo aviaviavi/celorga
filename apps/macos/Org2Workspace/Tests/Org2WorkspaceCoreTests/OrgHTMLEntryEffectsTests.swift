@@ -58,6 +58,53 @@ final class OrgHTMLEntryEffectsTests: XCTestCase {
     )
   }
 
+  func testMarkDoneLinkMarksTheHeadingDoneOnlyWhenEnabled() throws {
+    let coordinator = OrgHTMLDocumentView.Coordinator()
+    var performed: [(OrgHTMLRenderedEntryAction, Int)] = []
+    coordinator.performEntryAction = { performed.append(($0, $1)) }
+    let url = try XCTUnwrap(URL(string: "org2-workspace://mark-done?line=3"))
+
+    XCTAssertTrue(coordinator.openHeadingWorkLink(url))
+    XCTAssertTrue(performed.isEmpty, "A read-only document must not mark headings done")
+
+    coordinator.markDoneEnabled = true
+    XCTAssertTrue(coordinator.openHeadingWorkLink(url))
+    XCTAssertEqual(performed.count, 1)
+    guard case .todo(.done)? = performed.first?.0 else {
+      return XCTFail("Expected Mark done to set DONE, got \(String(describing: performed.first?.0))")
+    }
+    XCTAssertEqual(performed.first?.1, 3)
+    XCTAssertFalse(coordinator.openHeadingWorkLink(try XCTUnwrap(URL(string: "org2-workspace://mark-done?line=0"))))
+    XCTAssertFalse(coordinator.openHeadingWorkLink(try XCTUnwrap(URL(string: "https://example.test/mark-done?line=3"))))
+    XCTAssertEqual(performed.count, 1)
+  }
+
+  func testMarkDoneButtonAppearsOnOpenTodoHeadingsBeforeAskAI() async throws {
+    let view = try await page(for: sample)
+    let install = OrgHTMLHeadingWorkScript.installation + "\nwindow.__org2InstallStartWork(true, true);\ntrue;"
+    _ = try await view.evaluateJavaScript(install)
+    let script = """
+    Array.from(document.querySelectorAll('details.org2-headline[data-org2-start-line]')).map((headline) =>
+      headline.dataset.org2StartLine + ':' + Array.from(headline.querySelectorAll(':scope > summary > .org2-heading-ai-action'))
+        .map((button) => button.classList.contains('org2-heading-mark-done') ? 'done'
+          : button.classList.contains('org2-heading-start-work') ? 'start' : 'ask').join(','))
+    """
+    let openValue = try await evaluate(script, in: view)
+    let open = try XCTUnwrap(openValue as? [String])
+    XCTAssertEqual(open, ["3:done,start,ask", "5:done,start,ask", "7:ask", "9:ask"])
+
+    // Without Start work (for example, no agent), Mark done still appears.
+    _ = try await view.evaluateJavaScript("window.__org2InstallStartWork(false, true);\ntrue;")
+    let markOnlyValue = try await evaluate(script, in: view)
+    let markOnly = try XCTUnwrap(markOnlyValue as? [String])
+    XCTAssertEqual(markOnly, ["3:done,ask", "5:done,ask", "7:ask", "9:ask"])
+
+    _ = try await view.evaluateJavaScript("window.__org2InstallStartWork(false, false);\ntrue;")
+    let noneValue = try await evaluate(script, in: view)
+    let none = try XCTUnwrap(noneValue as? [String])
+    XCTAssertEqual(none, ["3:ask", "5:ask", "7:ask", "9:ask"])
+  }
+
   func testRenderedTodoActionShowsTheChangeBeforeTheWriteFinishes() async throws {
     let (store, note) = try makeStore()
     defer { try? FileManager.default.removeItem(at: note.deletingLastPathComponent()) }

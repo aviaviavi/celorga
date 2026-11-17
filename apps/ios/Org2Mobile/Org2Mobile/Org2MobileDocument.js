@@ -4950,7 +4950,7 @@ body.org2-resizing-column { cursor: col-resize; user-select: none; }
   var APP_DOCUMENT_SCRIPT = `(() => {
   function appendAIAction(container, line) {
     if (!container || !line) return;
-    if (container.querySelector(":scope > .org2-heading-ai-action:not(.org2-heading-start-work)")) return;
+    if (container.querySelector(":scope > .org2-heading-ai-action:not(.org2-heading-start-work):not(.org2-heading-mark-done)")) return;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "org2-heading-ai-action";

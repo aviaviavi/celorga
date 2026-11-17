@@ -618,6 +618,8 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
   var reportViewportSourceLine: @MainActor (Int?) -> Void = { _ in }
   /// Non-nil enables the hover "Start work" button on open TODO headings.
   var startWorkAtHeading: (@MainActor (Int) -> Void)? = nil
+  /// Shows a hover "Mark done" button on open TODO headings.
+  var allowsMarkDone = false
   var openWorkAtHeading: @MainActor (Int) -> Void = { _ in }
   var headingWorkBadges: [HeadingWorkBadge] = []
   /// Provisional heading changes to show before the re-render arrives.
@@ -714,8 +716,10 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     coordinator.openWorkAtHeading = openWorkAtHeading
     let headingWorkChanged = coordinator.headingWorkBadges != headingWorkBadges
       || coordinator.startWorkEnabled != (startWorkAtHeading != nil)
+      || coordinator.markDoneEnabled != allowsMarkDone
     coordinator.headingWorkBadges = headingWorkBadges
     coordinator.startWorkEnabled = startWorkAtHeading != nil
+    coordinator.markDoneEnabled = allowsMarkDone
     coordinator.performEntryAction = performEntryAction
     coordinator.peekEncryptedText = peekEncryptedText
     coordinator.allowsEntryContextMenu = allowsEntryContextMenu
@@ -913,6 +917,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     var headingWorkBadges: [HeadingWorkBadge] = []
     var projectThreadRows: [WorkspaceProjectThreadTable.Row]?
     var startWorkEnabled = false
+    var markDoneEnabled = false
     var performEntryAction: @MainActor (OrgHTMLRenderedEntryAction, Int) -> Void = { _, _ in }
     var peekEncryptedText: (@MainActor (Int) -> Void)?
     var allowsEntryContextMenu = true
@@ -1323,7 +1328,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
 
     func applyHeadingWork(to webView: WKWebView) {
       let script = OrgHTMLHeadingWorkScript.installation
-        + "\nwindow.__org2InstallStartWork?.(\(startWorkEnabled));"
+        + "\nwindow.__org2InstallStartWork?.(\(startWorkEnabled), \(markDoneEnabled));"
         + "\nwindow.__org2SetWorkBadges?.(\(OrgHTMLHeadingWorkScript.badgesPayload(headingWorkBadges)));"
       webView.evaluateJavaScript(script)
     }
@@ -1730,19 +1735,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
         return
       }
 
-      if url.scheme?.lowercased() == AIChatFileReference.deepLinkScheme,
-         url.host == "start-work" || url.host == "open-work",
-         let rawLine = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-           .queryItems?
-           .first(where: { $0.name == "line" })?
-           .value,
-         let line = Int(rawLine),
-         line > 0 {
-        if url.host == "start-work" {
-          startWorkAtHeading?(line)
-        } else {
-          openWorkAtHeading(line)
-        }
+      if openHeadingWorkLink(url) {
         decisionHandler(.cancel)
         return
       }
@@ -1782,6 +1775,30 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       }
 
       decisionHandler(.cancel)
+    }
+
+    /// Handles the hover buttons on TODO headings: Start work, its status
+    /// badge, and Mark done. Returns false for any other URL.
+    func openHeadingWorkLink(_ url: URL) -> Bool {
+      guard url.scheme?.lowercased() == AIChatFileReference.deepLinkScheme,
+            let host = url.host,
+            ["start-work", "open-work", "mark-done"].contains(host),
+            let rawLine = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+              .queryItems?
+              .first(where: { $0.name == "line" })?
+              .value,
+            let line = Int(rawLine),
+            line > 0
+      else { return false }
+      switch host {
+      case "start-work":
+        startWorkAtHeading?(line)
+      case "mark-done":
+        if markDoneEnabled { performEntryAction(.todo(.done), line) }
+      default:
+        openWorkAtHeading(line)
+      }
+      return true
     }
 
     func openChatLink(_ url: URL) -> Bool {

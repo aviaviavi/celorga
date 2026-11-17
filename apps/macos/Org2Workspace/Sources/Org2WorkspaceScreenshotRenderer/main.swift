@@ -384,7 +384,7 @@ struct Org2WorkspaceScreenshotRenderer {
           };
           const install = window.__org2InstallStartWork;
           if (install && !install.__docsHover) {
-            window.__org2InstallStartWork = (enabled) => { install(enabled); hover(); };
+            window.__org2InstallStartWork = (...args) => { install(...args); hover(); };
             window.__org2InstallStartWork.__docsHover = true;
           }
           hover();

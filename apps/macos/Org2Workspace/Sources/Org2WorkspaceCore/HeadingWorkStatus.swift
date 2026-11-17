@@ -255,8 +255,8 @@ enum HeadingWorkStatus {
   }
 }
 
-/// Rendered-document chrome for heading work: a hover "Start work" button on
-/// open TODO headings, and an always-visible state badge on headings with
+/// Rendered-document chrome for heading work: hover "Mark done" and "Start
+/// work" buttons on open TODO headings, and an always-visible state badge on headings with
 /// attached work. Injected by the app; the shared HTML export is unchanged.
 enum OrgHTMLHeadingWorkScript {
   static let installation = """
@@ -280,27 +280,46 @@ enum OrgHTMLHeadingWorkScript {
       @media (prefers-reduced-motion: reduce) { .org2-work-badge.state-working::before { animation: none; } }`;
     document.documentElement.appendChild(style);
     const go = (url) => { window.location.href = url; };
-    window.__org2InstallStartWork = (enabled) => {
-      document.querySelectorAll('.org2-heading-start-work').forEach((node) => node.remove());
-      if (!enabled) return;
+    // `enabled` adds "Start work"; `markDone` adds "Mark done". Both appear
+    // on hover over an open TODO heading, before the page's "Ask AI" button.
+    window.__org2InstallStartWork = (enabled, markDone) => {
+      document.querySelectorAll('.org2-heading-start-work, .org2-heading-mark-done').forEach((node) => node.remove());
+      if (!enabled && !markDone) return;
       document.querySelectorAll('details.org2-headline[data-org2-start-line]').forEach((headline) => {
         const summary = headline.querySelector(':scope > .org2-headline-summary');
         if (!summary) return;
         const todo = summary.querySelector('.org2-todo');
         if (!todo || /todo-(done|canceled|cancelled)/.test(todo.className)) return;
         const line = headline.dataset.org2StartLine;
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'org2-heading-ai-action org2-heading-start-work';
-        button.textContent = '▶ Start work…';
-        button.title = 'Start an agent run on this task and open its chat';
-        button.setAttribute('aria-label', 'Start work on this task with AI');
-        button.addEventListener('click', (event) => {
-          event.preventDefault(); event.stopPropagation();
-          go('org2-workspace://start-work?line=' + encodeURIComponent(line));
-        });
-        const ask = summary.querySelector(':scope > .org2-heading-ai-action:not(.org2-heading-start-work)');
-        summary.insertBefore(button, ask || null);
+        const ask = summary.querySelector(':scope > .org2-heading-ai-action:not(.org2-heading-start-work):not(.org2-heading-mark-done)');
+        if (markDone) {
+          const done = document.createElement('button');
+          done.type = 'button';
+          done.className = 'org2-heading-ai-action org2-heading-mark-done';
+          done.textContent = '✓ Mark done';
+          done.title = 'Mark this task DONE';
+          done.setAttribute('aria-label', 'Mark this task done');
+          done.addEventListener('click', (event) => {
+            event.preventDefault(); event.stopPropagation();
+            // The entry updates in place; hide the button until it does.
+            done.hidden = true;
+            go('org2-workspace://mark-done?line=' + encodeURIComponent(line));
+          });
+          summary.insertBefore(done, ask || null);
+        }
+        if (enabled) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'org2-heading-ai-action org2-heading-start-work';
+          button.textContent = '▶ Start work…';
+          button.title = 'Start an agent run on this task and open its chat';
+          button.setAttribute('aria-label', 'Start work on this task with AI');
+          button.addEventListener('click', (event) => {
+            event.preventDefault(); event.stopPropagation();
+            go('org2-workspace://start-work?line=' + encodeURIComponent(line));
+          });
+          summary.insertBefore(button, ask || null);
+        }
       });
     };
     window.__org2SetWorkBadges = (badges) => {
