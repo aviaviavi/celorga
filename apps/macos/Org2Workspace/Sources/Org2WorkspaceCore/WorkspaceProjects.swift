@@ -171,6 +171,54 @@ enum AIChatNewThreadProjectPicker {
   }
 }
 
+/// Whether changed corpus files can change the project list: an existing
+/// project note changed or disappeared, or a note now declares itself a
+/// project. Matches the header check in `src/project.ts`.
+enum WorkspaceProjectFileChanges {
+  static let headerByteLimit = 8_192
+
+  static func affectProjects(changedPaths: [String], knownProjectFiles: Set<String>) -> Bool {
+    for path in changedPaths {
+      let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+      if knownProjectFiles.contains(standardized) { return true }
+      let lowercased = standardized.lowercased()
+      guard lowercased.hasSuffix(".org") || lowercased.hasSuffix(".org2") else { continue }
+      if declaresProject(atPath: standardized) { return true }
+    }
+    return false
+  }
+
+  static func declaresProject(atPath path: String) -> Bool {
+    guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+    defer { try? handle.close() }
+    guard let data = try? handle.read(upToCount: headerByteLimit) else { return false }
+    // A cut multi-byte character at the limit decodes as a replacement character.
+    let header = String(decoding: data, as: UTF8.self)
+    return header.range(
+      of: #"(?im)^#\+(?:CELORGA|ORG2)_KIND:[ \t]*project[ \t]*$"#,
+      options: .regularExpression
+    ) != nil
+  }
+}
+
+extension WorkspaceStore {
+  /// Coalesces bursts of file events (a sync often writes a note twice) into
+  /// one project list reload.
+  func scheduleProjectRefreshAfterFileChange() {
+    projectFileChangeRefreshTask?.cancel()
+    projectFileChangeRefreshTask = Task { @MainActor [weak self] in
+      do {
+        try await Task.sleep(for: .milliseconds(150))
+      } catch {
+        return
+      }
+      guard let self, !Task.isCancelled else { return }
+      await self.refreshProjects()
+      self.projectFileChangeRefreshTask = nil
+    }
+  }
+}
+
 enum WorkspaceProjectSidebarExpansion {
   /// Projects to expand so the selected chat is visible after the project list
   /// changes. A project that just gained the selected chat (for example from

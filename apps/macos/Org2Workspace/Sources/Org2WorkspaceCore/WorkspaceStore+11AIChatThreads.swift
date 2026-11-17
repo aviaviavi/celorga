@@ -375,18 +375,29 @@ extension WorkspaceStore {
     }
 
     let currentFiles = corpusFiles
-    let (refreshedFiles, catalogUpdate) = await Task.detached(priority: .utility) {
+    let knownProjectFiles = Set(projectNotes.map { URL(fileURLWithPath: $0.file).standardizedFileURL.path })
+    let (refreshedFiles, catalogUpdate, touchesProjects) = await Task.detached(priority: .utility) {
       let refreshedFiles = paths.compactMap { Self.corpusFile(atPath: $0, corpusRoot: root) }
       let update = CorpusFileCatalog.applying(
         changedPaths: Set(paths),
         refreshedFiles: refreshedFiles,
         to: currentFiles
       )
-      return (refreshedFiles, update)
+      let touchesProjects = WorkspaceProjectFileChanges.affectProjects(
+        changedPaths: paths,
+        knownProjectFiles: knownProjectFiles
+      )
+      return (refreshedFiles, update, touchesProjects)
     }.value
     guard !Task.isCancelled,
           isCurrentCorpusSession(root: root, generation: sessionGeneration)
     else { return }
+    if touchesProjects {
+      // Membership written by another Mac, an agent, or the CLI arrives as a
+      // file change. A headless host has no sidebar to reload the list, so
+      // without this its phones kept the membership from when it started.
+      scheduleProjectRefreshAfterFileChange()
+    }
     let changedSet = Set(paths)
     if catalogUpdate.didChange {
       corpusFiles = catalogUpdate.files

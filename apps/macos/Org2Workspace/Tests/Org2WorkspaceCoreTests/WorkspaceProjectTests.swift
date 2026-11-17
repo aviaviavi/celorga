@@ -576,4 +576,89 @@ final class WorkspaceProjectTests: XCTestCase {
     let laterThread = try XCTUnwrap(laterThreadID, store.projectStatus)
     XCTAssertTrue(try String(contentsOf: laterURL, encoding: .utf8).contains(laterThread.uuidString.lowercased()))
   }
+  /// A headless host loaded its projects once at startup, so chats added to a
+  /// project on another Mac never appeared in the phone's project groups
+  /// (Avi, 2026-11-16). Project note changes on disk reload the list.
+  @MainActor
+  func testProjectNoteChangesOnDiskReloadTheProjectList() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-project-file-change-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let suiteName = "WorkspaceProjectTests.FileChange.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = WorkspaceStore(
+      cli: Org2CLI(repoRoot: try Org2CLI.defaultRepoRoot()),
+      defaults: defaults,
+      aiChatTranscriptURL: root.appendingPathComponent("chat.json"),
+      legacyDefaultsDomains: []
+    )
+    store.setCorpusRoot(root, persistsDefault: false)
+    let projectID = UUID().uuidString.lowercased()
+    let projectURL = root.appendingPathComponent("notes/projects/\(projectID).org")
+    try FileManager.default.createDirectory(at: projectURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let original = """
+    :PROPERTIES:
+    :ID: \(projectID)
+    :END:
+    #+PROJECT_THREADS:
+    #+ORG2_KIND: project
+    #+TITLE: Launch
+    """
+    try original.write(to: projectURL, atomically: true, encoding: .utf8)
+    await store.refreshProjects()
+    XCTAssertEqual(store.projectNotes.first?.threadIDs, [])
+
+    // Another Mac adds a chat to the project; the note syncs in.
+    let threadID = UUID()
+    try original.replacingOccurrences(
+      of: "#+PROJECT_THREADS:",
+      with: "#+PROJECT_THREADS: \(threadID.uuidString.lowercased())"
+    ).write(to: projectURL, atomically: true, encoding: .utf8)
+    await store.applyIncrementalCorpusChangesForTesting([projectURL.path])
+    try await waitUntil { store.projectNotes.first?.contains(threadID) == true }
+
+    // An ordinary note does not reload the list.
+    let refreshID = store.projectRefreshID
+    let note = root.appendingPathComponent("notes/plain.org")
+    try "#+TITLE: Plain\n\nNot a project.\n".write(to: note, atomically: true, encoding: .utf8)
+    await store.applyIncrementalCorpusChangesForTesting([note.path])
+    try await Task.sleep(for: .milliseconds(400))
+    XCTAssertEqual(store.projectRefreshID, refreshID)
+
+    // A note that becomes a project, and a project note removed, both reload it.
+    let laterID = UUID().uuidString.lowercased()
+    try "#+ORG2_KIND: project\n#+TITLE: Later\n:PROPERTIES:\n:ID: \(laterID)\n:END:\n"
+      .write(to: note, atomically: true, encoding: .utf8)
+    await store.applyIncrementalCorpusChangesForTesting([note.path])
+    try await waitUntil { store.projectNotes.contains { $0.id == laterID } }
+    try FileManager.default.removeItem(at: projectURL)
+    await store.applyIncrementalCorpusChangesForTesting([projectURL.path])
+    try await waitUntil { !store.projectNotes.contains { $0.id == projectID } }
+  }
+
+  func testProjectFileChangesRecognizeProjectNotesByHeader() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-project-header-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let project = root.appendingPathComponent("p.org")
+    try "#+TITLE: P\n#+CELORGA_KIND: project\n".write(to: project, atomically: true, encoding: .utf8)
+    let plain = root.appendingPathComponent("n.org")
+    try "#+TITLE: N\nWe discussed #+ORG2_KIND: project inline.\n".write(to: plain, atomically: true, encoding: .utf8)
+    let other = root.appendingPathComponent("x.txt")
+    try "#+ORG2_KIND: project\n".write(to: other, atomically: true, encoding: .utf8)
+    XCTAssertTrue(WorkspaceProjectFileChanges.affectProjects(changedPaths: [project.path], knownProjectFiles: []))
+    XCTAssertFalse(WorkspaceProjectFileChanges.affectProjects(changedPaths: [plain.path, other.path], knownProjectFiles: []))
+    let gone = root.appendingPathComponent("gone.org").path
+    XCTAssertTrue(WorkspaceProjectFileChanges.affectProjects(changedPaths: [gone], knownProjectFiles: [gone]))
+  }
+
+  @MainActor
+  private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async throws {
+    let deadline = Date().addingTimeInterval(8)
+    while !condition(), Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    XCTAssertTrue(condition())
+  }
 }

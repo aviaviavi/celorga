@@ -2484,6 +2484,8 @@ public final class WorkspaceStore {
   var isRefreshingProjects = false
   var projectRefreshID = UUID()
   @ObservationIgnored var projectRefreshTask: (id: UUID, task: Task<Void, Never>)?
+  /// Reloads the project list after a project note changes on disk.
+  @ObservationIgnored var projectFileChangeRefreshTask: Task<Void, Never>?
   var projectMutationIDs: Set<String> = []
   public var corpusRoot: URL?
   public internal(set) var mountedCorpora: [WorkspaceCorpusMount] = []
