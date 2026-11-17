@@ -248,5 +248,16 @@ write("notes/untagged.org", "#+TITLE: Untagged\n\nNothing cited here.\n");
   ]);
 }
 
+// A file field whose path does not exist is reported as a missing file, not a missing field (#597).
+{
+  const missing = path.join(root, "missing-file");
+  write("references.bib", "@misc{source, title = {Synthetic source}, file = {sources/source.txt}}\n", missing);
+  write("wiki/note.org", "#+TITLE: Synthetic\n\n\"This fabricated quotation is absent from the source document\" citep:source\n", missing);
+  const check = cli(["research", "check", "--dir", missing], { allowFailure: true });
+  assert.equal(check.status, 0, check.stdout + check.stderr);
+  assert.match(check.stdout, /not checked: No readable source: @source \(file not found: sources\/source\.txt\)/);
+  assert.doesNotMatch(check.stdout, /no file field/);
+}
+
 fs.rmSync(root, { recursive: true, force: true });
 console.log("research notes: citations, quotes, queue, concepts, related passed");

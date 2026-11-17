@@ -636,7 +636,13 @@ export function checkQuote(quote: NoteQuote, bibliography: Bibliography, corpusR
       const entry = bibliography.entries.get(source.key);
       if (!entry) { unreadable.push(`@${source.key} (not in the bibliography)`); continue; }
       const sourceFiles = bibEntrySourceFiles(entry, corpusRoot);
-      if (sourceFiles.length === 0) { unreadable.push(`@${source.key} (no file field)`); continue; }
+      if (sourceFiles.length === 0) {
+        const declared = bibEntryFileValues(entry);
+        unreadable.push(declared.length
+          ? `@${source.key} (file not found: ${declared.join("; ")})`
+          : `@${source.key} (no file field)`);
+        continue;
+      }
       for (const file of sourceFiles) files.push({ file, label: `@${source.key}` });
     } else {
       files.push({ file: source.file, startLine: source.startLine, endLine: source.endLine, label: source.target });
