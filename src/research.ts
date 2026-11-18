@@ -596,13 +596,19 @@ export function normalizeQuoteText(text: string): string {
 export function quoteAppearsInSource(quote: string, source: string): boolean {
   const haystack = ` ${normalizeQuoteText(source)} `;
   // Each part notes whether an ellipsis cuts it, since a cut may fall mid-word.
+  // A bracket touching a letter, as in "[W]hen" or "remove[d]", alters part
+  // of a word, so the text beside it is a partial word too.
   const pieces = quote.split(/(\.\.\.|…|\[[^\]]*\])/);
   const parts: Array<{ text: string; cutBefore: boolean; cutAfter: boolean }> = [];
+  const isEllipsis = (value: string | undefined) => value === "..." || value === "…";
+  const isBracket = (value: string | undefined) => value?.startsWith("[") ?? false;
   for (let index = 0; index < pieces.length; index += 2) {
-    const text = normalizeQuoteText(pieces[index] ?? "");
+    const raw = pieces[index] ?? "";
+    const text = normalizeQuoteText(raw);
     if (!text) continue;
-    const isEllipsis = (value: string | undefined) => value === "..." || value === "…";
-    parts.push({ text, cutBefore: isEllipsis(pieces[index - 1]), cutAfter: isEllipsis(pieces[index + 1]) });
+    const cutBefore = isEllipsis(pieces[index - 1]) || (isBracket(pieces[index - 1]) && /^[\p{L}\p{N}]/u.test(raw));
+    const cutAfter = isEllipsis(pieces[index + 1]) || (isBracket(pieces[index + 1]) && /[\p{L}\p{N}]$/u.test(raw));
+    parts.push({ text, cutBefore, cutAfter });
   }
   if (parts.length === 0) return true;
   let from = 0;

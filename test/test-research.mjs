@@ -79,6 +79,12 @@ const json = (args, options) => JSON.parse(cli([...args, "--format", "json"], op
   assert.ok(quoteAppearsInSource("The rate was linear across the ra...", source));
   assert.ok(quoteAppearsInSource("...ggests a single", source));
   assert.ok(!quoteAppearsInSource("The rate was linear across the ro...", source));
+  // A bracketed letter alters part of a word (#595).
+  const seasons = "When the earth turns seasons change over time and the oceans move.";
+  assert.ok(quoteAppearsInSource("[W]hen the earth turns seasons change over time and the oceans move", seasons));
+  assert.ok(quoteAppearsInSource("the earth turn[s] seasons change", seasons));
+  assert.ok(!quoteAppearsInSource("[W]hen the earth turns seasons change over time and the rivers move", seasons));
+  assert.ok(!quoteAppearsInSource("[W]hen the moon turns seasons change", seasons));
 }
 
 // A small research corpus.

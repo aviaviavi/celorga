@@ -35,7 +35,7 @@ A quote is checked when it is cited:
 
 The source is the cited key's =file=, or a file: link such as =[[file:raw/interview.org::88-94][interview]]=. A link ending in =::N= or =::N-M= limits the check to those lines. PDFs aren't read directly: put a text export beside the file (=paper.txt=, =paper.md=, =paper.org=, or =paper.html= next to =paper.pdf=) and Celorga compares against that.
 
-The comparison ignores case, punctuation, line breaks, and Org markup. An ellipsis (=...= or =…=) or a bracketed insertion such as =[sic]= splits the quote into parts, which must appear in order; a word cut by an ellipsis may be partial. When a quote cites lines that no longer hold it but the file does, the warning names the line it moved to. A quote is listed as not checked, rather than as a problem, when any of its sources has no readable text.
+The comparison ignores case, punctuation, line breaks, and Org markup. An ellipsis (=...= or =…=) or a bracketed insertion such as =[sic]= splits the quote into parts, which must appear in order; a word cut by an ellipsis may be partial, and so may a word a bracket alters, as in =[W]hen=. When a quote cites lines that no longer hold it but the file does, the warning names the line it moved to. A quote is listed as not checked, rather than as a problem, when any of its sources has no readable text.
 
 * Sources waiting for an article
 
