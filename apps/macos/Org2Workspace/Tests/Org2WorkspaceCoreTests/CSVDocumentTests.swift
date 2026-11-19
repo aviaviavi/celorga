@@ -415,6 +415,149 @@ final class CSVDocumentTests: XCTestCase {
   }
 
   @MainActor
+  func testWideCSVTableOnlyMaterializesVisibleCells() async throws {
+    // 100 rows by 150 columns used to build every column of every visible row
+    // as a SwiftUI TextField, which stalled the main thread on open.
+    var values: [CSVGridCell: Int] = [:]
+    let document = CSVDocument(rows: (0..<100).map { row in
+      (0..<150).map { "r\(row)c\($0)" }
+    })
+    let started = Date()
+    let (window, hostingView) = hostCSVTableEditor(AnyView(
+      CSVTableEditor(
+        document: document,
+        value: { row, column in
+          values[CSVGridCell(row: row, column: column), default: 0] += 1
+          return document.value(row: row, column: column)
+        },
+        setValue: { _, _, _ in },
+        mutate: { _ in }
+      )
+      .frame(width: 800, height: 420)
+    ))
+    defer { window.orderOut(nil) }
+    for _ in 0..<3 {
+      try await Task.sleep(nanoseconds: 25_000_000)
+      window.layoutIfNeeded()
+      hostingView.layoutSubtreeIfNeeded()
+      hostingView.displayIfNeeded()
+    }
+    let elapsed = Date().timeIntervalSince(started)
+
+    let grid = try XCTUnwrap(allViews(in: hostingView).compactMap { $0 as? CSVGridView }.first)
+    XCTAssertEqual(grid.frame.width, CSVGridView.rowNumberWidth + 150 * CSVGridView.cellWidth)
+    XCTAssertEqual(grid.frame.height, CSVGridView.rowHeight * 101)
+    XCTAssertTrue(allViews(in: hostingView).allSatisfy { !($0 is NSTextField) })
+    XCTAssertGreaterThan(values.count, 0)
+    XCTAssertLessThan(values.count, 200, "only visible cells should be read")
+    XCTAssertNotNil(values[CSVGridCell(row: 0, column: 0)])
+    XCTAssertNil(values[CSVGridCell(row: 0, column: 149)])
+    XCTAssertNil(values[CSVGridCell(row: 99, column: 0)])
+    XCTAssertLessThan(elapsed, 2.0)
+  }
+
+  @MainActor
+  func testCSVTableCellEditsReportCoordinatesAndSurviveDocumentRefresh() async throws {
+    var document = CSVDocument(rows: [["name", "note"], ["Ada", "first"]])
+    var edits: [(String, Int, Int)] = []
+    var mutations: [String] = []
+    let editor = { (document: CSVDocument) in
+      CSVTableEditor(
+        document: document,
+        value: { document.value(row: $0, column: $1) },
+        setValue: { value, row, column in edits.append((value, row, column)) },
+        mutate: { mutations.append("\($0)") }
+      )
+      .frame(width: 800, height: 420)
+    }
+    let (window, hostingView) = hostCSVTableEditor(AnyView(editor(document)))
+    defer { window.orderOut(nil) }
+    try await Task.sleep(nanoseconds: 50_000_000)
+    window.layoutIfNeeded()
+
+    let grid = try XCTUnwrap(allViews(in: hostingView).compactMap { $0 as? CSVGridView }.first)
+    XCTAssertEqual(
+      grid.hitTarget(at: NSPoint(x: CSVGridView.rowNumberWidth + CSVGridView.cellWidth + 5, y: CSVGridView.rowHeight * 2 + 5)),
+      .cell(CSVGridCell(row: 1, column: 1))
+    )
+    XCTAssertEqual(grid.hitTarget(at: NSPoint(x: CSVGridView.rowNumberWidth + 5, y: 5)), .columnHeader(0))
+    XCTAssertEqual(grid.hitTarget(at: NSPoint(x: 5, y: CSVGridView.rowHeight + 5)), .rowNumber(0))
+
+    grid.beginEditing(row: 1, column: 1)
+    let field = try XCTUnwrap(grid.editorField)
+    XCTAssertEqual(field.stringValue, "first")
+    XCTAssertNotNil(field.currentEditor())
+    field.stringValue = "second"
+    field.delegate?.controlTextDidChange?(
+      Notification(name: NSControl.textDidChangeNotification, object: field)
+    )
+    XCTAssertEqual(edits.count, 1)
+    XCTAssertEqual(edits.first?.0, "second")
+    XCTAssertEqual(edits.first?.1, 1)
+    XCTAssertEqual(edits.first?.2, 1)
+
+    // A debounced publication installs an equal document; the cell being
+    // edited must keep its field editor instead of being reset.
+    document.setValue("second", row: 1, column: 1)
+    hostingView.rootView = AnyView(editor(document))
+    try await Task.sleep(nanoseconds: 50_000_000)
+    window.layoutIfNeeded()
+    XCTAssertTrue(grid.editorField === field)
+    XCTAssertNotNil(field.currentEditor())
+    XCTAssertEqual(grid.editingCell, CSVGridCell(row: 1, column: 1))
+
+    // Shift-Tab moves to the previous cell in a fresh field.
+    let textView = try XCTUnwrap(field.currentEditor() as? NSTextView)
+    XCTAssertTrue(grid.control(field, textView: textView, doCommandBy: #selector(NSResponder.insertBacktab(_:))))
+    XCTAssertEqual(grid.editingCell, CSVGridCell(row: 1, column: 0))
+    XCTAssertEqual(grid.editorField?.stringValue, "Ada")
+    XCTAssertNil(field.superview)
+
+    // Removing the edited row ends editing instead of leaving a stray field.
+    document.removeRow(at: 1)
+    hostingView.rootView = AnyView(editor(document))
+    try await Task.sleep(nanoseconds: 50_000_000)
+    window.layoutIfNeeded()
+    XCTAssertNil(grid.editingCell)
+    XCTAssertNil(grid.editorField)
+    XCTAssertTrue(mutations.isEmpty)
+  }
+
+  @MainActor
+  private func hostCSVTableEditor(document: CSVDocument) -> (NSWindow, NSHostingView<AnyView>) {
+    hostCSVTableEditor(AnyView(
+      CSVTableEditor(
+        document: document,
+        value: { document.value(row: $0, column: $1) },
+        setValue: { _, _, _ in },
+        mutate: { _ in }
+      )
+      .frame(width: 800, height: 420)
+    ))
+  }
+
+  @MainActor
+  private func hostCSVTableEditor(_ rootView: AnyView) -> (NSWindow, NSHostingView<AnyView>) {
+    let hostingView = NSHostingView(rootView: rootView)
+    hostingView.frame = NSRect(x: 0, y: 0, width: 800, height: 420)
+    let window = NSWindow(
+      contentRect: hostingView.frame,
+      styleMask: [.borderless],
+      backing: .buffered,
+      defer: false
+    )
+    window.contentView = hostingView
+    window.makeKeyAndOrderFront(nil)
+    window.layoutIfNeeded()
+    return (window, hostingView)
+  }
+
+  @MainActor
+  private func allViews(in view: NSView) -> [NSView] {
+    [view] + view.subviews.flatMap(allViews)
+  }
+
+  @MainActor
   func testCSVFilesAreDiscoveredAndDoNotBecomeRoamNodes() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-workspace-csv-files-\(UUID().uuidString)", isDirectory: true)
