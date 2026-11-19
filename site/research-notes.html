@@ -70,11 +70,12 @@ a { text-decoration-thickness: 0.08em; text-underline-offset: 0.15em; }
 <p>This works with notes written for other tools. Citations use org-cite or org-ref syntax, bibliographies are BibTeX files, and a crucible-style <code>:SOURCE_KEYS:</code> property counts as a citation.</p>
 <section class="org2-headline level-1">
 <h1 id="citations">Citations</h1>
-<p>Celorga reads three citation forms:</p>
+<p>Celorga reads four citation forms:</p>
 <ul>
 <li><p>org-cite: <code>[cite:@doe2024]</code>, <code>[cite/t:@doe2024; see @roe2025 p. 4]</code></p></li>
 <li><p>org-ref links without brackets: <code>cite:doe2024</code>, <code>citep:doe2024,roe2025</code>, <code>citet:&amp;doe2024;&amp;roe2025</code>, and the other natbib types (<code>citealp</code>, <code>citealt</code>, <code>citeauthor</code>, <code>citeyear</code>, <code>citeyearpar</code>, <code>citenum</code>, <code>citetext</code>, capitalized or starred)</p></li>
 <li><p>org-ref links in brackets: <code>[[citep:&amp;doe2024][Doe (2024)]]</code>, which also accept biblatex types such as <code>parencite</code> and <code>textcite</code></p></li>
+<li><p>a <code>:SOURCE_KEYS:</code> property in a property drawer, with keys separated by spaces or commas: <code>:SOURCE_KEYS: doe2024 roe2025</code>. A key here also resolves when it names a source file without its extension, as in the source queue below</p></li>
 </ul>
 <p>Keys resolve against these bibliographies. When two define the same key, the first one wins:</p>
 <ol>

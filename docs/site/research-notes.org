@@ -6,11 +6,12 @@ This works with notes written for other tools. Citations use org-cite or org-ref
 
 * Citations
 
-Celorga reads three citation forms:
+Celorga reads four citation forms:
 
 - org-cite: =[cite:@doe2024]=, =[cite/t:@doe2024; see @roe2025 p. 4]=
 - org-ref links without brackets: =cite:doe2024=, =citep:doe2024,roe2025=, =citet:&doe2024;&roe2025=, and the other natbib types (=citealp=, =citealt=, =citeauthor=, =citeyear=, =citeyearpar=, =citenum=, =citetext=, capitalized or starred)
 - org-ref links in brackets: =[[citep:&doe2024][Doe (2024)]]=, which also accept biblatex types such as =parencite= and =textcite=
+- a =:SOURCE_KEYS:= property in a property drawer, with keys separated by spaces or commas: =:SOURCE_KEYS: doe2024 roe2025=. A key here also resolves when it names a source file without its extension, as in the source queue below
 
 Keys resolve against these bibliographies. When two define the same key, the first one wins:
 

@@ -301,7 +301,8 @@ export type NoteCitation = {
   file: string;
   line: number;
   raw: string;
-  syntax: "org-cite" | "org-ref";
+  /** "property" is a :SOURCE_KEYS: property; its style is the property name. */
+  syntax: "org-cite" | "org-ref" | "property";
   style?: string;
   keys: string[];
 };
@@ -321,6 +322,15 @@ function lineOfRaw(lines: string[], range: SourceRange | undefined, raw: string)
   if (!range) return 1;
   for (let line = range.startLine; line <= Math.min(range.endLine, lines.length); line += 1) {
     if (lines[line - 1]?.includes(raw)) return line;
+  }
+  return range.startLine;
+}
+
+function propertyLine(lines: string[], range: SourceRange | undefined, key: string): number {
+  if (!range) return 1;
+  const marker = `:${key.toUpperCase()}:`;
+  for (let line = range.startLine; line <= Math.min(range.endLine, lines.length); line += 1) {
+    if ((lines[line - 1] ?? "").trimStart().toUpperCase().startsWith(marker)) return line;
   }
   return range.startLine;
 }
@@ -488,9 +498,15 @@ export function readNoteResearchFacts(text: string, file: string): NoteResearchF
             const key = property.key.toUpperCase();
             if (key === "ID" && !id && !inheritedRange) id = property.value.trim();
             if (key === "SOURCE_KEYS" || key === "SOURCES" || key === "CITES") {
+              const keys: string[] = [];
               for (const value of property.value.split(/[\s,;]+/)) {
                 const trimmed = value.replace(/^[@&]/, "").trim();
-                if (trimmed) sourceKeys.add(trimmed);
+                if (trimmed) { sourceKeys.add(trimmed); if (!keys.includes(trimmed)) keys.push(trimmed); }
+              }
+              // The documented crucible-style property is a citation too.
+              if (key === "SOURCE_KEYS" && keys.length) {
+                const line = propertyLine(lines, range, property.key);
+                citations.push({ file, line, raw: (lines[line - 1] ?? `:${property.key}: ${property.value}`).trim(), syntax: "property", style: property.key, keys });
               }
             }
           }
@@ -723,6 +739,30 @@ export type CitationReport = {
   summary: { citations: number; unresolvedKeys: number; quotes: number; verified: number; mismatched: number; unverifiable: number };
 };
 
+/**
+ * Keys a citation names that no bibliography resolves. A :SOURCE_KEYS: value
+ * may also name a source file without its extension, as in the queue.
+ */
+function unresolvedCitationKeys(citation: NoteCitation, bibliography: Bibliography, sourceNames: () => Set<string>): string[] {
+  if (!bibliography.files.length) return [];
+  return citation.keys.filter((key) => !bibliography.entries.has(key) && !(citation.syntax === "property" && sourceNames().has(key)));
+}
+
+/** Source file names without extension, under the source folders or named by a BibTeX file field. */
+function sourceFileNames(settings: ResearchSettings, bibliography: Bibliography): Set<string> {
+  const names = new Set<string>();
+  for (const dir of settings.sourceDirs) for (const file of walkSourceFiles(dir)) names.add(path.basename(sourceGroupKey(file)));
+  for (const entry of bibliography.entries.values()) {
+    for (const file of bibEntrySourceFiles(entry, settings.corpusRoot)) names.add(path.basename(sourceGroupKey(file)));
+  }
+  return names;
+}
+
+function lazy<T>(compute: () => T): () => T {
+  let value: { v: T } | undefined;
+  return () => (value ??= { v: compute() }).v;
+}
+
 export function citationReport(settings: ResearchSettings, files?: string[]): CitationReport {
   const notes = readResearchNotes(settings, files);
   const citations: CitationReport["citations"] = [];
@@ -732,11 +772,9 @@ export function citationReport(settings: ResearchSettings, files?: string[]): Ci
     const text = fs.readFileSync(note.file, "utf8");
     const bibliography = bibliographyForDocument(text, note.file, settings);
     bibliography.files.forEach((file) => bibliographyFiles.add(file));
+    const names = lazy(() => sourceFileNames(settings, bibliography));
     for (const citation of note.citations) {
-      const unresolvedKeys = bibliography.files.length
-        ? citation.keys.filter((key) => !bibliography.entries.has(key))
-        : [];
-      citations.push({ ...citation, unresolvedKeys });
+      citations.push({ ...citation, unresolvedKeys: unresolvedCitationKeys(citation, bibliography, names) });
     }
     for (const quote of note.quotes) quotes.push(checkQuote(quote, bibliography, settings.corpusRoot));
   }
@@ -760,6 +798,7 @@ export function citationReport(settings: ResearchSettings, files?: string[]): Ci
 export type ResearchLintIssue = { severity: "warning"; rule: string; file: string; line: number; message: string };
 
 const CITATION_HINT = /\[cite[:/]|(?:^|[^\w&])(?:[Cc]ite|[A-Za-z]*cites?)\w*\*?:[&\w]/m;
+const SOURCE_KEYS_HINT = /^[ \t]*:SOURCE_KEYS:/im;
 const QUOTE_HINT = /#\+begin_quote|“[^”\n]{12,}”|"[^"\n]{12,}"/i;
 
 /** `celorga lint` rules: unresolved citation keys and quotes not in their source. */
@@ -770,7 +809,7 @@ export function researchLintIssues(files: string[], fileContents: Map<string, st
     const text = fileContents.get(file);
     if (typeof text !== "string") continue;
     // Most notes have no citation and no cited quote; skip them unparsed.
-    const hasCitation = CITATION_HINT.test(text);
+    const hasCitation = CITATION_HINT.test(text) || SOURCE_KEYS_HINT.test(text);
     if (!hasCitation && !(QUOTE_HINT.test(text) && /file:/i.test(text))) continue;
     const configPath = findConfigFile(path.dirname(file));
     const root = configPath ? path.dirname(configPath) : (rootHint ? path.resolve(rootHint) : path.dirname(file));
@@ -781,9 +820,9 @@ export function researchLintIssues(files: string[], fileContents: Map<string, st
     if (facts.citations.length === 0 && facts.quotes.length === 0) continue;
     const bibliography = bibliographyForDocument(text, file, settings);
     if (bibliography.files.length) {
+      const names = lazy(() => sourceFileNames(settings!, bibliography));
       for (const citation of facts.citations) {
-        for (const key of citation.keys) {
-          if (bibliography.entries.has(key)) continue;
+        for (const key of unresolvedCitationKeys(citation, bibliography, names)) {
           issues.push({ severity: "warning", rule: "unresolved-citation", file, line: citation.line,
             message: `Citation key '${key}' is not in ${bibliography.files.map((bib) => path.basename(bib)).join(", ")}.` });
         }

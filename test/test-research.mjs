@@ -187,6 +187,26 @@ write("notes/untagged.org", "#+TITLE: Untagged\n\nNothing cited here.\n");
   assert.deepEqual(rules, ["quote-not-in-source:15", "quote-not-in-source:6", "unresolved-citation:8"]);
 }
 
+// A :SOURCE_KEYS: property is a citation: listed, resolved, and checked (#596).
+{
+  const rates = path.join(corpus, "wiki/comparisons/rates.org");
+  const listed = json(["research", "citations", "--dir", corpus, "--file", rates]).citations;
+  assert.deepEqual(listed.map(({ line, syntax, style, keys, unresolvedKeys }) => ({ line, syntax, style, keys, unresolvedKeys })), [
+    // "blog" names sources/web/blog.html, as in the queue.
+    { line: 4, syntax: "property", style: "SOURCE_KEYS", keys: ["roe2025", "blog"], unresolvedKeys: [] },
+  ]);
+  const only = write("wiki/property-only.org", "#+TITLE: Property only\n* Property only\n:PROPERTIES:\n:SOURCE_KEYS: missing-source doe2024\n:END:\n\nSynthetic note.\n");
+  const check = cli(["research", "check", "--dir", corpus, "--file", only], { allowFailure: true });
+  assert.equal(check.status, 1);
+  assert.match(check.stdout, /wiki\/property-only\.org:4: unresolved citation @missing-source\n/);
+  assert.match(check.stdout, /1 citations, 1 unresolved keys/);
+  const lint = JSON.parse(cli(["lint", "--dir", corpus, "--recursive", "--format", "json"]).stdout);
+  assert.deepEqual(lint.issues.filter((issue) => issue.file === only).map((issue) => `${issue.rule}:${issue.line}:${issue.message}`),
+    ["unresolved-citation:4:Citation key 'missing-source' is not in references.bib."]);
+  assert.ok(!lint.issues.some((issue) => issue.file === rates), "a source file name in :SOURCE_KEYS: resolves");
+  fs.rmSync(only);
+}
+
 // Rendering: resolved keys carry the entry and link to the source; unknown keys are marked.
 {
   const html = renderAppHTML(fs.readFileSync(summary, "utf8"), { sourcePath: summary, corpusRoot: corpus });
