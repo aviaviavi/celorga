@@ -75,4 +75,39 @@ final class AIChatQuickConfigurationTests: XCTestCase {
     store.stepAIChatModel(by: -1)
     XCTAssertNil(store.selectedAIChatModel)
   }
+
+  /// A running or sending chat keeps its model and reasoning pickers; the
+  /// choice applies to the next message instead of locking the user out.
+  @MainActor
+  func testModelAndReasoningStayEditableWhileATurnRuns() throws {
+    let suiteName = "AIChatQuickConfigurationTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("ai-chat-quick-config-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = WorkspaceStore(
+      defaults: defaults,
+      aiChatTranscriptURL: root.appendingPathComponent("chat.json"),
+      legacyDefaultsDomains: []
+    )
+
+    let providerID = store.addAIChatDestination(adapter: .anthropic)
+    store.createAIChatThread(destinationID: providerID)
+    let threadID = try XCTUnwrap(store.selectedAIChatThreadID)
+    store.aiChatSendingThreadIDs.insert(threadID)
+    store.isSendingAIChatMessage = true
+
+    XCTAssertTrue(store.canChangeSelectedAIChatConfiguration)
+    store.aiChatModelOptions = [
+      AIChatModelOption(id: "model-a", label: "Model A"),
+      AIChatModelOption(id: "model-b", label: "Model B"),
+    ]
+    XCTAssertTrue(store.canStepAIChatModel)
+    store.setSelectedAIChatModel("model-b")
+    XCTAssertEqual(store.selectedAIChatModel, "model-b")
+    store.setSelectedAIChatReasoningEffort("high")
+    XCTAssertEqual(store.selectedAIChatReasoningEffort, "high")
+  }
 }

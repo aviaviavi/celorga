@@ -2014,7 +2014,6 @@ struct MobileRemoteThreadView: View {
         .frame(width: 30, height: 30)
         .background(Color(.tertiarySystemFill), in: Circle())
     }
-    .disabled(isSettled || isSending || isPreparingPhotos)
     .accessibilityLabel("Chat options, model \(modelLabel), reasoning \(reasoningLabel)")
   }
 
@@ -2148,9 +2147,10 @@ struct MobileRemoteThreadView: View {
     return !isSettled && !isSending && optimisticMessage == nil && aiChatDestinations.count > 1
   }
 
+  /// The model and reasoning menus stay available while a reply runs or a
+  /// message is sending: a choice made mid-turn applies to the next message.
   private var canChangeModel: Bool {
-    !isSettled && !isRunning && !isSending &&
-      remote.threadDetail?.thread.isSharedRoom != true &&
+    remote.threadDetail?.thread.isSharedRoom != true &&
       !remote.isUpdatingConfiguration &&
       remote.threadConfiguration != nil
   }

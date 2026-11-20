@@ -2201,9 +2201,6 @@ extension WorkspaceStore {
     guard let thread = aiChatThread(withID: threadID) else {
       throw AIChatRemoteConfigurationError.threadNotFound
     }
-    guard !isAIChatThreadRunning(threadID) else {
-      throw AIChatRemoteConfigurationError.turnInProgress
-    }
 
     var options = try await aiChatRemoteModelOptions(for: threadID)
     if let model, !options.contains(where: { $0.id == model }) {
@@ -2260,9 +2257,6 @@ extension WorkspaceStore {
   ) async throws {
     guard let thread = aiChatThread(withID: threadID) else {
       throw AIChatRemoteConfigurationError.threadNotFound
-    }
-    guard !isAIChatThreadRunning(threadID) else {
-      throw AIChatRemoteConfigurationError.turnInProgress
     }
 
     let configuration = try await aiChatRemoteConfiguration(for: threadID)

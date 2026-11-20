@@ -2356,9 +2356,10 @@ extension WorkspaceStore {
     selectedAIChatThread?.reasoningEffort
   }
 
+  /// The model and reasoning pickers stay available while a turn runs or a
+  /// message is queued: a choice made mid-turn applies to the next message.
   public var canChangeSelectedAIChatConfiguration: Bool {
     selectedAIChatThread.map { !$0.isSharedRoom } == true
-      && !isSendingAIChatMessage
   }
 
   public var selectedAIChatModelLabel: String {
@@ -2456,7 +2457,6 @@ extension WorkspaceStore {
     forDestinationID destinationID: String
   ) {
     guard let selectedAIChatThreadID,
-          !isAIChatThreadRunning(selectedAIChatThreadID),
           let index = aiChatThreads.firstIndex(where: {
             $0.id == selectedAIChatThreadID
           }),
@@ -2910,7 +2910,6 @@ extension WorkspaceStore {
 
   public func setSelectedAIChatRoomModel(_ model: String?, forDestinationID destinationID: String) {
     guard let selectedAIChatThreadID,
-          !isAIChatThreadRunning(selectedAIChatThreadID),
           let index = aiChatThreads.firstIndex(where: {
             $0.id == selectedAIChatThreadID
           }),

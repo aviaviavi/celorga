@@ -4164,7 +4164,6 @@ struct AIChatComposerView: View {
     .menuStyle(.borderlessButton)
     .menuIndicator(.hidden)
     .fixedSize()
-    .disabled(isRunning)
     .help("Choose the model for \(destination?.title ?? destinationID) in this shared room")
   }
 

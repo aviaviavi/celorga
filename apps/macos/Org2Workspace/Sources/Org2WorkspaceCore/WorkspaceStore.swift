@@ -4545,7 +4545,6 @@ enum AIChatAttachmentError: LocalizedError {
 
 enum AIChatRemoteConfigurationError: LocalizedError {
   case threadNotFound
-  case turnInProgress
   case unknownModel(String)
   case unknownReasoningEffort(String)
   case unknownDestination(String)
@@ -4555,8 +4554,6 @@ enum AIChatRemoteConfigurationError: LocalizedError {
     switch self {
     case .threadNotFound:
       "The remote chat no longer exists."
-    case .turnInProgress:
-      "Stop the current response before changing models."
     case .unknownDestination:
       "That AI destination is unavailable on this host."
     case .destinationLocked:
