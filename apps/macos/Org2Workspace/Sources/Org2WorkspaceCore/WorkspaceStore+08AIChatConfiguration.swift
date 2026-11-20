@@ -2875,9 +2875,9 @@ extension WorkspaceStore {
     if aiChatSteerHandlerForTesting != nil { return true }
     switch target.runtime {
     case .codex:
-      let hasClient = target.destinationID == AIChatDestinationConfiguration.localCodexID
-        ? codexAppServerClient != nil
-        : codexAppServerClientsByDestinationID[target.destinationID] != nil
+      let hasClient = codexAppServerClientsByDestinationID[target.destinationID] != nil
+        || (target.destinationID == AIChatDestinationConfiguration.localCodexID
+          && codexAppServerClient != nil)
       return codexActiveTurnsByThreadID[threadID] != nil && hasClient
     case .openClaw:
       return openClawGatewayClientsByThreadID[threadID] != nil

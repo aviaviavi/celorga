@@ -806,6 +806,33 @@ final class CodexAppServerClientTests: XCTestCase {
     XCTAssertTrue(routing?.sessionKey.hasPrefix("agent:org2:") == true)
   }
 
+  @MainActor
+  func testBuiltInCodexUsesConfiguredRemoteClient() throws {
+    let suiteName = "CodexRemoteBuiltIn.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let transcript = FileManager.default.temporaryDirectory
+      .appendingPathComponent("codex-remote-built-in-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let destination = AIChatDestinationConfiguration(
+      id: AIChatDestinationConfiguration.localCodexID,
+      name: "Codex", mention: "codex", adapter: .codexManagedRemote,
+      endpoint: "worker.example.test", workspaceRoot: "~/workspace"
+    )
+    defaults.set(try JSONEncoder().encode([destination]),
+      forKey: "Org2Workspace.aiChat.destinations.v1")
+    let store = WorkspaceStore(defaults: defaults, aiChatTranscriptURL: transcript,
+      legacyDefaultsDomains: [])
+
+    let client = try store.codexClient(forDestinationID: destination.id)
+    XCTAssertNil(store.codexAppServerClient, "A remote built-in must not create a local process client")
+    XCTAssertTrue(store.codexAppServerClientsByDestinationID[destination.id] === client)
+    XCTAssertTrue(try store.codexClient(forDestinationID: destination.id) === client)
+    let threadID = store.createAIChatThread(destinationID: destination.id)
+    store.codexActiveTurnsByThreadID[threadID] = ("remote-thread", "remote-turn")
+    XCTAssertTrue(store.canSteerAIChatThread(threadID), "Remote built-in turns remain steerable")
+  }
+
   func testCodexRemoteTransportDescribesItsWebSocketEndpoint() throws {
     let endpoint = try XCTUnwrap(URL(string: "wss://press.example.test/codex"))
     XCTAssertEqual(

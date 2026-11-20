@@ -2937,7 +2937,10 @@ extension WorkspaceStore {
   }
 
   func codexClient(forDestinationID destinationID: String) throws -> CodexAppServerClient {
-    if destinationID == AIChatDestinationConfiguration.localCodexID {
+    // Built-in IDs identify the agent, not the machine running its harness.
+    // Headless hosts can point the same Codex destination at another Mac.
+    if destinationID == AIChatDestinationConfiguration.localCodexID,
+       aiChatDestination(id: destinationID)?.adapter == .codexLocal {
       return localCodexClient()
     }
     if let existing = codexAppServerClientsByDestinationID[destinationID] {
