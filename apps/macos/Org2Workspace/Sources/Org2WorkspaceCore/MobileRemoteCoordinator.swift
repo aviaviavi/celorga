@@ -1878,6 +1878,19 @@ extension MobileRemoteCoordinator {
       } catch {
         return .error(error.localizedDescription, statusCode: 404)
       }
+    case ("POST", "/v1/files/slides"):
+      guard let payload = try? request.decode(MobileRemoteFileDownloadRequest.self) else {
+        return .error("The presentation reference could not be read.", statusCode: 400)
+      }
+      do {
+        return await backgroundWork.jsonResponse(try await store.mobileRemoteSlides(path: payload.path))
+      } catch MobileRemoteFilePreviewError.invalidPath {
+        return .error(MobileRemoteFilePreviewError.invalidPath.localizedDescription, statusCode: 404)
+      } catch MobileRemoteFilePreviewError.unavailable {
+        return .error(MobileRemoteFilePreviewError.unavailable.localizedDescription, statusCode: 404)
+      } catch {
+        return .error(error.localizedDescription, statusCode: 422)
+      }
     case ("POST", "/v1/capture/attachment"):
       guard let payload = try? request.decode(MobileRemoteCaptureAttachmentRequest.self) else {
         return .error("The note attachment could not be read.", statusCode: 400)

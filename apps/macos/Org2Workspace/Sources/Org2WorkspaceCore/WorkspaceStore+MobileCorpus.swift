@@ -219,6 +219,43 @@ extension WorkspaceStore {
     }.value
   }
 
+  // MARK: Slides
+
+  /// Renders an Org presentation to the same Beamer PDF the Mac slide preview
+  /// shows, so the phone can page through a deck without a TeX toolchain.
+  /// Reads the saved file; repeated requests for an unchanged file reuse the
+  /// last few PDFs.
+  public func mobileRemoteSlides(path rawPath: String) async throws -> MobileRemoteFileDownload {
+    let active = corpusRoot?.standardizedFileURL.path
+    let mounted = workspaceMountPaths().sorted()
+    let roots = (active.map { [$0] } ?? []) + mounted.filter { $0 != active }
+    let source = try await Task.detached(priority: .userInitiated) { () throws -> (MobileRemoteFilePreviewTarget, Date?, String) in
+      let target = try Self.mobileRemotePreviewTarget(for: rawPath, mountedRootPaths: roots)
+      guard ["org", "org2"].contains(target.url.pathExtension.lowercased()) else {
+        throw MobileRemoteFilePreviewError.unsupportedFile
+      }
+      let values = try? target.url.resourceValues(forKeys: [.contentModificationDateKey])
+      guard let text = try? String(contentsOf: target.url, encoding: .utf8) else {
+        throw MobileRemoteFilePreviewError.unavailable
+      }
+      return (target, values?.contentModificationDate, text)
+    }.value
+    let (target, modifiedAt, text) = source
+    let key = MobileSlideCache.Key(path: target.url.path, text: text)
+    if let cached = await MobileSlideCache.shared.pdf(for: key) {
+      return MobileRemoteFileDownload(relativePath: target.relativePath, modifiedAt: modifiedAt, data: cached)
+    }
+    let pdf: Data
+    if let renderer = slidePreviewRendererForTesting {
+      pdf = try await renderer(text, target.url.path, 2)
+    } else {
+      // Two passes so page numbers and progress bars are final.
+      pdf = try await cli.renderPresentationPDF(text, sourcePath: target.url.path, passes: 2, timeout: 120)
+    }
+    await MobileSlideCache.shared.store(pdf, for: key)
+    return MobileRemoteFileDownload(relativePath: target.relativePath, modifiedAt: modifiedAt, data: pdf)
+  }
+
   // MARK: Capture
 
   public func mobileRemoteCaptureAttachment(_ request: MobileRemoteCaptureAttachmentRequest) async throws -> MobileRemoteCaptureResponse {
@@ -342,5 +379,32 @@ public enum MobileCaptureError: LocalizedError, Equatable {
     case .invalidEntry: "The captured note could not be read."
     case .invalidAttachment: "The note attachment could not be saved."
     }
+  }
+}
+
+/// The last few slide PDFs rendered for paired phones, keyed by file and text.
+actor MobileSlideCache {
+  static let shared = MobileSlideCache()
+
+  struct Key: Hashable, Sendable {
+    let path: String
+    let text: String
+  }
+
+  private var entries: [(key: Key, pdf: Data)] = []
+  private let limit = 4
+
+  func pdf(for key: Key) -> Data? {
+    entries.first(where: { $0.key == key })?.pdf
+  }
+
+  func store(_ pdf: Data, for key: Key) {
+    entries.removeAll { $0.key.path == key.path }
+    entries.insert((key, pdf), at: 0)
+    if entries.count > limit { entries.removeLast(entries.count - limit) }
+  }
+
+  func removeAll() {
+    entries.removeAll()
   }
 }

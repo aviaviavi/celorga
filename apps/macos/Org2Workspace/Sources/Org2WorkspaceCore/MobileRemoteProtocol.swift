@@ -49,6 +49,9 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
   /// `GET /v1/corpus/files`, `POST /v1/corpus/search`, `POST /v1/corpus/resolve-id`,
   /// `POST /v1/files/download`, and `POST /v1/capture` (+ `/v1/capture/attachment`).
   public let supportsCorpusAccess: Bool?
+  /// The host renders an Org presentation to a slide PDF for the phone
+  /// (`POST /v1/files/slides`, the same Beamer renderer as the Mac preview).
+  public let supportsSlidePreview: Bool?
 
   public init(
     protocolVersion: Int = MobileRemoteProtocol.version,
@@ -67,8 +70,10 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
     supportsThreadOutputs: Bool? = true,
     supportsSourceCredentials: Bool? = true,
     supportsThreadDestinationChange: Bool? = true,
-    supportsCorpusAccess: Bool? = true
+    supportsCorpusAccess: Bool? = true,
+    supportsSlidePreview: Bool? = true
   ) {
+    self.supportsSlidePreview = supportsSlidePreview
     self.supportsCorpusAccess = supportsCorpusAccess
     self.supportsThreadDestinationChange = supportsThreadDestinationChange
     self.supportsSourceCredentials = supportsSourceCredentials

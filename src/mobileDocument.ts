@@ -3,6 +3,7 @@ import { parseInlinesFromText, parseOrgToCanonicalAst } from "./parser.js";
 import { documentTodoSequences, parseTodoSequenceDefinitions } from "./todo.js";
 import { renderOrgDocumentToAppHtml } from "./export.js";
 import { parseIdLinkTarget, resolveIdLinkInText } from "./linkSearch.js";
+import { isPresentationDocument } from "./presentation.js";
 
 type Ranged = Node & { sourceRange?: { startLine: number; endLine: number } };
 
@@ -131,5 +132,43 @@ export function renderDocument(source: string, path: string, line = 0, nodeID = 
   });
   // The local reader never executes source-provided scripts or loads remote embeds.
   const policy = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'none'">`;
-  return { title: rendered.title, html: rendered.html.replace("<head>", `<head>${policy}`) };
+  // A whole presentation file can also be shown as slides rendered by the host.
+  const kind = !selected && isPresentationDocument(doc) ? "slides" : "document";
+  const html = rendered.html.replace("<head>", `<head>${policy}`);
+  return { title: rendered.title, html, kind, images: documentImages(html, path) };
+}
+
+function decodeAttribute(value: string): string {
+  return value.replace(/&(amp|quot|#39|lt|gt);/g, (_, entity: string) =>
+    ({ amp: "&", quot: "\"", "#39": "'", lt: "<", gt: ">" } as Record<string, string>)[entity]!);
+}
+
+// The reader blocks file and network loads, so the phone fetches each local
+// image from the host and swaps it in as a data URL. `src` is the attribute as
+// written in the HTML; `path` is corpus-relative (or absolute, for the host to
+// authorize) with `..` already resolved.
+export function documentImages(html: string, documentPath: string): { src: string; path: string }[] {
+  const images: { src: string; path: string }[] = [];
+  const seen = new Set<string>();
+  for (const match of html.matchAll(/<img class="org2-image" src="([^"]*)"/g)) {
+    const src = match[1]!;
+    if (seen.has(src)) continue;
+    seen.add(src);
+    let target = decodeAttribute(src);
+    if (/^[a-z][a-z0-9+.-]*:/i.test(target) && !target.startsWith("file:")) continue;
+    target = target.replace(/^file:/, "").replace(/[?#].*$/, "");
+    try { target = decodeURI(target); } catch { /* keep the literal path */ }
+    if (!target || target.startsWith("~")) continue;
+    const absolute = target.startsWith("/");
+    const parts = absolute ? [] : documentPath.split("/").slice(0, -1);
+    let escaped = false;
+    for (const part of target.split("/")) {
+      if (!part || part === ".") continue;
+      if (part === "..") { if (parts.length && parts[parts.length - 1] !== "..") parts.pop(); else escaped = true; }
+      else parts.push(part);
+    }
+    if (escaped) continue;
+    images.push({ src, path: (absolute ? "/" : "") + parts.join("/") });
+  }
+  return images;
 }

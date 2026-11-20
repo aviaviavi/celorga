@@ -46,6 +46,43 @@ final class MobileDocumentRuntime {
 struct MobileRenderedDocument: Decodable, Sendable {
   let title: String
   let html: String
+  /// "slides" for a whole presentation file, otherwise "document".
+  var kind: String? = nil
+  /// Local images the reader cannot load itself; the view fetches them from
+  /// the host and inlines them.
+  var images: [MobileDocumentImage]? = nil
+
+  var isSlides: Bool { kind == "slides" }
+
+  /// Replaces each fetched image's `src` with a data URL, which the reader's
+  /// content security policy allows.
+  func inliningImages(_ data: [String: Data]) -> MobileRenderedDocument {
+    var html = html
+    for image in images ?? [] {
+      guard let bytes = data[image.src] else { continue }
+      let url = "data:\(image.mimeType);base64,\(bytes.base64EncodedString())"
+      html = html.replacingOccurrences(of: "src=\"\(image.src)\"", with: "src=\"\(url)\"")
+    }
+    return MobileRenderedDocument(title: title, html: html, kind: kind, images: nil)
+  }
+}
+
+struct MobileDocumentImage: Decodable, Hashable, Sendable {
+  /// The attribute value as written in the rendered HTML.
+  let src: String
+  /// Corpus-relative (or absolute) path for the host's image endpoint.
+  let path: String
+
+  var mimeType: String {
+    switch URL(fileURLWithPath: path).pathExtension.lowercased() {
+    case "jpg", "jpeg": "image/jpeg"
+    case "gif": "image/gif"
+    case "webp": "image/webp"
+    case "heic": "image/heic"
+    case "svg": "image/svg+xml"
+    default: "image/png"
+    }
+  }
 }
 
 /// A single serial executor owns JavaScriptCore. Warming does not read any notes.

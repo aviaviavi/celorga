@@ -1,3 +1,4 @@
+import PDFKit
 import PhotosUI
 import QuickLook
 import SwiftUI
@@ -3912,7 +3913,8 @@ private struct MobileRemoteFilePreviewSheet: View {
 
   var body: some View {
     NavigationStack {
-      CorpusFileDocumentView(citation: citation, prefersRendered: citation.documentLink != nil)
+      // A whole-file citation (a doc or deck the agent produced) opens rendered.
+      CorpusFileDocumentView(citation: citation, prefersRendered: citation.documentLink != nil || citation.line == nil)
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
           Button("Done") { dismiss() }
@@ -3928,7 +3930,10 @@ private struct CorpusFileDocumentView: View {
   let citation: MobileRemoteFileCitation
   var entry: MobileSearchEntry? = nil
   var prefersRendered = false
-  @State private var showsSource = false
+  /// Chat citations open on the cited source line; the toggle switches to
+  /// the rendered page (or slides) and back.
+  @State private var sourceToggle: Bool?
+  private var showsSource: Bool { sourceToggle ?? !prefersRendered }
   @State private var rendered: MobileRenderedDocument?
   @State private var renderError: String?
   @State private var linkedEntry: MobileSearchEntry?
@@ -3937,6 +3942,7 @@ private struct CorpusFileDocumentView: View {
   @State private var preview: CorpusFilePreview?
   @State private var errorMessage: String?
   @State private var isDownloading = false
+  @State private var showsOutline = false
 
   var body: some View {
     Group {
@@ -3961,7 +3967,7 @@ private struct CorpusFileDocumentView: View {
     .toolbar {
       if canRender {
         ToolbarItem(placement: .topBarTrailing) {
-          Button(showsSource ? "Rendered" : "Source") { showsSource.toggle() }
+          Button(showsSource ? "Rendered" : "Source") { sourceToggle = !showsSource }
         }
       }
       if let preview {
@@ -4003,6 +4009,12 @@ private struct CorpusFileDocumentView: View {
           let result = try await store.renderedDocument(preview: preview, entry: selectedEntry)
           guard !Task.isCancelled else { return }
           rendered = result
+          // The reader cannot load files itself; swap in images from the host.
+          if let images = result.images, !images.isEmpty {
+            let loaded = await store.documentImages(images)
+            guard !Task.isCancelled, !loaded.isEmpty else { return }
+            rendered = result.inliningImages(loaded)
+          }
         } catch {
           guard !Task.isCancelled else { return }
           renderError = error.localizedDescription
@@ -4042,7 +4054,7 @@ private struct CorpusFileDocumentView: View {
   }
 
   private var canRender: Bool {
-    prefersRendered && (citation.documentLink != nil || ["org", "org2"].contains(URL(fileURLWithPath: citation.path).pathExtension.lowercased()))
+    citation.documentLink != nil || ["org", "org2"].contains(URL(fileURLWithPath: citation.path).pathExtension.lowercased())
   }
 
   private func previewContent(_ preview: CorpusFilePreview) -> some View {
@@ -4068,7 +4080,19 @@ private struct CorpusFileDocumentView: View {
           )
         }.padding(.horizontal).padding(.vertical, 8)
       }
-      if canRender && !showsSource {
+      if canRender && !showsSource, let rendered, rendered.isSlides, remote.isPaired, remote.supportsSlidePreview {
+        Picker("View", selection: $showsOutline) {
+          Text("Slides").tag(false)
+          Text("Outline").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+      }
+      if canRender && !showsSource, !showsOutline, let rendered, rendered.isSlides,
+         remote.isPaired, remote.supportsSlidePreview {
+        MobileSlidesView(path: preview.relativePath, content: preview.content)
+      } else if canRender && !showsSource {
         if let rendered {
           MobileRenderedDocumentView(html: rendered.html) { target in
             guard let link = MobileDocumentLink.parse(target, relativeTo: preview.relativePath) else { return }
@@ -4636,6 +4660,140 @@ private struct MobileRemoteQRScanner: UIViewControllerRepresentable {
         onScan(payload)
         return
       }
+    }
+  }
+}
+
+/// A presentation rendered by the host's Beamer pipeline (the Mac slide
+/// preview), paged one slide at a time. Re-renders when the source changes.
+private struct MobileSlidesView: View {
+  @EnvironmentObject private var remote: MobileRemoteStore
+  let path: String
+  let content: String
+  @State private var document: PDFDocument?
+  @State private var errorMessage: String?
+  @State private var pageIndex = 0
+  @State private var quickLookURL: URL?
+  @State private var attempt = 0
+
+  var body: some View {
+    Group {
+      if let document {
+        VStack(spacing: 0) {
+          MobileSlidesPDFView(document: document, pageIndex: $pageIndex)
+          HStack {
+            Button {
+              pageIndex = max(0, pageIndex - 1)
+            } label: {
+              Label("Previous slide", systemImage: "chevron.left").labelStyle(.iconOnly)
+            }
+            .disabled(pageIndex == 0)
+            Spacer()
+            Text("\(pageIndex + 1) / \(document.pageCount)")
+              .font(.footnote.monospacedDigit())
+              .foregroundStyle(.secondary)
+            Spacer()
+            Button {
+              pageIndex = min(document.pageCount - 1, pageIndex + 1)
+            } label: {
+              Label("Next slide", systemImage: "chevron.right").labelStyle(.iconOnly)
+            }
+            .disabled(pageIndex >= document.pageCount - 1)
+            Button {
+              quickLookURL = temporaryCopy(of: document)
+            } label: {
+              Label("Full screen", systemImage: "arrow.up.left.and.arrow.down.right").labelStyle(.iconOnly)
+            }
+            .padding(.leading, 16)
+          }
+          .padding(.horizontal, 20)
+          .padding(.vertical, 10)
+        }
+      } else if let errorMessage {
+        ContentUnavailableView {
+          Label("Slides Unavailable", systemImage: "rectangle.on.rectangle.slash")
+        } description: {
+          Text(errorMessage)
+        } actions: {
+          Button("Try Again") { attempt += 1 }
+        }
+      } else {
+        ProgressView("Rendering slides on \(remote.status?.serverName ?? "the host")…")
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+    }
+    .quickLookPreview($quickLookURL)
+    .task(id: "\(path)|\(content.hashValue)|\(attempt)") {
+      errorMessage = nil
+      do {
+        let data = try await remote.slidesPDF(path: path)
+        guard !Task.isCancelled else { return }
+        guard let pdf = PDFDocument(data: data), pdf.pageCount > 0 else {
+          errorMessage = "The host returned an unreadable slide PDF."
+          return
+        }
+        pageIndex = min(pageIndex, pdf.pageCount - 1)
+        document = pdf
+      } catch {
+        guard !Task.isCancelled else { return }
+        if document == nil { errorMessage = error.localizedDescription }
+      }
+    }
+  }
+
+  private func temporaryCopy(of document: PDFDocument) -> URL? {
+    let folder = FileManager.default.temporaryDirectory
+      .appendingPathComponent("celorga-slides", isDirectory: true)
+    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let name = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+    let url = folder.appendingPathComponent("\(name).pdf")
+    guard let data = document.dataRepresentation(), (try? data.write(to: url, options: .atomic)) != nil else {
+      return nil
+    }
+    return url
+  }
+}
+
+private struct MobileSlidesPDFView: UIViewRepresentable {
+  let document: PDFDocument
+  @Binding var pageIndex: Int
+
+  final class Coordinator: NSObject {
+    var pageIndex: Binding<Int>
+    init(pageIndex: Binding<Int>) { self.pageIndex = pageIndex }
+    @MainActor @objc func pageChanged(_ notification: Notification) {
+      guard let view = notification.object as? PDFView,
+            let page = view.currentPage, let document = view.document
+      else { return }
+      let index = document.index(for: page)
+      if pageIndex.wrappedValue != index { pageIndex.wrappedValue = index }
+    }
+  }
+
+  func makeCoordinator() -> Coordinator { Coordinator(pageIndex: $pageIndex) }
+
+  func makeUIView(context: Context) -> PDFView {
+    let view = PDFView()
+    view.displayMode = .singlePage
+    view.displayDirection = .horizontal
+    view.usePageViewController(true)
+    view.autoScales = true
+    view.backgroundColor = .secondarySystemBackground
+    view.document = document
+    NotificationCenter.default.addObserver(
+      context.coordinator, selector: #selector(Coordinator.pageChanged(_:)),
+      name: .PDFViewPageChanged, object: view
+    )
+    return view
+  }
+
+  func updateUIView(_ view: PDFView, context: Context) {
+    context.coordinator.pageIndex = $pageIndex
+    if view.document !== document {
+      view.document = document
+    }
+    if let page = document.page(at: pageIndex), view.currentPage != page {
+      view.go(to: page)
     }
   }
 }

@@ -176,6 +176,67 @@ final class MobileRemoteCorpusAccessTests: XCTestCase {
   }
 
   @MainActor
+  func testPhoneReceivesRenderedSlidesForAPresentation() async throws {
+    let fm = FileManager.default
+    let corpus = fm.temporaryDirectory.appendingPathComponent("celorga-mobile-slides-\(UUID().uuidString)", isDirectory: true)
+    try fm.createDirectory(at: corpus.appendingPathComponent("talks"), withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: corpus) }
+    let deck = "#+TITLE: Deck\n#+OPTIONS: H:2\n#+BEAMER_THEME: default\n* Intro\n** Hello\n- One\n"
+    try deck.write(to: corpus.appendingPathComponent("talks/deck.org"), atomically: true, encoding: .utf8)
+    try Data([1]).write(to: corpus.appendingPathComponent("talks/photo.png"))
+
+    let suite = "MobileRemoteSlidesTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let store = WorkspaceStore(cli: Org2CLI(repoRoot: try Org2CLI.defaultRepoRoot()), defaults: defaults, legacyDefaultsDomains: [])
+    store.corpusRoot = corpus
+    let renders = SlideRenderCounter()
+    store.slidePreviewRendererForTesting = { text, file, passes in
+      await renders.record(text: text, file: file, passes: passes)
+      return Data("%PDF-slides".utf8)
+    }
+    await MobileSlideCache.shared.removeAll()
+    let credentials = fm.temporaryDirectory.appendingPathComponent("celorga-mobile-devices-\(UUID().uuidString).json")
+    defer { try? fm.removeItem(at: credentials) }
+    let remote = MobileRemoteCoordinator(defaults: defaults, credentialFile: credentials)
+    remote.attach(to: store)
+    remote.setPairingCodeForTesting("626262")
+    let token = try await call(remote, "POST", "/v1/pair", MobileRemotePairRequest(
+      code: "626262", deviceName: "Phone"
+    ), as: MobileRemotePairResponse.self).accessToken
+
+    let status = try await call(remote, "GET", "/v1/status", Optional<String>.none, token: token,
+                                as: MobileRemoteServerStatus.self)
+    XCTAssertEqual(status.supportsSlidePreview, true)
+
+    let slides = try await call(remote, "POST", "/v1/files/slides",
+                                MobileRemoteFileDownloadRequest(path: "talks/deck.org"), token: token,
+                                as: MobileRemoteFileDownload.self)
+    XCTAssertEqual(slides.relativePath, "talks/deck.org")
+    XCTAssertEqual(slides.data, Data("%PDF-slides".utf8))
+    let first = await renders.calls
+    XCTAssertEqual(first.count, 1)
+    XCTAssertEqual(first.first?.text, deck)
+    XCTAssertEqual(first.first?.file, corpus.appendingPathComponent("talks/deck.org").resolvingSymlinksInPath().standardizedFileURL.path)
+
+    // An unchanged deck is served from the cache.
+    _ = try await call(remote, "POST", "/v1/files/slides",
+                       MobileRemoteFileDownloadRequest(path: "talks/deck.org"), token: token,
+                       as: MobileRemoteFileDownload.self)
+    let afterRepeat = await renders.calls
+    XCTAssertEqual(afterRepeat.count, 1)
+
+    // Paths outside the corpus and non-Org files are refused.
+    let escape = try await rawCall(remote, "POST", "/v1/files/slides",
+                                   MobileRemoteFileDownloadRequest(path: "../deck.org"), token: token)
+    XCTAssertEqual(escape.statusCode, 404)
+    let image = try await rawCall(remote, "POST", "/v1/files/slides",
+                                  MobileRemoteFileDownloadRequest(path: "talks/photo.png"), token: token)
+    XCTAssertEqual(image.statusCode, 422)
+    await MobileSlideCache.shared.removeAll()
+  }
+
+  @MainActor
   private func rawCall<Body: Encodable>(
     _ remote: MobileRemoteCoordinator,
     _ method: String,
@@ -201,5 +262,12 @@ final class MobileRemoteCorpusAccessTests: XCTestCase {
     let response = try await rawCall(remote, method, path, body, token: token)
     XCTAssertLessThan(response.statusCode, 300, String(decoding: response.body, as: UTF8.self))
     return try MobileRemoteProtocol.decoder().decode(type, from: response.body)
+  }
+}
+
+private actor SlideRenderCounter {
+  var calls: [(text: String, file: String, passes: Int)] = []
+  func record(text: String, file: String, passes: Int) {
+    calls.append((text, file, passes))
   }
 }

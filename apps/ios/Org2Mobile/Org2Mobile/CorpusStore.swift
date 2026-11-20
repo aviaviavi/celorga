@@ -319,6 +319,28 @@ final class CorpusStore: ObservableObject {
     )
   }
 
+  /// Fetches a rendered document's local images from the host, keyed by the
+  /// HTML `src` they replace. Missing or oversized images keep their alt text.
+  func documentImages(_ images: [MobileDocumentImage]) async -> [String: Data] {
+    guard remote.isPaired, !images.isEmpty else { return [:] }
+    let remote = remote
+    var loaded: [String: Data] = [:]
+    var budget = 32 * 1024 * 1024
+    await withTaskGroup(of: (String, Data?).self) { group in
+      for image in images.prefix(40) {
+        group.addTask { @MainActor @Sendable in
+          (image.src, try? await remote.imageData(path: image.path))
+        }
+      }
+      for await (src, data) in group {
+        guard let data, data.count <= budget else { continue }
+        budget -= data.count
+        loaded[src] = data
+      }
+    }
+    return loaded
+  }
+
   private func normalizedPath(_ path: String) -> String {
     var value = path.trimmingCharacters(in: .whitespacesAndNewlines)
     if value.hasPrefix("file:") { value.removeFirst(5) }

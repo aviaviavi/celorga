@@ -59,3 +59,16 @@ assert.doesNotMatch(table[1].body, /\*Water\*/);
 const internalLinks = runtime.renderDocument("* Start\n[[*Next][Next]] [[#custom][Custom]]\n* Next\n:PROPERTIES:\n:CUSTOM_ID: custom\n:END:", "notes.org");
 assert.match(internalLinks.html, /org2-workspace:\/\/open-link\?target=\*Next/);
 assert.match(internalLinks.html, /org2-workspace:\/\/open-link\?target=%23custom/);
+
+// A whole presentation reports itself as slides so the phone can ask the host for the deck PDF.
+const deck = "#+TITLE: Deck\n#+BEAMER_THEME: metropolis\n#+OPTIONS: H:2\n* Intro\n** First slide\n- Point\n[[file:../images/chart.png]]\n";
+assert.equal(runtime.renderDocument(deck, "talks/deck.org").kind, "slides");
+assert.equal(runtime.renderDocument(deck, "talks/deck.org", 5).kind, "document");
+assert.equal(runtime.renderDocument(source, coffee.path).kind, "document");
+assert.match(runtime.renderDocument(deck, "talks/deck.org").html, /<img class="org2-image" src="\.\.\/images\/chart\.png"/);
+
+// Local images resolve against the document's folder for the host to serve.
+const pictures = runtime.renderDocument("* Pictures\n[[file:../images/a b.png]]\n[[./local.jpg]]\n[[file:/Users/x/c.png]]\n[[https://example.com/d.png]]\n[[file:../../outside.png]]\n[[file:../images/a b.png]]\n", "notes/talk.org");
+assert.deepEqual(JSON.parse(JSON.stringify(pictures.images)).map(image => image.path), ["images/a b.png", "notes/local.jpg", "/Users/x/c.png"]);
+for (const image of pictures.images) assert.ok(pictures.html.includes(`src="${image.src}"`));
+console.log("Mobile slides kind and image resolution passed");

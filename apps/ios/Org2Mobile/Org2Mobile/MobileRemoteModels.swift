@@ -48,6 +48,8 @@ struct MobileRemoteServerStatus: Codable, Hashable {
   let supportsThreadDestinationChange: Bool?
   /// The host serves the corpus to this phone, which keeps no copy of it.
   let supportsCorpusAccess: Bool?
+  /// The host renders an Org presentation to a slide PDF (`POST /v1/files/slides`).
+  let supportsSlidePreview: Bool?
 }
 
 struct MobileRemotePushRegistrationRequest: Codable {

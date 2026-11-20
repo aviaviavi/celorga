@@ -1409,6 +1409,24 @@ final class MobileRemoteStore: ObservableObject {
     )
   }
 
+  /// The host renders presentations with the same Beamer pipeline as the Mac
+  /// slide preview. Older hosts only show the outline.
+  var supportsSlidePreview: Bool {
+    status?.supportsSlidePreview == true
+  }
+
+  func slidesPDF(path: String) async throws -> Data {
+    activeRequestCount += 1
+    defer { activeRequestCount -= 1 }
+    // A cold TeX render with two passes can take a while on the host.
+    return try await pairedClient().post(
+      "/v1/files/slides",
+      payload: MobileRemoteFileDownloadRequest(path: path),
+      timeout: 150,
+      as: MobileRemoteFileDownload.self
+    ).data
+  }
+
   func imageData(path: String) async throws -> Data {
     try await pairedClient().post(
       "/v1/files/image",
