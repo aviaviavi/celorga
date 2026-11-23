@@ -60,7 +60,7 @@ Configure macOS release inputs outside the repository:
 - `OPENORG_ARM64_NODE_PATH` and `OPENORG_X86_64_NODE_PATH`: native Node executables for each target architecture. Verify each with `process.arch` instead of inferring architecture from its filesystem location.
 - `OPENORG_ARM64_WHISPER_CPP_PATH` and `OPENORG_X86_64_WHISPER_CPP_PATH`: target-native whisper.cpp executables when they are not discoverable automatically.
 - `OPENORG_WHISPER_MODEL_PATH`: the verified shared `ggml-base.en.bin` model when it is not discoverable automatically.
-- `ORG2_GOOGLE_OAUTH_CLIENT_JSON`: a protected Google OAuth Desktop client JSON path, or the paired `ORG2_GOOGLE_OAUTH_CLIENT_ID` and `ORG2_GOOGLE_OAUTH_CLIENT_SECRET` values. Never print the JSON or secret, commit it, or copy it into a release checkpoint.
+- `ORG2_GOOGLE_OAUTH_CLIENT_JSON`: a protected Google OAuth Desktop client JSON path (default: `~/.config/celorga/google-oauth-client.json` with mode 0600 when present), or the paired `ORG2_GOOGLE_OAUTH_CLIENT_ID` and `ORG2_GOOGLE_OAUTH_CLIENT_SECRET` values. Never print the JSON or secret, commit it, or copy it into a release checkpoint.
 
 Environment variable names and non-secret paths may be recorded in local operator configuration; secret contents stay in the Keychain or protected files. The release command must receive the configuration explicitly rather than guessing or logging candidate secrets.
 

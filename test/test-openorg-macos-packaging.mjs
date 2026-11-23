@@ -20,6 +20,11 @@ const packagingTestEnvironment = { ...process.env };
 delete packagingTestEnvironment.ORG2_GOOGLE_OAUTH_CLIENT_JSON;
 delete packagingTestEnvironment.ORG2_GOOGLE_OAUTH_CLIENT_ID;
 delete packagingTestEnvironment.ORG2_GOOGLE_OAUTH_CLIENT_SECRET;
+delete packagingTestEnvironment.CELORGA_GOOGLE_OAUTH_CLIENT_JSON;
+delete packagingTestEnvironment.CELORGA_GOOGLE_OAUTH_CLIENT_ID;
+delete packagingTestEnvironment.CELORGA_GOOGLE_OAUTH_CLIENT_SECRET;
+// A developer's machine-local default client must not satisfy these checks.
+packagingTestEnvironment.XDG_CONFIG_HOME = join(tmpdir(), `celorga-packaging-config-${process.pid}`);
 delete packagingTestEnvironment.OPENORG_RELEASE_BUILD_CACHE;
 // Release credentials must never turn these plan/negative checks into a real build.
 for (const key of [

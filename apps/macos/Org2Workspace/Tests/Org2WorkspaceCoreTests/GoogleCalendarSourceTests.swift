@@ -321,7 +321,8 @@ final class GoogleCalendarSourceTests: XCTestCase {
       accessToken: "short-lived",
       refreshToken: "refresh",
       expirationDate: Date(),
-      scope: WorkspaceSourceCatalog.googleCalendarScope
+      scope: WorkspaceSourceCatalog.googleCalendarScope,
+      accountEmail: "ada@example.com"
     )
     let encoded = try GoogleSourceOAuthCredential(credential).encodedString()
     XCTAssertFalse(encoded.contains("short-lived"))
@@ -329,6 +330,7 @@ final class GoogleCalendarSourceTests: XCTestCase {
     XCTAssertEqual(decoded.schema, "org2:google-oauth-credential:v1")
     XCTAssertEqual(decoded.clientId, "client.apps.googleusercontent.com")
     XCTAssertEqual(decoded.refreshToken, "refresh")
+    XCTAssertEqual(decoded.accountEmail, "ada@example.com")
     XCTAssertTrue(GoogleDriveOAuthClient.grants(WorkspaceSourceCatalog.googleCalendarScope, in: "openid \(WorkspaceSourceCatalog.googleCalendarScope)"))
     XCTAssertFalse(GoogleDriveOAuthClient.grants(WorkspaceSourceCatalog.googleCalendarScope, in: GoogleDriveOAuthClient.driveFileScope))
   }

@@ -2114,6 +2114,12 @@ extension WorkspaceStore {
     sourceCredentialStore.containsCredential(profileID: profile.id)
   }
 
+  /// The Google account a Google-backed source signed in with on this Mac.
+  public func sourceGoogleAccount(_ profile: WorkspaceSourceProfileStatus) -> String? {
+    guard sourceHasStoredCredential(profile) else { return nil }
+    return GoogleSourceAccountLabels.account(profileID: profile.id)
+  }
+
   public func savePresentedSourceCredential() {
     guard let profileID = sourceCredentialProfileID else { return }
     let token = sourceCredentialDraft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2135,6 +2141,7 @@ extension WorkspaceStore {
   public func deleteSourceCredential(_ profile: WorkspaceSourceProfileStatus) {
     do {
       try sourceCredentialStore.deleteCredential(profileID: profile.id)
+      GoogleSourceAccountLabels.setAccount(nil, profileID: profile.id)
       setSourceOperationMessage("Stored credential removed.", profileID: profile.id)
     } catch {
       setSourceOperationMessage(error.localizedDescription, profileID: profile.id, failed: true)
@@ -2326,7 +2333,8 @@ extension WorkspaceStore {
       )
       let encoded = try GoogleSourceOAuthCredential(credential).encodedString()
       try sourceCredentialStore.saveCredential(encoded, profileID: profile.id)
-      let saved = "Signed in to Google."
+      GoogleSourceAccountLabels.setAccount(credential.accountEmail, profileID: profile.id)
+      let saved = credential.accountEmail.map { "Signed in to Google as \($0)." } ?? "Signed in to Google."
       setSourceOperationMessage(openOrgServer.isPaired ? saved : "\(saved) Run Now to sync on this Mac, or pair a Celorga server to sync there.", profileID: profile.id)
       await shareSourceCredentialWithServer(profileID: profile.id, savedMessage: saved)
     } catch {

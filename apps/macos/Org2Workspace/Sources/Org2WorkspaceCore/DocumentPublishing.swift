@@ -543,6 +543,10 @@ public struct GoogleDriveOAuthCredential: Codable, Equatable, Sendable {
   public let expirationDate: Date
   public let scope: String
   public let tokenType: String
+  /// The signed-in Google account, when Celorga could identify it. Older
+  /// credentials saved before multi-account support have no account.
+  public let accountEmail: String?
+  public let accountName: String?
 
   public init(
     clientID: String,
@@ -551,7 +555,9 @@ public struct GoogleDriveOAuthCredential: Codable, Equatable, Sendable {
     refreshToken: String,
     expirationDate: Date,
     scope: String,
-    tokenType: String = "Bearer"
+    tokenType: String = "Bearer",
+    accountEmail: String? = nil,
+    accountName: String? = nil
   ) {
     self.clientID = clientID
     self.clientSecret = GoogleDriveOAuthConfiguration.normalizedClientSecret(clientSecret)
@@ -560,11 +566,66 @@ public struct GoogleDriveOAuthCredential: Codable, Equatable, Sendable {
     self.expirationDate = expirationDate
     self.scope = scope
     self.tokenType = tokenType
+    self.accountEmail = GoogleAccountIdentity.normalizedEmail(accountEmail)
+    let trimmedName = accountName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    self.accountName = trimmedName.isEmpty ? nil : trimmedName
   }
 
   public var grantsDriveFileScope: Bool {
     scope.split(whereSeparator: { $0.isWhitespace })
       .contains(Substring(GoogleDriveOAuthClient.driveFileScope))
+  }
+
+  /// Stable identity for choosing among connected accounts: the account email,
+  /// or a digest of the refresh credential for an unidentified legacy account.
+  public var accountID: String {
+    if let accountEmail { return accountEmail }
+    let digest = SHA256.hash(data: Data(refreshToken.utf8))
+    return "unidentified-" + digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+  }
+
+  /// The account label shown in pickers.
+  public var accountLabel: String {
+    switch (accountName, accountEmail) {
+    case let (name?, email?) where name.caseInsensitiveCompare(email) != .orderedSame:
+      "\(name) (\(email))"
+    case let (_, email?): email
+    default: "Google account (sign in again to identify)"
+    }
+  }
+
+  public func withAccount(_ identity: GoogleAccountIdentity?) -> GoogleDriveOAuthCredential {
+    guard let identity else { return self }
+    return GoogleDriveOAuthCredential(
+      clientID: clientID,
+      clientSecret: clientSecret,
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      expirationDate: expirationDate,
+      scope: scope,
+      tokenType: tokenType,
+      accountEmail: identity.email ?? accountEmail,
+      accountName: identity.name ?? accountName
+    )
+  }
+}
+
+/// The Google account a credential belongs to, read without extra OAuth
+/// scopes: Drive's `about` resource for `drive.file`, or the primary
+/// calendar's name (its owner's email) for read-only calendar access.
+public struct GoogleAccountIdentity: Codable, Equatable, Sendable {
+  public let email: String?
+  public let name: String?
+
+  public init(email: String?, name: String? = nil) {
+    self.email = Self.normalizedEmail(email)
+    let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    self.name = trimmedName.isEmpty ? nil : trimmedName
+  }
+
+  static func normalizedEmail(_ value: String?) -> String? {
+    let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    return trimmed.contains("@") ? trimmed : nil
   }
 }
 
@@ -740,48 +801,95 @@ public enum GoogleDriveOAuthDesktopClientError: LocalizedError, Equatable, Senda
   }
 }
 
+/// Connected Google Drive accounts on this Mac. All accounts live in one
+/// Keychain item as a JSON array; the single-account item written by earlier
+/// builds is read as one account and replaced on the next save.
 public enum GoogleDriveOAuthCredentialKeychain {
   public static let service = "Org2Workspace.GoogleDrive"
-  public static let account = "drive.file.oauth-credential"
+  public static let account = "drive.file.oauth-credentials"
+  static let legacyAccount = "drive.file.oauth-credential"
 
   public static func containsCredential() -> Bool {
-    SecItemCopyMatching(baseQuery() as CFDictionary, nil) == errSecSuccess
+    SecItemCopyMatching(baseQuery(account: account) as CFDictionary, nil) == errSecSuccess
+      || SecItemCopyMatching(baseQuery(account: legacyAccount) as CFDictionary, nil) == errSecSuccess
   }
 
-  public static func readCredential(allowUserInteraction: Bool = false) -> GoogleDriveOAuthCredential? {
-    var query = baseQuery()
-    query[kSecReturnData as String] = true
-    query[kSecMatchLimit as String] = kSecMatchLimitOne
-    let context = LAContext()
-    context.interactionNotAllowed = !allowUserInteraction
-    query[kSecUseAuthenticationContext as String] = context
-    var result: CFTypeRef?
-    guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-          let data = result as? Data
-    else { return nil }
-    return try? JSONDecoder().decode(GoogleDriveOAuthCredential.self, from: data)
+  public static func readCredentials(allowUserInteraction: Bool = false) -> [GoogleDriveOAuthCredential] {
+    if let data = readData(account: account, allowUserInteraction: allowUserInteraction) {
+      return (try? JSONDecoder().decode([GoogleDriveOAuthCredential].self, from: data)) ?? []
+    }
+    if let data = readData(account: legacyAccount, allowUserInteraction: allowUserInteraction),
+       let legacy = try? JSONDecoder().decode(GoogleDriveOAuthCredential.self, from: data) {
+      return [legacy]
+    }
+    return []
   }
 
-  public static func saveCredential(_ credential: GoogleDriveOAuthCredential) throws {
+  /// Adds the account, or replaces the saved credential for the same account,
+  /// and returns the saved list.
+  @discardableResult
+  public static func saveCredential(_ credential: GoogleDriveOAuthCredential) throws -> [GoogleDriveOAuthCredential] {
     guard !credential.accessToken.isEmpty,
           !credential.refreshToken.isEmpty,
           !credential.clientID.isEmpty
     else {
       throw GoogleDriveOAuthCredentialKeychainError.invalidCredential
     }
+    let credentials = upserting(credential, into: readCredentials())
+    try saveCredentials(credentials)
+    return credentials
+  }
+
+  /// Removes one account and returns the remaining list.
+  @discardableResult
+  public static func deleteCredential(accountID: String) throws -> [GoogleDriveOAuthCredential] {
+    let remaining = readCredentials().filter { $0.accountID != accountID }
+    try saveCredentials(remaining)
+    return remaining
+  }
+
+  static func upserting(
+    _ credential: GoogleDriveOAuthCredential,
+    into credentials: [GoogleDriveOAuthCredential]
+  ) -> [GoogleDriveOAuthCredential] {
+    var result = credentials
+    if let index = result.firstIndex(where: {
+      $0.accountID == credential.accountID || $0.refreshToken == credential.refreshToken
+    }) {
+      result[index] = credential
+    } else {
+      result.append(credential)
+    }
+    return result
+  }
+
+  static func saveCredentials(_ credentials: [GoogleDriveOAuthCredential]) throws {
+    try writeCredentials(credentials)
+    // The list now supersedes the single-account item from earlier builds.
+    _ = SecItemDelete(baseQuery(account: legacyAccount) as CFDictionary)
+  }
+
+  private static func writeCredentials(_ credentials: [GoogleDriveOAuthCredential]) throws {
+    guard !credentials.isEmpty else {
+      let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
+      guard status == errSecSuccess || status == errSecItemNotFound else {
+        throw GoogleDriveOAuthCredentialKeychainError.status(status)
+      }
+      return
+    }
     let data: Data
     do {
-      data = try JSONEncoder().encode(credential)
+      data = try JSONEncoder().encode(credentials)
     } catch {
       throw GoogleDriveOAuthCredentialKeychainError.invalidCredential
     }
-    var addition = baseQuery()
+    var addition = baseQuery(account: account)
     addition[kSecValueData as String] = data
     addition[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
     let status = SecItemAdd(addition as CFDictionary, nil)
     if status == errSecDuplicateItem {
       let update = SecItemUpdate(
-        baseQuery() as CFDictionary,
+        baseQuery(account: account) as CFDictionary,
         [kSecValueData as String: data] as CFDictionary
       )
       guard update == errSecSuccess else {
@@ -794,19 +902,71 @@ public enum GoogleDriveOAuthCredentialKeychain {
     }
   }
 
-  public static func deleteCredential() throws {
-    let status = SecItemDelete(baseQuery() as CFDictionary)
-    guard status == errSecSuccess || status == errSecItemNotFound else {
-      throw GoogleDriveOAuthCredentialKeychainError.status(status)
-    }
+  private static func readData(account: String, allowUserInteraction: Bool) -> Data? {
+    var query = baseQuery(account: account)
+    query[kSecReturnData as String] = true
+    query[kSecMatchLimit as String] = kSecMatchLimitOne
+    let context = LAContext()
+    context.interactionNotAllowed = !allowUserInteraction
+    query[kSecUseAuthenticationContext as String] = context
+    var result: CFTypeRef?
+    guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
+    return result as? Data
   }
 
-  private static func baseQuery() -> [String: Any] {
+  private static func baseQuery(account: String) -> [String: Any] {
     [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecAttrAccount as String: account,
     ]
+  }
+}
+
+/// Machine-local choices about which connected account publishes what. Not
+/// stored in the corpus: the account that owns a Drive file is a property of
+/// this Mac's sign-ins, not of the document.
+public enum GoogleDriveAccountPreferences {
+  static let lastAccountKey = "org.celorga.google-drive-last-account"
+  static let fileAccountsKey = "org.celorga.google-drive-file-accounts"
+
+  public static func lastAccountID(defaults: UserDefaults = .standard) -> String? {
+    defaults.string(forKey: lastAccountKey)
+  }
+
+  public static func accountID(forFileID fileID: String, defaults: UserDefaults = .standard) -> String? {
+    (defaults.dictionary(forKey: fileAccountsKey) as? [String: String])?[fileID]
+  }
+
+  public static func recordPublication(
+    fileID: String?,
+    accountID: String,
+    defaults: UserDefaults = .standard
+  ) {
+    defaults.set(accountID, forKey: lastAccountKey)
+    guard let fileID, !fileID.isEmpty else { return }
+    var map = (defaults.dictionary(forKey: fileAccountsKey) as? [String: String]) ?? [:]
+    map[fileID] = accountID
+    defaults.set(map, forKey: fileAccountsKey)
+  }
+
+  /// The account to preselect: the one that published the linked file, then
+  /// the last account used, then the first connected account.
+  public static func preferredAccountID(
+    among credentials: [GoogleDriveOAuthCredential],
+    linkedFileID: String?,
+    defaults: UserDefaults = .standard
+  ) -> String? {
+    let ids = Set(credentials.map(\.accountID))
+    if let linkedFileID,
+       let linked = accountID(forFileID: linkedFileID, defaults: defaults),
+       ids.contains(linked) {
+      return linked
+    }
+    if let last = lastAccountID(defaults: defaults), ids.contains(last) {
+      return last
+    }
+    return credentials.first?.accountID
   }
 }
 
@@ -977,6 +1137,7 @@ public struct GoogleDriveOAuthClient: Sendable {
         ? GoogleDriveOAuthError.scopeNotGranted
         : GoogleDriveOAuthError.requestedScopeNotGranted
     }
+    let identity = await accountIdentity(accessToken: response.accessToken, scope: scope)
     return GoogleDriveOAuthCredential(
       clientID: normalizedClientID,
       clientSecret: normalizedClientSecret,
@@ -984,7 +1145,9 @@ public struct GoogleDriveOAuthClient: Sendable {
       refreshToken: refreshToken,
       expirationDate: Date().addingTimeInterval(TimeInterval(response.expiresIn)),
       scope: scope,
-      tokenType: response.tokenType ?? "Bearer"
+      tokenType: response.tokenType ?? "Bearer",
+      accountEmail: identity?.email,
+      accountName: identity?.name
     )
   }
 
@@ -1016,8 +1179,41 @@ public struct GoogleDriveOAuthClient: Sendable {
       refreshToken: response.refreshToken ?? credential.refreshToken,
       expirationDate: now.addingTimeInterval(TimeInterval(response.expiresIn)),
       scope: scope,
-      tokenType: response.tokenType ?? credential.tokenType
+      tokenType: response.tokenType ?? credential.tokenType,
+      accountEmail: credential.accountEmail,
+      accountName: credential.accountName
     )
+  }
+
+  /// Identifies the Google account behind an access token using only the
+  /// scope that was granted. Returns nil when Google does not say.
+  public func accountIdentity(accessToken: String, scope: String) async -> GoogleAccountIdentity? {
+    let driveScope = Self.grants(Self.driveFileScope, in: scope)
+    var components = URLComponents(string: driveScope
+      ? "https://www.googleapis.com/drive/v3/about"
+      : "https://www.googleapis.com/calendar/v3/calendars/primary/events")
+    components?.queryItems = driveScope
+      ? [URLQueryItem(name: "fields", value: "user(displayName,emailAddress)")]
+      : [URLQueryItem(name: "maxResults", value: "1"), URLQueryItem(name: "fields", value: "summary")]
+    guard let url = components?.url else { return nil }
+    var request = URLRequest(url: url)
+    request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+    guard let (data, response) = try? await httpRequest(request),
+          let http = response as? HTTPURLResponse,
+          (200..<300).contains(http.statusCode),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return nil }
+    let identity: GoogleAccountIdentity
+    if driveScope {
+      let user = object["user"] as? [String: Any]
+      identity = GoogleAccountIdentity(
+        email: user?["emailAddress"] as? String,
+        name: user?["displayName"] as? String
+      )
+    } else {
+      identity = GoogleAccountIdentity(email: object["summary"] as? String)
+    }
+    return identity.email == nil ? nil : identity
   }
 
   static func authorizationURL(
@@ -1036,7 +1232,8 @@ public struct GoogleDriveOAuthClient: Sendable {
       URLQueryItem(name: "code_challenge", value: codeChallenge),
       URLQueryItem(name: "code_challenge_method", value: "S256"),
       URLQueryItem(name: "state", value: state),
-      URLQueryItem(name: "prompt", value: "consent"),
+      // Always offer the account chooser so another Google account can be added.
+      URLQueryItem(name: "prompt", value: "select_account consent"),
     ]
     guard let url = components?.url else {
       throw GoogleDriveOAuthError.invalidClientID

@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectNodeArchitecture } from "./macos-runtime-node.mjs";
+import { configuredGoogleOAuthClientJSON, googleOAuthEnvironmentValue } from "./google-oauth-client.mjs";
 import { MAC_DMG_ARM64, MAC_DMG_INTEL, MAC_DMG_VOLUME_NAME } from "./openorg-sparkle.mjs";
 import { releaseBuildCacheRoot } from "./openorg-build-cache.mjs";
 
@@ -208,9 +209,10 @@ function whisperModelPath() {
 }
 
 function googleOAuthClientSource() {
-  if (process.env.ORG2_GOOGLE_OAUTH_CLIENT_JSON?.trim()) return "desktop-client-json";
-  const clientID = process.env.ORG2_GOOGLE_OAUTH_CLIENT_ID?.trim();
-  const clientSecret = process.env.ORG2_GOOGLE_OAUTH_CLIENT_SECRET?.trim();
+  const configured = configuredGoogleOAuthClientJSON();
+  if (configured.source) return configured.source;
+  const clientID = googleOAuthEnvironmentValue("GOOGLE_OAUTH_CLIENT_ID");
+  const clientSecret = googleOAuthEnvironmentValue("GOOGLE_OAUTH_CLIENT_SECRET");
   return clientID && clientSecret ? "environment-pair" : null;
 }
 
@@ -254,7 +256,7 @@ function main() {
   }
   if (!googleOAuthClientSource()) {
     throw new Error(
-      "OpenOrg DMG packaging requires the shared Google OAuth Desktop client. Set ORG2_GOOGLE_OAUTH_CLIENT_JSON to its protected JSON path, or set the paired ORG2_GOOGLE_OAUTH_CLIENT_ID and ORG2_GOOGLE_OAUTH_CLIENT_SECRET values."
+      "OpenOrg DMG packaging requires the shared Google OAuth Desktop client. Save its protected JSON at ~/.config/celorga/google-oauth-client.json, set ORG2_GOOGLE_OAUTH_CLIENT_JSON to its path, or set the paired ORG2_GOOGLE_OAUTH_CLIENT_ID and ORG2_GOOGLE_OAUTH_CLIENT_SECRET values."
     );
   }
   if (existsSync(options.output) && !options.force) {

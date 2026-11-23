@@ -14,14 +14,18 @@ public struct GoogleSourceOAuthCredential: Codable, Equatable, Sendable {
   public var refreshToken: String
   public var scope: String
   public var signedInAt: String
+  /// The Google account this source signed in with, when known. Each source
+  /// keeps its own sign-in, so different sources can use different accounts.
+  public var accountEmail: String?
 
-  public init(clientId: String, clientSecret: String?, refreshToken: String, scope: String, signedInAt: Date = Date()) {
+  public init(clientId: String, clientSecret: String?, refreshToken: String, scope: String, signedInAt: Date = Date(), accountEmail: String? = nil) {
     schema = Self.schema
     self.clientId = clientId
     self.clientSecret = clientSecret
     self.refreshToken = refreshToken
     self.scope = scope
     self.signedInAt = ISO8601DateFormatter().string(from: signedInAt)
+    self.accountEmail = accountEmail
   }
 
   public init(_ credential: GoogleDriveOAuthCredential) {
@@ -29,7 +33,8 @@ public struct GoogleSourceOAuthCredential: Codable, Equatable, Sendable {
       clientId: credential.clientID,
       clientSecret: credential.clientSecret,
       refreshToken: credential.refreshToken,
-      scope: credential.scope
+      scope: credential.scope,
+      accountEmail: credential.accountEmail
     )
   }
 
@@ -41,6 +46,23 @@ public struct GoogleSourceOAuthCredential: Codable, Equatable, Sendable {
 
   public static func decode(_ value: String) -> GoogleSourceOAuthCredential? {
     try? JSONDecoder().decode(Self.self, from: Data(value.utf8))
+  }
+}
+
+/// The Google account each Google-backed source signed in with on this Mac,
+/// kept beside the Keychain credential so the Sources view can show it
+/// without reading the secret.
+public enum GoogleSourceAccountLabels {
+  static let defaultsKey = "org.celorga.google-source-accounts"
+
+  public static func account(profileID: String, defaults: UserDefaults = .standard) -> String? {
+    (defaults.dictionary(forKey: defaultsKey) as? [String: String])?[profileID]
+  }
+
+  public static func setAccount(_ email: String?, profileID: String, defaults: UserDefaults = .standard) {
+    var map = (defaults.dictionary(forKey: defaultsKey) as? [String: String]) ?? [:]
+    map[profileID] = email
+    defaults.set(map, forKey: defaultsKey)
   }
 }
 

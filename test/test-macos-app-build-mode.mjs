@@ -185,9 +185,15 @@ function run(script, args, expectedStatus = 0, environment = process.env) {
 }
 
 const noGoogleOAuthEnvironment = { ...process.env };
-delete noGoogleOAuthEnvironment.ORG2_GOOGLE_OAUTH_CLIENT_JSON;
-delete noGoogleOAuthEnvironment.ORG2_GOOGLE_OAUTH_CLIENT_ID;
-delete noGoogleOAuthEnvironment.ORG2_GOOGLE_OAUTH_CLIENT_SECRET;
+for (const prefix of ["ORG2", "CELORGA"]) {
+  delete noGoogleOAuthEnvironment[`${prefix}_GOOGLE_OAUTH_CLIENT_JSON`];
+  delete noGoogleOAuthEnvironment[`${prefix}_GOOGLE_OAUTH_CLIENT_ID`];
+  delete noGoogleOAuthEnvironment[`${prefix}_GOOGLE_OAUTH_CLIENT_SECRET`];
+}
+// Keep a developer's machine-local default client out of these checks.
+const emptyGoogleOAuthConfigHome = mkdtempSync(join(tmpdir(), "celorga-google-oauth-config-"));
+process.on("exit", () => rmSync(emptyGoogleOAuthConfigHome, { recursive: true, force: true }));
+noGoogleOAuthEnvironment.XDG_CONFIG_HOME = emptyGoogleOAuthConfigHome;
 
 const defaultDaily = JSON.parse(
   run(
@@ -295,6 +301,34 @@ try {
   assert.equal(configuredBuild.googleOAuthClientSource, "desktop-client-json");
   assert.equal(configuredBuild.googleOAuthRequired, true);
   assert.doesNotMatch(JSON.stringify(configuredBuild), /release-client-secret/);
+
+  // A client saved at the machine-local default path is bundled when nothing
+  // else is configured, and explicit configuration still takes precedence.
+  const defaultConfigHome = join(oauthConfigurationDirectory, "config-home");
+  mkdirSync(join(defaultConfigHome, "celorga"), { recursive: true });
+  writeFileSync(join(defaultConfigHome, "celorga", "google-oauth-client.json"), JSON.stringify({
+    installed: {
+      client_id: "default-client.apps.googleusercontent.com",
+      client_secret: "default-client-secret",
+    },
+  }));
+  const defaultClientBuild = JSON.parse(
+    run("tools/build-macos-app.mjs", ["--require-google-oauth-client", "--print-configuration"], 0, {
+      ...noGoogleOAuthEnvironment,
+      XDG_CONFIG_HOME: defaultConfigHome,
+    }).stdout
+  );
+  assert.equal(defaultClientBuild.googleOAuthClientConfigured, true);
+  assert.equal(defaultClientBuild.googleOAuthClientSource, "default-client-json");
+  assert.doesNotMatch(JSON.stringify(defaultClientBuild), /default-client-secret/);
+  const celorgaNamedBuild = JSON.parse(
+    run("tools/build-macos-app.mjs", ["--print-configuration"], 0, {
+      ...noGoogleOAuthEnvironment,
+      XDG_CONFIG_HOME: defaultConfigHome,
+      CELORGA_GOOGLE_OAUTH_CLIENT_JSON: desktopClientPath,
+    }).stdout
+  );
+  assert.equal(celorgaNamedBuild.googleOAuthClientSource, "desktop-client-json");
 
   const webClientPath = join(oauthConfigurationDirectory, "web-client.json");
   writeFileSync(webClientPath, JSON.stringify({

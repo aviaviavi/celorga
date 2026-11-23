@@ -1489,7 +1489,16 @@ private struct SourceProfileCard: View {
         .foregroundStyle(.secondary)
       }
 
+      if let account = store.sourceGoogleAccount(profile) {
+        Label("Signed in as \(account)", systemImage: "person.crop.circle")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+
       if profile.type == "google-calendar" {
+        Text("To sync another Google account, add another Google Calendar source and sign in to that account.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
         CalendarPromptToggle()
       }
     }

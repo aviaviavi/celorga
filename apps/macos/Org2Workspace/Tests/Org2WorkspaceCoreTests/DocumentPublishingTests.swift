@@ -657,6 +657,117 @@ final class DocumentPublishingTests: XCTestCase {
     XCTAssertEqual(values["code_challenge"], challenge)
     XCTAssertEqual(values["code_challenge_method"], "S256")
     XCTAssertEqual(values["state"], "state-token")
+    XCTAssertEqual(values["prompt"], "select_account consent")
+  }
+
+  func testGoogleAccountsUpsertBySignedInAccount() {
+    func credential(_ email: String?, refresh: String, access: String = "access") -> GoogleDriveOAuthCredential {
+      GoogleDriveOAuthCredential(
+        clientID: "desktop-client.apps.googleusercontent.com",
+        accessToken: access,
+        refreshToken: refresh,
+        expirationDate: Date(timeIntervalSince1970: 10),
+        scope: GoogleDriveOAuthClient.driveFileScope,
+        accountEmail: email
+      )
+    }
+    let personal = credential(" Ada@Example.com ", refresh: "r1")
+    XCTAssertEqual(personal.accountID, "ada@example.com")
+    XCTAssertEqual(personal.accountLabel, "ada@example.com")
+    let work = credential("ada@work.example", refresh: "r2")
+    var accounts = GoogleDriveOAuthCredentialKeychain.upserting(personal, into: [])
+    accounts = GoogleDriveOAuthCredentialKeychain.upserting(work, into: accounts)
+    XCTAssertEqual(accounts.map(\.accountID), ["ada@example.com", "ada@work.example"])
+
+    // Signing in to the same account again replaces it rather than duplicating it.
+    let renewed = credential("ada@example.com", refresh: "r3", access: "fresh")
+    accounts = GoogleDriveOAuthCredentialKeychain.upserting(renewed, into: accounts)
+    XCTAssertEqual(accounts.count, 2)
+    XCTAssertEqual(accounts.first?.refreshToken, "r3")
+
+    // A legacy credential has no email but still a stable, distinct identity.
+    let legacy = credential(nil, refresh: "legacy-refresh")
+    XCTAssertTrue(legacy.accountID.hasPrefix("unidentified-"))
+    XCTAssertEqual(legacy.accountID, credential(nil, refresh: "legacy-refresh").accountID)
+    XCTAssertNotEqual(legacy.accountID, credential(nil, refresh: "other").accountID)
+    let labeled = legacy.withAccount(GoogleAccountIdentity(email: "ada@legacy.example", name: "Ada"))
+    XCTAssertEqual(labeled.accountID, "ada@legacy.example")
+    XCTAssertEqual(labeled.accountLabel, "Ada (ada@legacy.example)")
+    XCTAssertEqual(labeled.refreshToken, "legacy-refresh")
+  }
+
+  func testGoogleDriveAccountPreferencePrefersTheLinkedFileOwner() throws {
+    let suite = "celorga-google-account-tests-\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let accounts = ["one@example.com", "two@example.com", "three@example.com"].map { email in
+      GoogleDriveOAuthCredential(
+        clientID: "client",
+        accessToken: "a",
+        refreshToken: email,
+        expirationDate: Date(),
+        scope: GoogleDriveOAuthClient.driveFileScope,
+        accountEmail: email
+      )
+    }
+    XCTAssertEqual(
+      GoogleDriveAccountPreferences.preferredAccountID(among: accounts, linkedFileID: nil, defaults: defaults),
+      "one@example.com"
+    )
+    GoogleDriveAccountPreferences.recordPublication(fileID: "file-a", accountID: "three@example.com", defaults: defaults)
+    GoogleDriveAccountPreferences.recordPublication(fileID: "file-b", accountID: "two@example.com", defaults: defaults)
+    XCTAssertEqual(
+      GoogleDriveAccountPreferences.preferredAccountID(among: accounts, linkedFileID: "file-a", defaults: defaults),
+      "three@example.com"
+    )
+    XCTAssertEqual(
+      GoogleDriveAccountPreferences.preferredAccountID(among: accounts, linkedFileID: nil, defaults: defaults),
+      "two@example.com"
+    )
+    // A disconnected owner falls back to the last account used.
+    XCTAssertEqual(
+      GoogleDriveAccountPreferences.preferredAccountID(
+        among: Array(accounts.prefix(2)),
+        linkedFileID: "file-a",
+        defaults: defaults
+      ),
+      "two@example.com"
+    )
+  }
+
+  func testGoogleAccountIdentityUsesOnlyTheGrantedScope() async throws {
+    let capture = RequestCapture()
+    let client = GoogleDriveOAuthClient { request in
+      await capture.record(request)
+      let url = try XCTUnwrap(request.url)
+      let body = url.path.hasSuffix("/about")
+        ? #"{"user":{"displayName":"Ada Lovelace","emailAddress":"Ada@Example.com"}}"#
+        : #"{"summary":"ada@work.example"}"#
+      let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+      return (Data(body.utf8), response)
+    }
+
+    let drive = await client.accountIdentity(accessToken: "drive-token", scope: GoogleDriveOAuthClient.driveFileScope)
+    XCTAssertEqual(drive, GoogleAccountIdentity(email: "ada@example.com", name: "Ada Lovelace"))
+    var request = await capture.request
+    XCTAssertEqual(request?.url?.host, "www.googleapis.com")
+    XCTAssertEqual(request?.url?.path, "/drive/v3/about")
+    XCTAssertEqual(request?.value(forHTTPHeaderField: "Authorization"), "Bearer drive-token")
+
+    let calendar = await client.accountIdentity(
+      accessToken: "calendar-token",
+      scope: WorkspaceSourceCatalog.googleCalendarScope
+    )
+    XCTAssertEqual(calendar?.email, "ada@work.example")
+    request = await capture.request
+    XCTAssertEqual(request?.url?.path, "/calendar/v3/calendars/primary/events")
+
+    let failing = GoogleDriveOAuthClient { request in
+      let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 403, httpVersion: "HTTP/1.1", headerFields: nil)!
+      return (Data("{}".utf8), response)
+    }
+    let unknown = await failing.accountIdentity(accessToken: "t", scope: GoogleDriveOAuthClient.driveFileScope)
+    XCTAssertNil(unknown)
   }
 
   func testGoogleDesktopClientJSONImportsTheCredentialPair() throws {
@@ -705,6 +816,7 @@ final class DocumentPublishingTests: XCTestCase {
 
     let credential = try JSONDecoder().decode(GoogleDriveOAuthCredential.self, from: data)
 
+    XCTAssertNil(credential.accountEmail)
     XCTAssertNil(credential.clientSecret)
     XCTAssertEqual(credential.clientID, "desktop-client.apps.googleusercontent.com")
   }

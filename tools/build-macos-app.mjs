@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import "./celorga-env.mjs";
+import { configuredGoogleOAuthClientJSON, googleOAuthEnvironmentValue } from "./google-oauth-client.mjs";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -173,17 +174,16 @@ function resolveBuildConfiguration() {
 }
 
 function resolveGoogleOAuthConfiguration() {
-  const jsonPath = buildOptions.googleOAuthClientJSON
-    || process.env.ORG2_GOOGLE_OAUTH_CLIENT_JSON?.trim()
-    || "";
-  const environmentClientID = process.env.ORG2_GOOGLE_OAUTH_CLIENT_ID?.trim() || "";
-  const environmentClientSecret = process.env.ORG2_GOOGLE_OAUTH_CLIENT_SECRET?.trim() || "";
-  if (jsonPath && (environmentClientID || environmentClientSecret)) {
+  const flagPath = buildOptions.googleOAuthClientJSON || "";
+  const environmentJSONPath = googleOAuthEnvironmentValue("GOOGLE_OAUTH_CLIENT_JSON");
+  const environmentClientID = googleOAuthEnvironmentValue("GOOGLE_OAUTH_CLIENT_ID");
+  const environmentClientSecret = googleOAuthEnvironmentValue("GOOGLE_OAUTH_CLIENT_SECRET");
+  if ((flagPath || environmentJSONPath) && (environmentClientID || environmentClientSecret)) {
     throw new Error(
       "Configure Google OAuth with either a Desktop client JSON or the separate client environment variables, not both."
     );
   }
-  if (!jsonPath) {
+  if (!flagPath && (environmentClientID || environmentClientSecret)) {
     if (Boolean(environmentClientID) !== Boolean(environmentClientSecret)) {
       throw new Error(
         "ORG2_GOOGLE_OAUTH_CLIENT_ID and ORG2_GOOGLE_OAUTH_CLIENT_SECRET must be configured together."
@@ -192,8 +192,15 @@ function resolveGoogleOAuthConfiguration() {
     return {
       clientID: environmentClientID,
       clientSecret: environmentClientSecret,
-      source: environmentClientID || environmentClientSecret ? "environment" : null,
+      source: "environment",
     };
+  }
+  const configured = flagPath
+    ? { jsonPath: flagPath, source: "desktop-client-json" }
+    : configuredGoogleOAuthClientJSON();
+  const jsonPath = configured.jsonPath;
+  if (!jsonPath) {
+    return { clientID: "", clientSecret: "", source: null };
   }
 
   const resolvedPath = resolve(jsonPath);
@@ -221,7 +228,7 @@ function resolveGoogleOAuthConfiguration() {
   if (!clientSecret) {
     throw new Error(`Google OAuth Desktop client JSON at ${resolvedPath} has no client secret.`);
   }
-  return { clientID, clientSecret, source: "desktop-client-json" };
+  return { clientID, clientSecret, source: configured.source };
 }
 
 function firstExistingPath(candidates) {
@@ -257,6 +264,7 @@ Options:
   --allow-daily-debug     Explicitly allow a debug build at org.org2.workspace
   --google-oauth-client-json PATH
                           Bundle a Google OAuth Desktop client without copying its JSON into source
+                          (default: ~/.config/celorga/google-oauth-client.json when present)
   --local-fast            Build the self-contained local app without Swift optimization, reusing
                           the debug cache shared by tests; distributable releases remain optimized
   --local-optimized       Keep -O optimization while enabling incremental Swift compilation; this
@@ -930,7 +938,7 @@ function main() {
     && (!googleOAuthClientID || !googleOAuthClientSecret)
   ) {
     throw new Error(
-      "This distributable build requires OpenOrg's Google OAuth Desktop client. Set ORG2_GOOGLE_OAUTH_CLIENT_JSON to its protected JSON path, or set the paired ORG2_GOOGLE_OAUTH_CLIENT_ID and ORG2_GOOGLE_OAUTH_CLIENT_SECRET values."
+      "This distributable build requires OpenOrg's Google OAuth Desktop client. Save its protected JSON at ~/.config/celorga/google-oauth-client.json, set ORG2_GOOGLE_OAUTH_CLIENT_JSON to its path, or set the paired ORG2_GOOGLE_OAUTH_CLIENT_ID and ORG2_GOOGLE_OAUTH_CLIENT_SECRET values."
     );
   }
   if (buildOptions.printConfiguration) {

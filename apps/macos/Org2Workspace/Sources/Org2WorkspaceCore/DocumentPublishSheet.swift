@@ -14,7 +14,8 @@ struct DocumentPublishSheet: View {
   @State private var googleOAuthClientID = ""
   @State private var googleOAuthClientSecret = ""
   @State private var showCustomGoogleOAuthClient = false
-  @State private var googleCredential: GoogleDriveOAuthCredential?
+  @State private var googleAccounts: [GoogleDriveOAuthCredential] = []
+  @State private var selectedGoogleAccountID: String?
   @State private var preview: DocumentPublishCLIResult?
   @State private var previewedRequest: DocumentPublishRequest?
   @State private var outcome: DocumentPublishOutcome?
@@ -65,7 +66,9 @@ struct DocumentPublishSheet: View {
     .task {
       restoreGoogleCredential()
       restoreLinkedGoogleDestination()
+      selectPreferredGoogleAccount()
       await previewPublication()
+      await identifyUnlabeledGoogleAccounts()
       await store.openOrgServer.refreshDocumentPublications()
     }
     .onChange(of: destination) { _, newDestination in
@@ -78,6 +81,13 @@ struct DocumentPublishSheet: View {
     .onChange(of: host) { _, _ in invalidatePreview() }
     .onChange(of: scope) { _, _ in invalidatePreview() }
     .onChange(of: googleFolderID) { _, _ in invalidatePreview() }
+    .onChange(of: existingGooglePublication?.fileID) { _, fileID in
+      if let fileID,
+         let linked = GoogleDriveAccountPreferences.accountID(forFileID: fileID),
+         googleAccounts.contains(where: { $0.accountID == linked }) {
+        selectedGoogleAccountID = linked
+      }
+    }
   }
 
   private var header: some View {
@@ -256,15 +266,39 @@ struct DocumentPublishSheet: View {
         }
 
         if let googleCredential {
+          LabeledContent("Account") {
+            Picker("Account", selection: $selectedGoogleAccountID) {
+              ForEach(googleAccounts, id: \.accountID) { account in
+                Text(account.accountLabel).tag(Optional(account.accountID))
+              }
+            }
+            .labelsHidden()
+            .frame(width: 340, alignment: .leading)
+          }
           HStack(spacing: 8) {
-            Label("Google Drive connected", systemImage: "checkmark.circle.fill")
-              .foregroundStyle(.green)
+            Button("Add Another Google Account…") {
+              Task { await connectGoogleDrive(usingCustomClient: !GoogleDriveOAuthConfiguration.hasManagedClient) }
+            }
+            .disabled(isWorking)
             Spacer()
-            Button("Disconnect on this Mac") {
+            Button("Disconnect This Account") {
               disconnectGoogleDrive()
             }
           }
-          Text("Celorga stores the refresh credential in macOS Keychain and requests only Google Drive’s per-file drive.file scope.")
+          if let linked = existingGooglePublication,
+             let owner = GoogleDriveAccountPreferences.accountID(forFileID: linked.fileID),
+             owner != googleCredential.accountID {
+            Label("This file was last published from \(googleAccounts.first { $0.accountID == owner }?.accountLabel ?? owner). The selected account can update it only if it has edit access.", systemImage: "person.crop.circle.badge.exclamationmark")
+              .font(.caption)
+              .foregroundStyle(.orange)
+          }
+          if let managedClientID = GoogleDriveOAuthConfiguration.managedClientID(),
+             googleCredential.clientID != managedClientID {
+            Label("This account is connected through an older Google OAuth client. Choose Add Another Google Account… and sign in to the same account to move it to Celorga's current client.", systemImage: "arrow.triangle.2.circlepath")
+              .font(.caption)
+              .foregroundStyle(.orange)
+          }
+          Text("Celorga stores each account's refresh credential in macOS Keychain and requests only Google Drive’s per-file drive.file scope.")
             .font(.caption)
             .foregroundStyle(.secondary)
           Text("OAuth client: \(abbreviatedClientID(googleCredential.clientID))")
@@ -548,6 +582,10 @@ struct DocumentPublishSheet: View {
     selectedHost == .server ? store.openOrgServer.serverName : "this Mac"
   }
 
+  private var googleCredential: GoogleDriveOAuthCredential? {
+    googleAccounts.first { $0.accountID == selectedGoogleAccountID } ?? googleAccounts.first
+  }
+
   private var canPublish: Bool {
     !isWorking
       && preview != nil
@@ -604,14 +642,17 @@ struct DocumentPublishSheet: View {
           throw DocumentPublishingError.missingGoogleCredential
         }
         let currentCredential = try await GoogleDriveOAuthClient().refreshingIfNeeded(credential)
-        try GoogleDriveOAuthCredentialKeychain.saveCredential(currentCredential)
-        googleCredential = currentCredential
+        googleAccounts = try GoogleDriveOAuthCredentialKeychain.saveCredential(currentCredential)
+        selectedGoogleAccountID = currentCredential.accountID
         googleAccessToken = currentCredential.accessToken
       }
       let published = try await store.publishDocument(
         request,
         googleAccessToken: googleAccessToken
       )
+      if case .googleDrive(_, _, let fileID, _, _) = published, let account = googleCredential {
+        GoogleDriveAccountPreferences.recordPublication(fileID: fileID, accountID: account.accountID)
+      }
       outcome = published
     } catch {
       errorText = error.localizedDescription
@@ -619,9 +660,12 @@ struct DocumentPublishSheet: View {
   }
 
   private func restoreGoogleCredential() {
-    if googleCredential == nil,
-       let credential = GoogleDriveOAuthCredentialKeychain.readCredential() {
-      googleCredential = credential
+    if googleAccounts.isEmpty {
+      googleAccounts = GoogleDriveOAuthCredentialKeychain.readCredentials()
+    }
+    if let credential = googleAccounts.first(where: {
+      $0.clientID != GoogleDriveOAuthConfiguration.managedClientID()
+    }) ?? googleAccounts.first {
       if credential.clientID != GoogleDriveOAuthConfiguration.managedClientID() {
         googleOAuthClientID = credential.clientID
         googleOAuthClientSecret = credential.clientSecret ?? ""
@@ -652,6 +696,36 @@ struct DocumentPublishSheet: View {
     destination = .googleDrive
     restoredLinkedSlides = linked.format.isSlides
     format = linked.format
+  }
+
+  private func selectPreferredGoogleAccount() {
+    selectedGoogleAccountID = GoogleDriveAccountPreferences.preferredAccountID(
+      among: googleAccounts,
+      linkedFileID: existingGooglePublication?.fileID
+    )
+  }
+
+  /// Accounts saved before multi-account support have no email. Label them
+  /// once so the picker can tell them apart; failures leave them unlabeled.
+  @MainActor
+  private func identifyUnlabeledGoogleAccounts() async {
+    for account in googleAccounts where account.accountEmail == nil {
+      let client = GoogleDriveOAuthClient()
+      guard let current = try? await client.refreshingIfNeeded(account),
+            let identity = await client.accountIdentity(accessToken: current.accessToken, scope: current.scope)
+      else { continue }
+      let wasSelected = selectedGoogleAccountID == account.accountID
+      let labeled = current.withAccount(identity)
+      var remaining = googleAccounts.filter { $0.accountID != account.accountID }
+      remaining = GoogleDriveOAuthCredentialKeychain.upserting(labeled, into: remaining)
+      do {
+        try GoogleDriveOAuthCredentialKeychain.saveCredentials(remaining)
+        googleAccounts = remaining
+        if wasSelected { selectedGoogleAccountID = labeled.accountID }
+      } catch {
+        continue
+      }
+    }
   }
 
   /// Slide formats are offered while the document is shown as slides, or
@@ -696,8 +770,8 @@ struct DocumentPublishSheet: View {
         googleOAuthClientID = credential.clientID
         googleOAuthClientSecret = credential.clientSecret ?? ""
       }
-      try GoogleDriveOAuthCredentialKeychain.saveCredential(credential)
-      googleCredential = credential
+      googleAccounts = try GoogleDriveOAuthCredentialKeychain.saveCredential(credential)
+      selectedGoogleAccountID = credential.accountID
     } catch {
       errorText = error.localizedDescription
     }
@@ -705,10 +779,12 @@ struct DocumentPublishSheet: View {
 
   private func disconnectGoogleDrive() {
     do {
-      let disconnectedCredential = googleCredential
-      try GoogleDriveOAuthCredentialKeychain.deleteCredential()
-      googleCredential = nil
-      if let disconnectedCredential,
+      guard let disconnectedCredential = googleCredential else { return }
+      googleAccounts = try GoogleDriveOAuthCredentialKeychain.deleteCredential(
+        accountID: disconnectedCredential.accountID
+      )
+      selectedGoogleAccountID = googleAccounts.first?.accountID
+      if googleAccounts.isEmpty,
          disconnectedCredential.clientID != GoogleDriveOAuthConfiguration.managedClientID() {
         googleOAuthClientID = disconnectedCredential.clientID
         googleOAuthClientSecret = disconnectedCredential.clientSecret ?? ""
