@@ -1,0 +1,24 @@
+#+TITLE: Terms of Service
+#+SUBTITLE: Effective November 23, 2026
+
+Celorga is an open-source personal project by Avi Press. By using the Celorga apps, the =celorga= CLI and npm package, editor extensions, or this website, you agree to these terms.
+
+* License
+
+Celorga's source code is available under the [[https://github.com/aviaviavi/celorga/blob/main/LICENSE][Apache License 2.0]]. That license governs your use, modification, and distribution of the software.
+
+* Your content
+
+You own your notes, files, and other content. Celorga stores them on your devices and in services you choose to connect, such as Google Calendar, Google Drive, or an AI provider. Your use of those services is subject to their own terms.
+
+* Use at your own risk
+
+Celorga is provided "as is", without warranties of any kind. Keep backups of anything important. To the extent permitted by law, Avi Press is not liable for any loss of data or other damages arising from use of Celorga.
+
+* Privacy
+
+See the [[file:privacy.org][Privacy Policy]] for what data Celorga does and does not collect.
+
+* Changes and contact
+
+These terms may be updated on this page with a new effective date. Questions can be sent through [[https://github.com/aviaviavi/celorga/issues][Celorga's GitHub issues]].

@@ -2839,6 +2839,23 @@ body > .celorga-footer .celorga-footer-tagline {
   color: var(--quiet);
 }
 
+body > .celorga-footer .celorga-footer-legal {
+  display: inline-flex;
+  gap: 1rem;
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+}
+
+body > .celorga-footer .celorga-footer-legal a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+body > .celorga-footer .celorga-footer-legal a:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
 @media (max-width: 920px) {
   #content .celorga-download-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

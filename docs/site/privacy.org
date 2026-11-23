@@ -1,0 +1,35 @@
+#+TITLE: Privacy Policy
+#+SUBTITLE: Effective November 23, 2026
+
+Celorga is an open-source personal project by Avi Press. It is not run by a company. This policy covers the Celorga apps, the =celorga= CLI and npm package, editor extensions, and the website at =celorga.io=.
+
+* Your data stays on your devices
+
+Celorga is local-first. Your notes, files, chats, and settings live on your own computers and in storage you choose. Celorga has no account system and no server that receives or stores your content. We do not collect, sell, or share personal information.
+
+* Google user data
+
+If you connect a Google account, Celorga requests only the access a feature needs:
+
+- *Google Calendar* (=calendar.events.readonly=): reads your calendar events so Celorga can show them and sync them into your local notes.
+- *Google Drive* (=drive.file=): creates and updates only the Google Docs, Slides, Sheets, or PDFs that you publish from Celorga. It cannot see your other Drive files.
+
+Google sign-in credentials are stored on your device, for example in the macOS Keychain. Data from Google goes directly between your device and Google; it is not sent to Celorga or any server we run. Celorga does not use Google data for advertising or to train AI models, and does not sell or transfer it to anyone. If you choose to use an AI feature with an AI provider you configured, the content you include is sent to that provider under its own terms.
+
+Celorga's use and transfer of information received from Google APIs adheres to the [[https://developers.google.com/terms/api-services-user-data-policy][Google API Services User Data Policy]], including the Limited Use requirements.
+
+You can revoke Celorga's access at any time from your [[https://myaccount.google.com/permissions][Google Account permissions]] page, and delete synced data by deleting the local files.
+
+* Anonymous usage statistics
+
+Celorga uses [[https://scarf.sh][Scarf]] to count usage. These counts contain no notes, file names, or account information:
+
+- The Mac app sends a small event when it starts, with the app version, macOS version, and CPU architecture. You can turn this off in *Settings → General → Send launch telemetry*, or set =DO_NOT_TRACK=1=.
+- The npm package reports installs through Scarf. Set =SCARF_ANALYTICS=false= to opt out.
+- Downloads and this website are counted through Scarf.
+
+Scarf receives the network address of these requests to produce aggregate statistics.
+
+* Changes and contact
+
+If this policy changes, the updated version will be posted on this page with a new effective date. Questions can be sent through [[https://github.com/aviaviavi/celorga/issues][Celorga's GitHub issues]].
