@@ -59,6 +59,48 @@ final class ClaudeCodeClientTests: XCTestCase {
     XCTAssertEqual(ClaudeCodeClient.permissionMode(for: .fullAccess), "bypassPermissions")
   }
 
+  func testArgumentsPassOnlySupportedEffortLevels() {
+    let prompt = URL(fileURLWithPath: "/tmp/context.txt")
+    for effort in ClaudeCodeClient.reasoningOptions.map(\.id) {
+      let arguments = ClaudeCodeClient.arguments(
+        sessionID: nil,
+        model: nil,
+        reasoningEffort: effort,
+        sandboxAccess: .workspaceWrite,
+        systemPromptFile: prompt,
+        attachmentDirectory: nil
+      )
+      XCTAssertEqual(arguments.value(after: "--effort"), effort)
+    }
+    XCTAssertEqual(
+      ClaudeCodeClient.reasoningOptions.map(\.id),
+      ["low", "medium", "high", "xhigh", "max"]
+    )
+    let unsupported = ClaudeCodeClient.arguments(
+      sessionID: nil,
+      model: nil,
+      reasoningEffort: "minimal",
+      sandboxAccess: .workspaceWrite,
+      systemPromptFile: prompt,
+      attachmentDirectory: nil
+    )
+    XCTAssertNil(unsupported.value(after: "--effort"))
+  }
+
+  func testStreamDecoderKeepsEveryResultOfASteeredTurn() async {
+    var decoder = ClaudeCodeStreamDecoder()
+    let lines = [
+      #"{"type":"result","subtype":"success","is_error":false,"session_id":"abc","result":"First part"}"#,
+      #"{"type":"result","subtype":"success","is_error":false,"session_id":"abc","result":"Applied your guidance"}"#
+    ]
+    for line in lines {
+      await decoder.consume(line) { _ in }
+    }
+    XCTAssertEqual(decoder.result.resultCount, 2)
+    XCTAssertTrue(decoder.result.succeeded)
+    XCTAssertEqual(decoder.result.reply, "First part\n\nApplied your guidance")
+  }
+
   func testStreamDecoderExtractsSessionDeltasActivitiesAndResult() async {
     let recorder = ClaudeEventRecorder()
     var decoder = ClaudeCodeStreamDecoder()

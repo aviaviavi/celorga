@@ -2086,6 +2086,7 @@ extension WorkspaceStore {
         attachments: requestUserMessage.attachments,
         cwd: corpusRoot,
         model: thread.model(forDestinationID: destinationID),
+        reasoningEffort: thread.reasoningEffort(forDestinationID: destinationID),
         sandboxAccess: codexSandboxAccess
       )
     }

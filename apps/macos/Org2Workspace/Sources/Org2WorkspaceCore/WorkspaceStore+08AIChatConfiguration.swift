@@ -10,6 +10,7 @@ extension WorkspaceStore {
     for model: String?,
     runtime: AIChatRuntime
   ) -> [AIChatReasoningOption] {
+    if runtime == .claude { return ClaudeCodeClient.reasoningOptions }
     guard runtime == .codex else { return [] }
     let option = model.flatMap { selected in
       aiChatModelOptions.first(where: { $0.id == selected })
@@ -2145,8 +2146,8 @@ extension WorkspaceStore {
       return AIChatRemoteConfiguration(
         models: models,
         effectiveModel: thread.model,
-        reasoningEffort: nil,
-        reasoningOptions: [],
+        reasoningEffort: thread.reasoningEffort,
+        reasoningOptions: ClaudeCodeClient.reasoningOptions,
         defaultReasoningEffort: nil
       )
     case .piLocal, .piRemote, .openCodeLocal, .openCodeRemote:

@@ -510,8 +510,9 @@ final class AIChatSharedRoomTests: XCTestCase {
         models: [AIChatModelOption(id: "openai/plain", label: "Plain", supportsReasoning: false)]
       ).isEmpty
     )
-    XCTAssertTrue(
-      WorkspaceStore.aiChatRoomReasoningOptions(adapter: .claudeLocal, selectedModel: nil, models: []).isEmpty
+    XCTAssertEqual(
+      WorkspaceStore.aiChatRoomReasoningOptions(adapter: .claudeLocal, selectedModel: nil, models: []),
+      ClaudeCodeClient.reasoningOptions
     )
   }
 

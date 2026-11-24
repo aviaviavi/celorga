@@ -216,9 +216,21 @@ public actor ClaudeCodeClient {
     )
   }
 
+  /// Claude Code's `--effort` levels, lowest to highest. A chat that leaves
+  /// effort unset passes no flag, so Claude Code uses its own default and
+  /// older releases without the flag keep working.
+  nonisolated public static let reasoningOptions = [
+    AIChatReasoningOption(id: "low", label: "Low"),
+    AIChatReasoningOption(id: "medium", label: "Medium"),
+    AIChatReasoningOption(id: "high", label: "High"),
+    AIChatReasoningOption(id: "xhigh", label: "Extra High"),
+    AIChatReasoningOption(id: "max", label: "Max")
+  ]
+
   nonisolated static func arguments(
     sessionID: String?,
     model: String?,
+    reasoningEffort: String? = nil,
     sandboxAccess: CodexSandboxAccess,
     systemPromptFile: URL,
     attachmentDirectory: URL?
@@ -239,6 +251,10 @@ public actor ClaudeCodeClient {
     }
     if let model = normalized(model) {
       arguments.append(contentsOf: ["--model", model])
+    }
+    if let effort = normalized(reasoningEffort),
+       reasoningOptions.contains(where: { $0.id == effort }) {
+      arguments.append(contentsOf: ["--effort", effort])
     }
     if let attachmentDirectory {
       arguments.append(contentsOf: ["--add-dir", attachmentDirectory.path])
@@ -273,6 +289,7 @@ public actor ClaudeCodeClient {
     attachments: [AIChatAttachment],
     cwd: URL,
     model: String?,
+    reasoningEffort: String? = nil,
     sandboxAccess: CodexSandboxAccess
   ) async throws -> ClaudeCodeTurnResult {
     guard let executableURL else { throw ClaudeCodeError.executableNotFound }
@@ -309,6 +326,7 @@ public actor ClaudeCodeClient {
     process.arguments = Self.arguments(
       sessionID: existingSessionID,
       model: model,
+      reasoningEffort: reasoningEffort,
       sandboxAccess: sandboxAccess,
       systemPromptFile: systemPromptURL,
       attachmentDirectory: materialized.directory

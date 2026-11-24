@@ -32,8 +32,18 @@ final class ClaudeModelSelectorTests: XCTestCase {
     await store.refreshAIChatConfiguration()
     XCTAssertEqual(store.aiChatModelOptions.map(\.id), ["sonnet", "opus", "haiku"])
     XCTAssertEqual(store.selectedAIChatModelLabel, "Default model")
+    // Claude Code takes --effort, so the reasoning picker has levels.
+    XCTAssertEqual(store.aiChatReasoningOptions.map(\.id), ["low", "medium", "high", "xhigh", "max"])
+    store.setSelectedAIChatReasoningEffort("max")
+    XCTAssertEqual(store.selectedAIChatReasoningEffort, "max")
+    XCTAssertEqual(store.selectedAIChatReasoningLabel, "Max")
+    store.setSelectedAIChatReasoningEffort(nil)
 
     store.setSelectedAIChatModel("opus")
+    XCTAssertEqual(
+      store.aiChatReasoningOptions.map(\.id), ["low", "medium", "high", "xhigh", "max"],
+      "changing the model must not hide Claude Code's effort levels"
+    )
     await store.refreshAIChatConfiguration(applySelection: true)
     XCTAssertEqual(store.selectedAIChatModel, "opus")
     XCTAssertEqual(store.selectedAIChatModelLabel, "Opus")
