@@ -286,6 +286,9 @@ final class WorkspaceDocumentMutationLaneTests: XCTestCase {
       // AI chat JSON machine state, explicitly outside the ordinary document
       // mutation lane.
       "data.write(to: url, options: [.atomic])",
+      // Opt-in shared AI destination settings, JSON in the corpus state
+      // directory beside the chat store, never ordinary Org documents.
+      "SharedAIChatDestinations.write(aiChatDestinations, to: url)",
       // Per-host chat presence records (heartbeat and live turn progress),
       // machine state beside the AI chat store rather than corpus documents.
       "AIChatLiveHostDirectory.write(record, transcriptURL:",
@@ -299,7 +302,7 @@ final class WorkspaceDocumentMutationLaneTests: XCTestCase {
       "text.write(to: url, atomically: true, encoding: .utf8)",
       "previousText.write(to: backupURL",
     ]
-    XCTAssertEqual(directWriteLines.count, 16, "Classify every new direct filesystem write")
+    XCTAssertEqual(directWriteLines.count, 18, "Classify every new direct filesystem write")
     for line in directWriteLines {
       XCTAssertTrue(
         classifiedDirectWriteMarkers.contains(where: line.contains),

@@ -80,6 +80,15 @@ struct AIChatSettingsView: View {
             .foregroundStyle(.secondary)
         }
 
+        Toggle("Save destinations in this corpus", isOn: Binding(
+          get: { store.aiChatDestinationsSharedWithCorpus },
+          set: { store.setAIChatDestinationsSharedWithCorpus($0) }
+        ))
+        .disabled(store.corpusRoot == nil)
+        Text("Other Macs that open this corpus add these destinations automatically. API keys and sign-ins stay on each Mac.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+
         if let error = store.aiChatDestinationSettingsError {
           Label(error, systemImage: "exclamationmark.triangle.fill")
             .font(.callout)

@@ -2270,10 +2270,67 @@ extension WorkspaceStore {
   }
 
   private func persistAIChatDestinations() {
+    publishSharedAIChatDestinationsIfEnabled()
     guard !Self.shouldIgnoreStandardDefaultsForTests(defaults),
           let data = try? JSONEncoder().encode(aiChatDestinations)
     else { return }
     defaults.set(data, forKey: aiChatDestinationsKey)
+  }
+
+  // MARK: Destinations shared through the corpus
+
+  /// Turns sharing of this Mac's AI destinations through the active corpus
+  /// on or off. Sharing writes the destination list, without credentials, to
+  /// the corpus state directory; every Mac that opens the corpus adds the
+  /// destinations it is missing. Turning sharing off removes the shared copy
+  /// and leaves each Mac's own destinations in place.
+  public func setAIChatDestinationsSharedWithCorpus(_ shared: Bool) {
+    guard let corpusRoot else { return }
+    let url = SharedAIChatDestinations.fileURL(corpusRoot: corpusRoot)
+    do {
+      if shared {
+        try SharedAIChatDestinations.write(aiChatDestinations, to: url)
+      } else if FileManager.default.fileExists(atPath: url.path) {
+        try FileManager.default.removeItem(at: url)
+      }
+      aiChatDestinationsSharedWithCorpus = shared
+      aiChatDestinationSettingsError = nil
+    } catch {
+      aiChatDestinationSettingsError = "Could not update the corpus copy of AI destinations: \(error.localizedDescription)"
+    }
+  }
+
+  /// Adds destinations that another Mac shared through the active corpus and
+  /// this Mac does not have yet. Destinations already on this Mac keep their
+  /// local settings. Credentials stay on each Mac.
+  @discardableResult
+  public func importSharedAIChatDestinations() -> [String] {
+    guard let corpusRoot else {
+      aiChatDestinationsSharedWithCorpus = false
+      return []
+    }
+    let url = SharedAIChatDestinations.fileURL(corpusRoot: corpusRoot)
+    guard let shared = SharedAIChatDestinations.read(from: url) else {
+      aiChatDestinationsSharedWithCorpus = false
+      return []
+    }
+    aiChatDestinationsSharedWithCorpus = true
+    let merged = SharedAIChatDestinations.merging(shared, into: aiChatDestinations)
+    let added = merged.map(\.id).filter { id in !aiChatDestinations.contains(where: { $0.id == id }) }
+    guard !added.isEmpty else { return [] }
+    aiChatDestinations = merged
+    persistAIChatDestinations()
+    return added
+  }
+
+  private func publishSharedAIChatDestinationsIfEnabled() {
+    guard aiChatDestinationsSharedWithCorpus, let corpusRoot else { return }
+    let url = SharedAIChatDestinations.fileURL(corpusRoot: corpusRoot)
+    do {
+      try SharedAIChatDestinations.write(aiChatDestinations, to: url)
+    } catch {
+      aiChatDestinationSettingsError = "Could not update the corpus copy of AI destinations: \(error.localizedDescription)"
+    }
   }
 
   nonisolated static func restoreAIChatDestinations(

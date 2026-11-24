@@ -2928,6 +2928,8 @@ public final class WorkspaceStore {
     }
   }
   public internal(set) var aiChatDestinationSettingsError: String?
+  /// Whether the active corpus carries a shared copy of the AI destinations.
+  public internal(set) var aiChatDestinationsSharedWithCorpus = false
   public internal(set) var aiChatReasoningOptions: [AIChatReasoningOption] = []
   public internal(set) var aiChatEffectiveModel: String?
   public internal(set) var aiChatDefaultReasoningEffort: String?

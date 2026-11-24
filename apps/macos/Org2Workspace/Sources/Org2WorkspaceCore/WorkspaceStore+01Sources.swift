@@ -1001,6 +1001,7 @@ extension WorkspaceStore {
       to: Self.aiChatTranscriptURL(corpusRoot: standardized),
       migrationSource: aiChatMigrationSource
     )
+    importSharedAIChatDestinations()
     agenda = cachedWorkspace?.agenda
     approvalItems = cachedWorkspace?.approvalItems ?? []
     snoozedApprovalItems = []
