@@ -323,6 +323,26 @@ public enum WorkspaceWindowLayout {
   }
 }
 
+/// Where the workspace tab bar sits relative to the sidebar.
+public enum WorkspaceTabBarPlacement: Equatable, Sendable {
+  /// Across the whole window, above the sidebar and the main area.
+  case aboveSplitView
+  /// At the top of the main area, beside a full-height sidebar.
+  case detailColumn
+
+  /// macOS 26 floats the sidebar over the window with its own inset and
+  /// expects it to run the window's full height. A bar above the split view
+  /// pushes that floating sidebar down and leaves an empty band above it, so
+  /// the bar moves into the main area there.
+  public static func placement(forMacOSMajorVersion major: Int) -> WorkspaceTabBarPlacement {
+    major >= 26 ? .detailColumn : .aboveSplitView
+  }
+
+  public static var current: WorkspaceTabBarPlacement {
+    placement(forMacOSMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+  }
+}
+
 struct WorkspaceIconBadge: View {
   let systemImage: String
   var tint: Color = .secondary

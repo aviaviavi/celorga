@@ -23,6 +23,13 @@ final class WorkspaceFirstRunLayoutTests: XCTestCase {
     XCTAssertGreaterThan(unknown.width, WorkspaceWindowLayout.minimumWidth)
   }
 
+  func testTabBarMovesBesideTheFloatingSidebarOnMacOS26() {
+    XCTAssertEqual(WorkspaceTabBarPlacement.placement(forMacOSMajorVersion: 14), .aboveSplitView)
+    XCTAssertEqual(WorkspaceTabBarPlacement.placement(forMacOSMajorVersion: 15), .aboveSplitView)
+    XCTAssertEqual(WorkspaceTabBarPlacement.placement(forMacOSMajorVersion: 26), .detailColumn)
+    XCTAssertEqual(WorkspaceTabBarPlacement.placement(forMacOSMajorVersion: 27), .detailColumn)
+  }
+
   func testLaunchGuideOffersEveryLocalAgentHarness() {
     let offered = Set(WorkspaceStore.launchGuideDestinationIDs)
     let localHarnesses = AIChatDestinationConfiguration.defaults

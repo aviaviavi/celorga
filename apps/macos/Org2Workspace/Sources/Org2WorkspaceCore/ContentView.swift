@@ -46,9 +46,12 @@ public struct ContentView: View {
 
   public var body: some View {
     @Bindable var store = store
+    let tabBarPlacement = WorkspaceTabBarPlacement.current
     GeometryReader { proxy in
       VStack(spacing: 0) {
-        WorkspaceTabBar()
+        if tabBarPlacement == .aboveSplitView {
+          WorkspaceTabBar()
+        }
         NavigationSplitView {
           SidebarView()
             .navigationSplitViewColumnWidth(
@@ -57,8 +60,13 @@ public struct ContentView: View {
               max: WorkspaceSidebarLayout.maximumWidth(for: proxy.size.width)
             )
         } detail: {
-          WorkspaceMainArea(workspaceTabID: store.selectedWorkspaceTabID)
-            .id(store.selectedWorkspaceTabID)
+          VStack(spacing: 0) {
+            if tabBarPlacement == .detailColumn {
+              WorkspaceTabBar()
+            }
+            WorkspaceMainArea(workspaceTabID: store.selectedWorkspaceTabID)
+              .id(store.selectedWorkspaceTabID)
+          }
         }
       }
       .toolbar {
