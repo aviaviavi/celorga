@@ -271,6 +271,14 @@ enum WorkspaceSidebarLayout {
   static func maximumWidth(for containerWidth: CGFloat) -> CGFloat {
     max(minimumWidth, containerWidth * 0.25)
   }
+
+  /// The flush sidebar's width: a stored drag width, or the default when none
+  /// is stored, kept within the same bounds as the system sidebar.
+  static func flushWidth(stored: CGFloat?, containerWidth: CGFloat) -> CGFloat {
+    let maximum = maximumWidth(for: containerWidth)
+    guard let stored, stored > 0 else { return defaultWidth(for: containerWidth) }
+    return min(max(stored, minimumWidth), maximum)
+  }
 }
 
 enum WorkspaceMainSplitLayout {
@@ -323,23 +331,40 @@ public enum WorkspaceWindowLayout {
   }
 }
 
-/// Where the workspace tab bar sits relative to the sidebar.
-public enum WorkspaceTabBarPlacement: Equatable, Sendable {
-  /// Across the whole window, above the sidebar and the main area.
-  case aboveSplitView
-  /// At the top of the main area, beside a full-height sidebar.
-  case detailColumn
+/// How the sidebar joins the main area.
+public enum WorkspaceSidebarPresentation: Equatable, Sendable {
+  /// NavigationSplitView's system sidebar.
+  case systemSplitView
+  /// A flush column that meets the window edges and the main area, divided
+  /// from it by a single hairline.
+  case flushColumn
 
-  /// macOS 26 floats the sidebar over the window with its own inset and
-  /// expects it to run the window's full height. A bar above the split view
-  /// pushes that floating sidebar down and leaves an empty band above it, so
-  /// the bar moves into the main area there.
-  public static func placement(forMacOSMajorVersion major: Int) -> WorkspaceTabBarPlacement {
-    major >= 26 ? .detailColumn : .aboveSplitView
+  /// macOS 26 draws NavigationSplitView's sidebar as a rounded, inset panel
+  /// floating inside the window, which reads as a box inside a box next to
+  /// Celorga's own opaque sidebar. There the sidebar is a flush column
+  /// instead, laid out like the macOS 15 sidebar.
+  public static func presentation(forMacOSMajorVersion major: Int) -> WorkspaceSidebarPresentation {
+    major >= 26 ? .flushColumn : .systemSplitView
   }
 
-  public static var current: WorkspaceTabBarPlacement {
-    placement(forMacOSMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+  /// `ORG2_WORKSPACE_SIDEBAR_PRESENTATION` (`flush` or `system`) overrides
+  /// the version check, so either layout can be rendered on any macOS.
+  public static func presentation(
+    forMacOSMajorVersion major: Int,
+    override: String?
+  ) -> WorkspaceSidebarPresentation {
+    switch override?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "flush": .flushColumn
+    case "system": .systemSplitView
+    default: presentation(forMacOSMajorVersion: major)
+    }
+  }
+
+  public static var current: WorkspaceSidebarPresentation {
+    presentation(
+      forMacOSMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
+      override: CelorgaNames.environment("ORG2_WORKSPACE_SIDEBAR_PRESENTATION")
+    )
   }
 }
 

@@ -41,35 +41,59 @@ func performAfterSwiftUIViewUpdate(
 
 public struct ContentView: View {
   @Environment(WorkspaceStore.self) private var store
+  @AppStorage(WorkspaceFlushSidebarDefaults.widthKey) private var flushSidebarWidth: Double = 0
+  @AppStorage(WorkspaceFlushSidebarDefaults.hiddenKey) private var isFlushSidebarHidden = false
 
   public init() {}
 
   public var body: some View {
     @Bindable var store = store
-    let tabBarPlacement = WorkspaceTabBarPlacement.current
+    let sidebarPresentation = WorkspaceSidebarPresentation.current
     GeometryReader { proxy in
       VStack(spacing: 0) {
-        if tabBarPlacement == .aboveSplitView {
-          WorkspaceTabBar()
-        }
-        NavigationSplitView {
-          SidebarView()
-            .navigationSplitViewColumnWidth(
-              min: WorkspaceSidebarLayout.minimumWidth,
-              ideal: WorkspaceSidebarLayout.defaultWidth(for: proxy.size.width),
-              max: WorkspaceSidebarLayout.maximumWidth(for: proxy.size.width)
-            )
-        } detail: {
-          VStack(spacing: 0) {
-            if tabBarPlacement == .detailColumn {
-              WorkspaceTabBar()
-            }
+        WorkspaceTabBar()
+        switch sidebarPresentation {
+        case .systemSplitView:
+          NavigationSplitView {
+            SidebarView()
+              .navigationSplitViewColumnWidth(
+                min: WorkspaceSidebarLayout.minimumWidth,
+                ideal: WorkspaceSidebarLayout.defaultWidth(for: proxy.size.width),
+                max: WorkspaceSidebarLayout.maximumWidth(for: proxy.size.width)
+              )
+          } detail: {
+            WorkspaceMainArea(workspaceTabID: store.selectedWorkspaceTabID)
+              .id(store.selectedWorkspaceTabID)
+          }
+        case .flushColumn:
+          WorkspaceFlushSidebarSplit(
+            containerWidth: proxy.size.width,
+            isSidebarHidden: isFlushSidebarHidden,
+            storedWidth: $flushSidebarWidth
+          ) {
+            SidebarView()
+          } detail: {
             WorkspaceMainArea(workspaceTabID: store.selectedWorkspaceTabID)
               .id(store.selectedWorkspaceTabID)
           }
         }
       }
       .toolbar {
+        if sidebarPresentation == .flushColumn {
+          ToolbarItem(placement: .navigation) {
+            Button {
+              withAnimation(WorkspaceMotion.disclosure) {
+                isFlushSidebarHidden.toggle()
+              }
+            } label: {
+              Label(isFlushSidebarHidden ? "Show Sidebar" : "Hide Sidebar", systemImage: "sidebar.left")
+            }
+            .labelStyle(.iconOnly)
+            .frame(width: 28, height: 28)
+            .keyboardShortcut("s", modifiers: [.command, .control])
+            .help(isFlushSidebarHidden ? "Show Sidebar (⌃⌘S)" : "Hide Sidebar (⌃⌘S)")
+          }
+        }
         ToolbarItem(placement: .navigation) {
           Button {
             store.navigateBack()

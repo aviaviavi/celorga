@@ -23,11 +23,40 @@ final class WorkspaceFirstRunLayoutTests: XCTestCase {
     XCTAssertGreaterThan(unknown.width, WorkspaceWindowLayout.minimumWidth)
   }
 
-  func testTabBarMovesBesideTheFloatingSidebarOnMacOS26() {
-    XCTAssertEqual(WorkspaceTabBarPlacement.placement(forMacOSMajorVersion: 14), .aboveSplitView)
-    XCTAssertEqual(WorkspaceTabBarPlacement.placement(forMacOSMajorVersion: 15), .aboveSplitView)
-    XCTAssertEqual(WorkspaceTabBarPlacement.placement(forMacOSMajorVersion: 26), .detailColumn)
-    XCTAssertEqual(WorkspaceTabBarPlacement.placement(forMacOSMajorVersion: 27), .detailColumn)
+  func testMacOS26UsesAFlushSidebarInsteadOfTheFloatingPanel() {
+    XCTAssertEqual(WorkspaceSidebarPresentation.presentation(forMacOSMajorVersion: 14), .systemSplitView)
+    XCTAssertEqual(WorkspaceSidebarPresentation.presentation(forMacOSMajorVersion: 15), .systemSplitView)
+    XCTAssertEqual(WorkspaceSidebarPresentation.presentation(forMacOSMajorVersion: 26), .flushColumn)
+    XCTAssertEqual(WorkspaceSidebarPresentation.presentation(forMacOSMajorVersion: 27), .flushColumn)
+    XCTAssertEqual(
+      WorkspaceSidebarPresentation.presentation(forMacOSMajorVersion: 15, override: " Flush "),
+      .flushColumn
+    )
+    XCTAssertEqual(
+      WorkspaceSidebarPresentation.presentation(forMacOSMajorVersion: 26, override: "system"),
+      .systemSplitView
+    )
+    XCTAssertEqual(
+      WorkspaceSidebarPresentation.presentation(forMacOSMajorVersion: 26, override: "other"),
+      .flushColumn
+    )
+  }
+
+  func testFlushSidebarWidthDefaultsAndStaysWithinSystemSidebarBounds() {
+    let container: CGFloat = 1600
+    XCTAssertEqual(
+      WorkspaceSidebarLayout.flushWidth(stored: nil, containerWidth: container),
+      WorkspaceSidebarLayout.defaultWidth(for: container)
+    )
+    XCTAssertEqual(WorkspaceSidebarLayout.flushWidth(stored: 300, containerWidth: container), 300)
+    XCTAssertEqual(
+      WorkspaceSidebarLayout.flushWidth(stored: 100, containerWidth: container),
+      WorkspaceSidebarLayout.minimumWidth
+    )
+    XCTAssertEqual(
+      WorkspaceSidebarLayout.flushWidth(stored: 900, containerWidth: container),
+      WorkspaceSidebarLayout.maximumWidth(for: container)
+    )
   }
 
   func testLaunchGuideOffersEveryLocalAgentHarness() {

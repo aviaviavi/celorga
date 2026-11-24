@@ -5,7 +5,7 @@ Celorga brings an ordinary folder of =.org= files into one Mac app. Your files r
 
 * Start with an agent and today's note
 
-On first launch, Celorga opens a window sized to most of your screen, creates a plain-text workspace automatically, and asks you to connect an agent already available on your Mac. Choose local Codex, Claude Code, OpenCode, or Pi, or an OpenClaw Gateway you already run. Remote agents over SSH and API providers are one click away in *AI Chat Settings…*. You can also continue without AI; Celorga does not require an account or agent. On macOS 26 and later, the sidebar runs the full height of the window and the workspace tabs sit above the main area beside it.
+On first launch, Celorga opens a window sized to most of your screen, creates a plain-text workspace automatically, and asks you to connect an agent already available on your Mac. Choose local Codex, Claude Code, OpenCode, or Pi, or an OpenClaw Gateway you already run. Remote agents over SSH and API providers are one click away in *AI Chat Settings…*. You can also continue without AI; Celorga does not require an account or agent. On macOS 26 and later, the sidebar is a flush column that meets the window edges instead of a floating inset panel; drag its edge to resize it, and use the toolbar button or =Cmd-Ctrl-S= to hide or show it.
 
 After setup, Home opens immediately with a chat box and today's daily note side by side. Ask a question, write in the note, or do both. The initial workspace lives in a normal folder that you can move or rename. Use *Celorga → Settings… → General* to update its portable name and kind, reveal it in Finder, or open a different corpus.
 
