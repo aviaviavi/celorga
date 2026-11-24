@@ -49,6 +49,8 @@ final class ClaudeCodeClientTests: XCTestCase {
     )
 
     XCTAssertTrue(arguments.contains("--include-partial-messages"))
+    XCTAssertEqual(arguments.value(after: "--input-format"), "stream-json")
+    XCTAssertNil(arguments.value(after: "--effort"), "an unset effort must leave Claude Code's default")
     XCTAssertEqual(arguments.value(after: "--permission-mode"), "acceptEdits")
     XCTAssertEqual(arguments.value(after: "--resume"), "session-123")
     XCTAssertEqual(arguments.value(after: "--model"), "sonnet")
@@ -88,10 +90,13 @@ final class ClaudeCodeClientTests: XCTestCase {
     let script = """
     #!/bin/sh
     printf '%s\\n' "$@" > "$ORG2_CLAUDE_TEST_ARGUMENTS"
-    cat > "$ORG2_CLAUDE_TEST_INPUT"
+    IFS= read -r line
+    printf '%s' "$line" > "$ORG2_CLAUDE_TEST_INPUT"
     printf '%s\\n' '{"type":"system","subtype":"init","session_id":"session-new"}'
     printf '%s\\n' '{"type":"stream_event","session_id":"session-new","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hi"}}}'
     printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"session-new","result":"Hi from Claude"}'
+    # Like Claude Code with streaming input, wait for more input until EOF.
+    cat > /dev/null
     """
     try script.write(to: executable, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
@@ -120,13 +125,129 @@ final class ClaudeCodeClientTests: XCTestCase {
     )
 
     XCTAssertEqual(result, ClaudeCodeTurnResult(sessionID: "session-new", reply: "Hi from Claude"))
-    XCTAssertEqual(try String(contentsOf: inputLog, encoding: .utf8), "Hello Claude")
+    let input = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(contentsOf: inputLog)) as? [String: Any]
+    )
+    XCTAssertEqual(input["type"] as? String, "user")
+    XCTAssertEqual((input["message"] as? [String: Any])?["content"] as? String, "Hello Claude")
     let arguments = try String(contentsOf: argumentsLog, encoding: .utf8)
     XCTAssertTrue(arguments.contains("--resume\nsession-old"))
     XCTAssertTrue(arguments.contains("--permission-mode\nplan"))
     XCTAssertTrue(arguments.contains("--model\nsonnet"))
     let events = await recorder.snapshot()
     XCTAssertEqual(events, ["session:session-new", "delta:Hi"])
+  }
+}
+
+final class ClaudeCodeSteeringTests: XCTestCase {
+  /// Guidance typed while Claude Code works reaches the running session's
+  /// input instead of waiting for a follow-up turn.
+  func testSteerWritesGuidanceToTheRunningTurn() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("celorga-claude-steer-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = root.appendingPathComponent("claude")
+    let inputLog = root.appendingPathComponent("input.jsonl")
+    let script = """
+    #!/bin/sh
+    IFS= read -r first
+    printf '%s\\n' "$first" > "$ORG2_CLAUDE_TEST_INPUT"
+    printf '%s\\n' '{"type":"system","subtype":"init","session_id":"steer-session"}'
+    IFS= read -r second
+    printf '%s\\n' "$second" >> "$ORG2_CLAUDE_TEST_INPUT"
+    printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"steer-session","result":"Working on it"}'
+    printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"steer-session","result":"Used the shorter title"}'
+    cat > /dev/null
+    """
+    try script.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    let threadID = UUID()
+    let client = ClaudeCodeClient(
+      executableURL: executable,
+      environment: [
+        "ORG2_CLAUDE_TEST_INPUT": inputLog.path,
+        "PATH": "/usr/bin:/bin",
+        "HOME": root.path
+      ]
+    ) { _, _ in }
+
+    async let turn = client.runTurn(
+      openOrgThreadID: threadID,
+      existingSessionID: nil,
+      message: "Draft the note",
+      systemPrompt: "Celorga context",
+      attachments: [],
+      cwd: root,
+      model: nil,
+      sandboxAccess: .readOnly
+    )
+    let deadline = Date().addingTimeInterval(5)
+    while await !client.canSteer(openOrgThreadID: threadID), Date() < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    try await client.steer(openOrgThreadID: threadID, message: "Use a shorter title")
+    let result = try await turn
+
+    XCTAssertEqual(result.sessionID, "steer-session")
+    XCTAssertEqual(result.reply, "Working on it\n\nUsed the shorter title")
+    let lines = try String(contentsOf: inputLog, encoding: .utf8)
+      .split(separator: "\n")
+      .compactMap { try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+      .compactMap { ($0["message"] as? [String: Any])?["content"] as? String }
+    XCTAssertEqual(lines, ["Draft the note", "Use a shorter title"])
+    let canSteerAfterTurn = await client.canSteer(openOrgThreadID: threadID)
+    XCTAssertFalse(canSteerAfterTurn)
+    do {
+      try await client.steer(openOrgThreadID: threadID, message: "too late")
+      XCTFail("a finished turn must not accept guidance")
+    } catch ClaudeCodeError.invalidResponse(let message) {
+      XCTAssertTrue(message.contains("no active Claude Code turn"))
+    }
+  }
+
+  /// Guidance Claude Code folds into its current answer gets no result of
+  /// its own; the turn must still end.
+  func testTurnEndsWhenFoldedGuidanceGetsNoResultOfItsOwn() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("celorga-claude-fold-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = root.appendingPathComponent("claude")
+    let script = """
+    #!/bin/sh
+    IFS= read -r first
+    printf '%s\\n' '{"type":"system","subtype":"init","session_id":"fold-session"}'
+    IFS= read -r second
+    printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"fold-session","result":"Done, with your guidance"}'
+    cat > /dev/null
+    """
+    try script.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    let threadID = UUID()
+    let client = ClaudeCodeClient(
+      executableURL: executable,
+      environment: ["PATH": "/usr/bin:/bin", "HOME": root.path],
+      pendingGuidanceIdleTimeout: .milliseconds(200)
+    ) { _, _ in }
+
+    async let turn = client.runTurn(
+      openOrgThreadID: threadID,
+      existingSessionID: nil,
+      message: "Draft the note",
+      systemPrompt: "Celorga context",
+      attachments: [],
+      cwd: root,
+      model: nil,
+      sandboxAccess: .readOnly
+    )
+    let deadline = Date().addingTimeInterval(5)
+    while await !client.canSteer(openOrgThreadID: threadID), Date() < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    try await client.steer(openOrgThreadID: threadID, message: "Mention the date")
+    let result = try await turn
+    XCTAssertEqual(result.reply, "Done, with your guidance")
   }
 }
 

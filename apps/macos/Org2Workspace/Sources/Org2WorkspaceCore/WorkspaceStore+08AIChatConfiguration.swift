@@ -2806,7 +2806,11 @@ extension WorkspaceStore {
       return true
     case .openCode:
       return !openCodeReattachedThreadIDs.contains(threadID)
-    case .claude, .pi:
+    case .claude:
+      // Local Claude Code reads guidance from the running turn's input.
+      return aiChatSteerHandlerForTesting != nil
+        || aiChatDestination(id: target.destinationID)?.adapter == .claudeLocal
+    case .pi:
       return aiChatSteerHandlerForTesting != nil
     }
   }
@@ -2883,7 +2887,8 @@ extension WorkspaceStore {
       return openClawGatewayClientsByThreadID[threadID] != nil
         && aiChatActiveRunIDByThreadID[threadID] != nil
     case .claude:
-      return false
+      return claudeCodeClient != nil
+        && aiChatActiveRunIDByThreadID[threadID] != nil
     case .pi:
       return false
     case .openCode:
@@ -2972,8 +2977,16 @@ extension WorkspaceStore {
             idempotencyKey: message.id.uuidString.lowercased()
           )
         case .claude:
-          throw ClaudeCodeError.invalidResponse(
-            "steering is not available for Claude Code; queue a follow-up instead"
+          guard let claudeCodeClient else {
+            throw ClaudeCodeError.invalidResponse("there is no active Claude Code turn to steer")
+          }
+          try await claudeCodeClient.steer(
+            openOrgThreadID: threadID,
+            message: Self.expandingOpenClawAgentCommand(
+              message,
+              corpusSkills: corpusAgentSkillCommands
+            ).content,
+            attachments: message.attachments
           )
         case .pi:
           throw PiAgentError.invalidResponse(
@@ -3074,7 +3087,9 @@ extension WorkspaceStore {
         || message.localizedCaseInsensitiveContains("live run")
         || message.localizedCaseInsensitiveContains("in progress")
     case .claude:
-      return false
+      guard case ClaudeCodeError.invalidResponse(let message) = error else { return false }
+      return message.localizedCaseInsensitiveContains("no active Claude Code turn")
+        || message.localizedCaseInsensitiveContains("queue a follow-up")
     case .pi:
       return false
     case .openCode:

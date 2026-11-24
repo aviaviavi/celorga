@@ -45,6 +45,8 @@ struct ClaudeCodeStreamResult: Equatable, Sendable {
   var reply = ""
   var errors: [String] = []
   var succeeded = false
+  /// How many `result` events the stream reported, one per user message.
+  var resultCount = 0
   /// The `result` text of a result event marked `is_error`. A usage limit
   /// arrives this way ("Claude AI usage limit reached|…") with no `errors`.
   var errorResult: String?
@@ -120,12 +122,22 @@ struct ClaudeCodeStreamDecoder: Sendable {
         await eventHandler(.warning(message))
       }
     case "result":
-      result.succeeded = object["subtype"] as? String == "success"
+      // Guidance sent while a turn runs can arrive as its own result. The
+      // turn succeeds only when every result did, and its reply keeps each
+      // result's text in order.
+      let resultSucceeded = object["subtype"] as? String == "success"
         && (object["is_error"] as? Bool != true)
+      result.succeeded = (result.resultCount == 0 || result.succeeded) && resultSucceeded
+      result.resultCount += 1
       if let reply = object["result"] as? String {
-        result.reply = reply
+        let trimmed = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        if result.reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          result.reply = reply
+        } else if !trimmed.isEmpty {
+          result.reply += "\n\n" + reply
+        }
         if object["is_error"] as? Bool == true {
-          result.errorResult = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+          result.errorResult = trimmed
         }
       }
       if let errors = object["errors"] as? [String] {
@@ -166,14 +178,29 @@ public actor ClaudeCodeClient {
   private let environment: [String: String]
   private let eventHandler: EventHandler
   private var activeProcesses: [UUID: Process] = [:]
+  private var activeInputs: [UUID: ActiveInput] = [:]
+  /// How long the input stays open after a result while guidance is still
+  /// unanswered and Claude Code is silent. Closing stdin never cancels work:
+  /// Claude Code finishes what it already received, then exits.
+  private let pendingGuidanceIdleTimeout: Duration
+
+  private struct ActiveInput {
+    let token: UUID
+    let handle: FileHandle
+    /// User messages written whose `result` has not arrived yet.
+    var unansweredMessages = 1
+    var lastOutputAt = ContinuousClock.now
+  }
 
   public init(
     executableURL: URL? = ClaudeCodeClient.resolveExecutableURL(),
     environment: [String: String] = ProcessInfo.processInfo.environment,
+    pendingGuidanceIdleTimeout: Duration = .seconds(30),
     eventHandler: @escaping EventHandler
   ) {
     self.executableURL = executableURL
     self.environment = environment
+    self.pendingGuidanceIdleTimeout = pendingGuidanceIdleTimeout
     self.eventHandler = eventHandler
   }
 
@@ -198,6 +225,9 @@ public actor ClaudeCodeClient {
   ) -> [String] {
     var arguments = [
       "-p",
+      // Streaming input keeps stdin open for the turn so guidance typed
+      // while Claude Code works reaches the same session (steering).
+      "--input-format", "stream-json",
       "--output-format", "stream-json",
       "--verbose",
       "--include-partial-messages",
@@ -214,6 +244,17 @@ public actor ClaudeCodeClient {
       arguments.append(contentsOf: ["--add-dir", attachmentDirectory.path])
     }
     return arguments
+  }
+
+  /// One stream-json input line carrying a user message.
+  nonisolated static func userMessageLine(_ text: String) throws -> Data {
+    let object: [String: Any] = [
+      "type": "user",
+      "message": ["role": "user", "content": text]
+    ]
+    var data = try JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes])
+    data.append(0x0A)
+    return data
   }
 
   nonisolated static func permissionMode(for sandboxAccess: CodexSandboxAccess) -> String {
@@ -235,6 +276,9 @@ public actor ClaudeCodeClient {
     sandboxAccess: CodexSandboxAccess
   ) async throws -> ClaudeCodeTurnResult {
     guard let executableURL else { throw ClaudeCodeError.executableNotFound }
+    // Guidance may be written just as Claude Code exits; report that as an
+    // error rather than letting a closed pipe terminate Celorga.
+    _ = Darwin.signal(SIGPIPE, SIG_IGN)
     if let existing = activeProcesses[openOrgThreadID], existing.isRunning {
       throw ClaudeCodeError.launchFailed("another turn is already running in this chat")
     }
@@ -284,14 +328,19 @@ public actor ClaudeCodeClient {
       throw ClaudeCodeError.launchFailed(error.localizedDescription)
     }
     activeProcesses[openOrgThreadID] = process
+    let inputToken = UUID()
     do {
-      try standardInput.fileHandleForWriting.write(contentsOf: Data(effectiveMessage.utf8))
-      try standardInput.fileHandleForWriting.close()
+      try standardInput.fileHandleForWriting.write(contentsOf: Self.userMessageLine(effectiveMessage))
     } catch {
       process.terminate()
       activeProcesses.removeValue(forKey: openOrgThreadID)
+      try? standardInput.fileHandleForWriting.close()
       throw ClaudeCodeError.launchFailed(error.localizedDescription)
     }
+    activeInputs[openOrgThreadID] = ActiveInput(
+      token: inputToken,
+      handle: standardInput.fileHandleForWriting
+    )
 
     let handler = eventHandler
     let outputHandle = standardOutput.fileHandleForReading
@@ -300,7 +349,14 @@ public actor ClaudeCodeClient {
       try await Self.consumeOutput(
         outputHandle,
         openOrgThreadID: openOrgThreadID,
-        eventHandler: handler
+        eventHandler: handler,
+        onLine: { isResult in
+          await self.noteOutput(
+            openOrgThreadID: openOrgThreadID,
+            token: inputToken,
+            isResult: isResult
+          )
+        }
       )
     }
     let errorTask = Task.detached(priority: .utility) {
@@ -311,6 +367,7 @@ public actor ClaudeCodeClient {
     } onCancel: {
       Task { await self.interrupt(openOrgThreadID: openOrgThreadID) }
     }
+    closeInput(openOrgThreadID: openOrgThreadID, token: inputToken)
     let decoded: ClaudeCodeStreamResult
     do {
       decoded = try await outputTask.value
@@ -334,12 +391,91 @@ public actor ClaudeCodeClient {
     return ClaudeCodeTurnResult(sessionID: sessionID, reply: decoded.reply)
   }
 
+  /// Whether a running turn in this chat can take guidance now.
+  public func canSteer(openOrgThreadID: UUID) -> Bool {
+    activeInputs[openOrgThreadID] != nil
+      && activeProcesses[openOrgThreadID]?.isRunning == true
+  }
+
+  /// Sends guidance to the running turn's session. Claude Code reads it as
+  /// the next user message in the same session, so the turn continues with
+  /// it instead of a separate follow-up turn starting afterwards.
+  public func steer(
+    openOrgThreadID: UUID,
+    message: String,
+    attachments: [AIChatAttachment] = []
+  ) throws {
+    guard var input = activeInputs[openOrgThreadID],
+          activeProcesses[openOrgThreadID]?.isRunning == true
+    else {
+      throw ClaudeCodeError.invalidResponse("there is no active Claude Code turn to steer")
+    }
+    guard attachments.isEmpty else {
+      throw ClaudeCodeError.invalidResponse(
+        "attachments cannot be added to a running Claude Code turn; queue a follow-up instead"
+      )
+    }
+    do {
+      try input.handle.write(contentsOf: Self.userMessageLine(message))
+    } catch {
+      closeInput(openOrgThreadID: openOrgThreadID, token: input.token)
+      throw ClaudeCodeError.invalidResponse(
+        "there is no active Claude Code turn to steer: \(error.localizedDescription)"
+      )
+    }
+    input.unansweredMessages += 1
+    input.lastOutputAt = .now
+    activeInputs[openOrgThreadID] = input
+  }
+
+  private func noteOutput(openOrgThreadID: UUID, token: UUID, isResult: Bool) {
+    guard var input = activeInputs[openOrgThreadID], input.token == token else { return }
+    input.lastOutputAt = .now
+    if isResult {
+      input.unansweredMessages -= 1
+    }
+    activeInputs[openOrgThreadID] = input
+    guard isResult else { return }
+    if input.unansweredMessages <= 0 {
+      // Every message has its answer: end the input so Claude Code exits.
+      closeInput(openOrgThreadID: openOrgThreadID, token: token)
+    } else {
+      scheduleIdleInputClose(openOrgThreadID: openOrgThreadID, token: token)
+    }
+  }
+
+  /// Guidance that Claude Code folded into the turn it was already running
+  /// gets no result of its own. Do not wait forever for one.
+  private func scheduleIdleInputClose(openOrgThreadID: UUID, token: UUID) {
+    let timeout = pendingGuidanceIdleTimeout
+    Task {
+      while true {
+        try? await Task.sleep(for: timeout)
+        guard let input = self.activeInputs[openOrgThreadID], input.token == token else { return }
+        if ContinuousClock.now - input.lastOutputAt >= timeout {
+          self.closeInput(openOrgThreadID: openOrgThreadID, token: token)
+          return
+        }
+      }
+    }
+  }
+
+  private func closeInput(openOrgThreadID: UUID, token: UUID) {
+    guard let input = activeInputs[openOrgThreadID], input.token == token else { return }
+    activeInputs.removeValue(forKey: openOrgThreadID)
+    try? input.handle.close()
+  }
+
   public func interrupt(openOrgThreadID: UUID) {
     guard let process = activeProcesses[openOrgThreadID], process.isRunning else { return }
     process.interrupt()
   }
 
   public func shutdown() {
+    for input in activeInputs.values {
+      try? input.handle.close()
+    }
+    activeInputs.removeAll()
     for process in activeProcesses.values where process.isRunning {
       process.terminate()
     }
@@ -349,7 +485,8 @@ public actor ClaudeCodeClient {
   private nonisolated static func consumeOutput(
     _ handle: FileHandle,
     openOrgThreadID: UUID,
-    eventHandler: @escaping EventHandler
+    eventHandler: @escaping EventHandler,
+    onLine: @escaping @Sendable (_ isResult: Bool) async -> Void
   ) async throws -> ClaudeCodeStreamResult {
     var decoder = ClaudeCodeStreamDecoder()
     var buffer = Data()
@@ -359,9 +496,11 @@ public actor ClaudeCodeClient {
         let lineData = buffer[..<newline]
         buffer.removeSubrange(...newline)
         let line = String(decoding: lineData, as: UTF8.self)
+        let resultsBefore = decoder.result.resultCount
         await decoder.consume(line) { event in
           await eventHandler(openOrgThreadID, event)
         }
+        await onLine(decoder.result.resultCount > resultsBefore)
       }
     }
     if !buffer.isEmpty {
