@@ -4,26 +4,22 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>OpenOrg</title>
         <item>
-            <title>0.10.1</title>
-            <pubDate>Wed, 04 Nov 2026 12:29:37 -0800</pubDate>
+            <title>0.10.2</title>
+            <pubDate>Mon, 23 Nov 2026 16:28:41 -0800</pubDate>
             <link>https://celorga.io/downloads.html</link>
-            <sparkle:version>0.10.1</sparkle:version>
-            <sparkle:shortVersionString>0.10.1</sparkle:shortVersionString>
+            <sparkle:version>0.10.2</sparkle:version>
+            <sparkle:shortVersionString>0.10.2</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <description sparkle:format="markdown"><![CDATA[## Highlights
-
-- Faster workspace search, typing, and AI chat updates, with new search filters.
-- Optional People & Companies workspace and a Calendar surface.
-- Drag rendered headings and list items to reorder or nest them.
-- Improved cross-host chat visibility and non-image attachment delivery.
-- iOS now connects to its paired host without maintaining an on-device corpus.
-- The GitHub star prompt sends a one-time event through the existing Scarf telemetry endpoint and respects telemetry opt-outs.
-
+- Connect multiple Google accounts and configure a machine-local OAuth client.
+- View slides and inline images in the iOS document reader.
+- Change the chat model and reasoning level while a reply is in progress.
+- Browse wide CSV tables more smoothly.
 ]]></description>
-            <enclosure url="https://org2.gateway.scarf.sh/downloads/0.10.1/Celorga-Intel.dmg" length="248989687" type="application/octet-stream" sparkle:edSignature="X3SfsW0sFU1J72e5B5wcLucrMNFT7qiFFSKIAe7rf2CrjdxWw8Uw4VQJopN+cNN0p90XORDRhhSc8ldwJDNqBA=="></enclosure>
+            <enclosure url="https://org2.gateway.scarf.sh/downloads/0.10.2/Celorga-Intel.dmg" length="249704508" type="application/octet-stream" sparkle:edSignature="1d93SqgJeqee7+1trvFGCnuyNbfvBtMVL622NeSeN5wXbyEmtu6bxzs+cPmcfv/m9OXHycTT1T8ttkuKkpZfCA=="></enclosure>
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: UlZGFUAaV9kf8JrhElLCALu14nWuvIVlKPg9k9Ikb43XoKp72QPrvjlNr1od5IJ60AGPYPg0UVvfV/eW/RyJAg==
-length: 1675
+edSignature: Qlq1bQDKT8jqPTG19vohVjQSkzETl4TskYJIMaj+vPW+g5tHWIMagzW0KpKEOf5PkQoZE9NWBQ7VQKcFJgbzAA==
+length: 1437
 -->
