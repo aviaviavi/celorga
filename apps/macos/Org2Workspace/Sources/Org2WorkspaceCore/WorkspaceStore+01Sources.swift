@@ -2284,13 +2284,15 @@ extension WorkspaceStore {
   /// sync finishes or after a bounded wait.
   public func runSourceSyncForPairedClient(
     profileID: String,
-    responseWait: Duration = .seconds(90)
+    responseWait: Duration = .seconds(90),
+    sourceLoadWait: Duration = .seconds(30)
   ) async -> MobileRemoteSourceSyncResponse {
-    if !sourceProfiles.contains(where: { $0.id == profileID }) {
-      await refreshSourceConnections()
+    if !sourceProfiles.contains(where: { $0.id == profileID }),
+       let unavailable = await reloadSourcesForPairedClient(profileID: profileID, loadWait: sourceLoadWait) {
+      return MobileRemoteSourceSyncResponse(profileID: profileID, ok: false, message: unavailable)
     }
     guard let profile = sourceProfiles.first(where: { $0.id == profileID }) else {
-      return MobileRemoteSourceSyncResponse(profileID: profileID, ok: false, message: "This server's corpus has no source named \(profileID) yet. Wait for celorga.json to sync, then try again.")
+      return MobileRemoteSourceSyncResponse(profileID: profileID, ok: false, message: "This server's corpus has no source named \(profileID).")
     }
     if activeSourceOperationIDs.contains(profileID) {
       return MobileRemoteSourceSyncResponse(profileID: profileID, ok: true, message: "A sync of this source is already running on the server.")
@@ -2320,6 +2322,30 @@ extension WorkspaceStore {
       ok: succeeded && !sourceOperationFailureIDs.contains(profileID),
       message: sourceOperationMessages[profileID]
     )
+  }
+
+  /// Reloads the source list for a paired client's sync request. Returns why
+  /// the source is still unavailable, or nil once it is loaded. A failed or
+  /// still-running reload is reported as such rather than as a missing source.
+  private func reloadSourcesForPairedClient(profileID: String, loadWait: Duration) async -> String? {
+    guard let corpusRoot else {
+      return "This server has no corpus open, so it cannot sync \(profileID)."
+    }
+    let deadline = ContinuousClock.now.advanced(by: loadWait)
+    while isLoadingSources, ContinuousClock.now < deadline {
+      try? await Task.sleep(for: .milliseconds(100))
+    }
+    if isLoadingSources {
+      return "This server is still loading its sources. Try again shortly; if this persists, restart the server."
+    }
+    await refreshSourceConnections()
+    if sourceProfiles.contains(where: { $0.id == profileID }) { return nil }
+    if sourceOperationFailureIDs.contains("workspace") {
+      let reason = sourceOperationMessages["workspace"] ?? "unknown error"
+      return "This server could not load its sources from \(corpusRoot.path): \(reason)"
+    }
+    let config = CelorgaNames.configFile(in: corpusRoot)?.lastPathComponent ?? CelorgaNames.configFileName
+    return "This server's corpus at \(corpusRoot.path) has no source named \(profileID) in \(config) yet. Wait for \(config) to sync, then try again."
   }
 
   /// Why a source cannot sync on this host yet, when it needs a stored credential.
