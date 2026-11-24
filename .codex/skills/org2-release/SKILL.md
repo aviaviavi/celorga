@@ -103,7 +103,7 @@ behavior and regression in generic terms.
 
 ## TestFlight browser completion
 
-Use an existing signed-in App Store Connect browser session for every release. Do not use the App Store Connect API to update review details, attach the external group, or submit beta review; API-key roles may allow upload and reads while forbidding those distribution actions.
+Reuse a signed-in App Store Connect session when available. If Apple shows its sign-in page, use the release account saved in the encrypted Apple / TestFlight login section of the operator’s Celorga project note. Check the saved account before accepting a browser-prefilled address. Use the protected credential to sign in on Apple’s site and continue with the uploaded build. Keep credential values out of chat, logs, and release files. Do not use the App Store Connect API to update review details, attach the external group, or submit beta review; API-key roles may allow upload and reads while forbidding those distribution actions.
 
 Avi's standing release instruction authorizes TestFlight submission, access for all existing TestFlight groups, and automatic tester notifications as part of cutting a release. Complete these steps without requesting a separate TestFlight approval.
 
