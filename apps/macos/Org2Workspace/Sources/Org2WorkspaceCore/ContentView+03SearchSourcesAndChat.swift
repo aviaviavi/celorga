@@ -1238,11 +1238,8 @@ private struct SourceProfileCard: View {
   let runtime: WorkspaceSourceRuntimeStatus?
 
   private var isRunning: Bool { store.activeSourceOperationIDs.contains(profile.id) }
-  private var needsToken: Bool {
-    profile.usesStoredCredential && profile.credentialAvailable != true && !store.sourceHasStoredCredential(profile)
-      && !(store.connectedServerRunsSourceSyncs && store.serverHasSourceCredential(profile) == true)
-  }
-  private var canSync: Bool { profile.ready && !needsToken }
+  private var needsToken: Bool { store.sourceNeedsCredentialHere(profile) }
+  private var canSync: Bool { store.sourceCanRunNow(profile) }
   private var notice: WorkspaceSourceNotice? {
     WorkspaceSourcePresentation.notice(
       scheduleError: store.sourceScheduleStates[profile.id]?.lastError,
@@ -1254,7 +1251,7 @@ private struct SourceProfileCard: View {
     WorkspaceSourcePresentation.state(
       isRunning: isRunning,
       needsToken: needsToken,
-      isReady: profile.ready,
+      isReady: profile.ready || store.connectedServerRunsSourceSyncs,
       runtimeOK: runtime?.ok,
       notice: notice
     )

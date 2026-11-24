@@ -2216,6 +2216,21 @@ extension WorkspaceStore {
     return corpusAutomationHostRef == serverRef
   }
 
+  /// Whether Run Now must wait for a credential saved on this Mac. When the
+  /// paired server runs syncs, it uses its own stored credentials and machine
+  /// bindings (such as a Keychain password command) and reports anything
+  /// still missing in its reply.
+  public func sourceNeedsCredentialHere(_ profile: WorkspaceSourceProfileStatus) -> Bool {
+    guard !connectedServerRunsSourceSyncs else { return false }
+    return profile.usesStoredCredential && profile.credentialAvailable != true && !sourceHasStoredCredential(profile)
+  }
+
+  /// Whether Run Now can start. A crawler or crawler config missing on this
+  /// Mac does not matter when the paired server runs the sync.
+  public func sourceCanRunNow(_ profile: WorkspaceSourceProfileStatus) -> Bool {
+    (connectedServerRunsSourceSyncs || profile.ready) && !sourceNeedsCredentialHere(profile)
+  }
+
   public func serverHasSourceCredential(_ profile: WorkspaceSourceProfileStatus) -> Bool? {
     serverSourceCredentialProfileIDs.map { $0.contains(profile.id) }
   }

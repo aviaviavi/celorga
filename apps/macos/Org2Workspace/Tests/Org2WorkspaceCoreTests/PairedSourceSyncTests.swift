@@ -65,4 +65,39 @@ final class PairedSourceSyncTests: XCTestCase {
     let message = try XCTUnwrap(result.message)
     XCTAssertTrue(message.contains("still loading its sources"), message)
   }
+  private func profile(_ json: String) throws -> WorkspaceSourceProfileStatus {
+    try JSONDecoder().decode(WorkspaceSourceProfileStatus.self, from: Data(json.utf8))
+  }
+
+  /// slacrawl and notcrawl, and an email password command, may exist only on
+  /// the paired server. When that server runs syncs, Run Now must not be gated
+  /// on this Mac's own crawler setup or credentials.
+  func testRunNowIgnoresThisMacsSetupWhenThePairedServerSyncs() throws {
+    let suite = "PairedSourceSyncTests.\(UUID())"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let slack = try profile("""
+      {"id":"slack","type":"slack","enabled":true,"scopes":[],"rawZone":"raw/connectors/slack","reviewZone":"views/connectors/slack","ingestionLimit":5000,"syncArgs":[],"media":"metadata-only","binary":"slacrawl","binaryAvailable":false,"configAvailable":false,"ready":false}
+      """)
+    let email = try profile("""
+      {"id":"clavi","type":"email","enabled":true,"scopes":[],"rawZone":"raw/connectors/email/clavi","reviewZone":"views/connectors/email/clavi","ingestionLimit":5000,"syncArgs":[],"media":"metadata-only","binary":"celorga (built-in IMAP)","binaryAvailable":true,"configAvailable":true,"ready":true,"credentialAvailable":false}
+      """)
+
+    let unpaired = WorkspaceStore(cli: Org2CLI(repoRoot: FileManager.default.temporaryDirectory), defaults: defaults, aiChatTranscriptURL: FileManager.default.temporaryDirectory.appendingPathComponent("chat-\(UUID()).json"), legacyDefaultsDomains: [])
+    XCTAssertFalse(unpaired.sourceCanRunNow(slack))
+    XCTAssertTrue(unpaired.sourceNeedsCredentialHere(email))
+    XCTAssertFalse(unpaired.sourceCanRunNow(email))
+
+    let pairing = OpenOrgServerPairing(
+      endpoint: "http://127.0.0.1:48922", serverName: "Test server", hostRef: "press-trial",
+      deviceID: UUID(), pairedAt: Date()
+    )
+    defaults.set(try MobileRemoteProtocol.encoder().encode(pairing), forKey: OpenOrgServerConnection.pairingKey)
+    let paired = WorkspaceStore(cli: Org2CLI(repoRoot: FileManager.default.temporaryDirectory), defaults: defaults, aiChatTranscriptURL: FileManager.default.temporaryDirectory.appendingPathComponent("chat-\(UUID()).json"), legacyDefaultsDomains: [])
+    paired.corpusAutomationHostRef = "press-trial"
+    XCTAssertTrue(paired.connectedServerRunsSourceSyncs)
+    XCTAssertTrue(paired.sourceCanRunNow(slack))
+    XCTAssertFalse(paired.sourceNeedsCredentialHere(email))
+    XCTAssertTrue(paired.sourceCanRunNow(email))
+  }
 }
