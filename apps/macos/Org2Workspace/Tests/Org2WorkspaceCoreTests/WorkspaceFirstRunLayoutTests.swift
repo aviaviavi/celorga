@@ -2,6 +2,27 @@ import XCTest
 @testable import Org2WorkspaceCore
 
 final class WorkspaceFirstRunLayoutTests: XCTestCase {
+  func testFirstWindowFillsMostOfALaptopScreen() {
+    // A 13-inch laptop's visible area at its default scaling.
+    let laptop = WorkspaceWindowLayout.defaultSize(forVisibleScreenSize: CGSize(width: 1_470, height: 919))
+    XCTAssertGreaterThanOrEqual(laptop.width, 1_300)
+    XCTAssertLessThanOrEqual(laptop.width, 1_470)
+    XCTAssertGreaterThanOrEqual(laptop.height, 800)
+    XCTAssertLessThanOrEqual(laptop.height, 919)
+    XCTAssertGreaterThan(laptop.width, WorkspaceWindowLayout.minimumWidth)
+
+    let large = WorkspaceWindowLayout.defaultSize(forVisibleScreenSize: CGSize(width: 3_000, height: 1_800))
+    XCTAssertEqual(large.width, 1_680)
+    XCTAssertEqual(large.height, 1_080)
+
+    let tiny = WorkspaceWindowLayout.defaultSize(forVisibleScreenSize: CGSize(width: 700, height: 500))
+    XCTAssertEqual(tiny.width, WorkspaceWindowLayout.minimumWidth)
+    XCTAssertEqual(tiny.height, WorkspaceWindowLayout.minimumHeight)
+
+    let unknown = WorkspaceWindowLayout.defaultSize(forVisibleScreenSize: nil)
+    XCTAssertGreaterThan(unknown.width, WorkspaceWindowLayout.minimumWidth)
+  }
+
   func testLaunchGuideOffersEveryLocalAgentHarness() {
     let offered = Set(WorkspaceStore.launchGuideDestinationIDs)
     let localHarnesses = AIChatDestinationConfiguration.defaults

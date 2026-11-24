@@ -297,6 +297,30 @@ public enum WorkspaceWindowLayout {
       + WorkspaceMainSplitLayout.surfaceMinimumWidth
       + WorkspaceMainSplitLayout.detailMinimumWidth
   }
+
+  /// A sidebar plus both panes at their ideal widths.
+  static var twoPaneContentIdealWidth: CGFloat {
+    WorkspaceSidebarLayout.minimumWidth
+      + WorkspaceMainSplitLayout.surfaceIdealWidth
+      + WorkspaceMainSplitLayout.detailIdealWidth
+  }
+
+  /// The size of the first window on a Mac with no saved window frame.
+  /// Without one, a window opens at its minimum size, too small for the
+  /// sidebar, chat, and note it opens with. Fill most of the screen's visible
+  /// area, cap the size on large displays, and never go below the minimum.
+  public static func defaultSize(forVisibleScreenSize visible: CGSize?) -> CGSize {
+    let fallback = CGSize(width: 1_280, height: 820)
+    guard let visible, visible.width > 0, visible.height > 0 else { return fallback }
+    // Prefer room for the sidebar and both panes at their ideal widths when
+    // the screen has it, without spreading past 1,680 points.
+    let width = min(max(visible.width * 0.9, min(twoPaneContentIdealWidth, visible.width)), 1_680)
+    let height = min(visible.height * 0.9, 1_080)
+    return CGSize(
+      width: max(minimumWidth, min(width, visible.width)).rounded(),
+      height: max(minimumHeight, min(height, visible.height)).rounded()
+    )
+  }
 }
 
 struct WorkspaceIconBadge: View {

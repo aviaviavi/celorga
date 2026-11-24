@@ -90,6 +90,9 @@ struct Org2WorkspaceApp: App {
           attention.attach(to: store)
         }
     }
+    .defaultSize(WorkspaceWindowLayout.defaultSize(
+      forVisibleScreenSize: NSScreen.main?.visibleFrame.size
+    ))
     .windowToolbarStyle(.unifiedCompact(showsTitle: false))
     .commands {
       CommandGroup(after: .appInfo) {
