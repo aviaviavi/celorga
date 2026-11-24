@@ -4,6 +4,14 @@ All notable changes to the Celorga VS Code extension (formerly Org2) are documen
 
 ## Unreleased
 
+## 0.10.2 - 2026-11-24
+
+## Highlights
+- Connect multiple Google accounts and configure a machine-local OAuth client.
+- View slides and inline images in the iOS document reader.
+- Change the chat model and reasoning level while a reply is in progress.
+- Browse wide CSV tables more smoothly.
+
 ## 0.10.1 - 2026-11-04
 
 ## Highlights
