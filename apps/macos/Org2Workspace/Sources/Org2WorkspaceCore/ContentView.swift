@@ -964,6 +964,8 @@ private struct OpenOrgLaunchGuideView: View {
   @Environment(WorkspaceStore.self) private var store
   @State private var selectedDestinationID: String?
   @State private var showsWorkspaceOptions = false
+  @Environment(\.openSettings) private var openSettings
+  @AppStorage(WorkspaceSettingsNavigation.selectionKey) private var settingsSelection = WorkspaceSettingsNavigation.workspace
 
   var body: some View {
     VStack(alignment: .leading, spacing: 20) {
@@ -1003,6 +1005,16 @@ private struct OpenOrgLaunchGuideView: View {
           isAvailable: store.isLocalClaudeCodeInstalled,
           badge: store.isLocalClaudeCodeInstalled ? "Installed" : "Not installed"
         )
+        localHarnessOption(
+          id: AIChatDestinationConfiguration.localOpenCodeID,
+          runtime: .openCode,
+          isInstalled: store.isLocalOpenCodeInstalled
+        )
+        localHarnessOption(
+          id: AIChatDestinationConfiguration.localPiID,
+          runtime: .pi,
+          isInstalled: store.isLocalPiInstalled
+        )
         agentOption(
           id: AIChatDestinationConfiguration.openClawID,
           title: "OpenClaw",
@@ -1011,6 +1023,17 @@ private struct OpenOrgLaunchGuideView: View {
           isAvailable: true,
           badge: "Existing gateway"
         )
+        HStack(spacing: 6) {
+          Text("Remote agents over SSH and API providers such as OpenAI, Anthropic, OpenRouter, and Ollama are in")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+          Button("AI Chat Settings…") {
+            settingsSelection = WorkspaceSettingsNavigation.aiChat
+            openSettings()
+          }
+          .buttonStyle(.link)
+          .font(.callout)
+        }
       }
 
       if selectedDestinationID == AIChatDestinationConfiguration.localCodexID,
@@ -1094,16 +1117,28 @@ private struct OpenOrgLaunchGuideView: View {
   }
 
   private var canContinue: Bool {
-    switch selectedDestinationID {
-    case AIChatDestinationConfiguration.localCodexID:
-      store.isLocalCodexInstalled && store.codexAccountState.isReady
-    case AIChatDestinationConfiguration.localClaudeID:
-      store.isLocalClaudeCodeInstalled
-    case AIChatDestinationConfiguration.openClawID:
-      true
-    default:
-      false
+    guard let selectedDestinationID else { return false }
+    if selectedDestinationID == AIChatDestinationConfiguration.localCodexID {
+      return store.isLocalCodexInstalled && store.codexAccountState.isReady
     }
+    return store.isLaunchGuideDestinationInstalled(selectedDestinationID)
+  }
+
+  private func localHarnessOption(
+    id: String,
+    runtime: AIChatRuntime,
+    isInstalled: Bool
+  ) -> some View {
+    agentOption(
+      id: id,
+      title: runtime.title,
+      detail: isInstalled
+        ? "Uses your existing local \(runtime.title) installation and provider sign-in."
+        : "Install \(runtime.title) and sign in to a provider first, then reopen this guide.",
+      systemImage: runtime.systemImage,
+      isAvailable: isInstalled,
+      badge: isInstalled ? "Installed" : "Not installed"
+    )
   }
 
   private func agentOption(

@@ -460,10 +460,41 @@ extension WorkspaceStore {
     ClaudeCodeClient.resolveExecutableURL() != nil
   }
 
+  public var isLocalPiInstalled: Bool {
+    PiAgentClient.resolveExecutableURL() != nil
+  }
+
+  public var isLocalOpenCodeInstalled: Bool {
+    OpenCodeClient.resolveExecutableURL() != nil
+  }
+
+  /// Built-in destinations the first-run guide offers, in display order.
+  /// Every local harness Celorga supports appears here, so a fresh install is
+  /// not limited to a subset; remote and API destinations live in Settings.
+  public nonisolated static let launchGuideDestinationIDs: [String] = [
+    AIChatDestinationConfiguration.localCodexID,
+    AIChatDestinationConfiguration.localClaudeID,
+    AIChatDestinationConfiguration.localOpenCodeID,
+    AIChatDestinationConfiguration.localPiID,
+    AIChatDestinationConfiguration.openClawID,
+  ]
+
+  /// Whether the guide's built-in destination is installed on this Mac.
+  public func isLaunchGuideDestinationInstalled(_ destinationID: String) -> Bool {
+    switch destinationID {
+    case AIChatDestinationConfiguration.localCodexID: isLocalCodexInstalled
+    case AIChatDestinationConfiguration.localClaudeID: isLocalClaudeCodeInstalled
+    case AIChatDestinationConfiguration.localPiID: isLocalPiInstalled
+    case AIChatDestinationConfiguration.localOpenCodeID: isLocalOpenCodeInstalled
+    case AIChatDestinationConfiguration.openClawID: true
+    default: false
+    }
+  }
+
   public func suggestedLaunchGuideDestinationID() -> String? {
-    if isLocalCodexInstalled { return AIChatDestinationConfiguration.localCodexID }
-    if isLocalClaudeCodeInstalled { return AIChatDestinationConfiguration.localClaudeID }
-    return nil
+    Self.launchGuideDestinationIDs.first { id in
+      id != AIChatDestinationConfiguration.openClawID && isLaunchGuideDestinationInstalled(id)
+    }
   }
 
   public func launchGuideRevealWorkspace() {
