@@ -657,6 +657,13 @@ struct AIChatTranscriptDocument: View {
     case "context":
       guard let context = AIChatTranscriptHTML.openableContext(in: message, index: detail) else { return }
       store.openAIChatContext(store.resolvedAIChatContext(context))
+    case "choice":
+      // The page supplies only the clicked option text; it is sent only if it
+      // is an option of this reply and the user has not answered yet.
+      guard let selections = AIChatChoices.selections(fromDetail: detail),
+            let answer = AIChatChoices.answer(selecting: selections, in: uuid, messages: messages)
+      else { return }
+      Task { await store.sendAIChatMessage(text: answer) }
     default: break
     }
   }
@@ -1613,6 +1620,29 @@ enum AIChatTranscriptHTML {
     document.addEventListener('mousedown',event=>{ if(event.target!==quoteButton) { pointerSelecting=true; quoteButton.hidden=true; } });
     document.addEventListener('mouseup',()=>{ pointerSelecting=false; setTimeout(updateQuoteButton,0); });
     document.addEventListener('selectionchange',()=>{ if(!pointerSelecting) setTimeout(updateQuoteButton,0); });
+    // Choices blocks in a reply: a click answers with that option; with
+    // :multiple, options toggle and Send answers with the selected ones. Once
+    // the user has written after the reply, its choices are inert.
+    document.addEventListener('click',event=>{
+      const choice=event.target.closest?.('.org2-choices button');
+      if(!choice || choice.disabled) return;
+      const figure=choice.closest('.org2-choices'), article=figure.closest('article.assistant');
+      if(!article || figure.classList.contains('answered') || article.matches(':has(~ article.user)')) return;
+      const id=article.id.replace(/^message-/,'');
+      const answer=values=>{ figure.classList.add('answered'); post('choice',id,JSON.stringify(values)); };
+      if(choice.hasAttribute('data-org2-choice-submit')) {
+        const picked=[...figure.querySelectorAll('button[data-org2-choice][aria-pressed="true"]')].map(b=>b.dataset.org2Choice);
+        if(picked.length) answer(picked);
+        return;
+      }
+      if(figure.dataset.org2ChoiceMode==='multiple') {
+        choice.setAttribute('aria-pressed',String(choice.getAttribute('aria-pressed')!=='true'));
+        const submit=figure.querySelector('[data-org2-choice-submit]');
+        if(submit) submit.disabled=!figure.querySelector('button[data-org2-choice][aria-pressed="true"]');
+        return;
+      }
+      choice.classList.add('chosen'); answer([choice.dataset.org2Choice]);
+    });
     document.getElementById('earlier').onclick=()=>post('earlier');
     document.getElementById('latest').onclick=()=>scrollTo(0,maxScroll());
     let scheduled=false;

@@ -45,3 +45,35 @@ assert.match(previewFrame(renderAppHTML("#+begin_src html :height 99999\n<p>x</p
 assert.doesNotMatch(renderCodeFileAppHTML(snippet, "html", {sourcePath:"/tmp/example.html"}), /<figure class="org2-html-preview"/);
 assert.doesNotMatch(renderAppHTML("#+begin_src html\n<div>partial", {sourcePath:"/tmp/chat.org"}), /<figure class="org2-html-preview"/, "streaming blocks wait for their closing delimiter");
 console.log("✓ chat HTML previews");
+
+// Choices blocks: an AI reply offers answers the reader can click.
+{
+  const { parseChoicesBlock } = await import("../dist/export.js");
+  assert.deepEqual(
+    parseChoicesBlock("Ship it today?\n- Yes\n- No\n- [ ] Later\n- Yes\n", ""),
+    { prompt: "Ship it today?", options: ["Yes", "No", "Later"], multiple: false },
+  );
+  assert.equal(parseChoicesBlock("- a\n", ":multiple").multiple, true);
+  assert.equal(parseChoicesBlock("- a\n", ":multiple yes").multiple, true);
+  assert.equal(parseChoicesBlock("- a\n", ":multiple no").multiple, false);
+
+  const single = renderAppHTML("#+begin_src choices\nShip it?\n- Yes\n- No & wait\n#+end_src\n", { sourcePath: "/tmp/chat.org" });
+  assert.match(single, /<figure class="org2-choices" data-org2-choice-mode="single" role="group"/);
+  assert.match(single, /<figcaption>Ship it\?<\/figcaption>/);
+  assert.match(single, /<button type="button" class="org2-choice" data-org2-choice="No &amp; wait">No &amp; wait<\/button>/);
+  assert.doesNotMatch(single, /data-org2-choice-submit/);
+  assert.doesNotMatch(single, /<pre class="org2-src/, "the block renders as choices, not code");
+
+  const multiple = renderAppHTML("#+begin_src choices :multiple\n- Summary\n- Risks\n#+end_src\n", { sourcePath: "/tmp/chat.org" });
+  assert.match(multiple, /data-org2-choice-mode="multiple"/);
+  assert.match(multiple, /aria-pressed="false"/);
+  assert.match(multiple, /data-org2-choice-submit disabled>Send</);
+
+  assert.doesNotMatch(renderAppHTML("#+begin_src choices\n- Yes\n- N", { sourcePath: "/tmp/chat.org" }), /org2-choices"/, "streaming blocks wait for their closing delimiter");
+  assert.match(renderAppHTML("#+begin_src choices\nNo options here\n#+end_src\n", { sourcePath: "/tmp/chat.org" }), /<pre class="org2-src/, "a block without options stays code");
+
+  const exported = renderOrgDocumentToHtml(parseOrgToCanonicalAst("#+begin_src choices\nShip it?\n- Yes\n- No\n#+end_src\n")).html;
+  assert.match(exported, /<figure class="org2-choices"[^>]*><figcaption>Ship it\?<\/figcaption><ul><li>Yes<\/li><li>No<\/li><\/ul><\/figure>/);
+  assert.doesNotMatch(exported, /<button/, "published HTML has nothing to answer, so it lists the options");
+  console.log("✓ chat choices blocks");
+}

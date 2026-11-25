@@ -4378,7 +4378,14 @@ li > .org2-image-figure { margin-top: 0.55rem; }
   .org2-tok-meta, .org2-tok-variable { color: #f29bc5; }
   .org2-tok-tag { color: #d3a4f5; }
 }`;
-  var APP_DOCUMENT_STYLE = `.org2-live-embed { margin: 1rem 0; border: 1px solid var(--org2-rule); border-radius: 8px; overflow: hidden; }
+  var APP_DOCUMENT_STYLE = `.org2-choices { margin: 0.9rem 0; padding: 0.7rem 0.8rem; border: 1px solid var(--org2-rule); border-radius: 10px; }
+.org2-choices > figcaption { margin: 0 0 0.55rem; font-weight: 600; }
+.org2-choice-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.org2-choices button { font: inherit; padding: 4px 12px; border: 1px solid var(--org2-rule); border-radius: 999px; background: var(--org2-elevated-surface); color: inherit; cursor: pointer; }
+.org2-choices button[aria-pressed="true"], .org2-choices button.chosen { border-color: #2563eb; background: rgba(37, 99, 235, 0.14); }
+.org2-choices .org2-choice-submit { margin-top: 0.55rem; }
+.org2-choices button:disabled, .org2-choices.answered button, article:has(~ article.user) .org2-choices button { cursor: default; opacity: 0.6; }
+.org2-live-embed { margin: 1rem 0; border: 1px solid var(--org2-rule); border-radius: 8px; overflow: hidden; }
 .org2-live-embed > header { padding: 9px 12px; font-size: 0.84rem; background: var(--org2-faint); }
 .org2-live-embed > p { padding: 0 12px; }
 .org2-live-embed-frame { display: block; width: 100%; height: 320px; border: 0; background: transparent; }
@@ -5773,6 +5780,10 @@ ${rows}
     if (pluginRender) return renderPluginFrame(pluginRender, renderSourceAttributes(node, context));
     const embeddedChart = sourceRange && (language === "chart" || language === "plot") ? context.chartsByBlockLine?.get(sourceRange.startLine) : void 0;
     if (embeddedChart) return renderEmbeddedChart(embeddedChart, renderSourceAttributes(node, context));
+    if (language === "choices" && node.terminated) {
+      const choices = parseChoicesBlock(node.bodyRaw, String(node.begin.afterKeywordRaw || ""));
+      if (choices.options.length) return renderChoices(choices, renderSourceAttributes(node, context), context.profile === "app");
+    }
     const languageClass = language ? ` language-${language}` : "";
     const codeClassAttr = language ? ` class="language-${escapeAttr(language)}"` : "";
     const raw = node.bodyRaw.replace(/\n$/, "");
@@ -5795,6 +5806,34 @@ ${rows}
       return `<details class="org2-large-source"${renderSourceAttributes(node, context)}><summary>${language ? `${escapeHtml2(language)} source` : "Source"} \xB7 ${lineCount} lines</summary>${pre}</details>`;
     }
     return pre;
+  }
+  function parseChoicesBlock(body, parameters = "") {
+    const prompt = [];
+    const options = [];
+    for (const line of body.split("\n")) {
+      const option = /^\s*[-+]\s+(?:\[[ xX-]?\]\s+)?(.*\S)\s*$/.exec(line);
+      if (option) {
+        if (!options.includes(option[1]) && options.length < CHOICES_MAX_OPTIONS) options.push(option[1]);
+      } else if (line.trim()) {
+        prompt.push(line.trim());
+      }
+    }
+    const flag = /(?:^|\s):multiple(?:\s+(\S+))?(?=\s|$)/i.exec(parameters);
+    const multiple = Boolean(flag) && !/^(?:no|nil|false)$/i.test(flag?.[1] ?? "");
+    return { prompt: prompt.join(" "), options, multiple };
+  }
+  var CHOICES_MAX_OPTIONS = 20;
+  function renderChoices(choices, sourceAttributes, interactive) {
+    const caption = choices.prompt ? `<figcaption>${escapeHtml2(choices.prompt)}</figcaption>` : "";
+    if (!interactive) {
+      const items = choices.options.map((option) => `<li>${escapeHtml2(option)}</li>`).join("");
+      return `<figure class="org2-choices"${sourceAttributes}>${caption}<ul>${items}</ul></figure>`;
+    }
+    const mode = choices.multiple ? "multiple" : "single";
+    const pressed = choices.multiple ? ' aria-pressed="false"' : "";
+    const buttons = choices.options.map((option) => `<button type="button" class="org2-choice" data-org2-choice="${escapeAttr(option)}"${pressed}>${escapeHtml2(option)}</button>`).join("");
+    const submit = choices.multiple ? `<div><button type="button" class="org2-choice-submit" data-org2-choice-submit disabled>Send</button></div>` : "";
+    return `<figure class="org2-choices" data-org2-choice-mode="${mode}" role="group"${sourceAttributes}>${caption}<div class="org2-choice-options">${buttons}</div>${submit}</figure>`;
   }
   var HTML_PREVIEW_SIZE_MESSAGE = "org2-frame-size";
   var HTML_PREVIEW_DEFAULT_HEIGHT = 320;
