@@ -65,6 +65,17 @@ final class AIChatChoicesTests: XCTestCase {
     XCTAssertNil(AIChatChoices.selections(fromDetail: nil))
   }
 
+  func testAgentsAreToldAboutChoicesAndCorpusRelativeLinks() {
+    let contract = AIChatWorkspaceContext.responseFormattingContract
+    XCTAssertTrue(contract.contains("#+begin_src choices"))
+    XCTAssertTrue(contract.contains(":multiple"))
+    XCTAssertTrue(contract.contains("sends the pick as the user's next message"))
+    XCTAssertTrue(contract.contains("corpus-relative [[file:notes/note.org::42][source]]"))
+    // The capabilities ride inside the contract every runtime prompt carries.
+    XCTAssertTrue(contract.contains("Interactive content"))
+    XCTAssertTrue(contract.contains("Celorga chat capabilities"))
+  }
+
   func testTranscriptPagePostsChoiceClicks() {
     let script = AIChatTranscriptHTML.script
     XCTAssertTrue(script.contains("post('choice',id,JSON.stringify(values))"))

@@ -397,7 +397,7 @@ final class CodexAppServerClientTests: XCTestCase {
       XCTAssertTrue(prompt.contains("one dash segment per column joined by +"))
       XCTAssertTrue(prompt.contains("#+begin_src sh"))
       XCTAssertTrue(prompt.contains("Never write ##+begin_src or ##+end_src"))
-      XCTAssertTrue(prompt.contains("Use Org links for citations too: [[file:/absolute/path/note.org::42][source]]."))
+      XCTAssertTrue(prompt.contains("Use Org links for citations too: [[file:/absolute/path/note.org::42][source]] or corpus-relative [[file:notes/note.org::42][source]]."))
       XCTAssertTrue(prompt.contains("[[https://example.com][label]]"))
       XCTAssertTrue(prompt.contains("Do not emit Markdown links in new replies."))
     }

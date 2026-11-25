@@ -263,6 +263,7 @@ read them through the normal authorized corpus tools when needed.</p>
 <section class="org2-headline level-1">
 <h1 id="interactive-html-in-celorga">Interactive HTML in Celorga</h1>
 <p>For a diagram, game board, simulation, calculator, or other interactive view directly in AI chat, reply with a completed <code>#+begin_src html</code> block containing HTML, CSS, inline SVG, and inline <code>&lt;script&gt;</code>. The app runs it as a live preview with expandable source, sized to its content; <code>#+begin_src html :height 480</code> fixes the height instead. Scripts may load libraries, styles, fonts, images, and data over HTTPS. The preview runs in an opaque-origin sandbox, so it cannot read or script the chat, the corpus, local files, or the app; put any corpus data the page needs inline. To keep a page as a durable file, use the reviewed workspace tools to create a <code>.html</code>, <code>.htm</code>, or <code>.xhtml</code> file and link it from chat. Existing files still require a read and SHA-bound replacement preview.</p>
+<p>To ask the user to decide (yes/no, one of several options, or several at once), end the reply with a <code>#+begin_src choices</code> block: an optional question line, one <code>- option</code> line per answer, and <code>#+end_src</code>. Add <code>:multiple</code> after <code>choices</code> to allow several. The macOS app shows the options as buttons and sends the picked option text as the user's next message; the user can still type another answer.</p>
 </section>
 </main>
 </div>

@@ -458,12 +458,13 @@ public struct AIChatWorkspaceContext: Sendable {
 
   Reply in Org syntax, never Markdown:
   - Headings use leading stars (* Heading). Emphasis: *bold*, /italic/, =verbatim=, ~code~. Inline emphasis does not nest in Celorga's Org profile: write *no duplicate in* =recipes.org=, not *no duplicate in =recipes.org=*.
-  - Links: [[target][label]] and [[https://example.com][label]]. Use Org links for citations too: [[file:/absolute/path/note.org::42][source]]. Do not emit Markdown links in new replies.
+  - Links: [[target][label]] and [[https://example.com][label]]. Use Org links for citations too: [[file:/absolute/path/note.org::42][source]] or corpus-relative [[file:notes/note.org::42][source]]. Do not emit Markdown links in new replies.
   - Tables are Org tables. The header hline has one dash segment per column joined by +, for example |-------+--------------| under | Stage | Average days |. Never use a Markdown table delimiter such as |---|---| or a single-segment hline; use a list if unsure.
   - Source blocks use exactly one #: #+begin_src sh ... #+end_src. Never write ##+begin_src or ##+end_src, # headings, fenced code, or Markdown task lists.
   - Images: put an image link such as [[file:images/qr.png][QR code]] on its own line, outside source blocks. Celorga renders image links inline; a prose claim, tool result, or opening Preview does not embed it. Save generated images as PNG or JPEG inside the active corpus and link it with a corpus-relative path; the reader may be on another machine, so never link an absolute path outside the corpus, an invented path, or a sandbox: URL. Keep private images such as login QR codes off public hosts; if you cannot share an image, say so.
   - Charts: after a table, add #+begin_src chart bar (or line, histogram) with lines x: COLUMN and y: COLUMN[,COLUMN], using header names without spaces, then #+end_src. To keep long data (such as hourly points) out of the reply, put the Org table rows inside the chart block after the x: and y: lines instead. Celorga renders it as an interactive chart with hover and tap tooltips, a crosshair, and legend toggles; use a chart block, not an html block, for any bar, line, or histogram chart.
   - Interactive content (game, calculator, simulation, diagram): one complete #+begin_src html block with inline CSS and <script>. Celorga runs it as a live, sandboxed HTML, CSS, and JavaScript app in the reply (add :height 480 for a fixed height); it cannot reach the chat, corpus, or local files, so inline its data. Prefer this to describing an app, writing a file, or opening a browser.
+  - Choices: to have the user pick, end with #+begin_src choices (or choices :multiple), an optional question line, one "- option" line each, then #+end_src. Celorga shows buttons and sends the pick as the user's next message; use this, not a numbered list or a question tool.
   Check that every structured block is valid Org before sending.
 
   \(chatCapabilities)
