@@ -3407,6 +3407,8 @@ public final class WorkspaceStore {
   public var isDocumentPublisherPresented = false
   public internal(set) var isPublishingDocument = false
   public internal(set) var localDocumentPublications: [LocalDocumentPublication] = []
+  /// Public links this Mac created in the configured bucket, newest first.
+  public internal(set) var publicBucketPublications: [PublicBucketPublication] = []
   /// Threads whose live share page is being rendered right now.
   public internal(set) var publishingChatThreadIDs: Set<UUID> = []
   /// Guest messages from live thread links waiting for the owner's decision.
@@ -3979,6 +3981,8 @@ public final class WorkspaceStore {
   var entryHTMLRendererForTesting: (@Sendable (String, String, Int, String?) async throws -> String)?
   var entryNativeRendererPreparationForTesting: (@Sendable () async -> Void)?
   var documentPDFRendererForTesting: ((String, URL?) async throws -> Data)?
+  /// Replaces the Keychain lookup for the public bucket's access key in tests.
+  var publicBucketCredentialsForTesting: PublicBucketCredentials?
   var documentPDFExportFileOpenerForTesting: ((URL) -> Bool)?
   var slideExportFileOpenerForTesting: ((URL) -> Bool)?
   var slidePreviewRendererForTesting: (@Sendable (String, String, Int) async throws -> Data)?

@@ -206,6 +206,7 @@
     </div>
     <ul class="celorga-feature-logos celorga-feature-logos-wide" aria-label="Publishing destinations">
       <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-server"></use></svg>Self-hosted link</li>
+      <li><svg class="celorga-logo" aria-hidden="true"><use href="#glyph-globe"></use></svg>Public link in your bucket</li>
       <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-drive"></use></svg>Google Drive</li>
       <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-docs"></use></svg>Google Docs</li>
       <li><svg class="celorga-logo" aria-hidden="true"><use href="#logo-google-slides"></use></svg>Google Slides</li>

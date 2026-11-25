@@ -140,6 +140,10 @@ async function main(): Promise<void> {
     const { runPublishDocumentCommand } = await import("./publishDocumentCli.js");
     if (await runPublishDocumentCommand(args)) return;
   }
+  if (args[0] === "publish" && args[1] === "bucket") {
+    const { runPublishBucketCommand } = await import("./publishDocumentCli.js");
+    if (await runPublishBucketCommand(args)) return;
+  }
 
   // Other argument combinations retain the full CLI's validation and help.
   if (args.length === 2 && args[0] === "agent" && args[1] === "capabilities") {

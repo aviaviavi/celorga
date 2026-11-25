@@ -9462,6 +9462,8 @@ Export / publish:
   celorga publish document --file FILE --to beamer-pdf --out-file FILE.pdf [--line N] [--apply]
   celorga publish document --file FILE --to google-docs|google-slides|google-sheets [--folder-id ID] [--apply]
   celorga publish document --file FILE --to google-drive-pdf --pdf-file FILE.pdf [--folder-id ID] [--apply]
+  celorga publish document --file FILE --to bucket --endpoint URL --public-base-url URL [--apply]
+  celorga publish bucket check|revoke --endpoint URL --public-base-url URL [--object-id ID] [--apply]
   celorga publish [PROJECT] [--config PATH] [--preview]
 
 Canvas:
@@ -9733,12 +9735,14 @@ Usage:
   celorga publish document --file FILE --to beamer-pdf --out-file FILE.pdf [--line N] [--apply]
   celorga publish document --file FILE --to google-docs|google-slides|google-sheets [--folder-id ID] [--apply]
   celorga publish document --file FILE --to google-drive-pdf --pdf-file FILE.pdf [--folder-id ID] [--apply]
+  celorga publish document --file FILE --to bucket --endpoint URL --public-base-url URL [--apply]
+  celorga publish bucket check|revoke --endpoint URL --public-base-url URL [--object-id ID] [--apply]
 
 Flags:
   --config PATH   Publish config file
   --preview       Do not write project outputs
 
-Run 'celorga publish document --help' for single-document destinations and guarded Google Drive updates.`;
+Run 'celorga publish document --help' for single-document destinations, guarded Google Drive updates, and public bucket links.`;
   } else if (command === "fmt") {
     text = `celorga fmt
 

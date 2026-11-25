@@ -244,9 +244,9 @@ extension WorkspaceStore {
     statusText = "Checking the publication boundary…"
     defer { isPublishingDocument = false }
 
-    let outputDirectory = request.destination == .localLink
-      ? documentPublicationDirectory(preview: true)
-      : nil
+    let outputDirectory = request.destination == .googleDrive
+      ? nil
+      : documentPublicationDirectory(preview: true)
     let result: DocumentPublishCLIResult = try await cli.runJSON(
       Self.documentPublishArguments(
         sourceFile: sourceFile,
@@ -273,51 +273,22 @@ extension WorkspaceStore {
       request: request
     )
     isPublishingDocument = true
-    statusText = request.destination == .localLink
-      ? "Starting the local publication…"
-      : "Publishing to \(request.format.title)…"
+    switch request.destination {
+    case .localLink: statusText = "Starting the local publication…"
+    case .publicLink: statusText = "Uploading the public link…"
+    case .googleDrive: statusText = "Publishing to \(request.format.title)…"
+    }
     defer { isPublishingDocument = false }
 
     switch request.destination {
+    case .publicLink:
+      return try await publishPublicBucketDocument(request, sourceFile: sourceFile)
+
     case .localLink:
-      let outputDirectory = documentPublicationDirectory(preview: false)
-      let result: DocumentPublishCLIResult = try await cli.runJSON(
-        Self.documentPublishArguments(
-          sourceFile: sourceFile,
-          request: request,
-          outputDirectory: outputDirectory,
-          apply: true
-        )
+      let (result, data, mediaType, _) = try await renderLocalPublicationArtifact(
+        sourceFile: sourceFile,
+        request: request
       )
-      let data: Data
-      let mediaType: String
-      switch request.format {
-      case .html:
-        let indexURL = outputDirectory.appendingPathComponent("index.html", isDirectory: false)
-        guard let html = await publicationData(at: indexURL) else {
-          throw DocumentPublishingError.missingWebBundle(indexURL.path)
-        }
-        data = html
-        mediaType = "text/html"
-      case .pdf:
-        let indexURL = outputDirectory.appendingPathComponent("index.html", isDirectory: false)
-        guard let html = await publicationData(at: indexURL) else {
-          throw DocumentPublishingError.missingWebBundle(indexURL.path)
-        }
-        data = try await renderedPublicationPDF(html: html, baseURL: outputDirectory)
-        mediaType = "application/pdf"
-      case .beamerSlides:
-        let pdfURL = outputDirectory.appendingPathComponent("presentation.pdf", isDirectory: false)
-        guard let pdf = await publicationData(at: pdfURL) else {
-          throw DocumentPublishingError.missingWebBundle(pdfURL.path)
-        }
-        data = try await Task.detached(priority: .userInitiated) {
-          try Org2PDFExporter.validated(pdf)
-        }.value
-        mediaType = "application/pdf"
-      case .googleDocs, .googleSlides, .googleSheets:
-        throw DocumentPublishingError.unsupportedFormat
-      }
       let location = request.host ?? openOrgServer.effectiveDefaultShareLocation
       if location == .server {
         let publication = try await openOrgServer.publishDocument(MobileRemoteDocumentPublishRequest(
@@ -432,6 +403,220 @@ extension WorkspaceStore {
     }
   }
 
+  /// Renders the sealed artifact for a link: the web page, a PDF rendered
+  /// from it, or a Beamer PDF.
+  private func renderLocalPublicationArtifact(
+    sourceFile: URL,
+    request: DocumentPublishRequest
+  ) async throws -> (result: DocumentPublishCLIResult, data: Data, mediaType: String, directory: URL) {
+    let outputDirectory = documentPublicationDirectory(preview: false)
+    let result: DocumentPublishCLIResult = try await cli.runJSON(
+      Self.documentPublishArguments(
+        sourceFile: sourceFile,
+        request: DocumentPublishRequest(destination: .localLink, format: request.format, line: request.line),
+        outputDirectory: outputDirectory,
+        apply: true
+      )
+    )
+    switch request.format {
+    case .html:
+      let indexURL = outputDirectory.appendingPathComponent("index.html", isDirectory: false)
+      guard let html = await publicationData(at: indexURL) else {
+        throw DocumentPublishingError.missingWebBundle(indexURL.path)
+      }
+      return (result, html, "text/html", outputDirectory)
+    case .pdf:
+      let indexURL = outputDirectory.appendingPathComponent("index.html", isDirectory: false)
+      guard let html = await publicationData(at: indexURL) else {
+        throw DocumentPublishingError.missingWebBundle(indexURL.path)
+      }
+      let pdf = try await renderedPublicationPDF(html: html, baseURL: outputDirectory)
+      return (result, pdf, "application/pdf", outputDirectory)
+    case .beamerSlides:
+      let pdfURL = outputDirectory.appendingPathComponent("presentation.pdf", isDirectory: false)
+      guard let pdf = await publicationData(at: pdfURL) else {
+        throw DocumentPublishingError.missingWebBundle(pdfURL.path)
+      }
+      let validated = try await Task.detached(priority: .userInitiated) {
+        try Org2PDFExporter.validated(pdf)
+      }.value
+      return (result, validated, "application/pdf", outputDirectory)
+    case .googleDocs, .googleSlides, .googleSheets:
+      throw DocumentPublishingError.unsupportedFormat
+    }
+  }
+
+  // MARK: Public links in the user's bucket
+
+  public var publicBucketConfiguration: PublicBucketConfiguration? {
+    PublicBucketConfiguration.load(defaults: defaults)
+  }
+
+  public func savePublicBucketConfiguration(_ configuration: PublicBucketConfiguration?) {
+    PublicBucketConfiguration.save(configuration, defaults: defaults)
+  }
+
+  func publicBucketCredentials() -> PublicBucketCredentials? {
+    if let publicBucketCredentialsForTesting { return publicBucketCredentialsForTesting }
+    return PublicBucketCredentialKeychain.read()
+  }
+
+  /// True when a bucket and its access key are both set up.
+  public var isPublicBucketReady: Bool {
+    (publicBucketConfiguration?.isComplete ?? false) && (publicBucketCredentials()?.isComplete ?? false)
+  }
+
+  public func reloadPublicBucketPublications() {
+    publicBucketPublications = PublicBucketPublicationList.load(defaults: defaults)
+  }
+
+  /// The existing link that publishing this request would update, if any.
+  public func publicBucketPublication(for request: DocumentPublishRequest) -> PublicBucketPublication? {
+    guard let sourceFile = currentOrgSourceFile?.standardizedFileURL,
+          let configuration = publicBucketConfiguration
+    else { return nil }
+    let key = Self.localDocumentPublicationStableKey(sourceFile: sourceFile, request: request)
+    return publicBucketPublications.first {
+      $0.stableKey == key && $0.targetIdentity == configuration.identity
+    }
+  }
+
+  /// Uploads a probe, reads it back through the public URL, and deletes it.
+  public func checkPublicBucket(
+    _ configuration: PublicBucketConfiguration,
+    credentials: PublicBucketCredentials
+  ) async throws -> PublicBucketCheckResult {
+    guard configuration.isComplete else { throw PublicBucketError.notConfigured }
+    guard credentials.isComplete else { throw PublicBucketError.missingCredentials }
+    let output: PublicBucketCommandResult = try await cli.runJSON(
+      ["publish", "bucket", "check"] + configuration.cliArguments + ["--apply", "--format", "json"],
+      environment: credentials.environment
+    )
+    return PublicBucketCheckResult(
+      publiclyReadable: output.result.publiclyReadable ?? false,
+      detail: output.result.detail
+    )
+  }
+
+  public func revokePublicBucketPublication(_ publicationID: String) async throws {
+    guard let publication = publicBucketPublications.first(where: { $0.id == publicationID }) else { return }
+    guard let configuration = publicBucketConfiguration, configuration.isComplete else {
+      throw PublicBucketError.notConfigured
+    }
+    guard configuration.identity == publication.targetIdentity else {
+      throw PublicBucketError.differentBucket(publication.bucketName)
+    }
+    guard let credentials = publicBucketCredentials(), credentials.isComplete else {
+      throw PublicBucketError.missingCredentials
+    }
+    let _: PublicBucketCommandResult = try await cli.runJSON(
+      ["publish", "bucket", "revoke"] + configuration.cliArguments
+        + ["--object-id", publication.id, "--apply", "--format", "json"],
+      environment: credentials.environment
+    )
+    publicBucketPublications.removeAll { $0.id == publicationID }
+    PublicBucketPublicationList.save(publicBucketPublications, defaults: defaults)
+    statusText = "Public link stopped"
+  }
+
+  /// Forgets a link without contacting the bucket, for links whose bucket is
+  /// no longer configured. The object stays until deleted at the provider.
+  public func forgetPublicBucketPublication(_ publicationID: String) {
+    publicBucketPublications.removeAll { $0.id == publicationID }
+    PublicBucketPublicationList.save(publicBucketPublications, defaults: defaults)
+  }
+
+  private func publishPublicBucketDocument(
+    _ request: DocumentPublishRequest,
+    sourceFile: URL
+  ) async throws -> DocumentPublishOutcome {
+    guard let configuration = publicBucketConfiguration, configuration.isComplete else {
+      throw PublicBucketError.notConfigured
+    }
+    guard let credentials = publicBucketCredentials(), credentials.isComplete else {
+      throw PublicBucketError.missingCredentials
+    }
+    let stableKey = Self.localDocumentPublicationStableKey(sourceFile: sourceFile, request: request)
+    let existing = publicBucketPublications.first {
+      $0.stableKey == stableKey && $0.targetIdentity == configuration.identity
+    }
+    var pdfFile: URL?
+    if request.format != .html {
+      let (_, pdf, _, directory) = try await renderLocalPublicationArtifact(
+        sourceFile: sourceFile,
+        request: request
+      )
+      let pdfURL = directory.appendingPathComponent("public-link.pdf", isDirectory: false)
+      try await Task.detached(priority: .userInitiated) {
+        try pdf.write(to: pdfURL, options: .atomic)
+      }.value
+      pdfFile = pdfURL
+    }
+    let result: DocumentPublishCLIResult = try await cli.runJSON(
+      Self.publicBucketPublishArguments(
+        sourceFile: sourceFile,
+        request: request,
+        configuration: configuration,
+        objectID: existing?.id,
+        pdfFile: pdfFile
+      ),
+      environment: credentials.environment
+    )
+    guard let objectID = result.destinationString("objectId"),
+          let link = result.destinationString("url"),
+          let url = URL(string: link)
+    else {
+      throw PublicBucketError.invalidResponse
+    }
+    let now = Date()
+    let publication = PublicBucketPublication(
+      id: objectID,
+      title: result.artifact.title,
+      url: url,
+      mediaType: result.destinationString("mediaType") ?? "text/html",
+      sourcePath: result.source.file,
+      format: request.format,
+      stableKey: stableKey,
+      targetIdentity: configuration.identity,
+      bucketName: configuration.displayName,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now
+    )
+    publicBucketPublications.removeAll { $0.id == publication.id }
+    publicBucketPublications.insert(publication, at: 0)
+    PublicBucketPublicationList.save(publicBucketPublications, defaults: defaults)
+    statusText = existing == nil
+      ? "Published \(result.artifact.title) as a public link"
+      : "Updated the public link for \(result.artifact.title)"
+    return .publicLink(publication: publication, result: result)
+  }
+
+  nonisolated static func publicBucketPublishArguments(
+    sourceFile: URL,
+    request: DocumentPublishRequest,
+    configuration: PublicBucketConfiguration,
+    objectID: String?,
+    pdfFile: URL?
+  ) -> [String] {
+    var arguments = [
+      "publish", "document",
+      "--file", sourceFile.path,
+      "--to", "bucket",
+      "--format", "json",
+    ] + configuration.cliArguments
+    if let line = request.line {
+      arguments.append(contentsOf: ["--line", String(line)])
+    }
+    if let objectID {
+      arguments.append(contentsOf: ["--object-id", objectID, "--replace-existing"])
+    }
+    if let pdfFile {
+      arguments.append(contentsOf: ["--pdf-file", pdfFile.path])
+    }
+    arguments.append("--apply")
+    return arguments
+  }
+
   public func revokeServerDocumentPublication(_ publicationID: String) async throws {
     try await openOrgServer.stopHostingDocument(publicationID)
     statusText = "Server publication revoked"
@@ -461,6 +646,7 @@ extension WorkspaceStore {
 
   public func restoreLocalDocumentPublications() async {
     do {
+      reloadPublicBucketPublications()
       localDocumentPublications = try await localDocumentPublicationHost.restorePublications()
       ensureChatThreadPublicationMonitor()
     } catch {
@@ -494,7 +680,8 @@ extension WorkspaceStore {
   ) -> [String] {
     let cliDestination: String
     switch request.destination {
-    case .localLink:
+    case .localLink, .publicLink:
+      // A public link previews the same sealed web or Beamer projection.
       cliDestination = request.format == .beamerSlides ? "beamer-pdf" : "web"
     case .googleDrive:
       cliDestination = request.format.googleCLIDestination ?? "google-docs"
@@ -508,7 +695,7 @@ extension WorkspaceStore {
     if let line = request.line {
       arguments.append(contentsOf: ["--line", String(line)])
     }
-    if let outputDirectory, request.destination == .localLink {
+    if let outputDirectory, request.destination != .googleDrive {
       if request.format == .beamerSlides {
         arguments.append(contentsOf: [
           "--out-file",

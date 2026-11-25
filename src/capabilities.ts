@@ -57,7 +57,7 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
       "Use `celorga plugin actions --context note|heading|thread|run|approval` and `celorga plugin action run PLUGIN:ACTION` for context-aware plugin actions, and `celorga plugin hooks dispatch --apply` for lifecycle hooks (run.blocked, run.completed, approval.requested, thread.reply-received, ...). Both are sandboxed and only return proposals; review them with `celorga plugin proposals list|apply|dismiss` (preview by default, `--apply` to write).",
       "Use `celorga plugin list|doctor` to inspect corpus-declared extensions, `plugin sync` to reproduce the content-addressed lock, and `plugin update` to advance a Git ref deliberately.",
       "Use `celorga workspace agenda|search` only with explicitly granted `--mount` paths for read-only multi-corpus projections.",
-      "Use `celorga publish document` to preview and publish a disclosure-safe document or subtree as a web bundle, Beamer PDF, Google Doc, Google Slides deck, Google Sheet, or Google Drive PDF.",
+      "Use `celorga publish document` to preview and publish a disclosure-safe document or subtree as a web bundle, Beamer PDF, Google Doc, Google Slides deck, Google Sheet, Google Drive PDF, or a public link in a user-owned S3-compatible bucket such as Cloudflare R2 or Amazon S3 (`--to bucket`; `celorga publish bucket check|revoke` verifies the bucket or deletes a link; keys come only from CELORGA_BUCKET_ACCESS_KEY_ID and CELORGA_BUCKET_SECRET_ACCESS_KEY).",
     ],
     safety: [
       "Treat corpus files as user-owned source code: make small, reviewable text changes.",
@@ -264,8 +264,8 @@ export function buildOrg2CapabilityManifest(): Org2CapabilityManifest {
       },
       {
         id: "publishing",
-        purpose: "Publish a disclosure-safe document or subtree to a portable web bundle, safe Beamer PDF, Google Doc, Google Slides deck, Google Sheet, or Google Drive PDF; export ordinary documents and slide decks; or publish a multi-file HTML project.",
-        commands: ["celorga publish document", "celorga export html", "celorga export beamer", "celorga publish"],
+        purpose: "Publish a disclosure-safe document or subtree to a portable web bundle, safe Beamer PDF, Google Doc, Google Slides deck, Google Sheet, Google Drive PDF, or public bucket link; export ordinary documents and slide decks; or publish a multi-file HTML project.",
+        commands: ["celorga publish document", "celorga publish bucket", "celorga export html", "celorga export beamer", "celorga publish"],
         writes: "preview-by-default",
       },
       {

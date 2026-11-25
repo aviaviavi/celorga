@@ -1556,6 +1556,8 @@ celorga publish document --file talks/briefing.org --to beamer-pdf --out-file pu
 celorga publish document --file reports/brief.org --to google-docs --folder-id DRIVE_FOLDER_ID
 celorga publish document --file talks/briefing.org --to google-slides --folder-id DRIVE_FOLDER_ID
 celorga publish document --file reports/evidence.org --to google-sheets --folder-id DRIVE_FOLDER_ID
+celorga publish document --file reports/brief.org --to bucket --endpoint https://ACCOUNT_ID.r2.cloudflarestorage.com/BUCKET --public-base-url https://PUBLIC_BUCKET_HOST
+celorga publish bucket check --endpoint https://ACCOUNT_ID.r2.cloudflarestorage.com/BUCKET --public-base-url https://PUBLIC_BUCKET_HOST --apply
 celorga publish docs-site --config celorga.json
 #+end_src
 
@@ -1568,6 +1570,15 @@ The =web= destination writes a self-contained =index.html= plus =manifest.json=.
 The =beamer-pdf= destination applies a second presentation-safety pass to the same projection, compiles slide headings with a fixed safe Beamer profile, and writes a PDF. Raw LaTeX headers and export blocks are never inherited by this publishing path. Use =export beamer= instead when you deliberately need reviewable author-controlled LaTeX.
 
 In Celorga for macOS, choose *Publish Document… → Local Link* to run this projection and host a *Web page*, document *PDF*, or compiled *Beamer slides (PDF)* from *This Mac* or a paired Celorga server behind a high-entropy capability URL. Document publishing honors the existing host preference in *Settings → Sharing*, with an override in the publication sheet. Only the sealed output is transferred to the server; the server must support document hosting, and connection or capability failures never silently fall back to this Mac. Publishing the same source scope and format again replaces the sealed artifact behind the existing URL; links and their listener port also survive app relaunch. The chosen host is available only while its Celorga process is running and uses HTTP on the local/private network; do not use it on an untrusted network. The paired relay advertises =supportsDocumentPublishing= in =GET /v1/status= and accepts sealed exports up to 8 MB through authenticated =POST /v1/document-publications=; =GET= lists document links and =DELETE /v1/document-publications/ID= stops one. The result screen can copy or open the link and revoke it immediately. *Settings → Sharing* lists the source path, output format, URL, and start time for every active link and can open, copy, stop, or stop all publications.
+
+The =bucket= destination uploads the sealed web page, or a PDF given with =--pdf-file FILE.pdf=, to an S3-compatible bucket you own (Cloudflare R2, Amazon S3, or a compatible store) and returns a public URL. Pass =--endpoint= (the storage origin, optionally followed by the bucket name, as R2 shows it), =--bucket= when the endpoint does not name it, =--public-base-url= for the address that serves the bucket publicly, =--region= (default =auto= for R2), and optionally =--key-prefix= (default =p/=). Requests use AWS Signature Version 4 with path-style addressing. The access key pair is read from =CELORGA_BUCKET_ACCESS_KEY_ID= and =CELORGA_BUCKET_SECRET_ACCESS_KEY= (or the variables named by =--access-key-env= and =--secret-key-env=), never from arguments; =CELORGA_BUCKET_SESSION_TOKEN= supplies temporary credentials. Each publication is stored at =PREFIX/OBJECT_ID/index.html= or =PREFIX/OBJECT_ID/document.pdf=, where the object ID has 192 random bits, with =Cache-Control: no-store= so deleting it stops the link immediately. The page carries its content-security policy and =noindex= as =<meta>= tags because a bucket cannot attach arbitrary response headers. Preview contacts nothing. With =--apply= the result includes =objectId= and =url=; keep the object ID, and pass =--object-id ID --replace-existing= to replace the content at the same URL. Replacing a page with a PDF, or the reverse, deletes the other artifact. =publish bucket revoke --object-id ID --apply= deletes every artifact for that link, and =publish bucket check --apply= uploads a probe, reads it through the public URL, and deletes it (in JSON mode it reports =publiclyReadable=; in text mode a failed read exits 1). In Celorga for macOS, *Publish Document… → Public Link* runs these commands with the bucket configured in *Settings → Sharing → Public Links*.
+
+#+begin_src sh
+CELORGA_BUCKET_ACCESS_KEY_ID="$KEY_ID" CELORGA_BUCKET_SECRET_ACCESS_KEY="$SECRET" \
+  celorga publish document --file reports/brief.org --to bucket \
+  --endpoint https://ACCOUNT_ID.r2.cloudflarestorage.com/BUCKET \
+  --public-base-url https://PUBLIC_BUCKET_HOST --apply --format json
+#+end_src
 
 Google Drive publishing uses one authorization and four formats:
 

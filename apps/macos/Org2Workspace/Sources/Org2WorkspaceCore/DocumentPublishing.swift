@@ -6,6 +6,8 @@ import Security
 
 public enum DocumentPublishDestination: String, CaseIterable, Identifiable, Sendable {
   case localLink
+  /// A public link in the user's own S3-compatible bucket.
+  case publicLink
   case googleDrive
 
   public var id: String { rawValue }
@@ -13,13 +15,14 @@ public enum DocumentPublishDestination: String, CaseIterable, Identifiable, Send
   public var title: String {
     switch self {
     case .localLink: "Local Link"
+    case .publicLink: "Public Link"
     case .googleDrive: "Google Drive"
     }
   }
 
   public var formats: [DocumentPublishFormat] {
     switch self {
-    case .localLink:
+    case .localLink, .publicLink:
       [.html, .pdf, .beamerSlides]
     case .googleDrive:
       [.googleDocs, .googleSlides, .googleSheets, .pdf]
@@ -494,6 +497,7 @@ public struct LocalDocumentPublication: Identifiable, Hashable, Sendable {
 public enum DocumentPublishOutcome: Sendable {
   case localLink(publication: LocalDocumentPublication, result: DocumentPublishCLIResult)
   case serverLink(publication: LocalDocumentPublication, result: DocumentPublishCLIResult)
+  case publicLink(publication: PublicBucketPublication, result: DocumentPublishCLIResult)
   case googleDrive(
     format: DocumentPublishFormat,
     url: URL,

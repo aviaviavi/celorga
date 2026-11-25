@@ -22,6 +22,7 @@ struct DocumentPublishSheet: View {
   @State private var isWorking = false
   @State private var errorText: String?
   @State private var restoredLinkedSlides = false
+  @State private var publicBucketReady = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -64,6 +65,8 @@ struct DocumentPublishSheet: View {
       maxHeight: 760
     )
     .task {
+      publicBucketReady = store.isPublicBucketReady
+      store.reloadPublicBucketPublications()
       restoreGoogleCredential()
       restoreLinkedGoogleDestination()
       selectPreferredGoogleAccount()
@@ -72,6 +75,9 @@ struct DocumentPublishSheet: View {
       await store.openOrgServer.refreshDocumentPublications()
     }
     .onChange(of: destination) { _, newDestination in
+      if newDestination == .publicLink {
+        publicBucketReady = store.isPublicBucketReady
+      }
       if !newDestination.formats(showingSlides: showsSlideFormats).contains(format) {
         format = newDestination.defaultFormat
       }
@@ -118,7 +124,7 @@ struct DocumentPublishSheet: View {
         }
         .labelsHidden()
         .pickerStyle(.segmented)
-        .frame(width: 300)
+        .frame(width: 390)
       }
 
       LabeledContent("Content") {
@@ -227,6 +233,62 @@ struct DocumentPublishSheet: View {
               .help("Stop hosting")
             }
           }
+        }
+      }
+      .padding(14)
+      .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+
+    case .publicLink:
+      VStack(alignment: .leading, spacing: 8) {
+        Label("Public internet link · \(format.title)", systemImage: "globe")
+          .font(.headline)
+        Text(localFormatDescription)
+          .font(.callout)
+          .foregroundStyle(.secondary)
+        if publicBucketReady, let configuration = store.publicBucketConfiguration {
+          Text("Celorga uploads the sealed output to your bucket \(configuration.displayName) under an unguessable address. Anyone who receives the link can open it from anywhere, even while this Mac is asleep or offline. Nothing connects back to this Mac.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+          if let existing = store.publicBucketPublication(for: request) {
+            VStack(alignment: .leading, spacing: 6) {
+              Label("Already published", systemImage: "link.circle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.green)
+              Text("Publishing again replaces the content at the same link.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+              Text(existing.url.absoluteString)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .textSelection(.enabled)
+              HStack {
+                Button("Open Link") { NSWorkspace.shared.open(existing.url) }
+                Button("Copy Link") { copy(existing.url.absoluteString) }
+              }
+              .controlSize(.small)
+            }
+            .padding(10)
+            .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+          }
+          Label("Review the disclosure preview before publishing. Stopping the link deletes the file from your bucket.", systemImage: "exclamationmark.shield")
+            .font(.caption)
+            .foregroundStyle(.orange)
+          SettingsLink {
+            Label("Manage Public Links…", systemImage: "gearshape")
+          }
+          .controlSize(.small)
+        } else {
+          Text("Public links are stored in a bucket you own, such as Cloudflare R2 or Amazon S3. Celorga runs no server for them, and nothing connects back to this Mac.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+          SettingsLink {
+            Label("Set Up Public Links…", systemImage: "gearshape")
+          }
+          Button("Check Again") {
+            publicBucketReady = store.isPublicBucketReady
+          }
+          .controlSize(.small)
         }
       }
       .padding(14)
@@ -369,7 +431,7 @@ struct DocumentPublishSheet: View {
     case .beamerSlides:
       "A presentation PDF compiled from the selected content’s slide headings using a safe Beamer profile."
     case .googleDocs, .googleSlides, .googleSheets:
-      "Choose a local publication format."
+      "Choose a web page or PDF format."
     }
   }
 
@@ -484,6 +546,38 @@ struct DocumentPublishSheet: View {
         }
       }
 
+    case .publicLink(let publication, let result):
+      VStack(alignment: .leading, spacing: 18) {
+        resultHeader(
+          title: "Published as a public link",
+          detail: "Stored in \(publication.bucketName); available while this Mac is offline",
+          systemImage: "checkmark.circle.fill"
+        )
+        publicationLink(publication.url)
+        Text("Anyone who has this link can view the sealed \(result.artifact.selection). The source corpus remains inaccessible. Publishing the same content and format again updates this link.")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+        Text("You can reopen, copy, or stop this link later in Settings → Sharing.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        HStack {
+          Button("Open Public Link") {
+            NSWorkspace.shared.open(publication.url)
+          }
+          Button("Copy Link") {
+            copy(publication.url.absoluteString)
+          }
+          Button("Stop Sharing", role: .destructive) {
+            Task {
+              do {
+                try await store.revokePublicBucketPublication(publication.id)
+                dismiss()
+              } catch { errorText = error.localizedDescription }
+            }
+          }
+        }
+      }
+
     case .googleDrive(let format, let url, let fileID, let version, _):
       VStack(alignment: .leading, spacing: 18) {
         resultHeader(
@@ -591,6 +685,7 @@ struct DocumentPublishSheet: View {
       && preview != nil
       && previewedRequest == request
       && (destination != .googleDrive || googleCredential != nil)
+      && (destination != .publicLink || publicBucketReady)
   }
 
   private var existingGooglePublication: GoogleDrivePublicationBinding? {
@@ -600,6 +695,11 @@ struct DocumentPublishSheet: View {
   private var publishButtonTitle: String {
     if destination == .localLink {
       return "Publish Local \(format.title)"
+    }
+    if destination == .publicLink {
+      return store.publicBucketPublication(for: request) == nil
+        ? "Publish Public \(format.title)"
+        : "Update Public \(format.title)"
     }
     return existingGooglePublication == nil
       ? "Publish to \(format.title)"

@@ -421,6 +421,8 @@ private struct SharingSettingsView: View {
         Text(publicationError).foregroundStyle(.red)
       }
 
+      PublicBucketSettingsSection()
+
       Section {
         if store.localDocumentPublications.isEmpty {
           ContentUnavailableView(

@@ -21,8 +21,22 @@ import {
   preparePublishedBeamer,
 } from "./publishedDocumentBeamer.js";
 import { brandEnv } from "./brandNames.js";
+import {
+  BUCKET_ACCESS_KEY_ID_ENV,
+  BUCKET_CACHE_CONTROL,
+  BUCKET_SECRET_ACCESS_KEY_ENV,
+  bucketObjectKey,
+  bucketPublicUrl,
+  checkBucketTarget,
+  normalizeBucketTarget,
+  publishArtifactToBucket,
+  revokeBucketPublication,
+  validateBucketObjectId,
+  type BucketCredentials,
+  type BucketTarget,
+} from "./publishBucket.js";
 
-type PublishDestination = "web" | "beamer-pdf" | GoogleWorkspaceDestination;
+type PublishDestination = "web" | "beamer-pdf" | "bucket" | GoogleWorkspaceDestination;
 type OutputFormat = "text" | "json";
 
 type PublishDocumentArguments = {
@@ -37,12 +51,77 @@ type PublishDocumentArguments = {
   folderId?: string;
   expectedVersion?: string;
   accessTokenEnv: string;
+  bucket?: BucketArguments;
   configPath?: string;
   allowIndexing: boolean;
   replaceExisting: boolean;
   apply: boolean;
   format: OutputFormat;
 };
+
+type BucketArguments = {
+  endpoint?: string;
+  bucket?: string;
+  region?: string;
+  publicBaseUrl?: string;
+  keyPrefix?: string;
+  objectId?: string;
+  accessKeyEnv: string;
+  secretKeyEnv: string;
+};
+
+const BUCKET_USAGE = `  celorga publish document --file FILE --to bucket --endpoint URL [--bucket NAME] --public-base-url URL [--region auto] [--key-prefix p/] [--pdf-file FILE.pdf] [--line N] [--apply] [--format text|json]
+  celorga publish document --file FILE --to bucket ... --object-id ID --replace-existing [--apply]
+  celorga publish bucket check --endpoint URL [--bucket NAME] --public-base-url URL [--region auto] [--key-prefix p/] [--apply] [--format text|json]
+  celorga publish bucket revoke --endpoint URL [--bucket NAME] --public-base-url URL --object-id ID [--region auto] [--key-prefix p/] [--apply] [--format text|json]`;
+
+/** Parses one bucket option at args[index]; returns the next index, or undefined when the option is not a bucket option. */
+function parseBucketOption(args: string[], index: number, bucket: BucketArguments): number | undefined {
+  const argument = args[index];
+  if (argument === "--endpoint") bucket.endpoint = requiredValue(args, index, argument);
+  else if (argument === "--bucket") bucket.bucket = requiredValue(args, index, argument);
+  else if (argument === "--region") bucket.region = requiredValue(args, index, argument);
+  else if (argument === "--public-base-url") bucket.publicBaseUrl = requiredValue(args, index, argument);
+  else if (argument === "--key-prefix") {
+    const value = args[index + 1];
+    if (value === undefined || value.startsWith("--")) throw new Error("--key-prefix requires a value (use \"\" for none)");
+    bucket.keyPrefix = value;
+  }
+  else if (argument === "--object-id") bucket.objectId = validateBucketObjectId(requiredValue(args, index, argument));
+  else if (argument === "--access-key-env") bucket.accessKeyEnv = requiredValue(args, index, argument);
+  else if (argument === "--secret-key-env") bucket.secretKeyEnv = requiredValue(args, index, argument);
+  else return undefined;
+  return index + 1;
+}
+
+function bucketTarget(bucket: BucketArguments): BucketTarget {
+  if (!bucket.endpoint) throw new Error("bucket publishing requires --endpoint URL");
+  if (!bucket.publicBaseUrl) throw new Error("bucket publishing requires --public-base-url URL");
+  return normalizeBucketTarget({
+    endpoint: bucket.endpoint,
+    bucket: bucket.bucket,
+    region: bucket.region,
+    publicBaseUrl: bucket.publicBaseUrl,
+    keyPrefix: bucket.keyPrefix,
+  });
+}
+
+function bucketCredentials(bucket: BucketArguments): BucketCredentials {
+  for (const name of [bucket.accessKeyEnv, bucket.secretKeyEnv]) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error("--access-key-env and --secret-key-env must name environment variables");
+  }
+  const accessKeyId = String(brandEnv(bucket.accessKeyEnv) || "").trim();
+  const secretAccessKey = String(brandEnv(bucket.secretKeyEnv) || "").trim();
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error(`Bucket publishing requires ${bucket.accessKeyEnv} and ${bucket.secretKeyEnv} in the environment`);
+  }
+  const sessionToken = String(brandEnv("CELORGA_BUCKET_SESSION_TOKEN") || "").trim();
+  return { accessKeyId, secretAccessKey, ...(sessionToken ? { sessionToken } : {}) };
+}
+
+function newBucketArguments(): BucketArguments {
+  return { accessKeyEnv: BUCKET_ACCESS_KEY_ID_ENV, secretKeyEnv: BUCKET_SECRET_ACCESS_KEY_ENV };
+}
 
 function googleDestinationLabel(destination: GoogleWorkspaceDestination): string {
   if (destination === "google-slides") return "Google Slides";
@@ -67,10 +146,15 @@ function usage(exitCode: number): never {
   celorga publish document --file FILE --to google-sheets [--folder-id ID] [--line N] [--apply] [--format text|json]
   celorga publish document --file FILE --to google-drive-pdf --pdf-file FILE.pdf [--folder-id ID] [--line N] [--apply] [--format text|json]
   celorga publish document --file FILE --to google-docs|google-slides|google-sheets --document-id ID [--if-version VERSION] --replace-existing [--apply] [--format text|json]
+${BUCKET_USAGE}
 
 Publishes a disclosure-safe document or subtree. Commands preview by default.
 Google credentials are read from ORG2_GOOGLE_DRIVE_ACCESS_TOKEN (or the
-environment variable named by --access-token-env), never from an argument.`);
+environment variable named by --access-token-env), never from an argument.
+Bucket destinations are S3-compatible storage you own, such as Cloudflare R2
+or Amazon S3. Keys are read from ${BUCKET_ACCESS_KEY_ID_ENV} and
+${BUCKET_SECRET_ACCESS_KEY_ENV} (or --access-key-env/--secret-key-env).
+Each link is an unguessable object ID; revoking deletes the object.`);
   process.exit(exitCode);
 }
 
@@ -92,6 +176,8 @@ function parseArguments(args: string[]): PublishDocumentArguments {
   let folderId: string | undefined;
   let expectedVersion: string | undefined;
   let accessTokenEnv = "ORG2_GOOGLE_DRIVE_ACCESS_TOKEN";
+  const bucket = newBucketArguments();
+  let usesBucketOptions = false;
   let configPath: string | undefined;
   let allowIndexing = false;
   let replaceExisting = false;
@@ -100,13 +186,19 @@ function parseArguments(args: string[]): PublishDocumentArguments {
 
   for (let index = 2; index < args.length; index += 1) {
     const argument = args[index];
+    const bucketNext = parseBucketOption(args, index, bucket);
+    if (bucketNext !== undefined) {
+      index = bucketNext;
+      usesBucketOptions = true;
+      continue;
+    }
     if (argument === "--file") file = requiredValue(args, index++, argument);
     else if (argument === "--line") line = Number(requiredValue(args, index++, argument));
     else if (argument === "--title") title = requiredValue(args, index++, argument);
     else if (argument === "--to") {
       const value = requiredValue(args, index++, argument);
-      if (!["web", "beamer-pdf", "google-docs", "google-slides", "google-sheets", "google-drive-pdf"].includes(value)) {
-        throw new Error("--to must be web, beamer-pdf, google-docs, google-slides, google-sheets, or google-drive-pdf");
+      if (!["web", "beamer-pdf", "bucket", "google-docs", "google-slides", "google-sheets", "google-drive-pdf"].includes(value)) {
+        throw new Error("--to must be web, beamer-pdf, bucket, google-docs, google-slides, google-sheets, or google-drive-pdf");
       }
       destination = value as PublishDestination;
     } else if (argument === "--out-dir") outDir = requiredValue(args, index++, argument);
@@ -133,7 +225,14 @@ function parseArguments(args: string[]): PublishDocumentArguments {
   if (!file) throw new Error("publish document requires --file FILE");
   if (line !== undefined && (!Number.isInteger(line) || line < 1)) throw new Error("--line must be a positive integer");
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(accessTokenEnv)) throw new Error("--access-token-env must name an environment variable");
-  if (destination === "web") {
+  if (usesBucketOptions && destination !== "bucket") throw new Error("bucket options require --to bucket");
+  if (destination === "bucket") {
+    if (outDir || outFile) throw new Error("--out-dir and --out-file do not apply to --to bucket");
+    if (documentId || folderId || expectedVersion) throw new Error("Google Drive options require a Google destination");
+    if (bucket.objectId && !replaceExisting) throw new Error("updating --object-id requires --replace-existing");
+    if (!bucket.objectId && replaceExisting) throw new Error("--replace-existing requires --object-id for bucket publishing");
+    bucketTarget(bucket);
+  } else if (destination === "web") {
     if (!outDir) throw new Error("web publishing requires --out-dir DIR");
     if (outFile || pdfFile) throw new Error("--out-file and --pdf-file do not apply to --to web");
     if (documentId || folderId || expectedVersion) throw new Error("Google Drive options require a Google destination");
@@ -169,6 +268,7 @@ function parseArguments(args: string[]): PublishDocumentArguments {
     ...(folderId !== undefined ? { folderId } : {}),
     ...(expectedVersion !== undefined ? { expectedVersion } : {}),
     accessTokenEnv,
+    ...(destination === "bucket" ? { bucket } : {}),
     ...(configPath !== undefined ? { configPath } : {}),
     allowIndexing,
     replaceExisting,
@@ -197,6 +297,12 @@ function prepare(arguments_: PublishDocumentArguments): { publication: PreparedP
     linearTeam: config?.links?.linearTeam,
   });
   return { publication, file, ...(discoveredConfig ? { configPath: discoveredConfig } : {}) };
+}
+
+function readPdfArtifact(pdfFile: string): Buffer {
+  const bytes = fs.readFileSync(path.resolve(pdfFile));
+  if (bytes.subarray(0, 5).toString("latin1") !== "%PDF-") throw new Error(`Not a PDF file: ${pdfFile}`);
+  return bytes;
 }
 
 function redactionCount(publication: PreparedPublishedDocument): number {
@@ -230,6 +336,10 @@ function printTextPreview(
   console.log(`disclosure: ${redactionCount(prepared.publication)} private or unsafe element${redactionCount(prepared.publication) === 1 ? "" : "s"} removed`);
   if (arguments_.destination === "web") {
     console.log(`destination: web bundle at ${String(destination.outDir || arguments_.outDir)}`);
+  } else if (arguments_.destination === "bucket") {
+    const action = arguments_.bucket?.objectId ? "replace" : "new link in";
+    console.log(`destination: ${action} bucket ${String(destination.bucket)} (${String(destination.mediaType)})`);
+    if (destination.url) console.log(`url: ${String(destination.url)}`);
   } else if (arguments_.destination === "beamer-pdf") {
     console.log(`destination: Beamer PDF at ${String(destination.outFile || arguments_.outFile)}`);
   } else if (arguments_.documentId) {
@@ -249,7 +359,37 @@ export async function runPublishDocumentCommand(args: string[]): Promise<boolean
   const prepared = prepare(arguments_);
 
   let destination: Record<string, unknown>;
-  if (arguments_.destination === "web") {
+  if (arguments_.destination === "bucket") {
+    const bucket = arguments_.bucket ?? newBucketArguments();
+    const target = bucketTarget(bucket);
+    const pdfBytes = arguments_.pdfFile ? readPdfArtifact(arguments_.pdfFile) : undefined;
+    const mediaType = pdfBytes ? PDF_MEDIA_TYPE : "text/html";
+    const body = pdfBytes ?? Buffer.from(prepared.publication.html, "utf8");
+    if (arguments_.apply) {
+      destination = await publishArtifactToBucket({
+        target,
+        credentials: bucketCredentials(bucket),
+        objectId: bucket.objectId,
+        body,
+        mediaType,
+      });
+    } else {
+      const key = bucket.objectId ? bucketObjectKey(target, bucket.objectId, mediaType) : undefined;
+      destination = {
+        destination: "bucket",
+        action: bucket.objectId ? "replace" : "create",
+        ...(bucket.objectId ? { objectId: bucket.objectId } : {}),
+        ...(key ? { key, url: bucketPublicUrl(target, key) } : { objectId: "assigned when published" }),
+        mediaType,
+        bytes: body.byteLength,
+        bucket: target.bucket,
+        endpoint: target.endpoint,
+        publicBaseUrl: target.publicBaseUrl,
+        cacheControl: BUCKET_CACHE_CONTROL,
+        access: "anyone with the unguessable link; revoke by deleting the object",
+      };
+    }
+  } else if (arguments_.destination === "web") {
     const outDir = path.resolve(arguments_.outDir || "");
     destination = arguments_.apply
       ? writeWebPublicationBundle(prepared.publication, { outDir, replaceExisting: arguments_.replaceExisting })
@@ -360,5 +500,73 @@ export async function runPublishDocumentCommand(args: string[]): Promise<boolean
   };
   if (arguments_.format === "json") console.log(JSON.stringify(payload, null, 2));
   else printTextPreview(arguments_, prepared, destination);
+  return true;
+}
+
+/** `celorga publish bucket check|revoke`: verify a bucket target or delete a link's objects. */
+export async function runPublishBucketCommand(args: string[]): Promise<boolean> {
+  if (args[0] !== "publish" || args[1] !== "bucket") return false;
+  const action = args[2];
+  if (args.includes("--help") || args.includes("-h") || (action !== "check" && action !== "revoke")) {
+    console.error(`Usage:\n${BUCKET_USAGE}\n\ncheck uploads a probe, reads it through --public-base-url, and deletes it.\nrevoke deletes every artifact stored for --object-id. Both preview by default.`);
+    process.exit(action === undefined || args.includes("--help") || args.includes("-h") ? 0 : 1);
+  }
+  const bucket = newBucketArguments();
+  let apply = false;
+  let format: OutputFormat = "text";
+  for (let index = 3; index < args.length; index += 1) {
+    const next = parseBucketOption(args, index, bucket);
+    if (next !== undefined) {
+      index = next;
+      continue;
+    }
+    const argument = args[index];
+    if (argument === "--apply") apply = true;
+    else if (argument === "--json") format = "json";
+    else if (argument === "--format") {
+      const value = requiredValue(args, index++, argument);
+      if (value !== "text" && value !== "json") throw new Error("--format must be text or json");
+      format = value;
+    } else throw new Error(`Unknown publish bucket option: ${argument}`);
+  }
+  const target = bucketTarget(bucket);
+  if (action === "revoke" && !bucket.objectId) throw new Error("publish bucket revoke requires --object-id ID");
+  if (action === "check" && bucket.objectId) throw new Error("--object-id does not apply to publish bucket check");
+
+  let result: Record<string, unknown>;
+  if (!apply) {
+    result = action === "check"
+      ? { destination: "bucket", action: "check", plan: "upload a probe object, read it through the public base URL, then delete it" }
+      : {
+          destination: "bucket",
+          action: "revoke",
+          objectId: bucket.objectId,
+          deletedKeys: [bucketObjectKey(target, bucket.objectId!, "text/html"), bucketObjectKey(target, bucket.objectId!, PDF_MEDIA_TYPE)],
+        };
+  } else if (action === "check") {
+    result = await checkBucketTarget({ target, credentials: bucketCredentials(bucket) });
+  } else {
+    result = await revokeBucketPublication({ target, credentials: bucketCredentials(bucket), objectId: bucket.objectId! });
+  }
+  const payload = {
+    $schema: "org2:publish-bucket-command-result:v1",
+    applied: apply,
+    target: { endpoint: target.endpoint, bucket: target.bucket, region: target.region, publicBaseUrl: target.publicBaseUrl, keyPrefix: target.keyPrefix },
+    result,
+  };
+  if (format === "json") {
+    console.log(JSON.stringify(payload, null, 2));
+  } else if (!apply) {
+    console.log(`would ${action === "check" ? "check" : "revoke"} bucket ${target.bucket} at ${target.endpoint}`);
+    if (action === "revoke") console.log(`object: ${bucket.objectId}`);
+    console.log("preview only; pass --apply to run");
+  } else if (action === "check") {
+    console.log(`bucket ${target.bucket}: writable`);
+    console.log(result.publiclyReadable ? `public URL: readable (${target.publicBaseUrl})` : `public URL: NOT readable. ${String(result.detail || "")}`);
+  } else {
+    console.log(`revoked: ${bucket.objectId}`);
+  }
+  // JSON callers read publiclyReadable; text mode signals a failed check by exit status.
+  if (apply && action === "check" && !result.publiclyReadable && format === "text") process.exitCode = 1;
   return true;
 }
