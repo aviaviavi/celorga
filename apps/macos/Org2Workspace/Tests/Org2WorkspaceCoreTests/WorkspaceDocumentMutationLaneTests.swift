@@ -275,6 +275,9 @@ final class WorkspaceDocumentMutationLaneTests: XCTestCase {
       // Org source.
       "Org2PDFExporter.validated(pdf).write(",
       "Data(html.utf8).write(",
+      // Rendered public-link PDF staged in the publication output directory
+      // before the bucket upload, never canonical corpus Org source.
+      "try pdf.write(to: pdfURL, options: .atomic)",
       // Capture attachment staging is a unique hidden temporary file; its
       // promotion and daily-note commit occur while the lane is held.
       "data.write(to: temporaryURL",
@@ -302,7 +305,7 @@ final class WorkspaceDocumentMutationLaneTests: XCTestCase {
       "text.write(to: url, atomically: true, encoding: .utf8)",
       "previousText.write(to: backupURL",
     ]
-    XCTAssertEqual(directWriteLines.count, 18, "Classify every new direct filesystem write")
+    XCTAssertEqual(directWriteLines.count, 19, "Classify every new direct filesystem write")
     for line in directWriteLines {
       XCTAssertTrue(
         classifiedDirectWriteMarkers.contains(where: line.contains),
