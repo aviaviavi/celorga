@@ -145,6 +145,29 @@ extension WorkspaceStore {
       && !isSavingBlock
   }
 
+  /// Whether *File → Edit Document* (Command-E) can open the Source editor
+  /// for the document shown in the document pane. Mirrors the pane header's
+  /// Edit button: the pane must be open and showing an editable Org document
+  /// that is not already being edited.
+  public var canEditCurrentDocument: Bool {
+    !isWorkspaceDetailPaneClosed
+      && presentedAgentRun == nil
+      && presentedWebPageURL == nil
+      && missingDailyNote == nil
+      && selectedLocation != nil
+      && !hasActiveEdit
+      && !selectedFileIsCSV
+      && !isLoadingEntrySource
+      && selectedEntrySource?.isEditable == true
+  }
+
+  /// Opens the Source editor for the document being viewed, at the line in
+  /// view, the same way the document header's Edit button does.
+  public func editCurrentDocument() {
+    guard canEditCurrentDocument else { return }
+    beginEditingCurrentScope(atSourceLine: currentDocumentViewportSourceLine)
+  }
+
   public var canPublishCurrentDocument: Bool {
     currentOrgSourceFile != nil
       && !isPublishingDocument

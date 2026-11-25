@@ -1663,6 +1663,7 @@ struct KeyboardShortcutsView: View {
             ShortcutHelpItem(keys: "⌘⇧O", action: "Open corpus"),
             ShortcutHelpItem(keys: "⌘R", action: "Refresh workspace; press again to cancel"),
             ShortcutHelpItem(keys: "⌘S", action: "Save active edit"),
+            ShortcutHelpItem(keys: "⌘E", action: "Edit the document you're viewing"),
             ShortcutHelpItem(keys: "⌘P", action: "Quick Open"),
             ShortcutHelpItem(keys: NewCorpusFileCommand.shortcutTitle, action: "New file"),
             ShortcutHelpItem(keys: "⌘K", action: "Quick Open outside the Source editor"),

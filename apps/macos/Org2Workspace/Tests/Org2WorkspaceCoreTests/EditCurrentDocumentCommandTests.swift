@@ -1,0 +1,91 @@
+import Foundation
+import XCTest
+@testable import Org2WorkspaceCore
+
+/// *File → Edit Document* (Command-E) opens the Source editor for the
+/// document in the document pane, like the pane header's Edit button.
+@MainActor
+final class EditCurrentDocumentCommandTests: XCTestCase {
+  func testEditDocumentOpensTheSourceEditorForTheViewedDocument() throws {
+    let fixture = try makeFixture()
+    defer { fixture.cleanUp() }
+    let store = fixture.store
+
+    XCTAssertTrue(store.canEditCurrentDocument)
+    store.editCurrentDocument()
+
+    XCTAssertTrue(store.isEditingEntry)
+    // Already editing: the command is disabled so Command-E reaches the text view.
+    XCTAssertFalse(store.canEditCurrentDocument)
+  }
+
+  func testEditDocumentIsUnavailableWhenNothingEditableIsInView() throws {
+    let fixture = try makeFixture()
+    defer { fixture.cleanUp() }
+    let store = fixture.store
+
+    store.isWorkspaceDetailPaneClosed = true
+    XCTAssertFalse(store.canEditCurrentDocument)
+    store.editCurrentDocument()
+    XCTAssertFalse(store.isEditingEntry)
+    store.isWorkspaceDetailPaneClosed = false
+
+    let source = try XCTUnwrap(store.selectedEntrySource)
+    store.selectedEntrySource = EntrySource(
+      file: source.file,
+      startLine: source.startLine,
+      endLineExclusive: source.endLineExclusive,
+      text: source.text,
+      isSubtree: false,
+      isEditable: false
+    )
+    XCTAssertFalse(store.canEditCurrentDocument)
+    store.editCurrentDocument()
+    XCTAssertFalse(store.isEditingEntry)
+  }
+
+  private struct Fixture {
+    let root: URL
+    let defaults: UserDefaults
+    let suiteName: String
+    let store: WorkspaceStore
+
+    func cleanUp() {
+      defaults.removePersistentDomain(forName: suiteName)
+      try? FileManager.default.removeItem(at: root)
+    }
+  }
+
+  private func makeFixture() throws -> Fixture {
+    let text = "#+TITLE: Notes\n\n* Heading\nBody\n"
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-edit-current-document-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let file = root.appendingPathComponent("notes.org")
+    try text.write(to: file, atomically: true, encoding: .utf8)
+    let suiteName = "org2-edit-current-document-\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    let store = WorkspaceStore(
+      cli: Org2CLI(repoRoot: root.appendingPathComponent("missing-runtime", isDirectory: true)),
+      defaults: defaults,
+      legacyDefaultsDomains: []
+    )
+    store.setCorpusRoot(root, persistsDefault: false)
+    store.selectCorpusFile(CorpusFile(
+      path: file.path,
+      relativePath: file.lastPathComponent,
+      modifiedAt: nil,
+      byteCount: nil
+    ))
+    store.selectedEntrySource = EntrySource(
+      file: file.path,
+      startLine: 1,
+      endLineExclusive: 5,
+      text: text,
+      isSubtree: false
+    )
+    store.editableEntryText = text
+    store.isLoadingEntrySource = false
+    return Fixture(root: root, defaults: defaults, suiteName: suiteName, store: store)
+  }
+}

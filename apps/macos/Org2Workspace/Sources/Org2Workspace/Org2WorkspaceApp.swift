@@ -233,6 +233,14 @@ struct Org2WorkspaceApp: App {
         .keyboardShortcut("s", modifiers: [.command])
         .disabled(!store.canSaveCurrentFile)
 
+        // Disabled while editing, so Command-E falls through to the text
+        // view's standard "Use Selection for Find".
+        Button("Edit Document") {
+          store.editCurrentDocument()
+        }
+        .keyboardShortcut("e", modifiers: [.command])
+        .disabled(!store.canEditCurrentDocument)
+
         Divider()
 
         Button("Export Current Document as PDF...") {

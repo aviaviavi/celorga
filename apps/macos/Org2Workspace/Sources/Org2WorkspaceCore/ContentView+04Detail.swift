@@ -691,7 +691,7 @@ struct DetailHeader: View {
           Label("Edit", systemImage: "square.and.pencil")
         }
         .disabled(store.selectedEntrySource?.isEditable != true || store.isLoadingEntrySource)
-        .help("Edit this file")
+        .help("Edit this file (Command-E)")
       }
     }
   }
