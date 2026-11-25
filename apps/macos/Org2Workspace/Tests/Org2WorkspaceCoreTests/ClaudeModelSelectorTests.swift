@@ -30,7 +30,7 @@ final class ClaudeModelSelectorTests: XCTestCase {
 
     let firstThreadID = store.createAIChatThread(destinationID: claude.id)
     await store.refreshAIChatConfiguration()
-    XCTAssertEqual(store.aiChatModelOptions.map(\.id), ["sonnet", "opus", "haiku"])
+    XCTAssertEqual(store.aiChatModelOptions.map(\.id), ["sonnet", "opus", "fable", "haiku"])
     XCTAssertEqual(store.selectedAIChatModelLabel, "Default model")
     // Claude Code takes --effort, so the reasoning picker has levels.
     XCTAssertEqual(store.aiChatReasoningOptions.map(\.id), ["low", "medium", "high", "xhigh", "max"])
@@ -47,6 +47,11 @@ final class ClaudeModelSelectorTests: XCTestCase {
     await store.refreshAIChatConfiguration(applySelection: true)
     XCTAssertEqual(store.selectedAIChatModel, "opus")
     XCTAssertEqual(store.selectedAIChatModelLabel, "Opus")
+
+    store.setSelectedAIChatModel("fable")
+    await store.refreshAIChatConfiguration(applySelection: true)
+    XCTAssertEqual(store.selectedAIChatModel, "fable")
+    XCTAssertEqual(store.selectedAIChatModelLabel, "Fable")
 
     store.setSelectedAIChatModel(nil)
     await store.refreshAIChatConfiguration(applySelection: true)

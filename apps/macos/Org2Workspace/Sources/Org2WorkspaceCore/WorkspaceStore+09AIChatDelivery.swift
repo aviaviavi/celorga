@@ -3018,6 +3018,7 @@ extension WorkspaceStore {
       return [
         AIChatModelOption(id: "sonnet", label: "Sonnet"),
         AIChatModelOption(id: "opus", label: "Opus"),
+        AIChatModelOption(id: "fable", label: "Fable"),
         AIChatModelOption(id: "haiku", label: "Haiku")
       ]
     case .piLocal, .piRemote:
