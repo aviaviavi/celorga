@@ -955,6 +955,17 @@ struct CorpusFileContextMenu: View {
       Label("Copy File Path", systemImage: "doc.on.doc")
     }
 
+    if WorkspaceStore.isPublishableDocument(path: file.path) {
+      Button {
+        // Dismiss a hosting sheet such as Quick Open before the publisher opens.
+        afterOpen?()
+        store.publishCorpusFile(file)
+      } label: {
+        Label("Publish…", systemImage: "square.and.arrow.up")
+      }
+      .disabled(store.isPublishingDocument)
+    }
+
     Divider()
 
     Button {

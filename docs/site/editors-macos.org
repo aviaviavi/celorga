@@ -187,7 +187,7 @@ Each completed move, resize, or edit saves through the shared runtime with the f
 
 * Publish a document
 
-Open an Org document, open its document menu, and choose *Publish Document…*. The same sheet also opens from =/publish document= in AI Chat. Choose the entire document or the subtree at the current reading/editing position, then inspect the disclosure preview before publishing. Slide formats (*Beamer slides (PDF)* and *Google Slides*) are offered only while the document is shown as slides (*View → Slides*), or when the document is already linked to a Google Slides deck; *File → Export Slides as PDF…* and *Export Slides as LaTeX…* likewise appear only in the slide view.
+Open an Org document, open its document menu, and choose *Publish Document…*. The same sheet also opens from =/publish document= in AI Chat, and from *Publish…* when you right-click an Org file in Files, the sidebar, Search, or Quick Open; that opens the file in the document pane without changing the current view. Choose the entire document or the subtree at the current reading/editing position, then inspect the disclosure preview before publishing. Slide formats (*Beamer slides (PDF)* and *Google Slides*) are offered only while the document is shown as slides (*View → Slides*), or when the document is already linked to a Google Slides deck; *File → Export Slides as PDF…* and *Export Slides as LaTeX…* likewise appear only in the slide view.
 
 The publish sheet separates the *destination* from the *format*:
 

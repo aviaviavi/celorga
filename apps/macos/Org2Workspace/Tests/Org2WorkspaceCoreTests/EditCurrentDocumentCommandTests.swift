@@ -44,6 +44,45 @@ final class EditCurrentDocumentCommandTests: XCTestCase {
     XCTAssertFalse(store.isEditingEntry)
   }
 
+  /// *Publish…* in a file's context menu opens the publisher for that file.
+  func testPublishFromFileContextMenuOpensThePublisherForThatFile() throws {
+    let fixture = try makeFixture()
+    defer { fixture.cleanUp() }
+    let store = fixture.store
+    store.selectedSurface = .aiChat
+
+    let other = fixture.root.appendingPathComponent("other.org")
+    try "* Other\n".write(to: other, atomically: true, encoding: .utf8)
+    store.publishCorpusFile(CorpusFile(
+      path: other.path,
+      relativePath: other.lastPathComponent,
+      modifiedAt: nil,
+      byteCount: nil
+    ))
+
+    XCTAssertTrue(store.isDocumentPublisherPresented)
+    XCTAssertEqual(store.currentOrgSourceFile?.path, other.standardizedFileURL.path)
+    // The surface the user right-clicked from stays in place.
+    XCTAssertEqual(store.selectedSurface, .aiChat)
+  }
+
+  func testPublishIsOfferedOnlyForOrgDocuments() throws {
+    XCTAssertTrue(WorkspaceStore.isPublishableDocument(path: "/c/notes/a.org"))
+    XCTAssertTrue(WorkspaceStore.isPublishableDocument(path: "/c/notes/a.ORG2"))
+    XCTAssertFalse(WorkspaceStore.isPublishableDocument(path: "/c/data/a.csv"))
+    XCTAssertFalse(WorkspaceStore.isPublishableDocument(path: "/c/board.canvas"))
+
+    let fixture = try makeFixture()
+    defer { fixture.cleanUp() }
+    fixture.store.publishCorpusFile(CorpusFile(
+      path: fixture.root.appendingPathComponent("data.csv").path,
+      relativePath: "data.csv",
+      modifiedAt: nil,
+      byteCount: nil
+    ))
+    XCTAssertFalse(fixture.store.isDocumentPublisherPresented)
+  }
+
   private struct Fixture {
     let root: URL
     let defaults: UserDefaults

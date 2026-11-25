@@ -252,6 +252,30 @@ extension WorkspaceStore {
     isDocumentPublisherPresented = true
   }
 
+  /// Whether a corpus file can be published (Org documents only).
+  public nonisolated static func isPublishableDocument(path: String) -> Bool {
+    ["org", "org2"].contains(URL(fileURLWithPath: path).pathExtension.lowercased())
+  }
+
+  /// *Publish…* from a file's context menu: shows the file in the document
+  /// pane, keeping the current surface, then opens the publisher for it. A
+  /// file that is already the current document is not reloaded, so its
+  /// unsaved edits are saved by the publisher as usual.
+  public func publishCorpusFile(_ file: CorpusFile) {
+    guard Self.isPublishableDocument(path: file.path) else {
+      statusText = "Only Org documents can be published"
+      return
+    }
+    let target = URL(fileURLWithPath: file.path).standardizedFileURL.path
+    if currentOrgSourceFile?.path != target
+      || isWorkspaceDetailPaneClosed
+      || presentedAgentRun != nil
+      || presentedWebPageURL != nil {
+      selectCorpusFile(file, surface: selectedSurface)
+    }
+    presentDocumentPublisher()
+  }
+
   public func previewDocumentPublication(
     _ request: DocumentPublishRequest
   ) async throws -> DocumentPublishCLIResult {
