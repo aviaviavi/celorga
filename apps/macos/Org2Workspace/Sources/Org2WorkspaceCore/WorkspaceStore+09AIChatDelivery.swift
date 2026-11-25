@@ -2718,7 +2718,7 @@ extension WorkspaceStore {
     return client
   }
 
-  private func localClaudeCodeClient() -> ClaudeCodeClient {
+  func localClaudeCodeClient() -> ClaudeCodeClient {
     if let claudeCodeClient { return claudeCodeClient }
     let client = ClaudeCodeClient { [weak self] threadID, event in
       await self?.handleClaudeCodeEvent(event, threadID: threadID)
@@ -3015,12 +3015,10 @@ extension WorkspaceStore {
           : Self.codexModelCatalogMaximumAge
       )
     case .claudeLocal:
-      return [
-        AIChatModelOption(id: "sonnet", label: "Sonnet"),
-        AIChatModelOption(id: "opus", label: "Opus"),
-        AIChatModelOption(id: "fable", label: "Fable"),
-        AIChatModelOption(id: "haiku", label: "Haiku")
-      ]
+      return await claudeCodeModels(
+        destinationID: destinationID,
+        forceReload: forceCodexModelCatalogReload
+      )
     case .piLocal, .piRemote:
       guard let model = destination.model else { return [] }
       return [AIChatModelOption(
@@ -3060,6 +3058,33 @@ extension WorkspaceStore {
       )
     case .openAIDot:
       return []
+    }
+  }
+
+  /// Claude Code's own model list. When Claude Code cannot report it, the
+  /// last discovered list is kept, so a temporary failure does not replace
+  /// versioned names such as "Opus 5.5" with bare aliases.
+  private func claudeCodeModels(
+    destinationID: String,
+    forceReload: Bool
+  ) async -> [AIChatModelOption] {
+    do {
+      if let claudeModelCatalogForTesting {
+        return try await claudeModelCatalogForTesting()
+      }
+      // Stores whose Claude turns are stubbed never launch Claude Code.
+      if claudeSendHandlerForTesting != nil { return ClaudeCodeClient.fallbackModelOptions }
+      let cwd = corpusRoot ?? FileManager.default.homeDirectoryForCurrentUser
+      return try await localClaudeCodeClient().listModels(
+        cwd: cwd,
+        maximumAge: forceReload ? 0 : ClaudeCodeClient.modelCatalogMaximumAge
+      )
+    } catch {
+      if let cached = aiChatConfigurationCatalogCache[destinationID]?.models,
+         cached.contains(where: { $0.detail != nil }) {
+        return cached
+      }
+      return ClaudeCodeClient.fallbackModelOptions
     }
   }
 

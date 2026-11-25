@@ -2496,7 +2496,7 @@ extension WorkspaceStore {
       if let option, !option.supportsReasoning { return [] }
       return cliHarnessReasoningOptions
     case .claudeLocal:
-      return ClaudeCodeClient.reasoningOptions
+      return ClaudeCodeClient.reasoningOptions(forModel: selectedModel, in: models)
     case .openAI, .anthropic, .openRouter, .ollama, .openAIDot:
       return []
     }
@@ -3131,9 +3131,12 @@ extension WorkspaceStore {
         defaultReasoningEffort = selectedModel?.defaultReasoningEffort
         resolvedReasoningConfiguration = true
       case .claudeLocal:
-        models = try await modelsForAIChatDestination(thread.destinationID)
-        effectiveModel = thread.model
-        reasoningOptions = ClaudeCodeClient.reasoningOptions
+        models = try await modelsForAIChatDestination(
+          thread.destinationID,
+          forceCodexModelCatalogReload: forceModelCatalogReload
+        )
+        effectiveModel = thread.model ?? models.first(where: \.isDefault)?.id
+        reasoningOptions = ClaudeCodeClient.reasoningOptions(forModel: thread.model, in: models)
         defaultReasoningEffort = nil
         resolvedReasoningConfiguration = true
       case .piLocal, .piRemote, .openCodeLocal, .openCodeRemote:

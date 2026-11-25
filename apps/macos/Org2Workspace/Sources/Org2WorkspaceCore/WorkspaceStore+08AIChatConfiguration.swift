@@ -10,7 +10,9 @@ extension WorkspaceStore {
     for model: String?,
     runtime: AIChatRuntime
   ) -> [AIChatReasoningOption] {
-    if runtime == .claude { return ClaudeCodeClient.reasoningOptions }
+    if runtime == .claude {
+      return ClaudeCodeClient.reasoningOptions(forModel: model, in: aiChatModelOptions)
+    }
     guard runtime == .codex else { return [] }
     let option = model.flatMap { selected in
       aiChatModelOptions.first(where: { $0.id == selected })
@@ -87,6 +89,14 @@ extension WorkspaceStore {
       aiChatReasoningOptions = selectedModel?.reasoningOptions ?? cached.reasoningOptions
       aiChatDefaultReasoningEffort = selectedModel?.defaultReasoningEffort
         ?? cached.defaultReasoningEffort
+    } else if thread.runtime == .claude {
+      // Claude Code's levels come with its catalog, so a cached catalog
+      // restores the effort control instead of hiding it until a refresh.
+      aiChatReasoningOptions = ClaudeCodeClient.reasoningOptions(
+        forModel: thread.model,
+        in: cached.models
+      )
+      aiChatDefaultReasoningEffort = nil
     } else if thread.runtime == .openClaw, cached.requestedModel == thread.model {
       aiChatReasoningOptions = cached.reasoningOptions
       aiChatDefaultReasoningEffort = cached.defaultReasoningEffort
@@ -2145,9 +2155,9 @@ extension WorkspaceStore {
       let models = try await remoteModelsForAIChatDestination(thread.destinationID)
       return AIChatRemoteConfiguration(
         models: models,
-        effectiveModel: thread.model,
+        effectiveModel: thread.model ?? models.first(where: \.isDefault)?.id,
         reasoningEffort: thread.reasoningEffort,
-        reasoningOptions: ClaudeCodeClient.reasoningOptions,
+        reasoningOptions: ClaudeCodeClient.reasoningOptions(forModel: thread.model, in: models),
         defaultReasoningEffort: nil
       )
     case .piLocal, .piRemote, .openCodeLocal, .openCodeRemote:

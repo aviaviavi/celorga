@@ -3639,6 +3639,8 @@ public final class WorkspaceStore {
   var codexAppServerClientsByDestinationID: [String: CodexAppServerClient] = [:]
   static let codexModelCatalogMaximumAge: TimeInterval = 15 * 60
   var claudeCodeClient: ClaudeCodeClient?
+  /// Replaces asking Claude Code for its model list in tests.
+  @ObservationIgnored var claudeModelCatalogForTesting: (@Sendable () async throws -> [AIChatModelOption])?
   var piAgentClientsByDestinationID: [String: PiAgentClient] = [:]
   var openCodeClientsByDestinationID: [String: OpenCodeClient] = [:]
   var externalCodexAppServerClient: CodexAppServerClient?

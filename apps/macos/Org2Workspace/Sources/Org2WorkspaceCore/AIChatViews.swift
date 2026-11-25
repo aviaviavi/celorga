@@ -4088,7 +4088,7 @@ struct AIChatComposerView: View {
         store.setSelectedAIChatRoomModel(nil, forDestinationID: destinationID)
       } label: {
         HStack {
-          Text("Default model")
+          Text(AIChatModelOption.defaultEntryTitle(in: options))
           if store.selectedAIChatRoomModel(forDestinationID: destinationID) == nil {
             Image(systemName: "checkmark")
           }
@@ -4173,7 +4173,7 @@ struct AIChatComposerView: View {
         store.setSelectedAIChatModel(nil)
       } label: {
         HStack {
-          Text("Default model")
+          Text(AIChatModelOption.defaultEntryTitle(in: store.aiChatModelOptions))
           if store.selectedAIChatModel == nil {
             Image(systemName: "checkmark")
           }

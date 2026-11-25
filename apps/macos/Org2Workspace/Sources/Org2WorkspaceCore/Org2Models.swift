@@ -4648,6 +4648,13 @@ public struct AIChatModelOption: Identifiable, Hashable, Codable, Sendable {
     self.defaultReasoningEffort = defaultReasoningEffort
     self.isDefault = isDefault
   }
+
+  /// The picker's Default entry names the model it runs when the harness
+  /// reports one, for example "Default (Opus 5.5)".
+  public static func defaultEntryTitle(in options: [AIChatModelOption]) -> String {
+    guard let label = options.first(where: \.isDefault)?.label else { return "Default model" }
+    return "Default (\(label))"
+  }
 }
 
 public struct AIChatRemoteConfiguration: Sendable {

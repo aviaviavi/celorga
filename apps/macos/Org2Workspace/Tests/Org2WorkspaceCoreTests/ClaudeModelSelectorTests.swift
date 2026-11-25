@@ -73,4 +73,79 @@ final class ClaudeModelSelectorTests: XCTestCase {
     store.selectAIChatThread(secondThreadID)
     XCTAssertEqual(store.selectedAIChatModelLabel, "Haiku")
   }
+
+  /// The picker lists the models Claude Code reports, named with their
+  /// versions, and offers each model's own effort levels, including right
+  /// after switching chats, before a refresh finishes.
+  func testDiscoveredClaudeCatalogDrivesModelAndEffortPickers() async throws {
+    let suiteName = "ClaudeModelSelectorTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("claude-model-catalog-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = WorkspaceStore(
+      defaults: defaults,
+      aiChatTranscriptURL: root.appendingPathComponent("chat.json"),
+      claudeSendHandlerForTesting: { _, _, _ in
+        ClaudeCodeTurnResult(sessionID: "session", reply: "ok")
+      },
+      legacyDefaultsDomains: []
+    )
+    let catalog = ClaudeCodeClient.modelOptions(fromReportedModels: claudeReportedModelRowsForTesting)
+    store.claudeModelCatalogForTesting = { catalog }
+    store.setCorpusRoot(root, persistsDefault: false)
+    var claude = try XCTUnwrap(AIChatDestinationConfiguration.defaults.first {
+      $0.id == AIChatDestinationConfiguration.localClaudeID
+    })
+    claude.isEnabled = true
+    store.updateAIChatDestination(claude)
+
+    let firstThreadID = store.createAIChatThread(destinationID: claude.id)
+    await store.refreshAIChatConfiguration()
+    XCTAssertEqual(
+      store.aiChatModelOptions.map(\.label),
+      ["Opus 5.5", "Opus 5.5 (1M context)", "Fable 5.2", "Sonnet 5.5", "Haiku 5.5"]
+    )
+    XCTAssertNil(store.selectedAIChatModel, "the default chat passes no --model")
+    XCTAssertEqual(store.selectedAIChatModelLabel, "Opus 5.5")
+    XCTAssertEqual(AIChatModelOption.defaultEntryTitle(in: store.aiChatModelOptions), "Default (Opus 5.5)")
+    XCTAssertEqual(store.aiChatReasoningOptions.map(\.id), ["low", "medium", "high", "xhigh", "max"])
+
+    store.setSelectedAIChatModel("sonnet")
+    XCTAssertEqual(store.aiChatReasoningOptions.map(\.id), ["low", "medium", "high"])
+    await store.refreshAIChatConfiguration(applySelection: true)
+    XCTAssertEqual(store.selectedAIChatModelLabel, "Sonnet 5.5")
+    XCTAssertEqual(store.aiChatReasoningOptions.map(\.id), ["low", "medium", "high"])
+
+    let secondThreadID = store.createAIChatThread(destinationID: claude.id)
+    store.setSelectedAIChatModel("fable")
+    await store.refreshAIChatConfiguration(applySelection: true)
+    store.setSelectedAIChatReasoningEffort("max")
+    XCTAssertEqual(store.selectedAIChatModelLabel, "Fable 5.2")
+
+    // Switching chats restores the cached catalog immediately; the effort
+    // control must not read "No reasoning levels" until a refresh lands.
+    store.selectAIChatThread(firstThreadID)
+    XCTAssertEqual(store.selectedAIChatModelLabel, "Sonnet 5.5")
+    XCTAssertEqual(store.aiChatReasoningOptions.map(\.id), ["low", "medium", "high"])
+    store.selectAIChatThread(secondThreadID)
+    XCTAssertEqual(store.selectedAIChatModelLabel, "Fable 5.2")
+    XCTAssertEqual(store.selectedAIChatReasoningLabel, "Max")
+    XCTAssertEqual(store.aiChatReasoningOptions.map(\.id), ["low", "medium", "high", "xhigh", "max"])
+
+    store.setSelectedAIChatModel("haiku")
+    XCTAssertEqual(store.aiChatReasoningOptions, [], "Haiku reports no effort levels")
+    XCTAssertNil(store.selectedAIChatReasoningEffort)
+
+    XCTAssertEqual(
+      WorkspaceStore.aiChatRoomReasoningOptions(
+        adapter: .claudeLocal,
+        selectedModel: "sonnet",
+        models: catalog
+      ).map(\.id),
+      ["low", "medium", "high"]
+    )
+  }
 }

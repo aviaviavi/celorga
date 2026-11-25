@@ -227,6 +227,261 @@ public actor ClaudeCodeClient {
     AIChatReasoningOption(id: "max", label: "Max")
   ]
 
+  /// The aliases offered when Claude Code cannot report its own model list,
+  /// for example when it is missing or predates the `models` field.
+  nonisolated public static let fallbackModelOptions = [
+    AIChatModelOption(id: "sonnet", label: "Sonnet"),
+    AIChatModelOption(id: "opus", label: "Opus"),
+    AIChatModelOption(id: "fable", label: "Fable"),
+    AIChatModelOption(id: "haiku", label: "Haiku")
+  ]
+
+  /// How long a discovered model list is reused before Claude Code is asked
+  /// again. Refresh Options in the picker always asks again.
+  nonisolated public static let modelCatalogMaximumAge: TimeInterval = 15 * 60
+
+  private var modelCatalog: (models: [AIChatModelOption], fetchedAt: Date)?
+  private var modelCatalogTask: Task<[AIChatModelOption], Error>?
+
+  /// The models Claude Code's own `/model` picker offers, with the version
+  /// each alias currently resolves to (for example "Opus 5.5") and the effort
+  /// levels each model accepts. Claude Code reports them in the reply to the
+  /// stream-json `initialize` control request, so the list follows the
+  /// installed release and the signed-in account instead of a hardcoded one.
+  public func listModels(
+    cwd: URL,
+    maximumAge: TimeInterval = ClaudeCodeClient.modelCatalogMaximumAge
+  ) async throws -> [AIChatModelOption] {
+    if let modelCatalog, Date().timeIntervalSince(modelCatalog.fetchedAt) < maximumAge {
+      return modelCatalog.models
+    }
+    if let modelCatalogTask { return try await modelCatalogTask.value }
+    guard let executableURL else { throw ClaudeCodeError.executableNotFound }
+    let environment = environment
+    let task = Task.detached(priority: .userInitiated) {
+      try await Self.discoverModels(
+        executableURL: executableURL,
+        environment: environment,
+        cwd: cwd
+      )
+    }
+    modelCatalogTask = task
+    defer { modelCatalogTask = nil }
+    let models = try await task.value
+    modelCatalog = (models, Date())
+    return models
+  }
+
+  nonisolated static let modelDiscoveryRequestID = "celorga-models"
+
+  nonisolated static func modelDiscoveryArguments() -> [String] {
+    [
+      "-p",
+      "--input-format", "stream-json",
+      "--output-format", "stream-json",
+      "--verbose",
+      "--no-session-persistence"
+    ]
+  }
+
+  nonisolated static func discoverModels(
+    executableURL: URL,
+    environment: [String: String],
+    cwd: URL,
+    timeout: Duration = .seconds(20)
+  ) async throws -> [AIChatModelOption] {
+    _ = Darwin.signal(SIGPIPE, SIG_IGN)
+    let process = Process()
+    let standardInput = Pipe()
+    let standardOutput = Pipe()
+    let standardError = Pipe()
+    process.executableURL = executableURL
+    process.arguments = modelDiscoveryArguments()
+    process.currentDirectoryURL = cwd.standardizedFileURL
+    process.environment = LocalAgentExecutableLocator.processEnvironment(
+      environment,
+      executableURL: executableURL
+    )
+    process.standardInput = standardInput
+    process.standardOutput = standardOutput
+    process.standardError = standardError
+    do {
+      try process.run()
+    } catch {
+      throw ClaudeCodeError.launchFailed(error.localizedDescription)
+    }
+    let request: [String: Any] = [
+      "type": "control_request",
+      "request_id": modelDiscoveryRequestID,
+      "request": ["subtype": "initialize"]
+    ]
+    var line = try JSONSerialization.data(withJSONObject: request)
+    line.append(0x0A)
+    // Claude Code answers the initialize request, then exits at end of input
+    // without starting a turn.
+    try? standardInput.fileHandleForWriting.write(contentsOf: line)
+    try? standardInput.fileHandleForWriting.close()
+
+    let outputHandle = standardOutput.fileHandleForReading
+    let errorHandle = standardError.fileHandleForReading
+    let errorTask = Task.detached(priority: .utility) {
+      try? await BlockingIO.readToEnd(errorHandle)
+    }
+    let watchdog = Task.detached {
+      try? await Task.sleep(for: timeout)
+      if !Task.isCancelled, process.isRunning { process.terminate() }
+    }
+    let output = (try? await BlockingIO.readToEnd(outputHandle)) ?? Data()
+    _ = await BlockingIO.terminationStatus(of: process)
+    watchdog.cancel()
+    _ = await errorTask.value
+    return try modelOptions(fromInitializeOutput: output, requestID: modelDiscoveryRequestID)
+  }
+
+  /// Model options from Claude Code's stream-json output containing the reply
+  /// to an `initialize` control request.
+  nonisolated static func modelOptions(
+    fromInitializeOutput output: Data,
+    requestID: String = modelDiscoveryRequestID
+  ) throws -> [AIChatModelOption] {
+    for rawLine in output.split(separator: 0x0A) {
+      guard let object = try? JSONSerialization.jsonObject(with: Data(rawLine)) as? [String: Any],
+            object["type"] as? String == "control_response",
+            let response = object["response"] as? [String: Any],
+            response["request_id"] as? String == requestID
+      else {
+        continue
+      }
+      guard response["subtype"] as? String == "success" else {
+        throw ClaudeCodeError.invalidResponse(
+          response["error"] as? String ?? "Claude Code refused the initialize request"
+        )
+      }
+      let payload = response["response"] as? [String: Any] ?? [:]
+      let models = modelOptions(fromReportedModels: payload["models"] as? [[String: Any]] ?? [])
+      guard !models.isEmpty else {
+        throw ClaudeCodeError.invalidResponse("this Claude Code release does not report its models")
+      }
+      return models
+    }
+    throw ClaudeCodeError.invalidResponse("Claude Code did not answer the initialize request")
+  }
+
+  /// Converts Claude Code's `ModelInfo` rows. The `default` row is not a
+  /// model to pick (the picker has its own Default entry); it marks which
+  /// alias Claude Code uses when no `--model` is passed.
+  nonisolated static func modelOptions(fromReportedModels rows: [[String: Any]]) -> [AIChatModelOption] {
+    let defaultRow = rows.first { ($0["value"] as? String) == "default" }
+    let defaultResolvedModel = defaultRow?["resolvedModel"] as? String
+    let defaultCurrentLabel = (defaultRow?["description"] as? String)
+      .flatMap { currentModelLabel(fromDefaultDescription: $0) }
+    var seen = Set<String>()
+    var drafts: [(option: AIChatModelOption, resolvedModel: String?)] = []
+    for row in rows {
+      guard let value = (row["value"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.isEmpty,
+            value != "default",
+            seen.insert(value).inserted
+      else {
+        continue
+      }
+      let displayName = (row["displayName"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? value
+      let description = (row["description"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+      let reasoning = reasoningOptions(forReportedModel: row)
+      drafts.append((
+        AIChatModelOption(
+          id: value,
+          label: modelLabel(displayName: displayName, description: description),
+          detail: description,
+          supportsReasoning: !reasoning.isEmpty,
+          reasoningOptions: reasoning
+        ),
+        row["resolvedModel"] as? String
+      ))
+    }
+    let defaultIndex = defaultResolvedModel.flatMap { resolved in
+      drafts.firstIndex { $0.resolvedModel == resolved }
+    } ?? defaultCurrentLabel.flatMap { current in
+      drafts.firstIndex { $0.option.label.caseInsensitiveCompare(current) == .orderedSame }
+    }
+    return drafts.enumerated().map { index, draft in
+      let option = draft.option
+      return AIChatModelOption(
+        id: option.id,
+        label: option.label,
+        detail: option.detail,
+        supportsReasoning: option.supportsReasoning,
+        reasoningOptions: option.reasoningOptions,
+        isDefault: index == defaultIndex
+      )
+    }
+  }
+
+  /// "Opus" with description "Opus 5.5 · Best for…" reads "Opus 5.5", so the
+  /// picker shows which version an alias runs. A name that already carries
+  /// the version, or a description without one, keeps the display name.
+  nonisolated static func modelLabel(displayName: String, description: String?) -> String {
+    guard let description,
+          let family = displayName.split(separator: " ").first.map(String.init),
+          !family.isEmpty
+    else {
+      return displayName
+    }
+    let summary = description.components(separatedBy: " · ").first ?? description
+    let pattern = "\\b" + NSRegularExpression.escapedPattern(for: family) + "\\s+(\\d+(?:\\.\\d+)*)\\b"
+    guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+          let match = expression.firstMatch(
+            in: summary,
+            range: NSRange(summary.startIndex..., in: summary)
+          ),
+          let versionRange = Range(match.range(at: 1), in: summary)
+    else {
+      return displayName
+    }
+    let version = String(summary[versionRange])
+    if displayName.contains(version) { return displayName }
+    return family + " " + version + displayName.dropFirst(family.count)
+  }
+
+  /// "Use the default model (currently Opus 5.5) · …" → "Opus 5.5".
+  nonisolated static func currentModelLabel(fromDefaultDescription description: String) -> String? {
+    guard let start = description.range(of: "(currently ") else { return nil }
+    let rest = description[start.upperBound...]
+    guard let end = rest.firstIndex(of: ")") else { return nil }
+    let label = rest[..<end].trimmingCharacters(in: .whitespaces)
+    return label.isEmpty ? nil : label
+  }
+
+  /// Effort levels a reported model accepts. A model that says it takes no
+  /// effort gets none; a release that predates per-model levels gets every
+  /// level `--effort` accepts.
+  nonisolated static func reasoningOptions(forReportedModel row: [String: Any]) -> [AIChatReasoningOption] {
+    if row["supportsEffort"] as? Bool == false { return [] }
+    guard let levels = row["supportedEffortLevels"] as? [String], !levels.isEmpty else {
+      return reasoningOptions
+    }
+    let reported = Set(levels)
+    let known = reasoningOptions.filter { reported.contains($0.id) }
+    return known.isEmpty ? reasoningOptions : known
+  }
+
+  /// Effort levels for `model` in a discovered catalog: the model's own
+  /// levels, or every level when the model is not in the catalog (an alias or
+  /// full model ID Claude Code still accepts).
+  nonisolated public static func reasoningOptions(
+    forModel model: String?,
+    in models: [AIChatModelOption]
+  ) -> [AIChatReasoningOption] {
+    let option = model.flatMap { selected in models.first { $0.id == selected } }
+      ?? (model == nil ? models.first(where: \.isDefault) : nil)
+    guard let option else { return reasoningOptions }
+    if !option.reasoningOptions.isEmpty { return option.reasoningOptions }
+    // A reported model without effort levels has a description; an entry
+    // without one comes from the fallback list or a catalog cached before
+    // Claude Code was asked, and keeps every level.
+    return option.detail == nil ? reasoningOptions : []
+  }
+
   nonisolated static func arguments(
     sessionID: String?,
     model: String?,
