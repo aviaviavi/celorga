@@ -36,7 +36,7 @@ Each meeting note is a Celorga node with `:kind: meeting` and links to its audio
 :END:
 
 ** Summary
-- Pending OpenClaw processing.
+- Not summarized yet.
 
 ** Decisions
 - [ ] Review transcript and extract decisions.

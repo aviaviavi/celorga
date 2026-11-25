@@ -297,6 +297,10 @@ public enum MeetingArtifactWriter {
   /// Transcription status of a meeting note created when recording starts,
   /// before any transcript exists.
   public static let liveRecordingStatus = "recording"
+  /// Placeholder under `** Summary` until someone (or an agent) summarizes
+  /// the meeting. It names no particular agent runtime, because which one
+  /// processes meetings, if any, depends on the user's setup.
+  public static let summaryPlaceholder = "Not summarized yet."
 
   /// Creates the meeting note when recording starts, so the user can take
   /// notes while the meeting is recorded. Never replaces an existing file.
@@ -351,7 +355,7 @@ public enum MeetingArtifactWriter {
 
 
     ** Summary
-    - Pending OpenClaw processing.
+    - \(summaryPlaceholder)
 
     ** Decisions
     - [ ] Review transcript and extract decisions.
@@ -526,7 +530,7 @@ public enum MeetingArtifactWriter {
     :END:
     \(attendeesSection)
     ** Summary
-    - Pending OpenClaw processing.
+    - \(summaryPlaceholder)
 
     ** Decisions
     - [ ] Review transcript and extract decisions.

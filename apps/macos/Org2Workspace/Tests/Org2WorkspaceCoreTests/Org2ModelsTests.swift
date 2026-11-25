@@ -5518,6 +5518,11 @@ final class Org2ModelsTests: XCTestCase {
     XCTAssertEqual(finished.components(separatedBy: ":transcription_status:").count, 2)
     XCTAssertEqual(finished.components(separatedBy: "** Transcript").count, 2)
     XCTAssertEqual(finished.components(separatedBy: "** Summary").count, 2)
+    // The summary placeholder names no specific agent runtime.
+    for note in [live, finished] {
+      XCTAssertTrue(note.contains("** Summary\n- \(MeetingArtifactWriter.summaryPlaceholder)\n"))
+      XCTAssertFalse(note.localizedCaseInsensitiveContains("openclaw"))
+    }
   }
 
   func testMeetingNoteMergeKeepsSectionsAfterTheTranscriptAndUserHeadings() {
