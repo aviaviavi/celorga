@@ -931,6 +931,7 @@ private struct OrgRenderedDocumentPreview: View {
             openChatThread: { store.openAIChatThreadLink($0) },
             askAIAboutHeading: { store.askAIChatAboutSourceHeading(at: $0) },
             performEntryAction: { store.performRenderedEntryAction($0, at: $1) },
+            isEntryPinned: { store.isRenderedEntryPinned(at: $0) },
             peekEncryptedText: { line in Task { await store.peekOrgCrypt(line: line) } },
             reportStatus: { store.statusText = $0 },
             allowsCheckboxMutations: source.isEditable,

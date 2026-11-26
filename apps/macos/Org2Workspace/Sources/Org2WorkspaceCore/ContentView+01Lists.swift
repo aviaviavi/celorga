@@ -1070,6 +1070,14 @@ private struct HeadingActionsContextMenu: View {
     } label: {
       Label("Start Work with AI…", systemImage: "play.circle")
     }
+    Button {
+      store.togglePinnedEntry(location)
+    } label: {
+      Label(
+        store.isEntryPinned(location) ? "Unpin Entry" : "Pin Entry",
+        systemImage: store.isEntryPinned(location) ? "pin.slash" : "pin"
+      )
+    }
     Divider()
 
     Menu {

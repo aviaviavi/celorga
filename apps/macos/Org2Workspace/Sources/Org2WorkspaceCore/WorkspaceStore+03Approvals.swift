@@ -2823,7 +2823,21 @@ extension WorkspaceStore {
       copyFileReference(path: source.file, line: block.startLine)
     case .delete:
       confirmAndDeleteRenderedEntry(block)
+    case .togglePin:
+      guard let source = selectedEntrySource, case .heading(let heading) = block.rendered else { return }
+      let lines = source.text.split(separator: "\n", omittingEmptySubsequences: false)
+      let start = max(0, block.startLine - source.startLine)
+      let entryText = lines.dropFirst(start).prefix(40).joined(separator: "\n")
+      togglePinnedEntry(file: source.file, line: block.startLine, title: heading.title, entryText: entryText)
     }
+  }
+
+  func isRenderedEntryPinned(at line: Int) -> Bool {
+    guard let source = selectedEntrySource,
+          let block = renderedHeadingBlock(at: line),
+          case .heading(let heading) = block.rendered
+    else { return false }
+    return isEntryPinned(file: source.file, line: line, title: heading.title)
   }
 
   // MARK: Start work on a TODO heading

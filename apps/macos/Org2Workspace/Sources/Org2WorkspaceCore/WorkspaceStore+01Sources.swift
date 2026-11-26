@@ -1025,6 +1025,7 @@ extension WorkspaceStore {
     openClawRemoteCorpusPath = restoreOpenClawRemoteCorpusPath(for: standardized)
     restoreMeetingReadyAutomationState(for: standardized)
     restorePinnedFiles(for: standardized)
+    restorePinnedEntries(for: standardized)
     if persistsDefault {
       defaults.set(standardized.path, forKey: corpusKey)
     }

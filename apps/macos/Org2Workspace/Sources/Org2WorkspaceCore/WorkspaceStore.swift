@@ -2631,6 +2631,8 @@ public final class WorkspaceStore {
     }
   }
   public internal(set) var pinnedFileRelativePaths: [String] = []
+  /// Headings pinned to the sidebar for the active corpus.
+  public internal(set) var pinnedEntries: [PinnedEntry] = []
   public internal(set) var pinnedCorpusFiles: [CorpusFile] = []
   public internal(set) var orgRoamLinkResolver = OrgRoamLinkResolver.empty
   public var selectedCorpusFileID: String?
@@ -3516,6 +3518,7 @@ public final class WorkspaceStore {
   let corpusKey = "Org2Workspace.corpusRoot"
   let corpusMountsKey = "Org2Workspace.corpusMounts.v1"
   let pinnedFilesByCorpusKey = "Org2Workspace.pinnedFilePathsByCorpus.v1"
+  let pinnedEntriesByCorpusKey = "Org2Workspace.pinnedEntriesByCorpus.v1"
   let agendaModeKey = "Org2Workspace.agendaMode"
   private let agendaOverdueOrderKey = "Org2Workspace.agendaOverdueOrder.v1"
   let openClawEndpointKey = "Org2Workspace.openClawEndpoint"

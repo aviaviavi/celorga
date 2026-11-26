@@ -1653,6 +1653,7 @@ extension WorkspaceStore {
   /// Carries pins and open history from a renamed file to its new path.
   func renameFileReferences(fromRelativePath oldPath: String, toRelativePath newPath: String) {
     guard let corpusRoot, oldPath != newPath else { return }
+    renamePinnedEntries(fromRelativePath: oldPath, toRelativePath: newPath)
     if let index = pinnedFileRelativePaths.firstIndex(of: oldPath) {
       if pinnedFileRelativePaths.contains(newPath) {
         pinnedFileRelativePaths.remove(at: index)

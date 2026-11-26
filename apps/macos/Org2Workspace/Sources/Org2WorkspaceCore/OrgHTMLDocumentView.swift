@@ -497,6 +497,7 @@ enum OrgHTMLRenderedEntryAction: Sendable {
   case cut
   case copyReference
   case delete
+  case togglePin
 }
 
 private enum EntryContextMenuTag: Int {
@@ -531,6 +532,7 @@ private enum EntryContextMenuTag: Int {
   case viewDecrypted
   case archive
   case copyPlainText
+  case togglePin
 
   var action: OrgHTMLRenderedEntryAction? {
     switch self {
@@ -565,12 +567,13 @@ private enum EntryContextMenuTag: Int {
     case .viewDecrypted: .viewDecrypted
     case .archive: .archive
     case .copyPlainText: .copyPlainText
+    case .togglePin: .togglePin
     }
   }
 
   var requiresEditableSource: Bool {
     switch self {
-    case .entryView, .askAI, .copy, .copyPlainText, .copyReference, .viewDecrypted:
+    case .entryView, .askAI, .copy, .copyPlainText, .copyReference, .viewDecrypted, .togglePin:
       false
     case .edit, .refile, .archive, .startWork,
          .scheduleToday, .scheduleTomorrow, .scheduleNextMonday, .scheduleNextMonth,
@@ -604,6 +607,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
   var openChatThread: (@MainActor (UUID) -> Void)? = nil
   let askAIAboutHeading: @MainActor (Int) -> Void
   let performEntryAction: @MainActor (OrgHTMLRenderedEntryAction, Int) -> Void
+  var isEntryPinned: @MainActor (Int) -> Bool = { _ in false }
   var peekEncryptedText: (@MainActor (Int) -> Void)? = nil
   var allowsEntryContextMenu = true
   let reportStatus: @MainActor (String) -> Void
@@ -721,6 +725,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     coordinator.startWorkEnabled = startWorkAtHeading != nil
     coordinator.markDoneEnabled = allowsMarkDone
     coordinator.performEntryAction = performEntryAction
+    coordinator.isEntryPinned = isEntryPinned
     coordinator.peekEncryptedText = peekEncryptedText
     coordinator.allowsEntryContextMenu = allowsEntryContextMenu
     coordinator.reportStatus = reportStatus
@@ -919,6 +924,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     var startWorkEnabled = false
     var markDoneEnabled = false
     var performEntryAction: @MainActor (OrgHTMLRenderedEntryAction, Int) -> Void = { _, _ in }
+    var isEntryPinned: @MainActor (Int) -> Bool = { _ in false }
     var peekEncryptedText: (@MainActor (Int) -> Void)?
     var allowsEntryContextMenu = true
     var entryContextMenuLine: Int?
@@ -1403,6 +1409,12 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       menu.addItem(contextMenuItem("Edit Entry", symbol: "square.and.pencil", tag: .edit))
       menu.addItem(contextMenuItem("Ask AI", symbol: "sparkles", tag: .askAI))
       menu.addItem(contextMenuItem("Start Work with AI…", symbol: "play.circle", tag: .startWork))
+      let pinned = entryContextMenuLine.map(isEntryPinned) ?? false
+      menu.addItem(contextMenuItem(
+        pinned ? "Unpin Entry" : "Pin Entry",
+        symbol: pinned ? "pin.slash" : "pin",
+        tag: .togglePin
+      ))
       menu.addItem(.separator())
       menu.addItem(contextMenuItem("Move / Refile…", symbol: "arrowshape.turn.up.right", tag: .refile))
       menu.addItem(contextMenuItem("Archive Entry", symbol: "archivebox", tag: .archive))

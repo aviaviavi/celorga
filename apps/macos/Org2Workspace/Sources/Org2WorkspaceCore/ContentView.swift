@@ -2624,9 +2624,26 @@ private struct SidebarView: View {
           SidebarSectionLabel("Workspace", section: .workspace)
         }
 
-        if !pinnedCorpusFiles.isEmpty {
+        if !pinnedCorpusFiles.isEmpty || !store.pinnedEntries.isEmpty {
           Section {
             if isSidebarSectionExpanded(.pinned) {
+              ForEach(store.pinnedEntries) { entry in
+                Button {
+                  store.openPinnedEntry(entry)
+                } label: {
+                  SidebarPinnedEntryRow(entry: entry)
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                  Button {
+                    store.unpinEntry(entry)
+                  } label: {
+                    Label("Unpin Entry", systemImage: "pin.slash")
+                  }
+                }
+                .help("\(entry.title) in \(entry.relativePath)")
+                .accessibilityIdentifier("sidebar-pinned-entry")
+              }
               ForEach(pinnedCorpusFiles) { file in
                 Button {
                   store.openSidebarFile(file)
@@ -3450,6 +3467,31 @@ private struct SidebarCorpusSwitcher: View {
 
   private var forgettableCorpora: [WorkspaceCorpusMount] {
     store.mountedCorpora.filter { $0.path != store.corpusRoot?.standardizedFileURL.path }
+  }
+}
+
+private struct SidebarPinnedEntryRow: View {
+  let entry: PinnedEntry
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "number")
+        .foregroundStyle(.secondary)
+        .frame(width: 16)
+      VStack(alignment: .leading, spacing: 1) {
+        Text(entry.title)
+          .font(.callout)
+          .lineLimit(1)
+          .truncationMode(.tail)
+        Text(entry.fileName)
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+      }
+      Spacer(minLength: 0)
+    }
+    .contentShape(Rectangle())
   }
 }
 

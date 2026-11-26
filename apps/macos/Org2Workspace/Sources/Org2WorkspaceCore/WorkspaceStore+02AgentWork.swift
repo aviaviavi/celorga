@@ -54,6 +54,7 @@ extension WorkspaceStore {
       resetCorpusFileCatalogMutations()
       corpusFiles = []
       pinnedFileRelativePaths = []
+      pinnedEntries = []
       orgRoamLinkResolverGeneration &+= 1
       orgRoamLinkResolverRefreshTask?.cancel()
       orgRoamLinkResolverRefreshTask = nil
