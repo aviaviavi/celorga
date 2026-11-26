@@ -1639,6 +1639,7 @@ while True:
     turnStartPolicy: CodexTurnStartPolicy = .startIfAbsent,
     model: String? = nil,
     reasoningEffort: String? = nil,
+    serviceTier: String? = nil,
     sandboxAccess: CodexSandboxAccess = .workspaceWrite
   ) async throws -> CodexTurnResult {
     try await runTurn(
@@ -1653,6 +1654,7 @@ while True:
       turnStartPolicy: turnStartPolicy,
       model: model,
       reasoningEffort: reasoningEffort,
+      serviceTier: serviceTier,
       sandboxAccess: sandboxAccess
     )
   }
@@ -1669,6 +1671,7 @@ while True:
     turnStartPolicy: CodexTurnStartPolicy = .startIfAbsent,
     model: String? = nil,
     reasoningEffort: String? = nil,
+    serviceTier: String? = nil,
     sandboxAccess: CodexSandboxAccess = .workspaceWrite
   ) async throws -> CodexTurnResult {
     try await connect()
@@ -1697,6 +1700,13 @@ while True:
     ]
     params["model"] = model.map(JSONValue.string) ?? .null
     params["effort"] = reasoningEffort.map(JSONValue.string) ?? .null
+    // Fast mode: Codex keeps a turn's service tier for later turns, so an
+    // explicit "default" is how a chat returns to standard speed. Omitting
+    // the field leaves the thread's tier and the user's Codex config alone.
+    if let serviceTier = serviceTier?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !serviceTier.isEmpty {
+      params["serviceTier"] = .string(serviceTier)
+    }
     if case .managedRemote = transport {
       if let existingTurn = try await reconciledTurn(
         threadID: threadID,
@@ -2015,6 +2025,32 @@ while True:
     }
   }
 
+  /// Speed tiers Codex reports for a model. Current servers list
+  /// `serviceTiers` (`priority` is Fast); older ones only list the
+  /// deprecated `additionalSpeedTiers` names, where `fast` maps to `priority`.
+  nonisolated static func serviceTierOptions(_ value: JSONValue) -> [AIChatServiceTierOption] {
+    if let tiers = value["serviceTiers"]?.arrayValue, !tiers.isEmpty {
+      return tiers.compactMap { tier in
+        guard let id = tier["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !id.isEmpty
+        else { return nil }
+        return AIChatServiceTierOption(
+          id: id,
+          label: tier["name"]?.stringValue ?? id.capitalized,
+          detail: tier["description"]?.stringValue
+        )
+      }
+    }
+    return (value["additionalSpeedTiers"]?.arrayValue ?? []).compactMap { tier in
+      guard let name = tier.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !name.isEmpty
+      else { return nil }
+      return name == "fast"
+        ? AIChatServiceTierOption(id: "priority", label: "Fast")
+        : AIChatServiceTierOption(id: name, label: name.capitalized)
+    }
+  }
+
   nonisolated private static func modelOption(_ value: JSONValue) -> AIChatModelOption? {
     guard let id = value["id"]?.stringValue,
           !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -2037,7 +2073,8 @@ while True:
       supportsReasoning: !reasoningOptions.isEmpty,
       reasoningOptions: reasoningOptions,
       defaultReasoningEffort: value["defaultReasoningEffort"]?.stringValue,
-      isDefault: value["isDefault"]?.boolValue ?? false
+      isDefault: value["isDefault"]?.boolValue ?? false,
+      serviceTiers: serviceTierOptions(value)
     )
   }
 

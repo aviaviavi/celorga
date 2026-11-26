@@ -2952,6 +2952,18 @@ public final class WorkspaceStore {
       defaults.set(codexSandboxAccess.rawValue, forKey: codexSandboxAccessKey)
     }
   }
+  /// Codex speed tier for every Codex turn, like Codex's `/fast` toggle:
+  /// nil keeps the user's Codex default, `default` is standard speed, and
+  /// a tier id such as `priority` (Fast) or `ultrafast` speeds turns up.
+  public var codexServiceTier: String? {
+    didSet {
+      if let codexServiceTier {
+        defaults.set(codexServiceTier, forKey: codexServiceTierKey)
+      } else {
+        defaults.removeObject(forKey: codexServiceTierKey)
+      }
+    }
+  }
   public var aiChatMessageSound: AIChatMessageSound = .org2 {
     didSet {
       defaults.set(aiChatMessageSound.rawValue, forKey: aiChatMessageSoundKey)
@@ -3515,6 +3527,7 @@ public final class WorkspaceStore {
   private let aiChatCorpusAccessScopeKey = "Org2Workspace.aiChat.corpusAccessScope.v1"
   private let aiChatCustomInstructionsKey = "Org2Workspace.aiChat.customInstructions.v1"
   private let codexSandboxAccessKey = "Org2Workspace.aiChat.codexSandboxAccess.v1"
+  private let codexServiceTierKey = "Org2Workspace.aiChat.codexServiceTier.v1"
   private let aiChatMessageSoundKey = "Org2Workspace.aiChat.messageSound.v1"
   private let aiChatRepairIntervalKey = "Org2Workspace.aiChat.repairIntervalSeconds.v1"
   private let aiChatDefaultRoomAgentTurnLimitKey = "Org2Workspace.aiChat.defaultRoomAgentTurnLimit.v1"
@@ -4397,6 +4410,7 @@ public final class WorkspaceStore {
     )
     codexSandboxAccess = defaults.string(forKey: codexSandboxAccessKey)
       .flatMap(CodexSandboxAccess.init(rawValue:)) ?? .workspaceWrite
+    codexServiceTier = defaults.string(forKey: codexServiceTierKey)
     aiChatMessageSound = defaults.string(forKey: aiChatMessageSoundKey)
       .flatMap(AIChatMessageSound.init(rawValue:)) ?? .org2
     let repairInterval = defaults.object(forKey: aiChatRepairIntervalKey) as? Double

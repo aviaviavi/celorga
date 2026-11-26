@@ -2648,6 +2648,7 @@ extension WorkspaceStore {
       turnStartPolicy: turnStartPolicy,
       model: selectedModel,
       reasoningEffort: selectedReasoningEffort,
+      serviceTier: codexTurnServiceTier(destinationID: destinationID, model: selectedModel),
       sandboxAccess: codexSandboxAccess
     )
     commitPersistentContext(contextDelivery.envelope, for: contextDelivery.key)

@@ -4622,6 +4622,20 @@ public struct AIChatReasoningOption: Identifiable, Hashable, Codable, Sendable {
   }
 }
 
+/// A speed tier a harness offers for a model, such as Codex's Fast mode
+/// (service tier `priority`).
+public struct AIChatServiceTierOption: Identifiable, Hashable, Codable, Sendable {
+  public let id: String
+  public let label: String
+  public let detail: String?
+
+  public init(id: String, label: String, detail: String? = nil) {
+    self.id = id
+    self.label = label
+    self.detail = detail
+  }
+}
+
 public struct AIChatModelOption: Identifiable, Hashable, Codable, Sendable {
   public let id: String
   public let label: String
@@ -4630,6 +4644,8 @@ public struct AIChatModelOption: Identifiable, Hashable, Codable, Sendable {
   public let reasoningOptions: [AIChatReasoningOption]
   public let defaultReasoningEffort: String?
   public let isDefault: Bool
+  /// Speed tiers beyond standard, for example Codex Fast and Ultrafast.
+  public let serviceTiers: [AIChatServiceTierOption]
 
   public init(
     id: String,
@@ -4638,7 +4654,8 @@ public struct AIChatModelOption: Identifiable, Hashable, Codable, Sendable {
     supportsReasoning: Bool = false,
     reasoningOptions: [AIChatReasoningOption] = [],
     defaultReasoningEffort: String? = nil,
-    isDefault: Bool = false
+    isDefault: Bool = false,
+    serviceTiers: [AIChatServiceTierOption] = []
   ) {
     self.id = id
     self.label = label
@@ -4647,6 +4664,31 @@ public struct AIChatModelOption: Identifiable, Hashable, Codable, Sendable {
     self.reasoningOptions = reasoningOptions
     self.defaultReasoningEffort = defaultReasoningEffort
     self.isDefault = isDefault
+    self.serviceTiers = serviceTiers
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, label, detail, supportsReasoning, reasoningOptions
+    case defaultReasoningEffort, isDefault, serviceTiers
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(String.self, forKey: .id)
+    label = try container.decode(String.self, forKey: .label)
+    detail = try container.decodeIfPresent(String.self, forKey: .detail)
+    supportsReasoning = try container.decodeIfPresent(Bool.self, forKey: .supportsReasoning) ?? false
+    reasoningOptions = try container.decodeIfPresent(
+      [AIChatReasoningOption].self,
+      forKey: .reasoningOptions
+    ) ?? []
+    defaultReasoningEffort = try container.decodeIfPresent(String.self, forKey: .defaultReasoningEffort)
+    isDefault = try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+    // Catalogs cached before speed tiers existed omit the field.
+    serviceTiers = try container.decodeIfPresent(
+      [AIChatServiceTierOption].self,
+      forKey: .serviceTiers
+    ) ?? []
   }
 
   /// The picker's Default entry names the model it runs when the harness

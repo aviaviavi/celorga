@@ -56,6 +56,60 @@ final class CodexAppServerClientTests: XCTestCase {
     XCTAssertEqual(restored.reasoningEffort, "high")
   }
 
+  func testCodexServiceTiersParseCurrentAndLegacyCatalogs() {
+    let current = CodexAppServerClient.serviceTierOptions(.object([
+      "serviceTiers": .array([
+        .object([
+          "id": .string("priority"),
+          "name": .string("Fast"),
+          "description": .string("2x speed")
+        ]),
+        .object(["id": .string("ultrafast"), "name": .string("Ultrafast")])
+      ]),
+      "additionalSpeedTiers": .array([.string("fast"), .string("ultrafast")])
+    ]))
+    XCTAssertEqual(current.map(\.id), ["priority", "ultrafast"])
+    XCTAssertEqual(current.first?.detail, "2x speed")
+
+    let legacy = CodexAppServerClient.serviceTierOptions(.object([
+      "additionalSpeedTiers": .array([.string("fast")])
+    ]))
+    XCTAssertEqual(legacy, [AIChatServiceTierOption(id: "priority", label: "Fast")])
+    XCTAssertTrue(CodexAppServerClient.serviceTierOptions(.object([:])).isEmpty)
+  }
+
+  func testCodexTurnServiceTierFollowsFastModeSetting() {
+    let fastOnly = [AIChatServiceTierOption(id: "priority", label: "Fast")]
+    let both = fastOnly + [AIChatServiceTierOption(id: "ultrafast", label: "Ultrafast")]
+
+    // Untouched: leave the thread and Codex config alone.
+    XCTAssertNil(WorkspaceStore.codexTurnServiceTier(setting: nil, modelTiers: both))
+    // Standard is explicit so a thread that ran Fast returns to standard.
+    XCTAssertEqual(WorkspaceStore.codexTurnServiceTier(setting: "default", modelTiers: both), "default")
+    XCTAssertEqual(WorkspaceStore.codexTurnServiceTier(setting: "ultrafast", modelTiers: both), "ultrafast")
+    // A tier the model lacks falls back to its Fast tier, else standard.
+    XCTAssertEqual(WorkspaceStore.codexTurnServiceTier(setting: "ultrafast", modelTiers: fastOnly), "priority")
+    XCTAssertEqual(WorkspaceStore.codexTurnServiceTier(setting: "priority", modelTiers: []), "default")
+    // Without a catalog, send the choice as is.
+    XCTAssertEqual(WorkspaceStore.codexTurnServiceTier(setting: "priority", modelTiers: nil), "priority")
+  }
+
+  func testModelOptionDecodesCatalogCachedBeforeServiceTiers() throws {
+    let json = #"{"id":"gpt-test","label":"GPT Test","supportsReasoning":false,"reasoningOptions":[],"isDefault":true}"#
+    let option = try JSONDecoder().decode(AIChatModelOption.self, from: Data(json.utf8))
+    XCTAssertEqual(option.id, "gpt-test")
+    XCTAssertTrue(option.serviceTiers.isEmpty)
+    let roundTripped = try JSONDecoder().decode(
+      AIChatModelOption.self,
+      from: JSONEncoder().encode(AIChatModelOption(
+        id: "gpt-test",
+        label: "GPT Test",
+        serviceTiers: [AIChatServiceTierOption(id: "priority", label: "Fast")]
+      ))
+    )
+    XCTAssertEqual(roundTripped.serviceTiers.map(\.id), ["priority"])
+  }
+
   func testChatRuntimeLocksAfterFirstMessage() {
     let thread = AIChatThread(
       title: "Runtime picker",
@@ -1089,6 +1143,7 @@ final class CodexAppServerClientTests: XCTestCase {
       attemptIdentity: CodexTurnAttemptIdentity(messageID: UUID(), attemptID: UUID()),
       model: "gpt-test",
       reasoningEffort: "high",
+      serviceTier: "priority",
       sandboxAccess: .fullAccess
     )
     XCTAssertEqual(result.status, .completed)
@@ -1116,6 +1171,8 @@ final class CodexAppServerClientTests: XCTestCase {
     XCTAssertEqual(models.first?.reasoningOptions.map(\.id), ["low", "high"])
     XCTAssertEqual(models.first?.defaultReasoningEffort, "low")
     XCTAssertTrue(models.first?.isDefault == true)
+    XCTAssertEqual(models.first?.serviceTiers.map(\.id), ["priority"])
+    XCTAssertEqual(models.first?.serviceTiers.first?.label, "Fast")
 
     await client.shutdown()
   }
@@ -4071,6 +4128,10 @@ final class CodexAppServerClientTests: XCTestCase {
           *'"effort":"high"'*) ;;
           *) printf '%s\n' '{"id":4,"error":{"message":"turn effort missing"}}'; continue ;;
         esac
+        case "$line" in
+          *'"serviceTier":"priority"'*) ;;
+          *) printf '%s\n' '{"id":4,"error":{"message":"turn service tier missing"}}'; continue ;;
+        esac
         printf '%s\n' '{"id":4,"result":{"turn":{"id":"turn-test","status":"inProgress","items":[],"error":null}}}'
         printf '%s\n' '{"method":"turn/started","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"inProgress","items":[],"error":null}}}'
         printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thr-test","turnId":"turn-test","itemId":"msg-test","delta":"Working…"}}'
@@ -4082,7 +4143,7 @@ final class CodexAppServerClientTests: XCTestCase {
         printf '%s\n' '{"method":"thread/tokenUsage/updated","params":{"threadId":"thr-test","turnId":"turn-test","tokenUsage":{"last":{"inputTokens":123,"cachedInputTokens":45,"outputTokens":6}}}}'
         ;;
       *'"method":"model/list"'*)
-        printf '%s\n' '{"id":5,"result":{"data":[{"id":"gpt-test","model":"gpt-test","upgrade":null,"upgradeInfo":null,"availabilityNux":null,"displayName":"GPT Test","description":"Test model","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"low","description":"Fast"},{"reasoningEffort":"high","description":"Thorough"}],"defaultReasoningEffort":"low","inputModalities":["text"],"supportsPersonality":false,"additionalSpeedTiers":[],"serviceTiers":[],"defaultServiceTier":null,"isDefault":true}],"nextCursor":null}}'
+        printf '%s\n' '{"id":5,"result":{"data":[{"id":"gpt-test","model":"gpt-test","upgrade":null,"upgradeInfo":null,"availabilityNux":null,"displayName":"GPT Test","description":"Test model","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"low","description":"Fast"},{"reasoningEffort":"high","description":"Thorough"}],"defaultReasoningEffort":"low","inputModalities":["text"],"supportsPersonality":false,"additionalSpeedTiers":["fast"],"serviceTiers":[{"id":"priority","name":"Fast","description":"2x speed"}],"defaultServiceTier":null,"isDefault":true}],"nextCursor":null}}'
         ;;
     esac
   done

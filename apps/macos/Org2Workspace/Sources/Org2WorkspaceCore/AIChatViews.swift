@@ -4250,6 +4250,12 @@ struct AIChatComposerView: View {
             .foregroundStyle(.secondary)
             .lineLimit(1)
         }
+        if store.isAIChatFastModeEnabled {
+          Image(systemName: "hare.fill")
+            .foregroundStyle(.tint)
+            .help("\(store.selectedAIChatServiceTierLabel) mode")
+            .accessibilityLabel("\(store.selectedAIChatServiceTierLabel) mode")
+        }
         Image(systemName: "chevron.down")
           .font(.system(size: 9, weight: .semibold))
           .foregroundStyle(.tertiary)
@@ -4270,6 +4276,9 @@ struct AIChatComposerView: View {
         modelPicker
         if store.selectedAIChatDestination.supportsReasoningEffort {
           effortConfiguration
+        }
+        if store.canChooseAIChatServiceTier {
+          speedConfiguration
         }
         Divider()
         HStack {
@@ -4346,6 +4355,54 @@ struct AIChatComposerView: View {
       }
     }
     .disabled(!store.canChangeSelectedAIChatConfiguration)
+  }
+
+  /// Codex Fast mode: standard speed, Fast, and any faster tier the model
+  /// offers. The choice applies to every Codex chat, like Codex's `/fast`.
+  private var speedConfiguration: some View {
+    let options = store.selectedAIChatServiceTierOptions
+    return VStack(alignment: .leading, spacing: 6) {
+      if options.count == 1, let fast = options.first {
+        Toggle(isOn: Binding(
+          get: { store.isAIChatFastModeEnabled },
+          set: { enabled in store.setCodexServiceTier(enabled ? fast.id : nil) }
+        )) {
+          Label("\(fast.label) mode", systemImage: "hare")
+        }
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .accessibilityIdentifier("ai-chat-fast-mode-toggle")
+        if let detail = fast.detail {
+          Text(detail)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+      } else {
+        Picker(selection: Binding(
+          get: { store.selectedAIChatServiceTier?.id ?? WorkspaceStore.codexStandardServiceTier },
+          set: { tier in
+            store.setCodexServiceTier(tier == WorkspaceStore.codexStandardServiceTier ? nil : tier)
+          }
+        )) {
+          Text("Standard").tag(WorkspaceStore.codexStandardServiceTier)
+          ForEach(options) { option in
+            Text(option.label).tag(option.id)
+          }
+        } label: {
+          Label("Speed", systemImage: "hare")
+        }
+        .pickerStyle(.menu)
+        .controlSize(.small)
+        .accessibilityIdentifier("ai-chat-speed-picker")
+        if let detail = store.selectedAIChatServiceTier?.detail {
+          Text(detail)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .help("Codex Fast mode applies to every Codex chat, like Codex's /fast")
   }
 
   private var defaultReasoningLabel: String {
