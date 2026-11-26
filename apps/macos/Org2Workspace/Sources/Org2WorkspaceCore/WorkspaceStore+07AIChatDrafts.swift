@@ -2516,20 +2516,14 @@ extension WorkspaceStore {
     forDestinationID destinationID: String
   ) {
     guard let selectedAIChatThreadID,
-          let index = aiChatThreads.firstIndex(where: {
-            $0.id == selectedAIChatThreadID
-          }),
-          aiChatThreads[index].isSharedRoom,
-          aiChatThreads[index].roomDestinationIDs.contains(destinationID),
-          aiChatThreads[index].roomReasoningEffortsByDestination[destinationID] != reasoningEffort
+          setAIChatRoomReasoningEffort(
+            reasoningEffort,
+            forDestinationID: destinationID,
+            threadID: selectedAIChatThreadID
+          )
     else {
       return
     }
-    var nextEfforts = aiChatThreads[index].roomReasoningEffortsByDestination
-    nextEfforts[destinationID] = reasoningEffort
-    aiChatThreads[index] = aiChatThreads[index]
-      .replacingAIChatMetadata(roomReasoningEffortsByDestination: nextEfforts)
-    persistAIChatTranscript()
     aiChatStatusText = reasoningEffort == nil
       ? "\(aiChatDestinationTitle(destinationID)) will use its default reasoning"
       : "\(aiChatDestinationTitle(destinationID)) will use \(selectedAIChatRoomReasoningLabel(forDestinationID: destinationID) ?? reasoningEffort!) reasoning"
@@ -2969,30 +2963,10 @@ extension WorkspaceStore {
 
   public func setSelectedAIChatRoomModel(_ model: String?, forDestinationID destinationID: String) {
     guard let selectedAIChatThreadID,
-          let index = aiChatThreads.firstIndex(where: {
-            $0.id == selectedAIChatThreadID
-          }),
-          aiChatThreads[index].isSharedRoom,
-          aiChatThreads[index].model(forDestinationID: destinationID) != model
+          setAIChatRoomModel(model, forDestinationID: destinationID, threadID: selectedAIChatThreadID)
     else {
       return
     }
-    var nextModels = aiChatThreads[index].roomModelsByDestination
-    nextModels[destinationID] = model
-    if model == nil { nextModels.removeValue(forKey: destinationID) }
-    // A different model may not support the previous effort, so the
-    // destination returns to its default effort, as in single-agent chats.
-    var nextEfforts = aiChatThreads[index].roomReasoningEffortsByDestination
-    nextEfforts.removeValue(forKey: destinationID)
-    let runtime = aiChatDestinationRuntime(destinationID)
-    let legacyModels = aiChatThreads[index].roomModels.replacingModel(model, for: runtime)
-    aiChatThreads[index] = aiChatThreads[index]
-      .replacingAIChatMetadata(
-        roomModels: legacyModels,
-        roomModelsByDestination: nextModels,
-        roomReasoningEffortsByDestination: nextEfforts
-      )
-    persistAIChatTranscript()
     aiChatStatusText = model == nil
       ? "\(aiChatDestinationTitle(destinationID)) will use its default model"
       : "\(aiChatDestinationTitle(destinationID)) will use \(selectedAIChatRoomModelLabel(forDestinationID: destinationID))"
@@ -3020,6 +2994,18 @@ extension WorkspaceStore {
     Task { @MainActor [weak self] in
       await self?.refreshAIChatConfiguration(applySelection: true)
     }
+  }
+
+  private func applyAIChatRoomModelOptions(
+    _ loaded: [String: [AIChatModelOption]],
+    destinationIDs: [String]
+  ) {
+    aiChatDestinationModelOptions = loaded
+    aiChatRoomModelOptions = Dictionary(uniqueKeysWithValues: AIChatRuntime.allCases.compactMap { runtime in
+      destinationIDs.first(where: { aiChatDestinationRuntime($0) == runtime })
+        .flatMap { loaded[$0] }
+        .map { (runtime, $0) }
+    })
   }
 
   public func refreshAIChatConfiguration(
@@ -3064,50 +3050,58 @@ extension WorkspaceStore {
       aiChatEffectiveModel = nil
       aiChatDefaultReasoningEffort = nil
       let destinationIDs = thread.roomDestinationIDs
-      let cachedPairs: [(String, [AIChatModelOption])] = thread.roomDestinationIDs.compactMap { destinationID in
+      let cachedPairs: [(String, [AIChatModelOption])] = destinationIDs.compactMap { destinationID in
         guard let models = aiChatConfigurationCatalogCache[destinationID]?.models,
               !models.isEmpty
         else { return nil }
         return (destinationID, models)
       }
-      let cachedLoaded = Dictionary(uniqueKeysWithValues: cachedPairs)
-      let refreshed = await withTaskGroup(
-        of: (String, [AIChatModelOption]?).self,
-        returning: [String: [AIChatModelOption]].self
-      ) { group in
+      // Show cached catalogs at once, then replace each agent's list as its
+      // own listing arrives, so one slow agent never hides the others.
+      var loaded = Dictionary(uniqueKeysWithValues: cachedPairs)
+      applyAIChatRoomModelOptions(loaded, destinationIDs: destinationIDs)
+      aiChatRoomLoadingDestinationIDs = Set(destinationIDs)
+      aiChatRoomModelErrors = [:]
+      await withTaskGroup(of: (String, Result<[AIChatModelOption], Error>).self) { group in
         for destinationID in destinationIDs {
           group.addTask { [weak self] in
-            guard let self else { return (destinationID, nil) }
-            return (
-              destinationID,
-              try? await self.modelsForAIChatDestination(
+            guard let self else {
+              return (destinationID, .failure(CancellationError()))
+            }
+            do {
+              return (
                 destinationID,
-                forceCodexModelCatalogReload: forceModelCatalogReload
+                .success(try await self.modelsForAIChatDestination(
+                  destinationID,
+                  forceCodexModelCatalogReload: forceModelCatalogReload
+                ))
               )
-            )
+            } catch {
+              return (destinationID, .failure(error))
+            }
           }
         }
-        var result: [String: [AIChatModelOption]] = [:]
-        for await (destinationID, models) in group {
-          if let models, !models.isEmpty { result[destinationID] = models }
+        for await (destinationID, result) in group {
+          guard generation == aiChatConfigurationGeneration,
+                selectedAIChatThreadID == threadID
+          else { continue }
+          aiChatRoomLoadingDestinationIDs.remove(destinationID)
+          switch result {
+          case .success(let models) where !models.isEmpty:
+            cacheAIChatModelCatalog(destinationID: destinationID, models: models)
+            loaded[destinationID] = models
+            aiChatRoomModelErrors.removeValue(forKey: destinationID)
+            applyAIChatRoomModelOptions(loaded, destinationIDs: destinationIDs)
+          case .success:
+            break
+          case .failure(let error):
+            aiChatRoomModelErrors[destinationID] = error.localizedDescription
+          }
         }
-        return result
       }
-      guard generation == aiChatConfigurationGeneration,
-            selectedAIChatThreadID == threadID
-      else {
-        return
+      if generation == aiChatConfigurationGeneration {
+        aiChatRoomLoadingDestinationIDs = []
       }
-      for (destinationID, models) in refreshed {
-        cacheAIChatModelCatalog(destinationID: destinationID, models: models)
-      }
-      let loaded = cachedLoaded.merging(refreshed) { _, fresh in fresh }
-      aiChatDestinationModelOptions = loaded
-      aiChatRoomModelOptions = Dictionary(uniqueKeysWithValues: AIChatRuntime.allCases.compactMap { runtime in
-        destinationIDs.first(where: { aiChatDestinationRuntime($0) == runtime })
-          .flatMap { loaded[$0] }
-          .map { (runtime, $0) }
-      })
       return
     }
 

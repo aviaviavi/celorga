@@ -1249,9 +1249,22 @@ final class MobileRemoteStore: ObservableObject {
     }
     pollingTask = Task { [weak self] in
       guard let self else { return }
+      var lastConfigurationAttempt = Date()
+      var configurationRetries = 0
       while !Task.isCancelled {
         await self.refreshThread(threadID, pollingLeaseID: leaseID)
         guard self.pollingLeaseID == leaseID else { return }
+        // A remote agent can be slow to list its models the first time.
+        // Ask again a few times instead of leaving "Model unavailable".
+        if self.needsConfigurationRetry(threadID),
+           configurationRetries < 6,
+           Date().timeIntervalSince(lastConfigurationAttempt) >= 10 {
+          configurationRetries += 1
+          lastConfigurationAttempt = Date()
+          Task { [weak self] in
+            await self?.refreshThreadConfiguration(threadID, pollingLeaseID: leaseID)
+          }
+        }
         let isActivelyChanging = self.threadDetail?.thread.id == threadID
           && (self.threadDetail?.thread.isRunning == true
             || self.threadDetail?.streamingReply.isEmpty == false)
@@ -1259,6 +1272,17 @@ final class MobileRemoteStore: ObservableObject {
       }
     }
     return leaseID
+  }
+
+  private func needsConfigurationRetry(_ threadID: UUID) -> Bool {
+    guard !isRefreshingConfiguration, !isUpdatingConfiguration else { return false }
+    guard let configuration = threadConfiguration, configuration.threadID == threadID else {
+      return true
+    }
+    if let room = configuration.roomDestinations {
+      return room.contains { $0.error != nil }
+    }
+    return configurationError != nil
   }
 
   func endPolling(threadID: UUID, leaseID: UUID) {
@@ -1448,6 +1472,28 @@ final class MobileRemoteStore: ObservableObject {
       MobileRemoteUpdateThreadConfigurationRequest(reasoningEffort: effort),
       threadID: threadID
     )
+  }
+
+  /// Chooses the model one agent in a shared room uses.
+  func setRoomModel(_ model: String?, destinationID: String, threadID: UUID) async {
+    await updateThreadConfiguration(
+      MobileRemoteUpdateThreadConfigurationRequest(model: model, roomDestinationID: destinationID),
+      threadID: threadID
+    )
+  }
+
+  func setRoomReasoningEffort(_ effort: String?, destinationID: String, threadID: UUID) async {
+    await updateThreadConfiguration(
+      MobileRemoteUpdateThreadConfigurationRequest(reasoningEffort: effort, roomDestinationID: destinationID),
+      threadID: threadID
+    )
+  }
+
+  /// Asks the host for the chat's models again, for example after a slow
+  /// remote agent did not answer the first time.
+  func reloadThreadConfiguration(_ threadID: UUID) async {
+    configurationError = nil
+    await refreshThreadConfiguration(threadID)
   }
 
   var supportsDestinationChange: Bool {

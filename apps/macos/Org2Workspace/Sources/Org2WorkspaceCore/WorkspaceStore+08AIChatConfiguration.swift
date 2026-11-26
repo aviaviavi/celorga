@@ -2175,8 +2175,11 @@ extension WorkspaceStore {
         allowKeychainRead: true
       )
       let client = OpenClawGatewayClient(settings: settings)
-      let models = try await client.listModels()
-      let configuration = try await client.sessionConfiguration(sessionKey: thread.sessionKey)
+      // Answer from the cached catalog like other destinations. A session
+      // the Gateway has not created yet (or a slow session lookup) still
+      // leaves the phone a model list instead of "Model unavailable".
+      let models = try await remoteModelsForAIChatDestination(thread.destinationID)
+      let configuration = try? await client.sessionConfiguration(sessionKey: thread.sessionKey)
       return AIChatRemoteConfiguration(
         models: models,
         effectiveModel: configuration?.model ?? thread.model,

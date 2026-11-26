@@ -2921,6 +2921,10 @@ public final class WorkspaceStore {
   public internal(set) var aiChatModelOptions: [AIChatModelOption] = []
   public internal(set) var aiChatRoomModelOptions: [AIChatRuntime: [AIChatModelOption]] = [:]
   public internal(set) var aiChatDestinationModelOptions: [String: [AIChatModelOption]] = [:]
+  /// Shared-room agents whose model listing is still in flight.
+  public internal(set) var aiChatRoomLoadingDestinationIDs: Set<String> = []
+  /// Why a shared-room agent's models could not be listed, by destination.
+  public internal(set) var aiChatRoomModelErrors: [String: String] = [:]
   public internal(set) var aiChatDestinations: [AIChatDestinationConfiguration] = [] {
     didSet {
       guard oldValue != aiChatDestinations else { return }

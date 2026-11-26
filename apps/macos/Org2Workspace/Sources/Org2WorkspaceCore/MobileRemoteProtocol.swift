@@ -340,6 +340,9 @@ public struct MobileRemoteThreadConfiguration: Codable, Hashable, Sendable {
   public let reasoningEffort: String?
   public let reasoningOptions: [MobileRemoteReasoningOption]
   public let defaultReasoningEffort: String?
+  /// A shared room's per-agent choices, one entry per room destination.
+  /// Nil for single-agent chats and from hosts that predate room control.
+  public let roomDestinations: [MobileRemoteRoomDestinationConfiguration]?
 
   public init(
     threadID: UUID,
@@ -347,7 +350,8 @@ public struct MobileRemoteThreadConfiguration: Codable, Hashable, Sendable {
     models: [MobileRemoteModelOption],
     reasoningEffort: String?,
     reasoningOptions: [MobileRemoteReasoningOption],
-    defaultReasoningEffort: String?
+    defaultReasoningEffort: String?,
+    roomDestinations: [MobileRemoteRoomDestinationConfiguration]? = nil
   ) {
     self.threadID = threadID
     self.model = model
@@ -355,26 +359,67 @@ public struct MobileRemoteThreadConfiguration: Codable, Hashable, Sendable {
     self.reasoningEffort = reasoningEffort
     self.reasoningOptions = reasoningOptions
     self.defaultReasoningEffort = defaultReasoningEffort
+    self.roomDestinations = roomDestinations
+  }
+}
+
+/// One agent's model and reasoning in a shared room. `error` explains why
+/// its models are missing, for example a destination that did not answer.
+public struct MobileRemoteRoomDestinationConfiguration: Codable, Hashable, Identifiable, Sendable {
+  public let destinationID: String
+  public let name: String
+  public let model: String?
+  public let models: [MobileRemoteModelOption]
+  public let reasoningEffort: String?
+  public let reasoningOptions: [MobileRemoteReasoningOption]
+  public let defaultReasoningEffort: String?
+  public let error: String?
+
+  public var id: String { destinationID }
+
+  public init(
+    destinationID: String,
+    name: String,
+    model: String?,
+    models: [MobileRemoteModelOption],
+    reasoningEffort: String?,
+    reasoningOptions: [MobileRemoteReasoningOption],
+    defaultReasoningEffort: String?,
+    error: String? = nil
+  ) {
+    self.destinationID = destinationID
+    self.name = name
+    self.model = model
+    self.models = models
+    self.reasoningEffort = reasoningEffort
+    self.reasoningOptions = reasoningOptions
+    self.defaultReasoningEffort = defaultReasoningEffort
+    self.error = error
   }
 }
 
 public struct MobileRemoteUpdateThreadConfigurationRequest: Codable, Hashable, Sendable {
   public let setting: String
   public let value: String?
+  /// In a shared room, the agent whose model or reasoning changes.
+  public let destinationID: String?
 
-  public init(model: String?) {
+  public init(model: String?, destinationID: String? = nil) {
     setting = "model"
     value = model
+    self.destinationID = destinationID
   }
 
-  public init(reasoningEffort: String?) {
+  public init(reasoningEffort: String?, destinationID: String? = nil) {
     setting = "reasoning"
     value = reasoningEffort
+    self.destinationID = destinationID
   }
 
   public init(destinationID: String) {
     setting = "destination"
     value = destinationID
+    self.destinationID = nil
   }
 }
 

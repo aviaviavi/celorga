@@ -313,20 +313,53 @@ struct MobileRemoteThreadConfiguration: Codable, Hashable {
   let reasoningEffort: String?
   let reasoningOptions: [MobileRemoteReasoningOption]
   let defaultReasoningEffort: String?
+  /// A shared room's per-agent choices; nil for single-agent chats and from
+  /// hosts that predate room model control.
+  var roomDestinations: [MobileRemoteRoomDestinationConfiguration]? = nil
+}
+
+/// One agent's model and reasoning in a shared room.
+struct MobileRemoteRoomDestinationConfiguration: Codable, Hashable, Identifiable {
+  let destinationID: String
+  let name: String
+  let model: String?
+  let models: [MobileRemoteModelOption]
+  let reasoningEffort: String?
+  let reasoningOptions: [MobileRemoteReasoningOption]
+  let defaultReasoningEffort: String?
+  let error: String?
+
+  var id: String { destinationID }
+
+  var modelLabel: String {
+    if let model {
+      return models.first(where: { $0.id == model })?.label ?? model
+    }
+    return models.first(where: \.isDefault)?.label ?? "Default"
+  }
+
+  var reasoningLabel: String? {
+    guard let effort = reasoningEffort ?? defaultReasoningEffort else { return nil }
+    return reasoningOptions.first(where: { $0.id == effort })?.label ?? effort.capitalized
+  }
 }
 
 struct MobileRemoteUpdateThreadConfigurationRequest: Codable {
   let setting: String
   let value: String?
+  /// In a shared room, the agent whose model or reasoning changes.
+  var destinationID: String? = nil
 
-  init(model: String?) {
+  init(model: String?, roomDestinationID: String? = nil) {
     setting = "model"
     value = model
+    destinationID = roomDestinationID
   }
 
-  init(reasoningEffort: String?) {
+  init(reasoningEffort: String?, roomDestinationID: String? = nil) {
     setting = "reasoning"
     value = reasoningEffort
+    destinationID = roomDestinationID
   }
 
   init(destinationID: String) {

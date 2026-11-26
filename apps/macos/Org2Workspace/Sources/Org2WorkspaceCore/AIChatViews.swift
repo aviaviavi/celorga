@@ -4076,6 +4076,10 @@ struct AIChatComposerView: View {
     if let reasoning = store.selectedAIChatRoomReasoningLabel(forDestinationID: destinationID) {
       title += " · \(reasoning)"
     }
+    if store.aiChatRoomLoadingDestinationIDs.contains(destinationID),
+       store.aiChatDestinationModelOptions[destinationID]?.isEmpty ?? true {
+      title += " · Loading…"
+    }
     return title
   }
 
@@ -4110,10 +4114,20 @@ struct AIChatComposerView: View {
           }
           .help(model.detail ?? model.id)
         }
-      } else if store.isRefreshingAIChatConfiguration {
+      } else if store.aiChatRoomLoadingDestinationIDs.contains(destinationID) {
         Text("Loading models…")
+      } else if let error = store.aiChatRoomModelErrors[destinationID] {
+        Text("Models unavailable: \(error)")
       } else {
         Text("No models reported")
+      }
+      if !store.aiChatRoomLoadingDestinationIDs.contains(destinationID),
+         options.isEmpty || store.aiChatRoomModelErrors[destinationID] != nil {
+        Button {
+          Task { await store.refreshAIChatConfiguration(forceModelCatalogReload: true) }
+        } label: {
+          Label("Reload Models", systemImage: "arrow.clockwise")
+        }
       }
 
       let reasoningOptions = store.selectedAIChatRoomReasoningOptions(forDestinationID: destinationID)
@@ -4151,6 +4165,15 @@ struct AIChatComposerView: View {
         Text(roomModelPickerTitle(forDestinationID: destinationID, destination: destination))
           .lineLimit(1)
           .frame(maxWidth: compact ? 125 : 165)
+        if store.aiChatRoomLoadingDestinationIDs.contains(destinationID) {
+          ProgressView()
+            .controlSize(.mini)
+            .accessibilityLabel("Loading models")
+        } else if store.aiChatRoomModelErrors[destinationID] != nil, options.isEmpty {
+          Image(systemName: "exclamationmark.triangle")
+            .foregroundStyle(.orange)
+            .accessibilityLabel("Models unavailable")
+        }
         Image(systemName: "chevron.up.chevron.down")
           .font(.caption2)
           .foregroundStyle(.tertiary)
@@ -4249,6 +4272,11 @@ struct AIChatComposerView: View {
           Text(store.selectedAIChatReasoningLabel)
             .foregroundStyle(.secondary)
             .lineLimit(1)
+        }
+        if store.isRefreshingAIChatConfiguration && store.aiChatModelOptions.isEmpty {
+          ProgressView()
+            .controlSize(.mini)
+            .accessibilityLabel("Loading models")
         }
         if store.isAIChatFastModeEnabled {
           Image(systemName: "hare.fill")

@@ -1994,19 +1994,23 @@ struct MobileRemoteThreadView: View {
         .disabled(remote.isUpdatingConfiguration)
       }
 
-      Menu {
-        modelMenuItems
-      } label: {
-        Label("Model · \(modelLabel)", systemImage: "cpu")
-      }
-      .disabled(!canChangeModel)
+      if isSharedRoom {
+        roomModelMenus
+      } else {
+        Menu {
+          modelMenuItems
+        } label: {
+          Label("Model · \(modelLabel)", systemImage: "cpu")
+        }
+        .disabled(!canChangeModel)
 
-      Menu {
-        reasoningMenuItems
-      } label: {
-        Label("Reasoning · \(reasoningLabel)", systemImage: "brain")
+        Menu {
+          reasoningMenuItems
+        } label: {
+          Label("Reasoning · \(reasoningLabel)", systemImage: "brain")
+        }
+        .disabled(!canChangeModel || !hasReasoningChoices)
       }
-      .disabled(!canChangeModel || !hasReasoningChoices)
     } label: {
       Image(systemName: "plus")
         .font(.system(size: 14, weight: .semibold))
@@ -2052,7 +2056,131 @@ struct MobileRemoteThreadView: View {
       Text("Loading models…")
     } else {
       Divider()
-      Text("Models unavailable")
+      Text(remote.configurationError.map { "Models unavailable: \($0)" } ?? "Models unavailable")
+    }
+    if !remote.isRefreshingConfiguration,
+       remote.configurationError != nil || remote.threadConfiguration?.models.isEmpty != false {
+      Button {
+        Task { await remote.reloadThreadConfiguration(threadID) }
+      } label: {
+        Label("Reload Models", systemImage: "arrow.clockwise")
+      }
+    }
+  }
+
+  private var isSharedRoom: Bool {
+    remote.threadDetail?.thread.isSharedRoom == true
+      || remote.threadConfiguration?.roomDestinations != nil
+  }
+
+  /// One menu per agent in a shared room, each with its model and reasoning.
+  @ViewBuilder
+  private var roomModelMenus: some View {
+    if let destinations = remote.threadConfiguration?.roomDestinations,
+       remote.threadConfiguration?.threadID == threadID,
+       !destinations.isEmpty {
+      ForEach(destinations) { destination in
+        Menu {
+          roomModelMenuItems(destination)
+        } label: {
+          Label(roomMenuTitle(destination), systemImage: "cpu")
+        }
+        .disabled(remote.isUpdatingConfiguration)
+      }
+    } else if remote.isRefreshingConfiguration {
+      Label("Loading agents' models…", systemImage: "hourglass")
+    } else {
+      Button {
+        Task { await remote.reloadThreadConfiguration(threadID) }
+      } label: {
+        Label(
+          remote.configurationError == nil ? "Load agents' models" : "Models unavailable, reload",
+          systemImage: "arrow.clockwise"
+        )
+      }
+    }
+  }
+
+  private func roomMenuTitle(_ destination: MobileRemoteRoomDestinationConfiguration) -> String {
+    var title = "\(destination.name) · \(destination.modelLabel)"
+    if let reasoning = destination.reasoningLabel { title += " · \(reasoning)" }
+    if destination.models.isEmpty, destination.error != nil { title += " · unavailable" }
+    return title
+  }
+
+  @ViewBuilder
+  private func roomModelMenuItems(_ destination: MobileRemoteRoomDestinationConfiguration) -> some View {
+    Button {
+      Task { await remote.setRoomModel(nil, destinationID: destination.destinationID, threadID: threadID) }
+    } label: {
+      HStack {
+        Text(destination.models.first(where: \.isDefault).map { "Default (\($0.label))" } ?? "Default model")
+        if destination.model == nil {
+          Image(systemName: "checkmark")
+        }
+      }
+    }
+    if !destination.models.isEmpty {
+      Section("Model") {
+        ForEach(destination.models) { model in
+          Button {
+            Task {
+              await remote.setRoomModel(model.id, destinationID: destination.destinationID, threadID: threadID)
+            }
+          } label: {
+            HStack {
+              Text(model.label)
+              if destination.model == model.id {
+                Image(systemName: "checkmark")
+              }
+            }
+          }
+        }
+      }
+    }
+    if let error = destination.error {
+      Text(error)
+      Button {
+        Task { await remote.reloadThreadConfiguration(threadID) }
+      } label: {
+        Label("Reload Models", systemImage: "arrow.clockwise")
+      }
+    } else if destination.models.isEmpty {
+      Text("No models reported")
+    }
+    if !destination.reasoningOptions.isEmpty {
+      Section("Reasoning") {
+        Button {
+          Task {
+            await remote.setRoomReasoningEffort(nil, destinationID: destination.destinationID, threadID: threadID)
+          }
+        } label: {
+          HStack {
+            Text("Default reasoning")
+            if destination.reasoningEffort == nil {
+              Image(systemName: "checkmark")
+            }
+          }
+        }
+        ForEach(destination.reasoningOptions) { option in
+          Button {
+            Task {
+              await remote.setRoomReasoningEffort(
+                option.id,
+                destinationID: destination.destinationID,
+                threadID: threadID
+              )
+            }
+          } label: {
+            HStack {
+              Text(option.label)
+              if destination.reasoningEffort == option.id {
+                Image(systemName: "checkmark")
+              }
+            }
+          }
+        }
+      }
     }
   }
 
@@ -2149,10 +2277,10 @@ struct MobileRemoteThreadView: View {
 
   /// The model and reasoning menus stay available while a reply runs or a
   /// message is sending: a choice made mid-turn applies to the next message.
+  /// The menu opens before models arrive so it can show loading progress,
+  /// an error, and Reload Models instead of a dead control.
   private var canChangeModel: Bool {
-    remote.threadDetail?.thread.isSharedRoom != true &&
-      !remote.isUpdatingConfiguration &&
-      remote.threadConfiguration != nil
+    !isSharedRoom && !remote.isUpdatingConfiguration
   }
 
   @ViewBuilder
@@ -2191,6 +2319,7 @@ struct MobileRemoteThreadView: View {
 
   private var modelLabel: String {
     guard let configuration = remote.threadConfiguration else {
+      if remote.isRefreshingConfiguration { return "Loading…" }
       return remote.configurationError == nil ? "Model" : "Model unavailable"
     }
     if let model = configuration.model {

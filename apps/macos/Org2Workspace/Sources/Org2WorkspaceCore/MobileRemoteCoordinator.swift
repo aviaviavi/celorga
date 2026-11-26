@@ -799,6 +799,9 @@ public final class MobileRemoteCoordinator: ObservableObject {
       return await handleThreadOutputs(threadID: threadID, store: store)
     }
     if request.method == "GET", components.count == 4, components[3] == "configuration" {
+      if thread.isSharedRoom {
+        return await roomConfigurationResponse(threadID: threadID, store: store)
+      }
       do {
         let configuration = try await store.aiChatRemoteConfiguration(for: threadID)
         let current = store.aiChatThreads.first(where: { $0.id == threadID }) ?? thread
@@ -810,6 +813,31 @@ public final class MobileRemoteCoordinator: ObservableObject {
     if request.method == "POST", components.count == 4, components[3] == "configuration" {
       guard let payload = try? request.decode(MobileRemoteUpdateThreadConfigurationRequest.self) else {
         return .error("Choose a valid chat configuration.", statusCode: 400)
+      }
+      if thread.isSharedRoom {
+        guard let destinationID = payload.destinationID,
+              payload.setting == "model" || payload.setting == "reasoning"
+        else {
+          return .error("Choose which agent in this room to change.", statusCode: 400)
+        }
+        do {
+          if payload.setting == "model" {
+            try await store.setAIChatRemoteRoomModel(
+              payload.value,
+              destinationID: destinationID,
+              threadID: threadID
+            )
+          } else {
+            try await store.setAIChatRemoteRoomReasoningEffort(
+              payload.value,
+              destinationID: destinationID,
+              threadID: threadID
+            )
+          }
+        } catch {
+          return .error(error.localizedDescription, statusCode: 409)
+        }
+        return await roomConfigurationResponse(threadID: threadID, store: store)
       }
       do {
         switch payload.setting {
@@ -1414,6 +1442,45 @@ public final class MobileRemoteCoordinator: ObservableObject {
 
   public var serverName: String {
     configuredServerName ?? Host.current().localizedName ?? "Celorga on Mac"
+  }
+
+  private func roomConfigurationResponse(
+    threadID: UUID,
+    store: WorkspaceStore
+  ) async -> MobileRemoteHTTPResponse {
+    do {
+      let destinations = try await store.aiChatRemoteRoomConfiguration(for: threadID)
+      return .json(MobileRemoteThreadConfiguration(
+        threadID: threadID,
+        model: nil,
+        models: [],
+        reasoningEffort: nil,
+        reasoningOptions: [],
+        defaultReasoningEffort: nil,
+        roomDestinations: destinations.map(Self.roomDestinationConfiguration)
+      ))
+    } catch {
+      return .error(error.localizedDescription, statusCode: 503)
+    }
+  }
+
+  nonisolated static func roomDestinationConfiguration(
+    _ configuration: AIChatRemoteRoomDestinationConfiguration
+  ) -> MobileRemoteRoomDestinationConfiguration {
+    MobileRemoteRoomDestinationConfiguration(
+      destinationID: configuration.destinationID,
+      name: configuration.name,
+      model: configuration.model,
+      models: configuration.models.map {
+        MobileRemoteModelOption(id: $0.id, label: $0.label, detail: $0.detail, isDefault: $0.isDefault)
+      },
+      reasoningEffort: configuration.reasoningEffort,
+      reasoningOptions: configuration.reasoningOptions.map {
+        MobileRemoteReasoningOption(id: $0.id, label: $0.label, detail: $0.detail)
+      },
+      defaultReasoningEffort: configuration.defaultReasoningEffort,
+      error: configuration.error
+    )
   }
 
   private func threadConfiguration(

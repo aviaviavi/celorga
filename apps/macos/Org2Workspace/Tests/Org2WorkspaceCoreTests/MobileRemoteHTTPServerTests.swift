@@ -757,6 +757,149 @@ final class MobileRemoteHTTPServerTests: XCTestCase {
   }
 
   @MainActor
+  func testSharedRoomConfigurationControlsEachAgentsModelAndReasoning() async throws {
+    let suiteName = "MobileRemoteHTTPServerTests.RoomModels.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let transcriptURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-mobile-remote-room-models-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: transcriptURL) }
+    let store = WorkspaceStore(
+      cli: Org2CLI(repoRoot: try Org2CLI.defaultRepoRoot()),
+      defaults: defaults,
+      aiChatTranscriptURL: transcriptURL
+    )
+    for id in [AIChatDestinationConfiguration.localOpenCodeID, AIChatDestinationConfiguration.localPiID] {
+      var destination = try XCTUnwrap(AIChatDestinationConfiguration.defaults.first(where: { $0.id == id }))
+      destination.isEnabled = true
+      if id == AIChatDestinationConfiguration.localPiID { destination.model = "pi/model" }
+      store.updateAIChatDestination(destination)
+    }
+    store.cacheAIChatConfigurationForTesting(
+      destinationID: AIChatDestinationConfiguration.localOpenCodeID,
+      models: [
+        AIChatModelOption(id: "example/fast", label: "Fast", isDefault: true),
+        AIChatModelOption(id: "example/deep", label: "Deep")
+      ],
+      effectiveModel: nil,
+      reasoningOptions: [],
+      defaultReasoningEffort: nil
+    )
+    let room = AIChatThread(
+      title: "Room",
+      runtime: .openClaw,
+      sessionKey: "room-session",
+      isSharedRoom: true,
+      roomDestinationIDs: [
+        AIChatDestinationConfiguration.localOpenCodeID,
+        AIChatDestinationConfiguration.localPiID
+      ]
+    )
+    store.aiChatThreads.append(room)
+
+    let destinations = try await store.aiChatRemoteRoomConfiguration(for: room.id)
+    XCTAssertEqual(destinations.map(\.destinationID), [
+      AIChatDestinationConfiguration.localOpenCodeID,
+      AIChatDestinationConfiguration.localPiID
+    ])
+    XCTAssertEqual(destinations[0].models.map(\.id), ["example/fast", "example/deep"])
+    XCTAssertEqual(destinations[1].models.map(\.id), ["pi/model"])
+    XCTAssertFalse(destinations[0].reasoningOptions.isEmpty)
+
+    try await store.setAIChatRemoteRoomModel(
+      "example/deep",
+      destinationID: AIChatDestinationConfiguration.localOpenCodeID,
+      threadID: room.id
+    )
+    let effort = try XCTUnwrap(destinations[0].reasoningOptions.last?.id)
+    try await store.setAIChatRemoteRoomReasoningEffort(
+      effort,
+      destinationID: AIChatDestinationConfiguration.localOpenCodeID,
+      threadID: room.id
+    )
+    let updated = try XCTUnwrap(store.aiChatThreads.first(where: { $0.id == room.id }))
+    XCTAssertEqual(updated.model(forDestinationID: AIChatDestinationConfiguration.localOpenCodeID), "example/deep")
+    XCTAssertEqual(updated.reasoningEffort(forDestinationID: AIChatDestinationConfiguration.localOpenCodeID), effort)
+    XCTAssertNil(updated.model(forDestinationID: AIChatDestinationConfiguration.localPiID))
+
+    let reloaded = try await store.aiChatRemoteRoomConfiguration(for: room.id)
+    XCTAssertEqual(reloaded[0].model, "example/deep")
+    XCTAssertEqual(reloaded[0].reasoningEffort, effort)
+
+    do {
+      try await store.setAIChatRemoteRoomReasoningEffort(
+        "not-a-level",
+        destinationID: AIChatDestinationConfiguration.localOpenCodeID,
+        threadID: room.id
+      )
+      XCTFail("Expected an unknown reasoning level to be refused")
+    } catch {}
+    do {
+      try await store.setAIChatRemoteRoomModel(
+        "example/deep",
+        destinationID: "not-in-room",
+        threadID: room.id
+      )
+      XCTFail("Expected a destination outside the room to be refused")
+    } catch {}
+  }
+
+  func testRoomModelListingTimeoutAnswersWithoutWaitingForASlowAgent() async {
+    let started = Date()
+    do {
+      _ = try await WorkspaceStore.withAIChatRoomTimeout(.milliseconds(50)) { () async throws -> Int in
+        try await Task.sleep(for: .seconds(5))
+        return 1
+      }
+      XCTFail("Expected the slow listing to time out")
+    } catch {
+      XCTAssertTrue(error is AIChatRoomTimeoutError)
+    }
+    XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+    let fast = try? await WorkspaceStore.withAIChatRoomTimeout(.seconds(5)) { 7 }
+    XCTAssertEqual(fast, 7)
+  }
+
+  func testRoomConfigurationWireFormatRoundTripsAndOldHostsDecode() throws {
+    let configuration = MobileRemoteThreadConfiguration(
+      threadID: UUID(),
+      model: nil,
+      models: [],
+      reasoningEffort: nil,
+      reasoningOptions: [],
+      defaultReasoningEffort: nil,
+      roomDestinations: [
+        MobileRemoteRoomDestinationConfiguration(
+          destinationID: "builtin.codex",
+          name: "Codex",
+          model: "gpt-test",
+          models: [MobileRemoteModelOption(id: "gpt-test", label: "GPT Test", detail: nil, isDefault: true)],
+          reasoningEffort: "high",
+          reasoningOptions: [MobileRemoteReasoningOption(id: "high", label: "High", detail: nil)],
+          defaultReasoningEffort: "low",
+          error: nil
+        )
+      ]
+    )
+    let data = try MobileRemoteProtocol.encoder().encode(configuration)
+    XCTAssertEqual(
+      try MobileRemoteProtocol.decoder().decode(MobileRemoteThreadConfiguration.self, from: data),
+      configuration
+    )
+    let legacy = #"{"threadID":"00000000-0000-0000-0000-000000000001","models":[],"reasoningOptions":[]}"#
+    XCTAssertNil(
+      try MobileRemoteProtocol.decoder()
+        .decode(MobileRemoteThreadConfiguration.self, from: Data(legacy.utf8))
+        .roomDestinations
+    )
+    let request = try MobileRemoteProtocol.decoder().decode(
+      MobileRemoteUpdateThreadConfigurationRequest.self,
+      from: Data(#"{"setting":"model","value":"gpt-test","destinationID":"builtin.codex"}"#.utf8)
+    )
+    XCTAssertEqual(request.destinationID, "builtin.codex")
+  }
+
+  @MainActor
   func testFilePreviewReadsCompleteFilesOnlyInsideMountedCorpora() async throws {
     let suiteName = "MobileRemoteHTTPServerTests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suiteName)!
