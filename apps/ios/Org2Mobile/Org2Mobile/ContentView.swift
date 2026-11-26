@@ -99,6 +99,10 @@ private struct WorkspaceTabs: View {
             route = .settings
             closeSidebar()
           },
+          openDocument: { destination in
+            route = .document(destination)
+            closeSidebar()
+          },
           close: closeSidebar
         )
         .frame(width: min(UIScreen.main.bounds.width * 0.88, 360))
@@ -176,6 +180,11 @@ private struct WorkspaceTabs: View {
       NavigationStack {
         MobileSettingsView()
       }
+    case .document(let destination):
+      NavigationStack {
+        MobileDocumentDestinationView(destination: destination)
+          .id(destination)
+      }
     }
   }
 
@@ -247,6 +256,7 @@ private enum MobileWorkspaceRoute: Equatable {
   case thread(UUID)
   case externalThreads
   case settings
+  case document(MobileDocumentDestination)
 }
 
 private struct NewNoteTabView: View {

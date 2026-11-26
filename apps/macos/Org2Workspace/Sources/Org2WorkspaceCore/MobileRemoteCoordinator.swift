@@ -1927,6 +1927,20 @@ extension MobileRemoteCoordinator {
       } catch {
         return .error(error.localizedDescription, statusCode: 503)
       }
+    case ("POST", "/v1/corpus/daily-note"):
+      guard let payload = try? request.decode(MobileRemoteDailyNoteRequest.self) else {
+        return .error("The date could not be read.", statusCode: 400)
+      }
+      do {
+        return .json(try await store.mobileRemoteDailyNote(date: payload.date))
+      } catch {
+        return .error(
+          store.automaticDailyNoteCreationDisabled
+            ? "There is no daily note for \(payload.date), and automatic daily notes are turned off on the host."
+            : "The daily note for \(payload.date) could not be opened.",
+          statusCode: 404
+        )
+      }
     case ("POST", "/v1/corpus/resolve-id"):
       guard let payload = try? request.decode(MobileRemoteResolveIDRequest.self) else {
         return .error("The entry ID could not be read.", statusCode: 400)

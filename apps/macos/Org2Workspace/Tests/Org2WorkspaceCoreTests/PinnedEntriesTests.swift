@@ -66,4 +66,37 @@ final class PinnedEntriesTests: XCTestCase {
     )
     XCTAssertTrue(reopened.pinnedEntries.isEmpty)
   }
+
+  @MainActor
+  func testPhoneDailyNoteRequestCreatesTheNoteUnlessCreationIsOff() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-mobile-daily-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let suiteName = "PinnedEntriesTests.Daily.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = WorkspaceStore(
+      defaults: defaults,
+      aiChatTranscriptURL: root.appendingPathComponent("chat.json"),
+      legacyDefaultsDomains: []
+    )
+    store.setCorpusRoot(root, persistsDefault: false)
+
+    let location = try await store.mobileRemoteDailyNote(date: "2026-11-26")
+    XCTAssertTrue(location.path.hasPrefix("daily/2026-11-26."), location.path)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(location.path).path))
+    let again = try await store.mobileRemoteDailyNote(date: "2026-11-26")
+    XCTAssertEqual(again, location)
+
+    store.automaticDailyNoteCreationDisabled = true
+    do {
+      _ = try await store.mobileRemoteDailyNote(date: "2026-11-27")
+      XCTFail("Expected a missing daily note to stay missing when creation is off")
+    } catch {}
+    do {
+      _ = try await store.mobileRemoteDailyNote(date: "not-a-date")
+      XCTFail("Expected an invalid date to be refused")
+    } catch {}
+  }
 }

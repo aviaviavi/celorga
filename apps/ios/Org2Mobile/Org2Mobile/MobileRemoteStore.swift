@@ -1391,6 +1391,20 @@ final class MobileRemoteStore: ObservableObject {
     )
   }
 
+  /// The host's daily note for `date` (`yyyy-MM-dd`), created on demand.
+  func dailyNoteLocation(date: String) async throws -> MobileRemoteResolvedLocation {
+    try await pairedClient().post(
+      "/v1/corpus/daily-note",
+      payload: MobileRemoteDailyNoteRequest(date: date),
+      timeout: 30,
+      as: MobileRemoteResolvedLocation.self
+    )
+  }
+
+  var supportsDailyNotes: Bool {
+    status?.supportsDailyNotes == true
+  }
+
   func downloadFile(path: String) async throws -> MobileRemoteFileDownload {
     try await pairedClient().post(
       "/v1/files/download",

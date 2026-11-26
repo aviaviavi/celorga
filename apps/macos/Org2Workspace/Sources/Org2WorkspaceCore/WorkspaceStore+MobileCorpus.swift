@@ -177,6 +177,30 @@ extension WorkspaceStore {
     return output
   }
 
+  /// The daily note for a `yyyy-MM-dd` date, created from the daily
+  /// template unless automatic daily note creation is turned off.
+  public func mobileRemoteDailyNote(date rawDate: String) async throws -> MobileRemoteResolvedLocation {
+    let formatter = DateFormatter()
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "yyyy-MM-dd"
+    guard let root = corpusRoot?.standardizedFileURL,
+          let date = formatter.date(from: rawDate.trimmingCharacters(in: .whitespaces))
+    else { throw MobileRemoteFilePreviewError.invalidPath }
+    // Noon keeps the date the same across a DST change.
+    let noon = Calendar.current.date(byAdding: .hour, value: 12, to: date) ?? date
+    let url = await dailyNotePath(corpusRoot: root, date: noon)
+    if !(await dailyNoteExists(at: url)) {
+      guard !automaticDailyNoteCreationDisabled,
+            let context = captureDocumentCorpusContext()
+      else { throw MobileRemoteFilePreviewError.unavailable }
+      try await ensureDailyNoteExists(at: url, context: context)
+    }
+    let target = try Self.mobileRemotePreviewTarget(for: url.path, mountedRootPaths: [root.path])
+    return MobileRemoteResolvedLocation(path: target.relativePath, line: 1)
+  }
+
   public func mobileRemoteResolveID(_ rawID: String) async throws -> MobileRemoteResolvedLocation {
     let id = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
     guard let root = corpusRoot?.standardizedFileURL,

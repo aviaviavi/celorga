@@ -21,9 +21,11 @@ final class CorpusStore: ObservableObject {
   @Published var isLoading = false
   @Published var errorMessage: String?
   @Published var statusMessage: String?
+  /// Files and headings pinned to the sidebar for the active host.
+  @Published var pins = MobilePins()
 
   private let remote: MobileRemoteStore
-  private var todoSequences: [String] = []
+  private(set) var todoSequences: [String] = []
   private var loadedHostKey: String?
   private let documentRenderer = MobileDocumentRenderer()
   private var observers: Set<AnyCancellable> = []
@@ -98,7 +100,7 @@ final class CorpusStore: ObservableObject {
     }
   }
 
-  private var hostKey: String {
+  var hostKey: String {
     remote.activeHostID?.uuidString ?? "unpaired"
   }
 
@@ -115,6 +117,7 @@ final class CorpusStore: ObservableObject {
       catalogUpdatedAt = nil
     }
     downloads = storage.loadDownloads()
+    pins = MobilePins.load(hostKey: key)
   }
 
   /// Earlier versions read a synced corpus folder. Forget its bookmark and

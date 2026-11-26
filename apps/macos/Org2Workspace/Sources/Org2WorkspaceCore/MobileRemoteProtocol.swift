@@ -52,6 +52,9 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
   /// The host renders an Org presentation to a slide PDF for the phone
   /// (`POST /v1/files/slides`, the same Beamer renderer as the Mac preview).
   public let supportsSlidePreview: Bool?
+  /// The host opens (and creates, unless that is turned off) the daily note
+  /// for a date: `POST /v1/corpus/daily-note`.
+  public let supportsDailyNotes: Bool?
 
   public init(
     protocolVersion: Int = MobileRemoteProtocol.version,
@@ -71,8 +74,10 @@ public struct MobileRemoteServerStatus: Codable, Hashable, Sendable {
     supportsSourceCredentials: Bool? = true,
     supportsThreadDestinationChange: Bool? = true,
     supportsCorpusAccess: Bool? = true,
-    supportsSlidePreview: Bool? = true
+    supportsSlidePreview: Bool? = true,
+    supportsDailyNotes: Bool? = true
   ) {
+    self.supportsDailyNotes = supportsDailyNotes
     self.supportsSlidePreview = supportsSlidePreview
     self.supportsCorpusAccess = supportsCorpusAccess
     self.supportsThreadDestinationChange = supportsThreadDestinationChange
@@ -1381,6 +1386,15 @@ public struct MobileRemoteResolveIDRequest: Codable, Hashable, Sendable {
 
   public init(id: String) {
     self.id = id
+  }
+}
+
+/// The daily note for `date`, written `yyyy-MM-dd` in the phone's calendar.
+public struct MobileRemoteDailyNoteRequest: Codable, Hashable, Sendable {
+  public let date: String
+
+  public init(date: String) {
+    self.date = date
   }
 }
 

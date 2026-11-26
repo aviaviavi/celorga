@@ -69,13 +69,17 @@ private struct MobileRemoteProjectLabel: View {
 
 struct MobileAISidebarView: View {
   @EnvironmentObject private var remote: MobileRemoteStore
+  @EnvironmentObject private var corpus: CorpusStore
   @State private var expandedProjectIDs: Set<String> = []
+  @State private var isDailyDatePickerPresented = false
+  @State private var dailyPickerDate = Date()
   let selectedThreadID: UUID?
   let openWorkspace: () -> Void
   let openFiles: () -> Void
   let openThread: (UUID) -> Void
   let openExternalThreads: () -> Void
   let openSettings: () -> Void
+  var openDocument: (MobileDocumentDestination) -> Void = { _ in }
   let close: () -> Void
 
   var body: some View {
@@ -139,6 +143,67 @@ struct MobileAISidebarView: View {
           )
           .disabled(!remote.isPaired)
           sidebarButton("Settings", systemImage: "gearshape", action: openSettings)
+        }
+
+        if !corpus.pins.isEmpty {
+          Section("Pinned") {
+            ForEach(corpus.pins.entries) { entry in
+              Button {
+                openDocument(.entry(entry))
+              } label: {
+                VStack(alignment: .leading, spacing: 1) {
+                  Label(entry.title, systemImage: "number")
+                    .lineLimit(1)
+                  Text(entry.fileName)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.leading, 32)
+                }
+              }
+              .foregroundStyle(.primary)
+              .contextMenu {
+                Button(role: .destructive) {
+                  corpus.togglePin(entry: entry)
+                } label: {
+                  Label("Unpin Entry", systemImage: "pin.slash")
+                }
+              }
+            }
+            ForEach(corpus.pins.files, id: \.self) { path in
+              Button {
+                openDocument(.file(path))
+              } label: {
+                Label(
+                  URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent,
+                  systemImage: "doc.text"
+                )
+                .lineLimit(1)
+              }
+              .foregroundStyle(.primary)
+              .contextMenu {
+                Button(role: .destructive) {
+                  corpus.togglePin(path: path)
+                } label: {
+                  Label("Unpin File", systemImage: "pin.slash")
+                }
+              }
+            }
+          }
+        }
+
+        if remote.isPaired && remote.supportsDailyNotes {
+          Section("Daily") {
+            ForEach(MobileDailyNoteTarget.allCases) { target in
+              sidebarButton(target.title, systemImage: target.systemImage) {
+                openDocument(.daily(target.date()))
+              }
+            }
+            sidebarButton("Choose Date…", systemImage: "calendar.badge.plus") {
+              dailyPickerDate = Date()
+              isDailyDatePickerPresented = true
+            }
+          }
         }
 
         if !remote.projects.isEmpty {
@@ -208,6 +273,27 @@ struct MobileAISidebarView: View {
     }
     .background(.regularMaterial)
     .shadow(color: .black.opacity(0.18), radius: 18, x: 8)
+    .sheet(isPresented: $isDailyDatePickerPresented) {
+      NavigationStack {
+        DatePicker("Daily note", selection: $dailyPickerDate, displayedComponents: .date)
+          .datePickerStyle(.graphical)
+          .padding()
+          .navigationTitle("Open Daily Note")
+          .navigationBarTitleDisplayMode(.inline)
+          .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+              Button("Cancel") { isDailyDatePickerPresented = false }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+              Button("Open") {
+                isDailyDatePickerPresented = false
+                openDocument(.daily(dailyPickerDate))
+              }
+            }
+          }
+      }
+      .presentationDetents([.medium, .large])
+    }
     .task {
       if remote.isPaired && remote.threads.isEmpty {
         await remote.refresh(reportsErrors: false)
@@ -3039,6 +3125,16 @@ struct CorpusFileBrowserView: View {
                   isDownloaded: store.isDownloaded(file.relativePath)
                 )
               }
+              .contextMenu {
+                Button {
+                  store.togglePin(path: file.relativePath)
+                } label: {
+                  Label(
+                    store.isPinned(path: file.relativePath) ? "Unpin File" : "Pin File",
+                    systemImage: store.isPinned(path: file.relativePath) ? "pin.slash" : "pin"
+                  )
+                }
+              }
             }
           } header: {
             Text(store.corpusName)
@@ -4053,6 +4149,77 @@ private struct MobileRemoteFilePreviewSheet: View {
   }
 }
 
+/// A pinned file or entry, or a daily note, opened from the sidebar.
+struct MobileDocumentDestinationView: View {
+  @EnvironmentObject private var remote: MobileRemoteStore
+  let destination: MobileDocumentDestination
+  @State private var citation: MobileRemoteFileCitation?
+  @State private var errorMessage: String?
+
+  var body: some View {
+    Group {
+      if let citation {
+        CorpusFileDocumentView(citation: citation, prefersRendered: true)
+      } else if let errorMessage {
+        ContentUnavailableView(
+          "Note Unavailable",
+          systemImage: "doc.text.magnifyingglass",
+          description: Text(errorMessage)
+        )
+      } else {
+        ProgressView(loadingTitle)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+    }
+    .toolbar {
+      ToolbarItem(placement: .topBarLeading) {
+        MobileSidebarToolbarButton()
+      }
+    }
+    .task(id: destination) {
+      citation = nil
+      errorMessage = nil
+      switch destination {
+      case .file(let path):
+        citation = MobileRemoteFileCitation(
+          path: path,
+          line: nil,
+          label: URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        )
+      case .entry(let entry):
+        citation = MobileRemoteFileCitation(
+          path: entry.path,
+          line: entry.line,
+          label: entry.title,
+          target: entry.linkTarget
+        )
+      case .daily(let date):
+        guard remote.isPaired else {
+          errorMessage = "Connect a host to open daily notes."
+          return
+        }
+        do {
+          let location = try await remote.dailyNoteLocation(date: MobileDailyNoteTarget.requestDate(date))
+          guard !Task.isCancelled else { return }
+          citation = MobileRemoteFileCitation(
+            path: location.path,
+            line: nil,
+            label: date.formatted(date: .abbreviated, time: .omitted)
+          )
+        } catch {
+          guard !Task.isCancelled else { return }
+          errorMessage = error.localizedDescription
+        }
+      }
+    }
+  }
+
+  private var loadingTitle: String {
+    if case .daily = destination { return "Opening daily note…" }
+    return "Loading…"
+  }
+}
+
 private struct CorpusFileDocumentView: View {
   @EnvironmentObject private var store: CorpusStore
   @EnvironmentObject private var remote: MobileRemoteStore
@@ -4072,6 +4239,7 @@ private struct CorpusFileDocumentView: View {
   @State private var errorMessage: String?
   @State private var isDownloading = false
   @State private var showsOutline = false
+  @State private var pinnableEntries: [MobileSearchEntry] = []
 
   var body: some View {
     Group {
@@ -4101,9 +4269,17 @@ private struct CorpusFileDocumentView: View {
       }
       if let preview {
         ToolbarItem(placement: .topBarTrailing) {
+          pinMenu(preview)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
           downloadButton(path: preview.relativePath)
         }
       }
+    }
+    .task(id: preview?.relativePath) {
+      pinnableEntries = []
+      guard let preview, canRender else { return }
+      pinnableEntries = await store.documentEntries(preview: preview)
     }
     .task(id: citation.id) {
       preview = nil
@@ -4150,6 +4326,50 @@ private struct CorpusFileDocumentView: View {
         }
       }
     }
+  }
+
+  /// Pins the file, the entry on screen, or any of the file's headings to
+  /// the sidebar.
+  private func pinMenu(_ preview: CorpusFilePreview) -> some View {
+    let fileIsPinned = store.isPinned(path: preview.relativePath)
+    let current = selectedEntry.flatMap { $0.line > 0 ? MobilePinnedEntry(entry: $0) : nil }
+    let anyPinned = fileIsPinned || current.map(store.isPinned(entry:)) == true
+    return Menu {
+      Button {
+        store.togglePin(path: preview.relativePath)
+      } label: {
+        Label(fileIsPinned ? "Unpin File" : "Pin File", systemImage: fileIsPinned ? "pin.slash" : "pin")
+      }
+      if let current {
+        let isPinned = store.isPinned(entry: current)
+        Button {
+          store.togglePin(entry: current)
+        } label: {
+          Label(isPinned ? "Unpin This Entry" : "Pin This Entry", systemImage: isPinned ? "pin.slash" : "pin")
+        }
+      }
+      if !pinnableEntries.isEmpty {
+        Menu {
+          ForEach(pinnableEntries) { entry in
+            let pinned = MobilePinnedEntry(entry: entry)
+            Button {
+              store.togglePin(entry: pinned)
+            } label: {
+              if store.isPinned(entry: pinned) {
+                Label(entry.title, systemImage: "pin.fill")
+              } else {
+                Text(entry.title)
+              }
+            }
+          }
+        } label: {
+          Label("Pin an Entry", systemImage: "list.bullet.indent")
+        }
+      }
+    } label: {
+      Label("Pin", systemImage: anyPinned ? "pin.fill" : "pin")
+    }
+    .accessibilityLabel(anyPinned ? "Pinned" : "Pin")
   }
 
   /// Keeps the file on this phone for reading without the host, or removes

@@ -50,6 +50,7 @@ struct MobileRemoteServerStatus: Codable, Hashable {
   let supportsCorpusAccess: Bool?
   /// The host renders an Org presentation to a slide PDF (`POST /v1/files/slides`).
   let supportsSlidePreview: Bool?
+  var supportsDailyNotes: Bool? = nil
 }
 
 struct MobileRemotePushRegistrationRequest: Codable {
@@ -208,6 +209,10 @@ struct MobileRemoteCorpusSearchResponse: Codable, Hashable {
 
 struct MobileRemoteResolveIDRequest: Codable, Hashable {
   let id: String
+}
+
+struct MobileRemoteDailyNoteRequest: Codable, Hashable {
+  let date: String
 }
 
 struct MobileRemoteResolvedLocation: Codable, Hashable {
