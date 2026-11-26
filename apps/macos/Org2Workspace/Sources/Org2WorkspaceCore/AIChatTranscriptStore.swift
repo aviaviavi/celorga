@@ -161,6 +161,20 @@ final class AIChatTranscriptStore: @unchecked Sendable {
   private var validatedStoreStates: [String: StoreState] = [:]
   private var suspendedWritePathsForTesting: Set<String> = []
   private var garbageCollectionPaths: Set<String> = []
+  /// When post-commit collection last started for each store. Collection can
+  /// delete only files older than the thirty-day grace interval, so running
+  /// it after every save found nothing new while rescanning the store's full
+  /// history; under steady chat activity it restarted after each save.
+  private var lastGarbageCollectionStart: [String: Date] = [:]
+  /// The pending deferred-collection wake, if any. A sooner deadline
+  /// replaces a later one; a superseded wake does nothing.
+  private var garbageCollectionWake: (deadline: Date, token: UInt64)?
+  private var garbageCollectionWakeToken: UInt64 = 0
+  /// Stores collect no earlier than one interval after this process starts,
+  /// keeping the first full scan away from launch.
+  private var garbageCollectionEpoch = Date()
+  private var garbageCollectionIntervalOverride: TimeInterval?
+  static let garbageCollectionMinimumInterval: TimeInterval = 10 * 60
   private var isDraining = false
   private var configuredWriterIdentity: AIChatTranscriptWriterIdentity?
   private var writerIdentityOverridesForTesting: [String: AIChatTranscriptWriterIdentity] = [:]
@@ -282,6 +296,17 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     serializedWithSaves: (() throws -> Void) throws -> Void = { try $0() },
     now: Date = Date()
   ) throws -> AIChatTranscriptRepairReport {
+    try withShardStatMemo {
+      try repairCommittedHeadsInPass(legacyURL: legacyURL, apply: apply, revision: revision,
+        serializedWithSaves: serializedWithSaves, now: now)
+    }
+  }
+
+  private static func repairCommittedHeadsInPass(
+    legacyURL: URL, apply: Bool, revision: String,
+    serializedWithSaves: (() throws -> Void) throws -> Void,
+    now: Date
+  ) throws -> AIChatTranscriptRepairReport {
     let storeURL = storeDirectory(for: legacyURL)
     var pointers = headPointers(storeURL: storeURL)
     var warnings: [String] = []
@@ -365,6 +390,9 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     }
     let changed = !candidates.contains { $0.commitID == merged.commitID }
     if apply && changed {
+      // Publishing creates shards that are validated below; never answer
+      // those checks from attributes recorded before they existed.
+      resetShardStatMemo()
       try serializedWithSaves {
         guard try repairFingerprint(storeURL: storeURL) == revision else {
           throw TranscriptStoreError.unrecoverableStore("Chat storage changed during repair; retry against the new commits.")
@@ -748,6 +776,57 @@ final class AIChatTranscriptStore: @unchecked Sendable {
       .appendingPathExtension("store")
   }
 
+  private var garbageCollectionIntervalLocked: TimeInterval {
+    garbageCollectionIntervalOverride ?? Self.garbageCollectionMinimumInterval
+  }
+
+  /// Overrides the minimum interval and makes the next collection due now.
+  func setGarbageCollectionIntervalForTesting(_ interval: TimeInterval?) {
+    condition.lock()
+    garbageCollectionIntervalOverride = interval
+    garbageCollectionEpoch = .distantPast
+    lastGarbageCollectionStart.removeAll()
+    garbageCollectionWake = nil
+    condition.unlock()
+  }
+
+  /// Collection deferred by the minimum interval still runs once it is due,
+  /// even if no further save arrives. Saves in the meantime only re-mark the
+  /// store; they never start another scan. Requires `condition` to be held.
+  private func scheduleGarbageCollectionWakeLocked() {
+    guard !garbageCollectionPaths.isEmpty else { return }
+    let now = Date()
+    let interval = garbageCollectionIntervalLocked
+    let delay = max(garbageCollectionPaths.map {
+      interval - now.timeIntervalSince(lastGarbageCollectionStart[$0] ?? garbageCollectionEpoch)
+    }.min() ?? interval, 1)
+    let deadline = now.addingTimeInterval(delay)
+    if let pending = garbageCollectionWake, pending.deadline <= deadline.addingTimeInterval(0.5) { return }
+    garbageCollectionWakeToken &+= 1
+    let token = garbageCollectionWakeToken
+    garbageCollectionWake = (deadline, token)
+    queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+      self?.wakeForGarbageCollection(token: token)
+    }
+  }
+
+  private func wakeForGarbageCollection(token: UInt64) {
+    condition.lock()
+    guard garbageCollectionWake?.token == token else {
+      condition.unlock()
+      return
+    }
+    garbageCollectionWake = nil
+    // A running drain collects due stores itself and schedules the next wake.
+    guard !isDraining, !garbageCollectionPaths.isEmpty else {
+      condition.unlock()
+      return
+    }
+    isDraining = true
+    condition.unlock()
+    drainWrites()
+  }
+
   private func drainWrites() {
     while true {
       condition.lock()
@@ -762,8 +841,13 @@ final class AIChatTranscriptStore: @unchecked Sendable {
           condition.unlock()
           continue
         }
-        let cleanupPaths = garbageCollectionPaths
-        garbageCollectionPaths.removeAll()
+        let now = Date()
+        let interval = garbageCollectionIntervalLocked
+        let cleanupPaths = garbageCollectionPaths.filter {
+          now.timeIntervalSince(lastGarbageCollectionStart[$0] ?? garbageCollectionEpoch) >= interval
+        }
+        garbageCollectionPaths.subtract(cleanupPaths)
+        for key in cleanupPaths { lastGarbageCollectionStart[key] = now }
         condition.unlock()
         // No other writer can start while `isDraining` remains true. Re-read
         // the committed marker and collect only artifacts it no longer
@@ -783,6 +867,7 @@ final class AIChatTranscriptStore: @unchecked Sendable {
         condition.lock()
         if pendingWrites.isEmpty && exactPendingWrites.isEmpty {
           isDraining = false
+          scheduleGarbageCollectionWakeLocked()
           condition.broadcast()
           condition.unlock()
           return
@@ -1045,6 +1130,19 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     legacyURL: URL,
     writer: AIChatTranscriptWriterIdentity? = nil,
     bases: [UUID: AdoptedThreadBase] = [:]
+  ) throws -> [UUID: AdoptedThreadBase] {
+    // Loading the prior commit stats every shard; the per-thread checks below
+    // reuse those attributes instead of statting each conversation again.
+    try withShardStatMemo {
+      try writeInPass(snapshot, legacyURL: legacyURL, writer: writer, bases: bases)
+    }
+  }
+
+  private static func writeInPass(
+    _ snapshot: AIChatTranscriptSnapshot,
+    legacyURL: URL,
+    writer: AIChatTranscriptWriterIdentity?,
+    bases: [UUID: AdoptedThreadBase]
   ) throws -> [UUID: AdoptedThreadBase] {
     let fileManager = FileManager.default
     let storeURL = storeDirectory(for: legacyURL)
@@ -1439,6 +1537,10 @@ final class AIChatTranscriptStore: @unchecked Sendable {
   }
 
   private static func loadStoreState(legacyURL: URL) -> StoreState? {
+    withShardStatMemo { loadStoreStateInPass(legacyURL: legacyURL) }
+  }
+
+  private static func loadStoreStateInPass(legacyURL: URL) -> StoreState? {
     let storeURL = storeDirectory(for: legacyURL)
     let markerURL = storeURL.appendingPathComponent("migration-marker.json")
     let previousMarkerURL = storeURL.appendingPathComponent("migration-marker.previous.json")
@@ -1463,7 +1565,7 @@ final class AIChatTranscriptStore: @unchecked Sendable {
         storeURL: storeURL
       ) {
         recoveryCandidates.append(current)
-        if isComplete(current, storeURL: storeURL) {
+        if hasCompleteShards(current, storeURL: storeURL) {
           let previous = pointer.previousManifest.flatMap {
             loadManifest(named: $0, expectedDigest: pointer.previousDigest, storeURL: storeURL)
           }
@@ -1609,6 +1711,10 @@ final class AIChatTranscriptStore: @unchecked Sendable {
   /// cold shards are verified when opened. A failed eager/cold shard read
   /// falls back to the exhaustive recovery scan before any data is exposed.
   private static func loadFastStoreState(legacyURL: URL) -> StoreState? {
+    withShardStatMemo { loadFastStoreStateInPass(legacyURL: legacyURL) }
+  }
+
+  private static func loadFastStoreStateInPass(legacyURL: URL) -> StoreState? {
     let storeURL = storeDirectory(for: legacyURL)
     let heads = headPointers(storeURL: storeURL)
     let pointers = heads.isEmpty
@@ -1750,13 +1856,13 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     expectedDigest: String?,
     storeURL: URL
   ) -> Manifest? {
-    guard name == URL(fileURLWithPath: name).lastPathComponent else { return nil }
+    guard isCommitFileName(name) else { return nil }
     guard let manifest = loadManifestCandidate(
       named: name,
       expectedDigest: expectedDigest,
       storeURL: storeURL
     ),
-          isComplete(manifest, storeURL: storeURL)
+          hasCompleteShards(manifest, storeURL: storeURL)
     else { return nil }
     return manifest
   }
@@ -1766,7 +1872,7 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     expectedDigest: String?,
     storeURL: URL
   ) -> Manifest? {
-    guard name == URL(fileURLWithPath: name).lastPathComponent else { return nil }
+    guard isCommitFileName(name) else { return nil }
     let url = manifestsDirectory(storeURL: storeURL).appendingPathComponent(name)
     return loadManifestCandidate(at: url, expectedDigest: expectedDigest)
   }
@@ -1774,7 +1880,7 @@ final class AIChatTranscriptStore: @unchecked Sendable {
   private static func loadManifest(at url: URL) -> Manifest? {
     let storeURL = url.deletingLastPathComponent()
     guard let manifest = loadManifestCandidate(at: url),
-          isComplete(manifest, storeURL: storeURL)
+          hasCompleteShards(manifest, storeURL: storeURL)
     else { return nil }
     return manifest
   }
@@ -1783,13 +1889,171 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     at url: URL,
     expectedDigest: String? = nil
   ) -> Manifest? {
-    guard !isSymbolicLink(url),
-          let data = try? Data(contentsOf: url, options: .mappedIfSafe),
-          expectedDigest == nil || digest(data) == expectedDigest,
-          let manifest = try? JSONDecoder().decode(Manifest.self, from: data),
-          isStructurallyValid(manifest)
+    guard let loaded = loadVerifiedManifest(at: url),
+          expectedDigest == nil || loaded.digest == expectedDigest
     else { return nil }
-    return manifest
+    return loaded.manifest
+  }
+
+  /// Identifies one version of a file without reading it. Any write updates
+  /// the modification and status-change times (the latter cannot be set by
+  /// tools that preserve timestamps), and an atomic replacement or a synced
+  /// copy gets a new inode, so an equal version means unchanged bytes.
+  struct FileVersion: Hashable, Sendable {
+    let device: Int64
+    let inode: UInt64
+    let size: Int64
+    let modifiedSeconds: Int
+    let modifiedNanoseconds: Int
+    let changedSeconds: Int
+    let changedNanoseconds: Int
+  }
+
+  /// The version of a regular file; nil for a symbolic link, directory, or
+  /// missing path.
+  static func regularFileVersion(at url: URL) -> FileVersion? {
+    var info = stat()
+    guard lstat(url.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return nil }
+    return FileVersion(
+      device: Int64(info.st_dev),
+      inode: UInt64(info.st_ino),
+      size: Int64(info.st_size),
+      modifiedSeconds: info.st_mtimespec.tv_sec,
+      modifiedNanoseconds: info.st_mtimespec.tv_nsec,
+      changedSeconds: info.st_ctimespec.tv_sec,
+      changedNanoseconds: info.st_ctimespec.tv_nsec
+    )
+  }
+
+  /// Decoded manifests by file version. Manifests are immutable commits of
+  /// several megabytes each; every save, collection, and repair pass used to
+  /// re-read, re-hash, and re-decode every writer's current and previous
+  /// commit. The digest is computed from the bytes when a version is first
+  /// read, so digest checks against heads stay exact. Invalid manifests are
+  /// remembered too, so a corrupt commit is not decoded on every pass.
+  private final class ManifestDecodeCache: @unchecked Sendable {
+    struct Loaded {
+      let digest: String
+      let manifest: Manifest?
+    }
+
+    private struct Entry {
+      let loaded: Loaded
+      var lastUse: UInt64
+    }
+
+    // Keyed by version, which includes the device and inode, so one file
+    // reached through different path spellings is decoded once.
+    private let lock = NSLock()
+    private var decoded: [FileVersion: Entry] = [:]
+    private var rejected: [FileVersion: Entry] = [:]
+    private var clock: UInt64 = 0
+    /// Every writer's current and previous commit stay resident. A smaller
+    /// bound would evict them cyclically on stores with many writer heads.
+    let decodedLimit = 48
+    let rejectedLimit = 4_096
+
+    func lookup(version: FileVersion) -> Loaded? {
+      lock.lock()
+      defer { lock.unlock() }
+      clock &+= 1
+      if var entry = decoded[version] {
+        entry.lastUse = clock
+        decoded[version] = entry
+        return entry.loaded
+      }
+      return rejected[version]?.loaded
+    }
+
+    func store(version: FileVersion, loaded: Loaded, retainDecoded: Bool) {
+      lock.lock()
+      defer { lock.unlock() }
+      clock &+= 1
+      let entry = Entry(loaded: loaded, lastUse: clock)
+      if loaded.manifest == nil {
+        if rejected.count >= rejectedLimit { rejected.removeAll(keepingCapacity: true) }
+        rejected[version] = entry
+        return
+      }
+      guard retainDecoded else { return }
+      if decoded[version] == nil, decoded.count >= decodedLimit,
+         let oldest = decoded.min(by: { $0.value.lastUse < $1.value.lastUse })?.key {
+        decoded.removeValue(forKey: oldest)
+      }
+      decoded[version] = entry
+    }
+
+    func removeAll() {
+      lock.lock()
+      decoded.removeAll()
+      rejected.removeAll()
+      lock.unlock()
+    }
+  }
+
+  private static let manifestDecodeCache = ManifestDecodeCache()
+  private static let manifestDecodeCounter = DecodeCounter()
+
+  /// Full manifest decodes in this process. Tests use it to prove that an
+  /// unchanged store is not re-decoded by routine maintenance.
+  static func manifestDecodeCountForTesting() -> Int {
+    manifestDecodeCounter.read()
+  }
+
+  private final class RecentPaths: @unchecked Sendable {
+    private let lock = NSLock()
+    private var paths: [String] = []
+
+    func record(_ path: String) {
+      lock.lock()
+      paths.append(path)
+      if paths.count > 32 { paths.removeFirst(paths.count - 32) }
+      lock.unlock()
+    }
+
+    func read() -> [String] {
+      lock.lock()
+      defer { lock.unlock() }
+      return paths
+    }
+  }
+
+  private static let recentManifestDecodes = RecentPaths()
+
+  /// The most recently decoded manifest files, for diagnosing extra reads.
+  static func recentManifestDecodesForTesting() -> [String] {
+    recentManifestDecodes.read()
+  }
+
+  static func resetManifestCachesForTesting() {
+    manifestDecodeCache.removeAll()
+    manifestFileFacts.removeAll()
+  }
+
+  /// Reads, hashes, and decodes a manifest file once per file version.
+  /// `retainDecoded: false` still returns the manifest and remembers an
+  /// invalid one, but does not keep a valid decode resident; collection uses
+  /// it for historical commits it only needs to summarize.
+  private static func loadVerifiedManifest(
+    at url: URL,
+    retainDecoded: Bool = true
+  ) -> ManifestDecodeCache.Loaded? {
+    let path = url.path
+    guard let version = regularFileVersion(at: url) else { return nil }
+    if let cached = manifestDecodeCache.lookup(version: version) {
+      return cached
+    }
+    guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
+    manifestDecodeCounter.increment()
+    recentManifestDecodes.record(path)
+    let manifest = (try? JSONDecoder().decode(Manifest.self, from: data))
+      .flatMap { isStructurallyValid($0) ? $0 : nil }
+    let loaded = ManifestDecodeCache.Loaded(digest: digest(data), manifest: manifest)
+    // A file replaced while it was read is not remembered under either version.
+    if regularFileVersion(at: url) == version {
+      manifestDecodeCache.store(version: version, loaded: loaded, retainDecoded: retainDecoded)
+    }
+    return loaded
   }
 
   private static func recoveryManifestCandidates(
@@ -1799,27 +2063,29 @@ final class AIChatTranscriptStore: @unchecked Sendable {
   ) -> [Manifest] {
     let fileManager = FileManager.default
     let manifestDirectory = manifestsDirectory(storeURL: storeURL)
-    var urls = (try? fileManager.contentsOfDirectory(
+    // Files are told apart by the listing they came from. Comparing each
+    // file's standardized parent URL queried the file system for every one
+    // of thousands of historical commits on every load.
+    var urls = ((try? fileManager.contentsOfDirectory(
       at: manifestDirectory,
       includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
       options: [.skipsHiddenFiles]
-    )) ?? []
-    let rootViews = ((try? fileManager.contentsOfDirectory(
-      at: storeURL,
-      includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
-      options: [.skipsHiddenFiles]
-    )) ?? []).filter {
-      $0.lastPathComponent.hasPrefix("manifest") && $0.pathExtension == "json"
+    )) ?? []).filter { url in
+      !(url.pathExtension == "json"
+        && excludingCommitIDs.contains(url.deletingPathExtension().lastPathComponent))
     }
     // Root views are redundant copies (or conflict copies) of immutable
     // commits. Routine reconciliation reads the immutable directory only.
-    if includesRootViews { urls += rootViews }
-    return urls.compactMap { url in
-      if url.deletingLastPathComponent().standardizedFileURL == manifestDirectory.standardizedFileURL,
-         url.pathExtension == "json",
-         excludingCommitIDs.contains(url.deletingPathExtension().lastPathComponent) {
-        return nil
+    if includesRootViews {
+      urls += ((try? fileManager.contentsOfDirectory(
+        at: storeURL,
+        includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+        options: [.skipsHiddenFiles]
+      )) ?? []).filter {
+        $0.lastPathComponent.hasPrefix("manifest") && $0.pathExtension == "json"
       }
+    }
+    return urls.compactMap { url in
       guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
             values.isRegularFile == true,
             values.isSymbolicLink != true
@@ -1843,11 +2109,18 @@ final class AIChatTranscriptStore: @unchecked Sendable {
       if $0.generation != $1.generation { return $0.generation > $1.generation }
       return $0.commitID > $1.commitID
     }
-    var validatedEntries: [ManifestThread: Bool] = [:]
+    // Shard validity depends only on these fields. Keying by the whole entry
+    // hashed each conversation's full metadata for every candidate.
+    var validatedEntries: [String: Bool] = [:]
     func isValid(_ entry: ManifestThread) -> Bool {
-      if let cached = validatedEntries[entry] { return cached }
+      let key = [
+        entry.shard, entry.shardDigest,
+        entry.metadata.storedMessageCount.map(String.init) ?? "-",
+        entry.blobs?.joined(separator: ",") ?? "-",
+      ].joined(separator: "|")
+      if let cached = validatedEntries[key] { return cached }
       let valid = isValidShard(entry, storeURL: storeURL)
-      validatedEntries[entry] = valid
+      validatedEntries[key] = valid
       return valid
     }
     func isCompleteCandidate(_ manifest: Manifest) -> Bool {
@@ -2015,7 +2288,13 @@ final class AIChatTranscriptStore: @unchecked Sendable {
   /// healthy metadata-only thread and lets recovery choose the previous
   /// complete commit instead.
   private static func isComplete(_ manifest: Manifest, storeURL: URL) -> Bool {
-    guard isStructurallyValid(manifest) else { return false }
+    isStructurallyValid(manifest) && hasCompleteShards(manifest, storeURL: storeURL)
+  }
+
+  /// `isComplete` for a manifest returned by `loadManifestCandidate`, which
+  /// already verified its structure. Re-checking it hashed every merged
+  /// commit ID (thousands per manifest) on each load.
+  private static func hasCompleteShards(_ manifest: Manifest, storeURL: URL) -> Bool {
     for entry in manifest.threads {
       guard isValidShard(entry, storeURL: storeURL) else { return false }
     }
@@ -2046,15 +2325,73 @@ final class AIChatTranscriptStore: @unchecked Sendable {
 
   private static let shardValidationCache = ShardValidationCache()
 
+  private final class DecodeCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func increment() {
+      lock.lock()
+      value += 1
+      lock.unlock()
+    }
+
+    func read() -> Int {
+      lock.lock()
+      defer { lock.unlock() }
+      return value
+    }
+  }
+
+  /// File attributes of shards already examined during one maintenance pass.
+  /// Writer heads share almost every shard, so a pass over ten heads used to
+  /// stat each conversation file twenty or more times. Only positive results
+  /// are kept, and the memo ends with the pass, so a shard that disappears or
+  /// changes is still noticed by the next load.
+  private final class ShardStatMemo {
+    var attributes: [String: (size: Int, modifiedAt: Date)] = [:]
+  }
+
+  private static let shardStatMemoKey = "org.org2.workspace.ai-chat-transcript-store.shard-stat-memo"
+  private static let shardStatCounter = DecodeCounter()
+
+  static func shardStatCountForTesting() -> Int {
+    shardStatCounter.read()
+  }
+
+  /// Runs synchronous maintenance with a per-pass shard attribute memo.
+  /// Nested passes share the outermost memo.
+  private static func withShardStatMemo<T>(_ body: () throws -> T) rethrows -> T {
+    let dictionary = Thread.current.threadDictionary
+    if dictionary[shardStatMemoKey] is ShardStatMemo { return try body() }
+    dictionary[shardStatMemoKey] = ShardStatMemo()
+    defer { dictionary.removeObject(forKey: shardStatMemoKey) }
+    return try body()
+  }
+
+  /// Forget memoized attributes before a pass publishes files it validates.
+  private static func resetShardStatMemo() {
+    (Thread.current.threadDictionary[shardStatMemoKey] as? ShardStatMemo)?.attributes.removeAll()
+  }
+
+  private static func shardAttributes(at url: URL) -> (size: Int, modifiedAt: Date)? {
+    let memo = Thread.current.threadDictionary[shardStatMemoKey] as? ShardStatMemo
+    let path = url.path
+    if let cached = memo?.attributes[path] { return cached }
+    shardStatCounter.increment()
+    var info = stat()
+    guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return nil }
+    let modifiedAt = Date(timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec)
+      + TimeInterval(info.st_mtimespec.tv_nsec) / 1_000_000_000)
+    let attributes = (size: Int(info.st_size), modifiedAt: modifiedAt)
+    memo?.attributes[path] = attributes
+    return attributes
+  }
+
   private static func shardValidationKey(_ entry: ManifestThread, storeURL: URL) -> String? {
     let url = storeURL.appendingPathComponent(entry.shard)
-    guard let values = try? url.resourceValues(forKeys: [
-      .fileSizeKey, .contentModificationDateKey, .isRegularFileKey,
-    ]),
-          values.isRegularFile == true,
-          let size = values.fileSize,
-          let modifiedAt = values.contentModificationDate
-    else { return nil }
+    guard let attributes = shardAttributes(at: url) else { return nil }
+    let size = attributes.size
+    let modifiedAt = attributes.modifiedAt
     let count = entry.metadata.storedMessageCount.map(String.init) ?? "-"
     let blobs = entry.blobs?.joined(separator: ",") ?? "-"
     return [
@@ -2079,7 +2416,8 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     threadShardDecodeCounter.increment()
     #endif
     let threadDirectory = threadsDirectory(storeURL: storeURL)
-    let shardName = URL(fileURLWithPath: entry.shard).lastPathComponent
+    // A string operation: a relative file URL resolves the working directory.
+    let shardName = (entry.shard as NSString).lastPathComponent
     guard entry.shard == "threads/\(shardName)",
           isValidDigest(entry.shardDigest)
     else { return nil }
@@ -2119,7 +2457,7 @@ final class AIChatTranscriptStore: @unchecked Sendable {
         guard reference.byteCount >= 0,
               isValidDigest(reference.digest),
               reference.blob == "\(reference.digest).blob",
-              reference.blob == URL(fileURLWithPath: reference.blob).lastPathComponent
+              isCommitFileName(reference.blob)
         else { return false }
         return isDescendant(
           attachmentDirectory.appendingPathComponent(reference.blob),
@@ -2142,6 +2480,17 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     shouldYield: () -> Bool = { false },
     beforeDeletion: () -> Void = {}
   ) -> Bool {
+    garbageCollectionRuns.increment(storeDirectory(for: legacyURL).path)
+    return withShardStatMemo {
+      garbageCollectInPass(legacyURL: legacyURL, shouldYield: shouldYield, beforeDeletion: beforeDeletion)
+    }
+  }
+
+  private static func garbageCollectInPass(
+    legacyURL: URL,
+    shouldYield: () -> Bool,
+    beforeDeletion: () -> Void
+  ) -> Bool {
     guard let state = loadStoreState(legacyURL: legacyURL),
           !state.recoveryStatus.blocksWrites,
           let current = state.current
@@ -2149,11 +2498,12 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     guard !shouldYield() else { return false }
     let storeURL = storeDirectory(for: legacyURL)
     let cutoff = Date().addingTimeInterval(-garbageCollectionGraceInterval)
-    let recentManifestFiles = recoveryManifestFiles(
+    guard let recentScan = recoveryManifestFiles(
       storeURL: storeURL,
       modifiedAfter: cutoff,
       shouldYield: shouldYield
-    )
+    ) else { return false }
+    let recentManifestFiles = recentScan.files
     guard !shouldYield() else { return false }
     // Every writer's head (and its previous commit) stays loadable even when
     // that writer has been offline longer than the grace interval.
@@ -2169,34 +2519,36 @@ final class AIChatTranscriptStore: @unchecked Sendable {
         },
       ].compactMap { $0 }
     }
-    let retainedManifests = [current, state.previous].compactMap { $0 }
-      + recentManifestFiles.map(\.manifest)
-      + headManifests
-    var retainedCommitFiles = Set(retainedManifests.map { "\($0.commitID).json" })
+    let retainedManifests = [current, state.previous].compactMap { $0 } + headManifests
+    var retainedCommitFiles = Set(
+      retainedManifests.map { "\($0.commitID).json" }
+        + recentManifestFiles.map { "\($0.references.commitID).json" }
+    )
     retainedCommitFiles.formUnion(recentManifestFiles.compactMap { file in
-      file.url.deletingLastPathComponent().standardizedFileURL
-        == manifestsDirectory(storeURL: storeURL).standardizedFileURL
-        ? file.url.lastPathComponent
-        : nil
+      file.isImmutableCommit ? file.url.lastPathComponent : nil
     })
     // Historical manifests often repeat the same immutable shard. Collect
     // references incrementally and decode each legacy shard at most once,
     // rather than materializing every repeated thread entry in memory.
     var retainedShards = Set<String>()
     var retainedBlobs = Set<String>()
-    var entriesWithoutBlobIndexes: [String: ManifestThread] = [:]
+    var shardsWithoutBlobIndexes = Set<String>()
     for manifest in retainedManifests {
       for entry in manifest.threads {
         retainedShards.insert(entry.shard)
         if let blobs = entry.blobs {
           retainedBlobs.formUnion(blobs)
         } else {
-          entriesWithoutBlobIndexes[entry.shard] = entry
+          shardsWithoutBlobIndexes.insert(entry.shard)
         }
       }
     }
-    for entry in entriesWithoutBlobIndexes.values {
-      let shard = entry.shard
+    for file in recentManifestFiles {
+      retainedShards.formUnion(file.references.shards)
+      retainedBlobs.formUnion(file.references.blobs)
+      shardsWithoutBlobIndexes.formUnion(file.references.shardsWithoutBlobIndexes)
+    }
+    for shard in shardsWithoutBlobIndexes {
       let shardURL = storeURL.appendingPathComponent(shard)
       guard isDescendant(shardURL, of: threadsDirectory(storeURL: storeURL)),
             let data = try? Data(contentsOf: shardURL, options: .mappedIfSafe),
@@ -2209,6 +2561,7 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     beforeDeletion()
     removeUnretainedFiles(
       in: manifestsDirectory(storeURL: storeURL),
+      listed: recentScan.listedImmutableURLs,
       retaining: retainedCommitFiles,
       // A writer can publish a fresh manifest after the inventory above.
       // Give fresh unseen manifests the same grace interval as shards and
@@ -2217,7 +2570,9 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     )
     removeUnretainedFiles(
       in: threadsDirectory(storeURL: storeURL),
-      retaining: Set(retainedShards.map { URL(fileURLWithPath: $0).lastPathComponent }),
+      // A string operation: a relative file URL queried the working directory
+      // once per retained shard.
+      retaining: Set(retainedShards.map { ($0 as NSString).lastPathComponent }),
       modifiedBefore: cutoff
     )
     removeUnretainedFiles(
@@ -2250,7 +2605,9 @@ final class AIChatTranscriptStore: @unchecked Sendable {
 
   private struct RecoveryManifestFile {
     let url: URL
-    let manifest: Manifest
+    /// In the immutable `manifests/` directory rather than a root view.
+    let isImmutableCommit: Bool
+    let references: ManifestReferences
   }
 
   private struct RecoverySelectedEntry {
@@ -2312,50 +2669,51 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     storeURL: URL,
     modifiedAfter cutoff: Date,
     shouldYield: () -> Bool = { false }
-  ) -> [RecoveryManifestFile] {
+  ) -> (files: [RecoveryManifestFile], listedImmutableURLs: [URL])? {
     let fileManager = FileManager.default
     let manifestDirectory = manifestsDirectory(storeURL: storeURL)
-    var urls = (try? fileManager.contentsOfDirectory(
+    let keys: [URLResourceKey] = [
+      .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey, .fileSizeKey,
+    ]
+    let immutableURLs = (try? fileManager.contentsOfDirectory(
       at: manifestDirectory,
-      includingPropertiesForKeys: [
-        .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey,
-      ],
+      includingPropertiesForKeys: keys,
       options: [.skipsHiddenFiles]
     )) ?? []
-    urls += ((try? fileManager.contentsOfDirectory(
+    let rootViewURLs = ((try? fileManager.contentsOfDirectory(
       at: storeURL,
-      includingPropertiesForKeys: [
-        .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey,
-      ],
+      includingPropertiesForKeys: keys,
       options: [.skipsHiddenFiles]
     )) ?? []).filter {
       $0.lastPathComponent.hasPrefix("manifest") && $0.pathExtension == "json"
     }
-    let recentURLs = urls.compactMap { url -> (url: URL, key: ManifestLineageKey)? in
-      guard let values = try? url.resourceValues(forKeys: [
-        .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey, .fileSizeKey,
-      ]),
+    let listed = immutableURLs.map { ($0, true) } + rootViewURLs.map { ($0, false) }
+    let recentURLs = listed.compactMap { url, isImmutableCommit
+      -> (url: URL, key: ManifestLineageKey, isImmutableCommit: Bool)? in
+      guard let values = try? url.resourceValues(forKeys: Set(keys)),
             values.isRegularFile == true,
             values.isSymbolicLink != true,
             let modifiedAt = values.contentModificationDate,
             modifiedAt >= cutoff
       else { return nil }
+      // The listing already names a standardized store path. Standardizing
+      // each URL again queried the file system once per historical commit.
       return (url, ManifestLineageKey(
-        path: url.standardizedFileURL.path,
+        path: url.path,
         modifiedAt: modifiedAt,
         size: values.fileSize ?? -1
-      ))
+      ), isImmutableCommit)
     }
     // Fast path: choose the retained commits from each manifest's lineage
-    // alone, cached by path, size, and modification date, and fully decode
-    // only those few manifests. A long chat history keeps hundreds of
+    // alone, cached by path, size, and modification date, and summarize only
+    // those few manifests. A long chat history keeps hundreds of
     // multi-megabyte manifests inside the grace interval; decoding every one
     // after every save kept a core busy and delayed requests behind it.
-    var lineages: [(url: URL, lineage: ManifestLineage)] = []
+    var lineages: [(url: URL, lineage: ManifestLineage, isImmutableCommit: Bool)] = []
     for item in recentURLs {
-      guard !shouldYield() else { return [] }
+      guard !shouldYield() else { return nil }
       guard let lineage = manifestLineage(at: item.url, key: item.key) else { continue }
-      lineages.append((item.url, lineage))
+      lineages.append((item.url, lineage, item.isImmutableCommit))
     }
     let lineageParents = Set(lineages.compactMap(\.lineage.parentCommitID))
     let lineageRetained = Set(lineages
@@ -2363,35 +2721,203 @@ final class AIChatTranscriptStore: @unchecked Sendable {
       .flatMap { [$0.lineage.commitID, $0.lineage.parentCommitID].compactMap { $0 } })
     var fastFiles: [RecoveryManifestFile] = []
     var fastPathIsExact = true
+    // Summaries the fast path needed stay cached even when this pass falls
+    // back to the exact scan, which retains a different set; otherwise the
+    // next pass would decode them again.
+    var summarizedPaths = Set<String>()
     for item in lineages where lineageRetained.contains(item.lineage.commitID) {
-      guard !shouldYield() else { return [] }
-      guard let manifest = loadManifestCandidate(at: item.url),
-            manifest.commitID == item.lineage.commitID,
-            manifest.parentCommitID == item.lineage.parentCommitID
+      guard !shouldYield() else { return nil }
+      guard let references = manifestReferences(at: item.url),
+            references.commitID == item.lineage.commitID,
+            references.parentCommitID == item.lineage.parentCommitID
       else {
         // An unreadable tip changes which commits count as tips. Fall back to
         // the exact scan rather than guess.
         fastPathIsExact = false
         break
       }
-      fastFiles.append(RecoveryManifestFile(url: item.url, manifest: manifest))
+      summarizedPaths.insert(item.url.path)
+      fastFiles.append(RecoveryManifestFile(
+        url: item.url, isImmutableCommit: item.isImmutableCommit, references: references
+      ))
     }
-    if fastPathIsExact { return fastFiles }
+    let recentPaths = Set(recentURLs.map(\.key.path))
+    if fastPathIsExact {
+      manifestFileFacts.retain(identities: recentPaths, references: Set(fastFiles.map(\.url.path)))
+      return (fastFiles, immutableURLs)
+    }
 
-    let candidates = recentURLs.compactMap { item -> RecoveryManifestFile? in
+    garbageCollectionExactScanCounter.increment()
+    // Every recent manifest's validity is needed here; it is remembered per
+    // file version, so only commits that arrived since the last scan are read.
+    var candidates: [(url: URL, identity: ManifestIdentity, isImmutableCommit: Bool)] = []
+    for item in recentURLs {
       guard !shouldYield() else { return nil }
-      guard let manifest = loadManifestCandidate(at: item.url) else { return nil }
-      return RecoveryManifestFile(url: item.url, manifest: manifest)
+      guard let identity = validatedManifestIdentity(at: item.url) else { continue }
+      candidates.append((item.url, identity, item.isImmutableCommit))
     }
     // Keep each recently observed branch tip plus its direct parent. That is
     // enough to recover from an incomplete synced tip without retaining a
     // full 500 KB manifest for every routine local metadata save.
-    let parentCommitIDs = Set(candidates.compactMap(\.manifest.parentCommitID))
-    let tips = candidates.filter { !parentCommitIDs.contains($0.manifest.commitID) }
+    let parentCommitIDs = Set(candidates.compactMap(\.identity.parentCommitID))
+    let tips = candidates.filter { !parentCommitIDs.contains($0.identity.commitID) }
     let retainedCommitIDs = Set(tips.flatMap { file in
-      [file.manifest.commitID, file.manifest.parentCommitID].compactMap { $0 }
+      [file.identity.commitID, file.identity.parentCommitID].compactMap { $0 }
     })
-    return candidates.filter { retainedCommitIDs.contains($0.manifest.commitID) }
+    var files: [RecoveryManifestFile] = []
+    for candidate in candidates where retainedCommitIDs.contains(candidate.identity.commitID) {
+      guard !shouldYield() else { return nil }
+      guard let references = manifestReferences(at: candidate.url) else { continue }
+      files.append(RecoveryManifestFile(
+        url: candidate.url, isImmutableCommit: candidate.isImmutableCommit, references: references
+      ))
+    }
+    manifestFileFacts.retain(
+      identities: recentPaths, references: summarizedPaths.union(files.map(\.url.path))
+    )
+    return (files, immutableURLs)
+  }
+
+  private struct ManifestIdentity: Equatable, Sendable {
+    let commitID: String
+    let parentCommitID: String?
+  }
+
+  /// What collection needs from one manifest: its lineage and the shards and
+  /// blobs it keeps alive. Derived once per file version from a full decode.
+  private struct ManifestReferences: Sendable {
+    let commitID: String
+    let parentCommitID: String?
+    let shards: [String]
+    let blobs: [String]
+    let shardsWithoutBlobIndexes: [String]
+  }
+
+  /// Facts derived from historical manifests, keyed by file version.
+  /// Summaries are kept only for the commits collection currently retains,
+  /// and names shared by many commits are stored once.
+  private final class ManifestFileFacts: @unchecked Sendable {
+    private let lock = NSLock()
+    private var identities: [String: (version: FileVersion, identity: ManifestIdentity?)] = [:]
+    private var summaries: [String: (version: FileVersion, references: ManifestReferences)] = [:]
+    private var interned = Set<String>()
+
+    func identity(path: String, version: FileVersion) -> ManifestIdentity?? {
+      lock.lock()
+      defer { lock.unlock() }
+      guard let entry = identities[path], entry.version == version else { return nil }
+      return .some(entry.identity)
+    }
+
+    func references(path: String, version: FileVersion) -> ManifestReferences? {
+      lock.lock()
+      defer { lock.unlock() }
+      guard let entry = summaries[path], entry.version == version else { return nil }
+      return entry.references
+    }
+
+    func store(path: String, version: FileVersion, identity: ManifestIdentity?) {
+      lock.lock()
+      identities[path] = (version, identity)
+      lock.unlock()
+    }
+
+    func store(path: String, version: FileVersion, manifest: Manifest) -> ManifestReferences {
+      lock.lock()
+      defer { lock.unlock() }
+      func intern(_ value: String) -> String { interned.insert(value).memberAfterInsert }
+      var blobs = Set<String>()
+      var unindexed: [String] = []
+      for entry in manifest.threads {
+        if let entryBlobs = entry.blobs {
+          blobs.formUnion(entryBlobs)
+        } else {
+          unindexed.append(intern(entry.shard))
+        }
+      }
+      let references = ManifestReferences(
+        commitID: manifest.commitID,
+        parentCommitID: manifest.parentCommitID,
+        shards: manifest.threads.map { intern($0.shard) },
+        blobs: blobs.map(intern),
+        shardsWithoutBlobIndexes: unindexed
+      )
+      identities[path] = (version, ManifestIdentity(
+        commitID: manifest.commitID, parentCommitID: manifest.parentCommitID
+      ))
+      summaries[path] = (version, references)
+      return references
+    }
+
+    /// Drops facts for files a completed scan no longer needs.
+    func retain(identities identityPaths: Set<String>, references referencePaths: Set<String>) {
+      lock.lock()
+      identities = identities.filter { identityPaths.contains($0.key) }
+      summaries = summaries.filter { referencePaths.contains($0.key) }
+      if interned.count > 4 * (summaries.count + 1) * 1_024 {
+        interned.removeAll(keepingCapacity: false)
+      }
+      lock.unlock()
+    }
+
+    func removeAll() {
+      lock.lock()
+      identities.removeAll()
+      summaries.removeAll()
+      interned.removeAll()
+      lock.unlock()
+    }
+  }
+
+  private static let manifestFileFacts = ManifestFileFacts()
+  private static let garbageCollectionExactScanCounter = DecodeCounter()
+  private final class RunCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: Int] = [:]
+
+    func increment(_ key: String) {
+      lock.lock()
+      values[key, default: 0] += 1
+      lock.unlock()
+    }
+
+    func read(_ key: String) -> Int {
+      lock.lock()
+      defer { lock.unlock() }
+      return values[key, default: 0]
+    }
+  }
+
+  private static let garbageCollectionRuns = RunCounter()
+
+  static func garbageCollectionRunCountForTesting(legacyURL: URL) -> Int {
+    garbageCollectionRuns.read(storeDirectory(for: legacyURL).path)
+  }
+
+  static func garbageCollectionExactScanCountForTesting() -> Int {
+    garbageCollectionExactScanCounter.read()
+  }
+
+  private static func validatedManifestIdentity(at url: URL) -> ManifestIdentity? {
+    guard let version = regularFileVersion(at: url) else { return nil }
+    if let cached = manifestFileFacts.identity(path: url.path, version: version) { return cached }
+    let manifest = loadVerifiedManifest(at: url, retainDecoded: false)?.manifest
+    let identity = manifest.map {
+      ManifestIdentity(commitID: $0.commitID, parentCommitID: $0.parentCommitID)
+    }
+    manifestFileFacts.store(path: url.path, version: version, identity: identity)
+    return identity
+  }
+
+  private static func manifestReferences(at url: URL) -> ManifestReferences? {
+    guard let version = regularFileVersion(at: url) else { return nil }
+    if let cached = manifestFileFacts.references(path: url.path, version: version) { return cached }
+    if case .some(.none) = manifestFileFacts.identity(path: url.path, version: version) { return nil }
+    guard let manifest = loadVerifiedManifest(at: url, retainDecoded: false)?.manifest else {
+      manifestFileFacts.store(path: url.path, version: version, identity: nil)
+      return nil
+    }
+    return manifestFileFacts.store(path: url.path, version: version, manifest: manifest)
   }
 
   struct ManifestLineageKey: Hashable {
@@ -2426,7 +2952,7 @@ final class AIChatTranscriptStore: @unchecked Sendable {
           CelorgaNames.schemaMatches(lineage.schema, Manifest.schemaValue),
           lineage.version == 2,
           !lineage.commitID.isEmpty,
-          lineage.commitID == URL(fileURLWithPath: lineage.commitID).lastPathComponent
+          isCommitFileName(lineage.commitID)
     else { return nil }
     manifestLineageLock.lock()
     manifestLineageDecodeCountForTesting &+= 1
@@ -2438,11 +2964,33 @@ final class AIChatTranscriptStore: @unchecked Sendable {
     return lineage
   }
 
+  /// `listed` reuses a listing taken earlier in the same pass. A file that
+  /// appears after it is newer than the grace interval, so it could not be
+  /// collected anyway; each candidate's age is re-read before deletion.
   private static func removeUnretainedFiles(
     in directory: URL,
+    listed: [URL]? = nil,
     retaining names: Set<String>,
     modifiedBefore cutoff: Date?
   ) {
+    if let listed, let cutoff {
+      for url in listed where !names.contains(url.lastPathComponent) {
+        guard let prefetched = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
+              let modifiedAt = prefetched.contentModificationDate, modifiedAt < cutoff
+        else { continue }
+        var fresh = url
+        fresh.removeAllCachedResourceValues()
+        guard let values = try? fresh.resourceValues(forKeys: [
+                .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey,
+              ]),
+              values.isRegularFile == true || values.isSymbolicLink == true,
+              let current = values.contentModificationDate, current < cutoff,
+              isDescendant(url, of: directory)
+        else { continue }
+        try? FileManager.default.removeItem(at: url)
+      }
+      return
+    }
     guard let urls = try? FileManager.default.contentsOfDirectory(
       at: directory,
       includingPropertiesForKeys: [
@@ -2450,9 +2998,11 @@ final class AIChatTranscriptStore: @unchecked Sendable {
       ],
       options: [.skipsHiddenFiles]
     ) else { return }
+    // Check the prefetched age before resolving paths: most unretained files
+    // are still inside the grace interval, and resolving each one queried the
+    // file system thousands of times per collection.
     for url in urls where !names.contains(url.lastPathComponent) {
-      guard isDescendant(url, of: directory),
-            let values = try? url.resourceValues(forKeys: [
+      guard let values = try? url.resourceValues(forKeys: [
               .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey,
             ]),
             values.isRegularFile == true || values.isSymbolicLink == true
@@ -2460,6 +3010,7 @@ final class AIChatTranscriptStore: @unchecked Sendable {
       if let cutoff {
         guard let modifiedAt = values.contentModificationDate, modifiedAt < cutoff else { continue }
       }
+      guard isDescendant(url, of: directory) else { continue }
       try? FileManager.default.removeItem(at: url)
     }
   }

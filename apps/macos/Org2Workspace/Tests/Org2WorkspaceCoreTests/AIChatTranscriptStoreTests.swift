@@ -799,6 +799,8 @@ final class AIChatTranscriptStoreTests: XCTestCase {
   func testPostCommitGarbageCollectionBoundsImmutableStoreGrowth() throws {
     let fixture = try makeRecoveryFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }
+    AIChatTranscriptStore.shared.setGarbageCollectionIntervalForTesting(0)
+    defer { AIChatTranscriptStore.shared.setGarbageCollectionIntervalForTesting(nil) }
     for index in 0..<12 {
       let attachment = AIChatAttachment(
         fileName: "artifact-\(index).bin",
