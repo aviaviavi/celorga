@@ -78,6 +78,7 @@ struct MobileAISidebarView: View {
   let openWorkspace: () -> Void
   let openFiles: () -> Void
   let openThread: (UUID) -> Void
+  var openQuickChat: () -> Void = {}
   let openExternalThreads: () -> Void
   let openSettings: () -> Void
   var openDocument: (MobileDocumentDestination) -> Void = { _ in }
@@ -120,8 +121,10 @@ struct MobileAISidebarView: View {
             }
           } label: {
             Image(systemName: "square.and.pencil")
+          } primaryAction: {
+            // Tap: Quick Chat with the default agent. Hold: choose an agent or project.
+            openQuickChat()
           }
-          .disabled(!remote.isConnected)
           .accessibilityLabel("New AI chat")
         }
         Button(action: close) {
@@ -501,6 +504,28 @@ struct MobileSettingsView: View {
         Text("On This iPhone")
       } footer: {
         Text("Your corpus stays on your host. This phone keeps only the files you download for reading offline, and notes until the host receives them.")
+      }
+
+      if remote.isPaired {
+        Section {
+          Toggle("Open to Quick Chat", isOn: $remote.opensToQuickChat)
+          Picker("Quick Chat agent", selection: Binding(
+            get: { remote.quickChatDestination?.id ?? "" },
+            set: { id in
+              if let destination = remote.chatDestinations.first(where: { $0.id == id }) {
+                remote.setQuickChatDestination(destination)
+              }
+            }
+          )) {
+            ForEach(remote.chatDestinations) { destination in
+              Text(destination.name).tag(destination.id)
+            }
+          }
+        } header: {
+          Text("Quick Chat")
+        } footer: {
+          Text("Quick Chat opens ready to type. Your message starts a new chat with this agent, using the model you last picked for it. The pencil in the sidebar opens it too; hold the pencil to choose another agent or a project.")
+        }
       }
 
       Section("Host Connection") {
@@ -1493,6 +1518,14 @@ struct MobileRemoteThreadView: View {
     // A task attached to the temporary loading subtree can be cancelled while
     // a notification switches tabs or restores the navigation path, leaving
     // an already-loaded transcript behind a permanent spinner.
+    .onAppear {
+      // A chat started from Quick Chat sends its first message from here, so
+      // it shows the usual sending state while the host creates the chat.
+      if let message = remote.takeQuickChatMessage(for: threadID) {
+        draft = message
+        sendMessage()
+      }
+    }
     .task(id: remote.threadDetail?.thread.id) {
       guard remote.threadDetail?.thread.id == threadID else {
         hasPresentedInitialContent = false

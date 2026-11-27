@@ -48,6 +48,7 @@
 		0A1001802C20000000000001 /* MobileRemoteTranscriptPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002802C20000000000001 /* MobileRemoteTranscriptPage.swift */; };
 		0A10010F2C20000000000001 /* MobileRemoteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002112C20000000000001 /* MobileRemoteStore.swift */; };
 		0A1001102C20000000000001 /* MobileRemoteViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002122C20000000000001 /* MobileRemoteViews.swift */; };
+		0A10011F2C20000000000001 /* MobileQuickChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A10021F2C20000000000001 /* MobileQuickChatView.swift */; };
 		0A1001112C20000000000001 /* MobileVoiceTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002132C20000000000001 /* MobileVoiceTranscriber.swift */; };
 		0A1001122C20000000000001 /* MobileCallTranscriptImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1002142C20000000000001 /* MobileCallTranscriptImport.swift */; };
 /* End PBXBuildFile section */
@@ -106,6 +107,7 @@
 		0A1002802C20000000000001 /* MobileRemoteTranscriptPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileRemoteTranscriptPage.swift; sourceTree = "<group>"; };
 		0A1002112C20000000000001 /* MobileRemoteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileRemoteStore.swift; sourceTree = "<group>"; };
 		0A1002122C20000000000001 /* MobileRemoteViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileRemoteViews.swift; sourceTree = "<group>"; };
+		0A10021F2C20000000000001 /* MobileQuickChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileQuickChatView.swift; sourceTree = "<group>"; };
 		0A1002132C20000000000001 /* MobileVoiceTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileVoiceTranscriber.swift; sourceTree = "<group>"; };
 		0A1002142C20000000000001 /* MobileCallTranscriptImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileCallTranscriptImport.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -172,6 +174,7 @@
 		0A1002802C20000000000001 /* MobileRemoteTranscriptPage.swift */,
 				0A1002112C20000000000001 /* MobileRemoteStore.swift */,
 				0A1002122C20000000000001 /* MobileRemoteViews.swift */,
+				0A10021F2C20000000000001 /* MobileQuickChatView.swift */,
 				0A1002132C20000000000001 /* MobileVoiceTranscriber.swift */,
 				0A1002142C20000000000001 /* MobileCallTranscriptImport.swift */,
 				0A1002052C20000000000001 /* CorpusStore.swift */,
@@ -314,6 +317,7 @@
 		0A1001802C20000000000001 /* MobileRemoteTranscriptPage.swift in Sources */,
 				0A10010F2C20000000000001 /* MobileRemoteStore.swift in Sources */,
 				0A1001102C20000000000001 /* MobileRemoteViews.swift in Sources */,
+				0A10011F2C20000000000001 /* MobileQuickChatView.swift in Sources */,
 				0A1001112C20000000000001 /* MobileVoiceTranscriber.swift in Sources */,
 				0A1001122C20000000000001 /* MobileCallTranscriptImport.swift in Sources */,
 				0A1001052C20000000000001 /* CorpusStore.swift in Sources */,

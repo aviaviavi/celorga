@@ -91,6 +91,10 @@ private struct WorkspaceTabs: View {
             route = .thread(threadID)
             closeSidebar()
           },
+          openQuickChat: {
+            route = .quickChat
+            closeSidebar()
+          },
           openExternalThreads: {
             route = .externalThreads
             closeSidebar()
@@ -126,7 +130,13 @@ private struct WorkspaceTabs: View {
         isSidebarPresented = true
       }
     )
-    .onAppear { openPendingNotification() }
+    .onAppear {
+      // Open ready to type unless a notification asked for something else.
+      if remote.isPaired, remote.opensToQuickChat, route == .workspace {
+        route = .quickChat
+      }
+      openPendingNotification()
+    }
     .onChange(of: scenePhase) { _, phase in
       if phase == .active { openPendingNotification() }
     }
@@ -160,6 +170,12 @@ private struct WorkspaceTabs: View {
     switch route {
     case .workspace:
       workspaceTabView
+    case .quickChat:
+      NavigationStack {
+        MobileQuickChatView { threadID in
+          route = .thread(threadID)
+        }
+      }
     case .thread(let threadID):
       NavigationStack {
         MobileRemoteThreadView(threadID: threadID) { destinationThreadID in
@@ -253,6 +269,7 @@ private enum MobileSidebarEdgeSwipe {
 
 private enum MobileWorkspaceRoute: Equatable {
   case workspace
+  case quickChat
   case thread(UUID)
   case externalThreads
   case settings

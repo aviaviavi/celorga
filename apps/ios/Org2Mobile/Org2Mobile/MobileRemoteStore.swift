@@ -83,6 +83,18 @@ final class MobileRemoteStore: ObservableObject {
   private var configurationByDestinationID: [String: MobileRemoteThreadConfiguration] = [:]
   private var destinationConfigurationsFetchedAt: Date?
   private var isFetchingDestinationConfigurations = false
+  /// What the app opens to, and which agent a quick message goes to.
+  @Published var opensToQuickChat: Bool {
+    didSet { defaults.set(opensToQuickChat, forKey: Self.opensToQuickChatKey) }
+  }
+  @Published private(set) var quickChatDestinationID: String?
+  /// The first message of a chat started from Quick Chat, sent by the chat's
+  /// own view so it shows the usual sending state.
+  private var quickChatPendingMessages: [UUID: String] = [:]
+  private var quickChatPendingConfigurations: [UUID: (model: String?, effort: String?)] = [:]
+  private static let opensToQuickChatKey = "Org2Mobile.remote.opensToQuickChat.v1"
+  private static let quickChatDestinationKeyPrefix = "Org2Mobile.remote.quickChatDestination.v1."
+  private static let quickChatChoiceKeyPrefix = "Org2Mobile.remote.quickChatChoice.v1."
   private var threadListCursor: String?
   private var threadListCacheWrite: Task<Void, Never>?
   private static let destinationConfigurationsKeyPrefix = "Org2Mobile.remote.destinationConfigurations.v1."
@@ -97,6 +109,7 @@ final class MobileRemoteStore: ObservableObject {
   init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
     threadNotificationsEnabled = defaults.object(forKey: Self.threadNotificationsEnabledKey) as? Bool ?? true
+    opensToQuickChat = defaults.object(forKey: Self.opensToQuickChatKey) as? Bool ?? true
     endpointDraft = defaults.string(forKey: Self.endpointKey) ?? ""
     let storedServerName = defaults.string(forKey: Self.serverNameKey)
     serverName = storedServerName == "Org2 on Mac" || storedServerName == "OpenOrg on Mac"
@@ -126,6 +139,7 @@ final class MobileRemoteStore: ObservableObject {
     }
     isPaired = !activeEndpoint.isEmpty && accessToken != nil
     loadDestinationConfigurations()
+    loadQuickChatDestination()
     if isPaired { loadCachedThreadList() }
     notificationObservers = [
       NotificationCenter.default.addObserver(
@@ -240,6 +254,7 @@ final class MobileRemoteStore: ObservableObject {
     activeEndpoint = host.endpoint
     endpointDraft = host.endpoint
     loadDestinationConfigurations()
+    loadQuickChatDestination()
     loadCachedThreadList()
     serverName = host.name
     accessToken = token
@@ -1344,6 +1359,17 @@ final class MobileRemoteStore: ObservableObject {
     let message = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !message.isEmpty || !attachments.isEmpty else { return nil }
     guard await awaitPendingCreation(of: threadID) else { return nil }
+    // A Quick Chat's model and effort apply before its first message.
+    if let choice = quickChatPendingConfigurations.removeValue(forKey: threadID) {
+      if let model = choice.model {
+        await updateThreadConfiguration(MobileRemoteUpdateThreadConfigurationRequest(model: model), threadID: threadID)
+      }
+      if let effort = choice.effort {
+        await updateThreadConfiguration(
+          MobileRemoteUpdateThreadConfigurationRequest(reasoningEffort: effort), threadID: threadID
+        )
+      }
+    }
     do {
       let response: MobileRemoteMutationResponse = try await pairedClient().post(
         "/v1/threads/\(threadID.uuidString)/messages",
@@ -1593,6 +1619,76 @@ final class MobileRemoteStore: ObservableObject {
     else { return }
     configurationByDestinationID[destinationID] = configuration
     persistDestinationConfigurations()
+  }
+
+  // MARK: Quick Chat
+
+  /// The host's agents, or the built-in pair before the first status arrives.
+  var chatDestinations: [MobileRemoteAIDestination] {
+    if let destinations = status?.aiChatDestinations, !destinations.isEmpty { return destinations }
+    return [
+      MobileRemoteAIDestination(id: "builtin.codex", name: "Codex", mention: "codex", runtime: "codex"),
+      MobileRemoteAIDestination(id: "builtin.openclaw", name: "OpenClaw", mention: "openclaw", runtime: "openClaw"),
+    ]
+  }
+
+  /// The chosen Quick Chat agent, falling back to the host's first agent.
+  var quickChatDestination: MobileRemoteAIDestination? {
+    chatDestinations.first { $0.id == quickChatDestinationID } ?? chatDestinations.first
+  }
+
+  func setQuickChatDestination(_ destination: MobileRemoteAIDestination) {
+    quickChatDestinationID = destination.id
+    guard !activeEndpoint.isEmpty else { return }
+    defaults.set(destination.id, forKey: Self.quickChatDestinationKeyPrefix + activeEndpoint)
+  }
+
+  private func loadQuickChatDestination() {
+    quickChatDestinationID = activeEndpoint.isEmpty
+      ? nil
+      : defaults.string(forKey: Self.quickChatDestinationKeyPrefix + activeEndpoint)
+  }
+
+  /// The models an agent offers, from the saved lists; never waits on the host.
+  func cachedModels(for destinationID: String) -> MobileRemoteThreadConfiguration? {
+    configurationByDestinationID[destinationID]
+  }
+
+  /// The model and effort last sent with Quick Chat to this agent.
+  func quickChatChoice(for destinationID: String) -> (model: String?, effort: String?) {
+    let stored = defaults.dictionary(forKey: Self.quickChatChoiceKeyPrefix + activeEndpoint + "." + destinationID)
+    return (stored?["model"] as? String, stored?["effort"] as? String)
+  }
+
+  /// Opens a new chat at once and leaves its first message for the chat's
+  /// view to send; the host creates the chat in the background. Nothing is
+  /// created until there is something to send, so Quick Chat never leaves
+  /// empty chats behind.
+  func startQuickChat(
+    message: String,
+    destination: MobileRemoteAIDestination,
+    model: String?,
+    effort: String?
+  ) async -> UUID? {
+    let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return nil }
+    guard let threadID = await createThread(destination: destination) else { return nil }
+    if !activeEndpoint.isEmpty {
+      var choice: [String: String] = [:]
+      choice["model"] = model
+      choice["effort"] = effort
+      defaults.set(choice, forKey: Self.quickChatChoiceKeyPrefix + activeEndpoint + "." + destination.id)
+    }
+    if model != nil || effort != nil {
+      quickChatPendingConfigurations[threadID] = (model, effort)
+    }
+    quickChatPendingMessages[threadID] = text
+    return threadID
+  }
+
+  /// The first message a Quick Chat left for this chat, handed out once.
+  func takeQuickChatMessage(for threadID: UUID) -> String? {
+    quickChatPendingMessages.removeValue(forKey: threadID)
   }
 
   private var threadListCacheURL: URL? {

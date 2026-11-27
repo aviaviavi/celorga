@@ -241,7 +241,13 @@ assert.match(createThread, /guard isConnected else/);
 assert.doesNotMatch(createThread, /await refresh\(\)/);
 assert.match(createThread, /Task \{ \[weak self\][\s\S]*refresh\(reportsErrors: false\)/);
 assert.match(createThread, /projectID: project\?\.id/);
-assert.match(remoteStore, /projects = nextThreads\.projects \?\? \[\]/);
+// Projects come from the merged list: a full list replaces them, a change-only
+// list without projects keeps the phone's copy.
+assert.match(remoteStore, /projects = merged\.projects/);
+assert.match(
+  readFileSync(resolve("apps/ios/Org2Mobile/Org2Mobile/MobileRemoteModels.swift"), "utf8"),
+  /response\.projects \?\? currentProjects/,
+);
 assert.match(remoteStore, /\/v1\/threads\/\\\(threadID\.uuidString\)\/project/);
 
 assert.match(corpusStore, /content\.title = "Celorga due today"/);
