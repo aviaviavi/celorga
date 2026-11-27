@@ -3209,3 +3209,57 @@ private extension AIChatTranscriptRecoveryStatus {
     }
   }
 }
+
+extension AIChatTranscriptStore.FileVersion {
+  var modifiedDate: Date {
+    Date(timeIntervalSince1970: TimeInterval(modifiedSeconds) + TimeInterval(modifiedNanoseconds) / 1_000_000_000)
+  }
+}
+
+/// A bounded, thread-safe cache of values derived from files, keyed by path
+/// and valid only while the file's version is unchanged.
+final class FileVersionCache<Value: Sendable>: @unchecked Sendable {
+  private struct Entry {
+    let version: AIChatTranscriptStore.FileVersion
+    let value: Value
+    let cost: Int
+  }
+
+  private let lock = NSLock()
+  private var entries: [String: Entry] = [:]
+  private var totalCost = 0
+  let maximumEntries: Int
+  let maximumCost: Int
+
+  init(maximumEntries: Int, maximumCost: Int = .max) {
+    self.maximumEntries = maximumEntries
+    self.maximumCost = maximumCost
+  }
+
+  func value(path: String, version: AIChatTranscriptStore.FileVersion) -> Value? {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let entry = entries[path], entry.version == version else { return nil }
+    return entry.value
+  }
+
+  func store(_ value: Value, path: String, version: AIChatTranscriptStore.FileVersion, cost: Int = 0) {
+    lock.lock()
+    defer { lock.unlock() }
+    if let old = entries.removeValue(forKey: path) { totalCost -= old.cost }
+    guard cost <= maximumCost else { return }
+    // Starting over is cheap: the next pass re-reads what it needs.
+    if entries.count >= maximumEntries || totalCost + cost > maximumCost {
+      entries.removeAll(keepingCapacity: true)
+      totalCost = 0
+    }
+    entries[path] = Entry(version: version, value: value, cost: cost)
+    totalCost += cost
+  }
+
+  var count: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return entries.count
+  }
+}

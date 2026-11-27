@@ -1761,11 +1761,13 @@ extension WorkspaceStore {
     return properties
   }
 
+  nonisolated static let aiChatThreadRecordLimit = 250
+
   nonisolated static func scanAIChatThreadRecords(corpusRoot: URL) throws -> [AIChatThreadRecord] {
     let fileManager = FileManager.default
     let directories = aiChatThreadRecordDirectories(corpusRoot: corpusRoot)
-    var threads: [AIChatThreadRecord] = []
     let allowedExtensions = Set(["org", "org2", "md", "txt", "log", "json", "jsonl"])
+    var candidates: [(url: URL, directory: URL, modifiedAt: Date?)] = []
 
     for directory in directories where isDirectoryURL(directory) {
       guard let enumerator = fileManager.enumerator(
@@ -1784,19 +1786,29 @@ extension WorkspaceStore {
         guard allowedExtensions.contains(ext) else { continue }
         if fileURL.lastPathComponent.hasSuffix(".transcript.org")
           || fileURL.lastPathComponent.hasSuffix(".transcript.org2") { continue }
-
-        let prefix = (try? readPrefix(fileURL, maxBytes: 48 * 1024)) ?? ""
-        let titleInfo = aiChatTitle(from: prefix, fallback: fileURL.deletingPathExtension().lastPathComponent)
-        let zone = aiChatThreadRecordZone(fileURL: fileURL, corpusRoot: corpusRoot, directory: directory)
-        threads.append(AIChatThreadRecord(
-          title: titleInfo.title,
-          file: fileURL.path,
-          line: titleInfo.line,
-          zone: zone,
-          modifiedAt: values?.contentModificationDate,
-          idValue: firstOrgID(in: prefix)
-        ))
+        candidates.append((fileURL, directory, values?.contentModificationDate))
       }
+    }
+
+    // Only the most recent records are listed. Reading and parsing every
+    // file's heading kept a core busy for seconds on corpora with thousands
+    // of agent and meeting files, on every refresh. Files tied with the last
+    // listed modification date are still read, so the title tie-break below
+    // chooses among exactly the same records as before.
+    let byDate = candidates.map { $0.modifiedAt ?? .distantPast }.sorted(by: >)
+    let cutoff = byDate.count > aiChatThreadRecordLimit ? byDate[aiChatThreadRecordLimit - 1] : .distantPast
+    var threads: [AIChatThreadRecord] = []
+    for candidate in candidates where (candidate.modifiedAt ?? .distantPast) >= cutoff {
+      let fileURL = candidate.url
+      let heading = aiChatThreadRecordHeading(fileURL)
+      threads.append(AIChatThreadRecord(
+        title: heading.title,
+        file: fileURL.path,
+        line: heading.line,
+        zone: aiChatThreadRecordZone(fileURL: fileURL, corpusRoot: corpusRoot, directory: candidate.directory),
+        modifiedAt: candidate.modifiedAt,
+        idValue: heading.idValue
+      ))
     }
 
     return threads
@@ -1806,9 +1818,32 @@ extension WorkspaceStore {
         if left != right { return left > right }
         return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
       }
-      .prefix(250)
+      .prefix(aiChatThreadRecordLimit)
       .map { $0 }
   }
+
+  struct AIChatThreadRecordHeading: Sendable {
+    let title: String
+    let line: Int
+    let idValue: String?
+  }
+
+  /// A record's title, line, and ID, parsed once per file version.
+  nonisolated static func aiChatThreadRecordHeading(_ fileURL: URL) -> AIChatThreadRecordHeading {
+    let version = AIChatTranscriptStore.regularFileVersion(at: fileURL)
+    if let version, let cached = aiChatThreadRecordHeadingCache.value(path: fileURL.path, version: version) {
+      return cached
+    }
+    let prefix = (try? readPrefix(fileURL, maxBytes: 48 * 1024)) ?? ""
+    let titleInfo = aiChatTitle(from: prefix, fallback: fileURL.deletingPathExtension().lastPathComponent)
+    let heading = AIChatThreadRecordHeading(title: titleInfo.title, line: titleInfo.line, idValue: firstOrgID(in: prefix))
+    if let version, AIChatTranscriptStore.regularFileVersion(at: fileURL) == version {
+      aiChatThreadRecordHeadingCache.store(heading, path: fileURL.path, version: version)
+    }
+    return heading
+  }
+
+  nonisolated static let aiChatThreadRecordHeadingCache = FileVersionCache<AIChatThreadRecordHeading>(maximumEntries: 20_000)
 
   nonisolated static func scanMeetingItems(corpusRoot: URL) throws -> [MeetingWorkspaceItem] {
     let fileManager = FileManager.default
@@ -2300,6 +2335,16 @@ extension WorkspaceStore {
 
   nonisolated static let aiChatChangeSnapshotEagerReadMaxBytes = 16_000_000
 
+  struct CachedSnapshotText: Sendable {
+    /// Nil for a binary or non-UTF-8 file.
+    let text: String?
+  }
+
+  /// Snapshot text by file version, shared by every turn's snapshot.
+  nonisolated static let aiChatSnapshotTextCache = FileVersionCache<CachedSnapshotText>(
+    maximumEntries: 200_000, maximumCost: 512_000_000
+  )
+
   struct AIChatCorpusSnapshotListing: Sendable {
     struct Entry: Sendable {
       let url: URL
@@ -2356,6 +2401,21 @@ extension WorkspaceStore {
     var files: [String: AIChatSnapshotFile] = [:]
     var unknownPaths: Set<String> = []
     for entry in listing.entries {
+      // Every turn snapshots the corpus to report what the agent changed.
+      // Re-reading every file each turn kept cores busy on large corpora, so
+      // text is reused while a file's version (inode, size, and change times)
+      // is unchanged.
+      let version = AIChatTranscriptStore.regularFileVersion(at: entry.url)
+      if let version {
+        if version.modifiedDate >= modifiedBefore {
+          unknownPaths.insert(entry.relativePath)
+          continue
+        }
+        if let cached = aiChatSnapshotTextCache.value(path: entry.url.path, version: version) {
+          if let text = cached.text { files[entry.relativePath] = AIChatSnapshotFile(text: text) }
+          continue
+        }
+      }
       guard let data = try? Data(contentsOf: entry.url) else {
         // Removed or replaced during the turn.
         unknownPaths.insert(entry.relativePath)
@@ -2366,7 +2426,12 @@ extension WorkspaceStore {
         unknownPaths.insert(entry.relativePath)
         continue
       }
-      guard !data.contains(0), let text = String(data: data, encoding: .utf8) else { continue }
+      let text = data.contains(0) ? nil : String(data: data, encoding: .utf8)
+      if let version, AIChatTranscriptStore.regularFileVersion(at: entry.url) == version {
+        aiChatSnapshotTextCache.store(CachedSnapshotText(text: text), path: entry.url.path, version: version,
+                                      cost: data.count)
+      }
+      guard let text else { continue }
       files[entry.relativePath] = AIChatSnapshotFile(text: text)
     }
     return AIChatCorpusSnapshot(rootPath: rootPath, files: files, unknownPaths: unknownPaths)
