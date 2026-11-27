@@ -2080,6 +2080,29 @@ extension WorkspaceStore {
   /// background, so a slow harness listing (for example `opencode models`)
   /// never holds up the model menu. Only a destination without a cached
   /// catalog waits for the live listing.
+  /// Loads, in the background and one destination at a time, the model list
+  /// of every enabled destination that has none cached, so a phone's model
+  /// picker for a new chat is filled before it is opened. Concurrent calls
+  /// share one pass; failures are left for the chat's own request to report.
+  func prefetchMissingAIChatModelCatalogs() {
+    guard aiChatModelCatalogPrefetchTask == nil else { return }
+    let missing = enabledAIChatDestinations
+      .filter { aiChatConfigurationCatalogCache[$0.id]?.models.isEmpty != false }
+      // Agent CLIs only: API providers and OpenClaw read credentials from
+      // the Keychain, which must not prompt on a desktop just because the
+      // phone server started. Their catalogs load on first use as before.
+      .filter { !$0.adapter.isDirectProvider && $0.adapter != .openClaw && $0.adapter != .openAIDot }
+      .map(\.id)
+    guard !missing.isEmpty else { return }
+    aiChatModelCatalogPrefetchTask = Task { @MainActor [weak self] in
+      for destinationID in missing {
+        guard let self, !Task.isCancelled else { break }
+        _ = try? await self.remoteModelsForAIChatDestination(destinationID)
+      }
+      self?.aiChatModelCatalogPrefetchTask = nil
+    }
+  }
+
   func remoteModelsForAIChatDestination(_ destinationID: String) async throws -> [AIChatModelOption] {
     if let cached = aiChatConfigurationCatalogCache[destinationID]?.models, !cached.isEmpty {
       refreshRemoteAIChatModelCatalogInBackground(destinationID)

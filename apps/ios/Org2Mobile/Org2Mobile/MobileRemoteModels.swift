@@ -373,6 +373,18 @@ struct MobileRemoteUpdateThreadConfigurationRequest: Codable {
   }
 }
 
+/// Every destination's cached models and reasoning levels on the host.
+struct MobileRemoteDestinationConfigurations: Codable, Hashable {
+  let destinations: [MobileRemoteDestinationConfiguration]
+}
+
+struct MobileRemoteDestinationConfiguration: Codable, Hashable {
+  let destinationID: String
+  let models: [MobileRemoteModelOption]
+  let reasoningOptions: [MobileRemoteReasoningOption]
+  let defaultReasoningEffort: String?
+}
+
 struct MobileRemoteReasoningOption: Codable, Hashable, Identifiable {
   let id: String
   let label: String

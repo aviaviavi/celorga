@@ -87,6 +87,7 @@ struct MobileRemoteClient: Sendable {
 
     var headers = [
       "Accept: application/json",
+      "Accept-Encoding: deflate",
       "Connection: close",
       "Host: \(host):\(portValue)"
     ]
@@ -115,7 +116,7 @@ struct MobileRemoteClient: Sendable {
       port: port,
       request: requestData,
       timeout: timeout
-    ).run()
+    ).run().decoded()
 
     try Task.checkCancellation()
     if response.statusCode == 304, let cached {
@@ -178,10 +179,52 @@ struct MobileRemoteClient: Sendable {
   }
 }
 
-private struct MobileRemoteRawResponse: Sendable {
+struct MobileRemoteRawResponse: Sendable {
   let statusCode: Int
   let entityTag: String?
+  var contentEncoding: String? = nil
   let body: Data
+
+  /// The identity body. Hosts that support it deflate large JSON responses;
+  /// older hosts ignore Accept-Encoding and send identity bodies.
+  func decoded() throws -> MobileRemoteRawResponse {
+    guard let coding = contentEncoding?.lowercased(), coding != "identity" else { return self }
+    guard coding == "deflate", let inflated = Self.zlibInflate(body) else {
+      throw MobileRemoteClientError.malformedResponse
+    }
+    return MobileRemoteRawResponse(statusCode: statusCode, entityTag: entityTag, body: inflated)
+  }
+
+  /// RFC 1950 zlib data, as the "deflate" HTTP content coding defines it.
+  static func zlibInflate(_ data: Data) -> Data? {
+    guard data.count >= 6 else { return nil }
+    let cmf = data[data.startIndex], flg = data[data.startIndex + 1]
+    guard cmf & 0x0F == 8, (UInt16(cmf) << 8 | UInt16(flg)) % 31 == 0, flg & 0x20 == 0 else { return nil }
+    let raw = data.subdata(in: (data.startIndex + 2)..<(data.endIndex - 4))
+    guard let inflated = try? (raw as NSData).decompressed(using: .zlib) as Data else { return nil }
+    let trailer = data.suffix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+    return adler32(inflated) == trailer ? inflated : nil
+  }
+
+  static func adler32(_ data: Data) -> UInt32 {
+    var a: UInt32 = 1
+    var b: UInt32 = 0
+    data.withUnsafeBytes { buffer in
+      let bytes = buffer.bindMemory(to: UInt8.self)
+      var index = 0
+      while index < bytes.count {
+        let end = min(index + 5_552, bytes.count)
+        while index < end {
+          a &+= UInt32(bytes[index])
+          b &+= a
+          index += 1
+        }
+        a %= 65_521
+        b %= 65_521
+      }
+    }
+    return (b << 16) | a
+  }
 }
 
 /// Recent GET bodies with their entity tags. Polls send If-None-Match, and a
@@ -360,6 +403,7 @@ private final class MobileRemoteHTTPExchange: @unchecked Sendable {
     guard statusParts.count >= 2, let statusCode = Int(statusParts[1]) else { return nil }
     var contentLength: Int?
     var entityTag: String?
+    var contentEncoding: String?
     for line in lines.dropFirst() {
       guard let separator = line.firstIndex(of: ":") else { continue }
       let key = String(line[..<separator]).trimmingCharacters(in: .whitespaces).lowercased()
@@ -368,6 +412,8 @@ private final class MobileRemoteHTTPExchange: @unchecked Sendable {
         contentLength = Int(value)
       } else if key == "etag", !value.isEmpty {
         entityTag = value
+      } else if key == "content-encoding", !value.isEmpty {
+        contentEncoding = value
       }
     }
     guard let contentLength, contentLength >= 0 else { return nil }
@@ -376,6 +422,7 @@ private final class MobileRemoteHTTPExchange: @unchecked Sendable {
     return MobileRemoteRawResponse(
       statusCode: statusCode,
       entityTag: entityTag,
+      contentEncoding: contentEncoding,
       body: data.subdata(in: bodyStart..<(bodyStart + contentLength))
     )
   }

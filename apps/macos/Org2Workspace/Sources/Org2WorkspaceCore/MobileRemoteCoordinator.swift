@@ -276,6 +276,8 @@ public final class MobileRemoteCoordinator: ObservableObject {
     do {
       try server.start(host: selectedBindHost, port: port)
       self.server = server
+      // A phone's first new chat should not wait on an agent listing models.
+      store?.prefetchMissingAIChatModelCatalogs()
     } catch {
       self.server = nil
       statusText = error.localizedDescription
@@ -429,6 +431,29 @@ public final class MobileRemoteCoordinator: ObservableObject {
         },
         pushNotificationsSupported: true,
         pushNotificationsConfigured: pushProviderConfigured
+      ))
+    }
+
+    if request.method == "GET", path == "/v1/destinations/configurations" {
+      // Answer from cached catalogs without waiting on any agent; fill the
+      // gaps in the background for the next request.
+      store.prefetchMissingAIChatModelCatalogs()
+      return .json(MobileRemoteDestinationConfigurations(
+        destinations: store.enabledAIChatDestinations.compactMap { destination in
+          guard let cached = store.aiChatConfigurationCatalogCache[destination.id],
+                !cached.models.isEmpty
+          else { return nil }
+          return MobileRemoteDestinationConfiguration(
+            destinationID: destination.id,
+            models: cached.models.map {
+              MobileRemoteModelOption(id: $0.id, label: $0.label, detail: $0.detail, isDefault: $0.isDefault)
+            },
+            reasoningOptions: cached.reasoningOptions.map {
+              MobileRemoteReasoningOption(id: $0.id, label: $0.label, detail: $0.detail)
+            },
+            defaultReasoningEffort: cached.defaultReasoningEffort
+          )
+        }
       ))
     }
 

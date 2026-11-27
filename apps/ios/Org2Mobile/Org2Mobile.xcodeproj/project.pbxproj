@@ -8,8 +8,10 @@
 
 		EA0000000000000000000001 = {isa = PBXBuildFile; fileRef = EA0000000000000000000002; };
 		EA0000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Org2MobileTests/AudioApprovalEndToEndTests.swift; sourceTree = SOURCE_ROOT; };
+		EA00000000000000000000F1 = {isa = PBXBuildFile; fileRef = EA00000000000000000000F2; };
+		EA00000000000000000000F2 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Org2MobileTests/MobileRemoteClientCompressionTests.swift; sourceTree = SOURCE_ROOT; };
 		EA0000000000000000000003 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = Org2MobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		EA0000000000000000000004 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (EA0000000000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
+		EA0000000000000000000004 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (EA0000000000000000000001,EA00000000000000000000F1,); runOnlyForDeploymentPostprocessing = 0; };
 		EA0000000000000000000005 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		EA0000000000000000000006 = {isa = PBXNativeTarget; buildConfigurationList = EA0000000000000000000007; buildPhases = (EA0000000000000000000004, EA0000000000000000000005,); buildRules = (); dependencies = (EA000000000000000000000A,); name = Org2MobileTests; productName = Org2MobileTests; productReference = EA0000000000000000000003; productType = "com.apple.product-type.bundle.unit-test"; };
 		EA0000000000000000000007 = {isa = XCConfigurationList; buildConfigurations = (EA0000000000000000000008,EA0000000000000000000009,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
@@ -131,6 +133,7 @@
 			children = (
 				EA0000000000000000000002 /* AudioApprovalEndToEndTests.swift */,
 				EA0000000000000000000002 /* AudioApprovalEndToEndTests.swift */,
+				EA00000000000000000000F2 /* MobileRemoteClientCompressionTests.swift */,
 				0A1005012C20000000000001 /* Org2Mobile */,
 				0A1005022C20000000000001 /* Org2ShareExtension */,
 				0A1004022C20000000000001 /* Products */,

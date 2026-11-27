@@ -79,7 +79,12 @@ final class MobileRemoteStore: ObservableObject {
   private var pendingThreadCreations: [UUID: Task<Bool, Never>] = [:]
   /// The last model catalog seen for each destination. A newly opened chat
   /// shows it at once while the host confirms the chat's own configuration.
+  /// Saved per host, so the picker is filled immediately after a relaunch.
   private var configurationByDestinationID: [String: MobileRemoteThreadConfiguration] = [:]
+  private var destinationConfigurationsFetchedAt: Date?
+  private var isFetchingDestinationConfigurations = false
+  private static let destinationConfigurationsKeyPrefix = "Org2Mobile.remote.destinationConfigurations.v1."
+  private static let destinationConfigurationsRefreshInterval: TimeInterval = 60
   private var threadDetailCacheOrder: [UUID] = []
   private static let threadDetailCacheLimit = 6
   private var externalThreadLoadRequestID: UUID?
@@ -118,6 +123,7 @@ final class MobileRemoteStore: ObservableObject {
       }
     }
     isPaired = !activeEndpoint.isEmpty && accessToken != nil
+    loadDestinationConfigurations()
     notificationObservers = [
       NotificationCenter.default.addObserver(
         forName: .org2RemotePushTokenUpdated,
@@ -201,6 +207,7 @@ final class MobileRemoteStore: ObservableObject {
       activeHostID = host.id
       activeEndpoint = endpoint
       endpointDraft = endpoint
+      loadDestinationConfigurations()
       persistHosts()
       accessToken = response.accessToken
       serverName = response.serverName
@@ -229,6 +236,7 @@ final class MobileRemoteStore: ObservableObject {
     activeHostID = host.id
     activeEndpoint = host.endpoint
     endpointDraft = host.endpoint
+    loadDestinationConfigurations()
     serverName = host.name
     accessToken = token
     isPaired = true
@@ -300,6 +308,8 @@ final class MobileRemoteStore: ObservableObject {
     }
     activeHostID = nil
     activeEndpoint = ""
+    configurationByDestinationID = [:]
+    destinationConfigurationsFetchedAt = nil
     persistHosts()
     accessToken = nil
     isPaired = false
@@ -372,6 +382,7 @@ final class MobileRemoteStore: ObservableObject {
       }
       threads = pendingThreads + nextThreads.threads
       projects = nextThreads.projects ?? []
+      prefetchDestinationConfigurations()
       pruneThreadDetailCache(
         keeping: Set(nextThreads.threads.map(\.id)).union(pendingThreadCreations.keys)
       )
@@ -1562,6 +1573,66 @@ final class MobileRemoteStore: ObservableObject {
             .destinationID
     else { return }
     configurationByDestinationID[destinationID] = configuration
+    persistDestinationConfigurations()
+  }
+
+  private var destinationConfigurationsKey: String? {
+    activeEndpoint.isEmpty ? nil : Self.destinationConfigurationsKeyPrefix + activeEndpoint
+  }
+
+  private func loadDestinationConfigurations() {
+    destinationConfigurationsFetchedAt = nil
+    configurationByDestinationID = destinationConfigurationsKey
+      .flatMap { defaults.data(forKey: $0) }
+      .flatMap { try? JSONDecoder().decode([String: MobileRemoteThreadConfiguration].self, from: $0) }
+      ?? [:]
+  }
+
+  private func persistDestinationConfigurations() {
+    guard let key = destinationConfigurationsKey,
+          let data = try? JSONEncoder().encode(configurationByDestinationID)
+    else { return }
+    defaults.set(data, forKey: key)
+  }
+
+  /// Keeps every destination's models ready before a chat is opened, at
+  /// most once a minute and never blocking the caller. Hosts without the
+  /// request answer 404 and keep using per-chat configuration.
+  private func prefetchDestinationConfigurations() {
+    guard isPaired, !isFetchingDestinationConfigurations else { return }
+    if let fetchedAt = destinationConfigurationsFetchedAt,
+       Date().timeIntervalSince(fetchedAt) < Self.destinationConfigurationsRefreshInterval {
+      return
+    }
+    isFetchingDestinationConfigurations = true
+    let generation = connectionGeneration
+    Task { [weak self] in
+      guard let self else { return }
+      defer { self.isFetchingDestinationConfigurations = false }
+      guard let client = try? self.pairedClient(),
+            let response = try? await client.get(
+              "/v1/destinations/configurations",
+              as: MobileRemoteDestinationConfigurations.self
+            ),
+            self.isCurrentConnection(generation)
+      else { return }
+      self.destinationConfigurationsFetchedAt = Date()
+      for destination in response.destinations where !destination.models.isEmpty {
+        self.configurationByDestinationID[destination.destinationID] = MobileRemoteThreadConfiguration(
+          threadID: UUID(),
+          model: nil,
+          models: destination.models,
+          reasoningEffort: nil,
+          reasoningOptions: destination.reasoningOptions,
+          defaultReasoningEffort: destination.defaultReasoningEffort
+        )
+      }
+      self.persistDestinationConfigurations()
+      if let threadID = self.pollingThreadID,
+         self.threadConfiguration == nil || self.threadConfiguration?.threadID != threadID {
+        self.threadConfiguration = self.cachedConfiguration(for: threadID)
+      }
+    }
   }
 
   @discardableResult

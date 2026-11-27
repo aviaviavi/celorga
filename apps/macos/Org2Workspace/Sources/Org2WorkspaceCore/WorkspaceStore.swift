@@ -3835,6 +3835,7 @@ public final class WorkspaceStore {
   var aiChatCommandDiscoveryGeneration = 0
   var aiChatConfigurationGeneration = 0
   @ObservationIgnored var aiChatConfigurationCatalogCache: [String: AIChatConfigurationCatalogCacheEntry] = [:]
+  @ObservationIgnored var aiChatModelCatalogPrefetchTask: Task<Void, Never>?
   /// Destinations whose cached model catalog is being refreshed for a phone.
   @ObservationIgnored var aiChatRemoteModelCatalogRefreshes: Set<String> = []
   var aiChatConfigurationFallbackNoticesByThreadID: [UUID: String] = [:]

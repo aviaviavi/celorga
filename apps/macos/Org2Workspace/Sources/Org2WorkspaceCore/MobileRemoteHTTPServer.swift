@@ -150,7 +150,10 @@ final class MobileRemoteHTTPConnection: @unchecked Sendable {
       if let request = Self.parseRequestIfComplete(self.received) {
         Task {
           let response = await self.handler(request)
-          self.send(response)
+          self.send(MobileRemoteHTTPCompression.negotiated(
+            response,
+            acceptEncoding: request.headers["accept-encoding"]
+          ))
         }
         return
       }
@@ -242,5 +245,75 @@ final class MobileRemoteHTTPConnection: @unchecked Sendable {
     case 503: "Service Unavailable"
     default: "Internal Server Error"
     }
+  }
+}
+
+
+/// Compresses JSON responses for clients that ask with `Accept-Encoding`.
+/// A full thread list is over a megabyte of JSON; deflated it travels in a
+/// fraction of the time over a phone's Tailscale connection. Clients that
+/// do not ask (older Celorga apps) keep receiving identity bodies. Entity
+/// tags describe the uncompressed body, so revalidation is unchanged.
+enum MobileRemoteHTTPCompression {
+  static let minimumBytes = 1_024
+
+  static func negotiated(
+    _ response: MobileRemoteHTTPResponse,
+    acceptEncoding: String?
+  ) -> MobileRemoteHTTPResponse {
+    guard response.body.count >= minimumBytes,
+          response.headers["Content-Encoding"] == nil,
+          response.headers["Content-Type"]?.lowercased().hasPrefix("application/json") == true,
+          accepts("deflate", in: acceptEncoding),
+          let compressed = zlibDeflate(response.body),
+          compressed.count < response.body.count
+    else { return response }
+    var headers = response.headers
+    headers["Content-Encoding"] = "deflate"
+    headers["Vary"] = "Accept-Encoding"
+    return MobileRemoteHTTPResponse(statusCode: response.statusCode, headers: headers, body: compressed)
+  }
+
+  static func accepts(_ coding: String, in header: String?) -> Bool {
+    guard let header else { return false }
+    return header.split(separator: ",").contains { item in
+      let parts = item.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+      guard parts.first == coding else { return false }
+      // "deflate;q=0" refuses the coding.
+      return !parts.dropFirst().contains { $0.replacingOccurrences(of: " ", with: "") == "q=0" }
+    }
+  }
+
+  /// RFC 1950 zlib data: the "deflate" HTTP content coding.
+  static func zlibDeflate(_ data: Data) -> Data? {
+    guard let raw = try? (data as NSData).compressed(using: .zlib) as Data else { return nil }
+    var output = Data([0x78, 0x9C])
+    output.append(raw)
+    let checksum = adler32(data)
+    output.append(contentsOf: [
+      UInt8(truncatingIfNeeded: checksum >> 24), UInt8(truncatingIfNeeded: checksum >> 16),
+      UInt8(truncatingIfNeeded: checksum >> 8), UInt8(truncatingIfNeeded: checksum),
+    ])
+    return output
+  }
+
+  static func adler32(_ data: Data) -> UInt32 {
+    var a: UInt32 = 1
+    var b: UInt32 = 0
+    data.withUnsafeBytes { buffer in
+      var index = 0
+      let bytes = buffer.bindMemory(to: UInt8.self)
+      while index < bytes.count {
+        let end = min(index + 5_552, bytes.count)
+        while index < end {
+          a &+= UInt32(bytes[index])
+          b &+= a
+          index += 1
+        }
+        a %= 65_521
+        b %= 65_521
+      }
+    }
+    return (b << 16) | a
   }
 }

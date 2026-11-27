@@ -368,6 +368,36 @@ public struct MobileRemoteThreadConfiguration: Codable, Hashable, Sendable {
   }
 }
 
+/// The models and reasoning levels each destination offers, from the host's
+/// cached catalogs. A phone shows them for a new chat at once instead of
+/// waiting for the chat's own configuration request.
+public struct MobileRemoteDestinationConfigurations: Codable, Hashable, Sendable {
+  public let destinations: [MobileRemoteDestinationConfiguration]
+
+  public init(destinations: [MobileRemoteDestinationConfiguration]) {
+    self.destinations = destinations
+  }
+}
+
+public struct MobileRemoteDestinationConfiguration: Codable, Hashable, Sendable {
+  public let destinationID: String
+  public let models: [MobileRemoteModelOption]
+  public let reasoningOptions: [MobileRemoteReasoningOption]
+  public let defaultReasoningEffort: String?
+
+  public init(
+    destinationID: String,
+    models: [MobileRemoteModelOption],
+    reasoningOptions: [MobileRemoteReasoningOption],
+    defaultReasoningEffort: String?
+  ) {
+    self.destinationID = destinationID
+    self.models = models
+    self.reasoningOptions = reasoningOptions
+    self.defaultReasoningEffort = defaultReasoningEffort
+  }
+}
+
 /// One agent's model and reasoning in a shared room. `error` explains why
 /// its models are missing, for example a destination that did not answer.
 public struct MobileRemoteRoomDestinationConfiguration: Codable, Hashable, Identifiable, Sendable {
