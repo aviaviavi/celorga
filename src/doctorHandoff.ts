@@ -21,7 +21,7 @@ export const MACHINE_EVIDENCE_LIMITS = {
   incidentScanEntries: 2000,
 } as const;
 
-export const HANDOFF_RUNTIMES = ["codex", "claude", "opencode", "pi", "openclaw"] as const;
+export const HANDOFF_RUNTIMES = ["codex", "claude", "opencode", "pi", "antigravity", "openclaw"] as const;
 export type HandoffRuntime = typeof HANDOFF_RUNTIMES[number];
 
 interface RuntimeSpec {
@@ -43,6 +43,8 @@ const RUNTIME_SPECS: Record<HandoffRuntime, RuntimeSpec> = {
     permissionPosture: "edit, bash, and external-directory permissions set to ask" },
   pi: { name: "Pi", executableName: "pi", executableEnv: "ORG2_PI_EXECUTABLE", launchSupported: true,
     permissionPosture: "read-only tool allowlist (read,grep,find,ls)" },
+  antigravity: { name: "Antigravity", executableName: "agy", executableEnv: "ORG2_ANTIGRAVITY_EXECUTABLE", launchSupported: true,
+    permissionPosture: "default mode with write, command, and MCP deny rules (--settings)" },
   openclaw: { name: "OpenClaw", executableName: "openclaw", executableEnv: "ORG2_OPENCLAW_EXECUTABLE", launchSupported: false,
     permissionPosture: "prepare-only: deliver the packet to the selected OpenClaw agent" },
 };
@@ -257,6 +259,12 @@ export interface DoctorHandoff {
   handoffFile?: string;
 }
 
+const ANTIGRAVITY_READ_ONLY_SETTINGS = JSON.stringify({
+  agentMode: "",
+  toolPermission: "request-review",
+  permissions: { deny: ["write_file(*)", "command(*)", "mcp(*)"] },
+});
+
 const OPENCODE_ASK_CONFIGURATION = JSON.stringify({
   $schema: "https://opencode.ai/config.json",
   permission: { edit: "ask", bash: "ask", external_directory: "ask" },
@@ -268,6 +276,7 @@ function launchArguments(runtime: HandoffRuntime, root: string, prompt: string):
     case "claude": return { args: ["--permission-mode", "plan", "--add-dir", root, prompt], env: {} };
     case "opencode": return { args: [root, "--prompt", prompt], env: { OPENCODE_CONFIG_CONTENT: OPENCODE_ASK_CONFIGURATION } };
     case "pi": return { args: ["--tools", "read,grep,find,ls", prompt], env: {} };
+    case "antigravity": return { args: ["--add-dir", root, "--settings", ANTIGRAVITY_READ_ONLY_SETTINGS, "-i", prompt], env: {} };
     case "openclaw": return null;
   }
 }

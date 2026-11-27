@@ -14,6 +14,7 @@ private func mobileAIRuntimeTitle(_ runtime: String) -> String {
   case "claude": "Claude Code"
   case "pi": "Pi"
   case "openCode": "OpenCode"
+  case "antigravity": "Antigravity"
   case "openClaw": "OpenClaw"
   default: "Assistant"
   }

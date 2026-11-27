@@ -291,9 +291,9 @@ struct AIChatSettingsView: View {
   private var addableDestinationAdapters: [AIChatDestinationAdapter] {
     AIChatDestinationAdapter.allCases.filter { adapter in
       switch adapter {
-      case .codexLocal, .claudeLocal, .piLocal, .openCodeLocal:
+      case .codexLocal, .claudeLocal, .piLocal, .openCodeLocal, .antigravityLocal:
         return !store.aiChatDestinations.contains(where: { $0.adapter == adapter })
-      case .piRemote, .openCodeRemote, .codexManagedRemote,
+      case .piRemote, .openCodeRemote, .antigravityRemote, .codexManagedRemote,
            .openClaw, .openAI, .anthropic, .openRouter, .ollama, .openAIDot:
         return true
       case .codexRemote:
@@ -402,7 +402,8 @@ private struct AIChatDestinationEditor: View {
             text: $destination.workspaceRoot,
             prompt: Text("~/notes")
           )
-        } else if destination.adapter == .piRemote || destination.adapter == .openCodeRemote {
+        } else if destination.adapter == .piRemote || destination.adapter == .openCodeRemote
+                    || destination.adapter == .antigravityRemote {
           TextField(
             "SSH host",
             text: $destination.endpoint,
@@ -421,7 +422,8 @@ private struct AIChatDestinationEditor: View {
             ),
             prompt: Text("provider/model")
           )
-        } else if destination.adapter == .piLocal || destination.adapter == .openCodeLocal {
+        } else if destination.adapter == .piLocal || destination.adapter == .openCodeLocal
+                    || destination.adapter == .antigravityLocal {
           TextField(
             "Model (optional)",
             text: Binding(
@@ -638,7 +640,8 @@ private struct AIChatDestinationEditor: View {
     if (destination.adapter == .codexRemote
         || destination.adapter == .codexManagedRemote
         || destination.adapter == .piRemote
-        || destination.adapter == .openCodeRemote),
+        || destination.adapter == .openCodeRemote
+        || destination.adapter == .antigravityRemote),
        destination.workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
       return true
     }
@@ -713,6 +716,10 @@ private struct AIChatDestinationEditor: View {
       return "Starts the locally installed OpenCode CLI with a Celorga-specific agent configuration."
     case .openCodeRemote:
       return "Runs OpenCode over SSH in the configured corpus workspace. OpenCode must already be installed and connected to a model provider on that host."
+    case .antigravityLocal:
+      return "Starts Google Antigravity's CLI (agy) in headless mode, using its existing Google sign-in. Run `agy` once in Terminal to sign in. Conversations resume through Antigravity's conversation history."
+    case .antigravityRemote:
+      return "Runs Google Antigravity's CLI (agy) over SSH in the configured corpus workspace. agy must already be installed and signed in on that host."
     case .codexRemote:
       return "Connects to a Codex App Server over WebSocket. Use TLS and a bearer token outside localhost. Enter the absolute path of the writable Celorga corpus checkout on that machine; Codex edits it directly."
     case .codexManagedRemote:

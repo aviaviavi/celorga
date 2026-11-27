@@ -76,7 +76,7 @@ Open *Agenda* to see actionable items collected across the entire corpus. Mark a
 
 Celorga is the shared workspace that holds and coordinates work; it is not one autonomous agent that is always awake inside your notes. Your *corpus* (the ordinary folder of =.org= and related files) is the durable memory and source of truth. Celorga turns those files into useful views, gives configured agents bounded access to them, and keeps delegated work and decisions inspectable across every agent you use.
 
-The agent harness you connect is a *runtime*: the engine that actually reasons and acts. Codex, Claude Code, Pi, OpenCode, and OpenClaw are the runtimes Celorga supports out of the box today, but they are examples rather than the architecture. Other local, remote, hosted, or self-hosted harnesses can use the same files and Celorga interfaces as adapters are added.
+The agent harness you connect is a *runtime*: the engine that actually reasons and acts. Codex, Claude Code, Pi, OpenCode, Antigravity, and OpenClaw are the runtimes Celorga supports out of the box today, but they are examples rather than the architecture. Other local, remote, hosted, or self-hosted harnesses can use the same files and Celorga interfaces as adapters are added.
 
 A runtime sees the current conversation, the context you selected or authorized, the active corpus's instructions and capabilities, and the tools Celorga exposes for that turn or run. It does not silently absorb the whole workspace or keep watching it after the turn ends.
 
@@ -112,7 +112,7 @@ Org-style entries and =TODO= headings can carry =SCHEDULED:= dates and =DEADLINE
 
 What an AI does with that data depends on the instructions and triggers you configure. You might tell an interactive agent to review today's Agenda, let a runtime-owned scheduled task generate a morning brief, or have Celorga send a prompt when a meeting finishes ingesting. In each case the same entries remain the shared data underneath the view and the agent's work.
 
-Celorga's *Automations* view binds a plain-text prompt and schedule to any configured AI destination, including Codex, Claude Code, Pi, OpenCode, OpenClaw, or a direct provider. The selected desktop or [[file:headless-server.org][headless host]] owns the portable clock while it is running and catches up the latest missed occurrence after sleep or relaunch. Harness-native clocks remain optional adapters; keeping the instructions and run history in the corpus makes that implementation detail replaceable.
+Celorga's *Automations* view binds a plain-text prompt and schedule to any configured AI destination, including Codex, Claude Code, Pi, OpenCode, Antigravity, OpenClaw, or a direct provider. The selected desktop or [[file:headless-server.org][headless host]] owns the portable clock while it is running and catches up the latest missed occurrence after sleep or relaunch. Harness-native clocks remain optional adapters; keeping the instructions and run history in the corpus makes that implementation detail replaceable.
 
 For example, if you want a reminder at 8:30, put a scheduled =TODO= on your Agenda. If you want an agent to prepare the brief, create an automation with that prompt, time, and AI destination. If the recipe needs inputs, checks, artifacts, or approvals, extend the same file into a fuller workflow.
 
@@ -121,7 +121,7 @@ For example, if you want a reminder at 8:30, put a scheduled =TODO= on your Agen
 You do not need to design a metaharness on day one. Use this order:
 
 1. *Choose the corpus.* Confirm which folder should hold the work and give it a portable identity in *Settings → General*. Writes always belong to one active corpus, even when Search or Agenda can read several.
-2. *Connect a runtime.* Start with any supported harness that can access the corpus and the Celorga CLI or MCP tools. Codex, Claude Code, Pi, OpenCode, and OpenClaw are the current out-of-the-box choices, not a limit on the model.
+2. *Connect a runtime.* Start with any supported harness that can access the corpus and the Celorga CLI or MCP tools. Codex, Claude Code, Pi, OpenCode, Antigravity, and OpenClaw are the current out-of-the-box choices, not a limit on the model.
 3. *Work the process once.* Keep the source notes and tasks where they naturally belong, select the relevant context, and ask the runtime to help with one concrete outcome.
 4. *Track consequential delegation.* Use a durable run when the work needs status, artifacts, validation, approvals, or a reviewer-facing outcome. Casual questions do not need one.
 5. *Package proven repetition.* Put runtime operating instructions in a skill, or generalize the process into a Celorga workflow with inputs, steps, expected outputs, checks, and approval boundaries. Keep generated material in =views/= or =compiled/= until reviewed.

@@ -85,7 +85,7 @@ function chatRepairInterval(value: unknown): number {
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const help = `Celorga headless server (macOS 14 or later)
 
-  celorga server init --dir CORPUS --host-ref HOST --bind TAILSCALE_IP [--name NAME] [--destination codex|claude|pi|opencode|openclaw] [--filesystem-access read-only|workspace-write|full-access] [--chat-repair-interval off|SECONDS] [--mcp-port PORT] [--apply]
+  celorga server init --dir CORPUS --host-ref HOST --bind TAILSCALE_IP [--name NAME] [--destination codex|claude|pi|opencode|antigravity|openclaw] [--filesystem-access read-only|workspace-write|full-access] [--chat-repair-interval off|SECONDS] [--mcp-port PORT] [--apply]
   celorga server chat-repair --interval off|SECONDS [--config FILE] [--apply]
   celorga server permissions --filesystem-access read-only|workspace-write|full-access [--config FILE] [--apply]
   celorga server token create --name NAME [--config FILE] [--apply]
@@ -232,7 +232,7 @@ export function validateServerConfiguration(value: unknown, configFile: string):
   for (const destination of config.destinations) {
     if (!destination.id || ids.has(destination.id)) throw new Error("AI destination IDs must be unique");
     ids.add(destination.id);
-    if (!["codexLocal", "claudeLocal", "piLocal", "piRemote", "openCodeLocal", "openCodeRemote", "openClaw", "codexRemote", "codexManagedRemote", "openAI", "anthropic", "openRouter", "ollama", "openAIDot"].includes(destination.adapter)) {
+    if (!["codexLocal", "claudeLocal", "piLocal", "piRemote", "openCodeLocal", "openCodeRemote", "antigravityLocal", "antigravityRemote", "openClaw", "codexRemote", "codexManagedRemote", "openAI", "anthropic", "openRouter", "ollama", "openAIDot"].includes(destination.adapter)) {
       throw new Error(`Unsupported AI destination adapter: ${destination.adapter}`);
     }
     for (const key of ["name", "mention", "endpoint", "agentID", "workspaceRoot"] as const) {
@@ -469,10 +469,11 @@ export async function runServerCommand(args: string[]): Promise<void> {
       claude: { name: "Claude Code", adapter: "claudeLocal" },
       pi: { name: "Pi", adapter: "piLocal" },
       opencode: { name: "OpenCode", adapter: "openCodeLocal" },
+      antigravity: { name: "Antigravity", adapter: "antigravityLocal" },
       openclaw: { name: "OpenClaw", adapter: "openClaw" },
     };
     const builtInDestination = builtInDestinations[destination];
-    if (!builtInDestination) throw new Error("Choose codex, claude, pi, opencode, or openclaw");
+    if (!builtInDestination) throw new Error("Choose codex, claude, pi, opencode, antigravity, or openclaw");
     const relayPort = Number(values.port || 48922);
     const config = validateServerConfiguration({
       schema: "org2:server-config:v1", hostRef: values["host-ref"], name: values.name || `Celorga on ${values["host-ref"]}`,

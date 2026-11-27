@@ -468,6 +468,10 @@ extension WorkspaceStore {
     OpenCodeClient.resolveExecutableURL() != nil
   }
 
+  public var isLocalAntigravityInstalled: Bool {
+    AntigravityClient.resolveExecutableURL() != nil
+  }
+
   /// Built-in destinations the first-run guide offers, in display order.
   /// Every local harness Celorga supports appears here, so a fresh install is
   /// not limited to a subset; remote and API destinations live in Settings.
@@ -476,6 +480,7 @@ extension WorkspaceStore {
     AIChatDestinationConfiguration.localClaudeID,
     AIChatDestinationConfiguration.localOpenCodeID,
     AIChatDestinationConfiguration.localPiID,
+    AIChatDestinationConfiguration.localAntigravityID,
     AIChatDestinationConfiguration.openClawID,
   ]
 
@@ -486,6 +491,7 @@ extension WorkspaceStore {
     case AIChatDestinationConfiguration.localClaudeID: isLocalClaudeCodeInstalled
     case AIChatDestinationConfiguration.localPiID: isLocalPiInstalled
     case AIChatDestinationConfiguration.localOpenCodeID: isLocalOpenCodeInstalled
+    case AIChatDestinationConfiguration.localAntigravityID: isLocalAntigravityInstalled
     case AIChatDestinationConfiguration.openClawID: true
     default: false
     }

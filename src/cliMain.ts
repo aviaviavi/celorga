@@ -9417,7 +9417,7 @@ Usage:
 Core commands:
   celorga doctor [--dir CORPUS] [--json]
   celorga doctor --machine [--dir CORPUS] [--json]
-  celorga doctor --handoff codex|claude|opencode|pi|openclaw [--agent-ref ID] [--apply] [--launch] [--dir CORPUS] [--json]
+  celorga doctor --handoff codex|claude|opencode|pi|antigravity|openclaw [--agent-ref ID] [--apply] [--launch] [--dir CORPUS] [--json]
     Bounded troubleshooting handoff to the selected agent; works without the app. --apply writes views/diagnostics/handoffs/; --launch starts the runtime once in this terminal. Never schedules.
   celorga ledger <list|show|create|update|event> LEDGER [ACCOUNT] [options]
   celorga corpus <show|validate|init> [--dir CORPUS] [--id ID --name NAME --kind KIND] [--apply]
@@ -9514,7 +9514,7 @@ Roam / IDs:
 Maintenance / health:
   celorga doctor [--dir CORPUS] [--json]
   celorga doctor --machine [--dir CORPUS] [--json]
-  celorga doctor --handoff codex|claude|opencode|pi|openclaw [--agent-ref ID] [--apply] [--launch] [--dir CORPUS] [--json]
+  celorga doctor --handoff codex|claude|opencode|pi|antigravity|openclaw [--agent-ref ID] [--apply] [--launch] [--dir CORPUS] [--json]
     Bounded troubleshooting handoff to the selected agent; works without the app. --apply writes views/diagnostics/handoffs/; --launch starts the runtime once in this terminal. Never schedules.
   celorga index [--dir DIR] [--recursive] [--include-archives] [--file FILE|--files FILE ...] [--incremental] [--format text|json]
   celorga approvals [--dir DIR] [--recursive] [--include-archives] [--include-snoozed] [--file FILE|--files FILE ...] [--index auto|never|rebuild] [--run-detail ID] [--format text|json]

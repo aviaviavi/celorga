@@ -8,7 +8,7 @@ export const ORG2_GOAL_SCHEMA = "org2:goal:v1" as const;
 export const ORG2_AGENT_PROFILE_SCHEMA = "org2:agent-profile:v1" as const;
 export const GOAL_STATUSES = ["planned", "active", "achieved", "canceled"] as const;
 export const AGENT_PROFILE_STATUSES = ["active", "paused", "retired"] as const;
-export const AGENT_PROFILE_DEFAULT_RUNTIMES = ["openclaw", "codex", "claude", "pi", "opencode"] as const;
+export const AGENT_PROFILE_DEFAULT_RUNTIMES = ["openclaw", "codex", "claude", "pi", "opencode", "antigravity"] as const;
 export const GOAL_DRIVE_STATES = ["driving", "paused", "stalled"] as const;
 export const GOAL_DRIVE_DEFAULT_STALL_AFTER = 3;
 /** Level-2 goal sections that Celorga regenerates; every other section is user-owned and preserved. */

@@ -149,7 +149,7 @@ export function queueAIChatInboxMessage(
     if (requestedResponders.length || authorAgentRef || source) {
       throw new Error("thread send accepts --author but not --request-turn, --agent-ref, or --source; use thread post for attributed background delivery.");
     }
-    if (thread.runtime !== undefined && !["openClaw", "codex", "claude", "pi", "openCode"].includes(thread.runtime)) {
+    if (thread.runtime !== undefined && !["openClaw", "codex", "claude", "pi", "openCode", "antigravity"].includes(thread.runtime)) {
       throw new Error(`unsupported single-agent runtime: ${thread.runtime}; no message was queued`);
     }
     destinationID = typeof thread.destinationID === "string"

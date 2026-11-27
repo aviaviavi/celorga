@@ -573,6 +573,7 @@ extension WorkspaceStore {
            || aiChatThreads[index].runtime == .claude
            || aiChatThreads[index].runtime == .pi
            || aiChatThreads[index].runtime == .openCode
+           || aiChatThreads[index].runtime == .antigravity
            || aiChatThreads[index].isSharedRoom {
         aiChatThreads[index] = aiChatThreads[index]
           .replacingAIChatMetadata(

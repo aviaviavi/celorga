@@ -817,6 +817,13 @@ extension WorkspaceStore {
             destinationID: dispatchDestinationID,
             sendOrigin: sendOrigin
           )
+        case .antigravityLocal, .antigravityRemote:
+          reply = try await sendAntigravityRequest(
+            messages: requestMessages,
+            threadID: threadID,
+            destinationID: dispatchDestinationID,
+            sendOrigin: sendOrigin
+          )
         case .openCodeLocal, .openCodeRemote:
           reply = try await sendOpenCodeRequest(
             messages: requestMessages,
@@ -2188,6 +2195,84 @@ extension WorkspaceStore {
     return reply.isEmpty ? "Pi completed the turn without a text response." : reply
   }
 
+  private func sendAntigravityRequest(
+    messages: [AIChatMessage],
+    threadID: UUID,
+    destinationID: String,
+    sendOrigin: AIChatSendOrigin
+  ) async throws -> String {
+    guard let corpusRoot = sendOrigin.corpusRoot else {
+      throw AntigravityError.invalidResponse("choose a Celorga corpus before using Antigravity")
+    }
+    guard let destination = aiChatDestination(id: destinationID),
+          destination.adapter == .antigravityLocal || destination.adapter == .antigravityRemote,
+          let thread = aiChatThread(threadID, transcriptURL: sendOrigin.transcriptURL),
+          let userMessage = messages.last(where: { $0.role == .user }),
+          thread.runtime == .antigravity
+            || (thread.isSharedRoom && userMessage.targetDestinationID == destinationID)
+    else {
+      throw AntigravityError.invalidResponse("the selected thread is not routed to Antigravity")
+    }
+    let requestMessages = thread.isSharedRoom
+      ? Self.sharedRoomRequestMessages(
+          messages,
+          targetDestinationName: destination.name,
+          targetDestinationID: destinationID,
+          destinationNamesByID: Dictionary(
+            uniqueKeysWithValues: enabledAIChatDestinations.map { ($0.id, $0.name) }
+          ),
+          handoffMentions: aiChatRoomHandoffMentions(in: thread, excluding: destinationID),
+          agentTurnLimit: aiChatRoomAgentTurnLimit(for: thread),
+          through: userMessage.id
+        )
+      : messages
+    let requestUserMessage = requestMessages.last(where: { $0.id == userMessage.id }) ?? userMessage
+    resetAIChatTurnTelemetry(
+      threadID: threadID,
+      destinationID: destinationID,
+      transcriptURL: sendOrigin.transcriptURL
+    )
+
+    openClawGatewayStateByThreadID[threadID] = .connecting
+    openClawGatewayDetailByThreadID[threadID] = destination.name
+    var workspaceContext = sendOrigin.workspaceContext.threadContinuation == nil
+      ? sendOrigin.workspaceContext.replacingThreadContinuation(
+          aiChatThreadContinuation(for: thread, excludingMessageID: userMessage.id)
+        )
+      : sendOrigin.workspaceContext
+    if destination.adapter == .antigravityRemote {
+      workspaceContext = workspaceContext.replacingRuntimeCorpusRoot(destination.workspaceRoot)
+    }
+    let result = try await antigravityClient(forDestinationID: destinationID).runTurn(
+      openOrgThreadID: threadID,
+      existingSessionID: thread.runtimeThreadID(forDestinationID: destinationID),
+      message: Self.expandingOpenClawAgentCommand(
+        requestUserMessage,
+        corpusSkills: corpusAgentSkillCommands
+      ).content,
+      systemPrompt: workspaceContext.localAgentSystemPrompt(
+        runtime: "antigravity",
+        runtimeTitle: "Antigravity",
+        runtimeFilesystemAccess: destination.adapter == .antigravityRemote
+      ),
+      attachments: requestUserMessage.attachments,
+      cwd: corpusRoot,
+      model: thread.model(forDestinationID: destinationID) ?? destination.model,
+      reasoningEffort: thread.reasoningEffort(forDestinationID: destinationID),
+      sandboxAccess: codexSandboxAccess
+    )
+    persistRuntimeSessionID(
+      result.sessionID,
+      destinationID: destinationID,
+      thread: thread,
+      transcriptURL: sendOrigin.transcriptURL
+    )
+    openClawGatewayStateByThreadID[threadID] = .connected
+    openClawGatewayDetailByThreadID[threadID] = destination.name
+    let reply = result.reply.trimmingCharacters(in: .whitespacesAndNewlines)
+    return reply.isEmpty ? "Antigravity completed the turn without a text response." : reply
+  }
+
   /// When a conversation's OpenCode destination is configured only on the
   /// host that started it (for example a laptop's "OpenCode on press" SSH
   /// destination), another host that has to run the turn uses its own local
@@ -2752,6 +2837,30 @@ extension WorkspaceStore {
     return client
   }
 
+  private func antigravityClient(forDestinationID destinationID: String) throws -> AntigravityClient {
+    if let client = antigravityClientsByDestinationID[destinationID] { return client }
+    guard let destination = aiChatDestination(id: destinationID) else {
+      throw AntigravityError.invalidResponse("the configured Antigravity destination no longer exists")
+    }
+    let transport: AntigravityTransport
+    switch destination.adapter {
+    case .antigravityLocal:
+      transport = .local
+    case .antigravityRemote:
+      transport = .managedRemote(
+        sshHost: destination.endpoint,
+        workspacePath: destination.workspaceRoot
+      )
+    default:
+      throw AntigravityError.invalidResponse("the configured AI destination is not an Antigravity target")
+    }
+    let client = AntigravityClient(transport: transport) { [weak self] threadID, event in
+      await self?.handleAntigravityEvent(event, threadID: threadID)
+    }
+    antigravityClientsByDestinationID[destinationID] = client
+    return client
+  }
+
   func openCodeClient(forDestinationID destinationID: String) throws -> OpenCodeClient {
     if let client = openCodeClientsByDestinationID[destinationID] { return client }
     guard let destination = aiChatDestination(id: destinationID) else {
@@ -2919,6 +3028,8 @@ extension WorkspaceStore {
     let claudeClient = claudeCodeClient
     claudeCodeClient = nil
     let piClients = Array(piAgentClientsByDestinationID.values)
+    let antigravityClients = Array(antigravityClientsByDestinationID.values)
+    antigravityClientsByDestinationID.removeAll()
     let openCodeClients = Array(openCodeClientsByDestinationID.values)
     piAgentClientsByDestinationID.removeAll()
     openCodeClientsByDestinationID.removeAll()
@@ -2928,6 +3039,7 @@ extension WorkspaceStore {
     }
     await claudeClient?.shutdown()
     for client in piClients { await client.shutdown() }
+    for client in antigravityClients { await client.shutdown() }
     for client in openCodeClients { await client.shutdown() }
     await withTaskGroup(of: Void.self) { group in
       for gateway in gatewayClients {
@@ -2980,6 +3092,7 @@ extension WorkspaceStore {
       }
       transport = .managedRemote(sshHost: destination.endpoint)
     case .claudeLocal, .piLocal, .piRemote, .openCodeLocal, .openCodeRemote,
+         .antigravityLocal, .antigravityRemote,
          .openClaw, .openAI, .anthropic, .openRouter, .ollama, .openAIDot:
       throw CodexAppServerError.invalidResponse("the configured AI destination is not a Codex target")
     }
@@ -3029,6 +3142,11 @@ extension WorkspaceStore {
         reasoningOptions: Self.cliHarnessReasoningOptions,
         isDefault: true
       )]
+    case .antigravityLocal, .antigravityRemote:
+      return try await antigravityClient(forDestinationID: destinationID).listModels(
+        cwd: corpusRoot ?? FileManager.default.homeDirectoryForCurrentUser,
+        configuredModel: destination.model
+      )
     case .openCodeLocal, .openCodeRemote:
       guard let corpusRoot else {
         throw OpenCodeError.invalidResponse("OpenCode needs an active corpus workspace")

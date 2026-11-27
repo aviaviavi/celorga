@@ -2148,6 +2148,7 @@ extension WorkspaceStore {
         case AIChatDestinationConfiguration.localClaudeID: .claude
         case AIChatDestinationConfiguration.localPiID: .pi
         case AIChatDestinationConfiguration.localOpenCodeID: .openCode
+        case AIChatDestinationConfiguration.localAntigravityID: .antigravity
         default: .openClaw
         }
       }()
@@ -2487,6 +2488,8 @@ extension WorkspaceStore {
       return option?.reasoningOptions ?? []
     case .piLocal, .piRemote, .openCodeLocal, .openCodeRemote:
       return cliHarnessReasoningOptions
+    case .antigravityLocal, .antigravityRemote:
+      return AntigravityClient.reasoningOptions
     case .openClaw:
       // OpenClaw reports thinking levels per session; rooms offer the
       // standard levels when the model reasons. The Gateway still validates.
@@ -3137,6 +3140,13 @@ extension WorkspaceStore {
         models = try await modelsForAIChatDestination(thread.destinationID)
         effectiveModel = thread.model ?? selectedAIChatDestination.model
         reasoningOptions = Self.cliHarnessReasoningOptions
+        defaultReasoningEffort = nil
+        resolvedReasoningConfiguration = true
+      case .antigravityLocal, .antigravityRemote:
+        models = try await modelsForAIChatDestination(thread.destinationID)
+        effectiveModel = thread.model ?? models.first(where: \.isDefault)?.id
+          ?? selectedAIChatDestination.model
+        reasoningOptions = AntigravityClient.reasoningOptions
         defaultReasoningEffort = nil
         resolvedReasoningConfiguration = true
       case .openClaw:

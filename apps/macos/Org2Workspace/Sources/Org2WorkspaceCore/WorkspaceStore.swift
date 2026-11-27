@@ -3662,6 +3662,7 @@ public final class WorkspaceStore {
   /// Replaces asking Claude Code for its model list in tests.
   @ObservationIgnored var claudeModelCatalogForTesting: (@Sendable () async throws -> [AIChatModelOption])?
   var piAgentClientsByDestinationID: [String: PiAgentClient] = [:]
+  var antigravityClientsByDestinationID: [String: AntigravityClient] = [:]
   var openCodeClientsByDestinationID: [String: OpenCodeClient] = [:]
   var externalCodexAppServerClient: CodexAppServerClient?
   var externalThreadRefreshRequestID: UUID?

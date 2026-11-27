@@ -750,6 +750,23 @@ extension WorkspaceStore {
       aiChatDrainTasksByThreadID[threadID]?.task.cancel()
       return true
     }
+    if activeRuntime == .antigravity {
+      guard isAIChatThreadRunning(threadID) else {
+        if selectedAIChatThreadID == threadID {
+          aiChatStatusText = "No active Antigravity request to stop"
+        }
+        return false
+      }
+      markAIChatRunStopped(
+        in: threadID,
+        statusText: thread.isSharedRoom ? "Shared room stopped" : "Antigravity stopped"
+      )
+      await antigravityClientsByDestinationID[activeDestinationID]?.interrupt(
+        openOrgThreadID: threadID
+      )
+      aiChatDrainTasksByThreadID[threadID]?.task.cancel()
+      return true
+    }
     if activeRuntime == .openCode {
       guard isAIChatThreadRunning(threadID) else {
         if selectedAIChatThreadID == threadID {
@@ -2135,6 +2152,7 @@ extension WorkspaceStore {
         case .claude: .claudeLocal
         case .pi: .piLocal
         case .openCode: .openCodeLocal
+        case .antigravity: .antigravityLocal
         case .openClaw: .openClaw
         }
       }()
@@ -2167,6 +2185,16 @@ extension WorkspaceStore {
         effectiveModel: thread.model ?? aiChatDestination(id: thread.destinationID)?.model,
         reasoningEffort: thread.reasoningEffort,
         reasoningOptions: Self.cliHarnessReasoningOptions,
+        defaultReasoningEffort: nil
+      )
+    case .antigravityLocal, .antigravityRemote:
+      let models = try await remoteModelsForAIChatDestination(thread.destinationID)
+      return AIChatRemoteConfiguration(
+        models: models,
+        effectiveModel: thread.model ?? models.first(where: \.isDefault)?.id
+          ?? aiChatDestination(id: thread.destinationID)?.model,
+        reasoningEffort: thread.reasoningEffort,
+        reasoningOptions: AntigravityClient.reasoningOptions,
         defaultReasoningEffort: nil
       )
     case .openClaw:
@@ -2824,7 +2852,7 @@ extension WorkspaceStore {
       // Local Claude Code reads guidance from the running turn's input.
       return aiChatSteerHandlerForTesting != nil
         || aiChatDestination(id: target.destinationID)?.adapter == .claudeLocal
-    case .pi:
+    case .pi, .antigravity:
       return aiChatSteerHandlerForTesting != nil
     }
   }
@@ -2903,7 +2931,7 @@ extension WorkspaceStore {
     case .claude:
       return claudeCodeClient != nil
         && aiChatActiveRunIDByThreadID[threadID] != nil
-    case .pi:
+    case .pi, .antigravity:
       return false
     case .openCode:
       return openCodeClientsByDestinationID[target.destinationID] != nil
@@ -3006,6 +3034,10 @@ extension WorkspaceStore {
           throw PiAgentError.invalidResponse(
             "steering is not available for Pi; queue a follow-up instead"
           )
+        case .antigravity:
+          throw AntigravityError.invalidResponse(
+            "steering is not available for Antigravity; queue a follow-up instead"
+          )
         case .openCode:
           guard let sessionID = aiChatActiveRunIDByThreadID[threadID] else {
             throw OpenCodeError.invalidResponse("there is no active OpenCode turn to steer")
@@ -3104,7 +3136,7 @@ extension WorkspaceStore {
       guard case ClaudeCodeError.invalidResponse(let message) = error else { return false }
       return message.localizedCaseInsensitiveContains("no active Claude Code turn")
         || message.localizedCaseInsensitiveContains("queue a follow-up")
-    case .pi:
+    case .pi, .antigravity:
       return false
     case .openCode:
       guard let error = error as? OpenCodeError else { return false }

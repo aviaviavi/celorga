@@ -290,6 +290,19 @@ extension WorkspaceStore {
     }
   }
 
+  func handleAntigravityEvent(_ event: AntigravityEvent, threadID: UUID) async {
+    switch event {
+    case .sessionStarted(let sessionID):
+      handleCLIChatSessionStarted(sessionID, threadID: threadID, title: "Antigravity")
+    case .textDelta(let delta):
+      handleCLIChatTextDelta(delta, threadID: threadID, title: "Antigravity")
+    case .activity(let id, let title, let status):
+      handleCLIChatActivity(id: id, title: title, status: status, threadID: threadID, runID: "antigravity")
+    case .warning(let message):
+      handleCLIChatWarning(message, threadID: threadID)
+    }
+  }
+
   func handleOpenCodeEvent(_ event: OpenCodeEvent, threadID: UUID) async {
     switch event {
     case .processStarted:

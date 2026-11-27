@@ -1047,6 +1047,11 @@ private struct OpenOrgLaunchGuideView: View {
           runtime: .pi,
           isInstalled: store.isLocalPiInstalled
         )
+        localHarnessOption(
+          id: AIChatDestinationConfiguration.localAntigravityID,
+          runtime: .antigravity,
+          isInstalled: store.isLocalAntigravityInstalled
+        )
         agentOption(
           id: AIChatDestinationConfiguration.openClawID,
           title: "OpenClaw",

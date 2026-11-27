@@ -231,7 +231,7 @@ function syncLinkedArtifactReviewStatus(corpus: string, artifactPath: string, re
 const HELP = `Agentic workspace commands:
   celorga doctor [--dir CORPUS] [--json]
   celorga doctor --machine [--dir CORPUS] [--json]
-  celorga doctor --handoff codex|claude|opencode|pi|openclaw [--agent-ref ID] [--apply] [--launch] [--dir CORPUS] [--json]
+  celorga doctor --handoff codex|claude|opencode|pi|antigravity|openclaw [--agent-ref ID] [--apply] [--launch] [--dir CORPUS] [--json]
     Bounded troubleshooting handoff to the selected agent; works without the app. --apply writes views/diagnostics/handoffs/; --launch starts the runtime once in this terminal. Never schedules.
   celorga ledger list LEDGER [--eligible] [--state STATE] [--field KEY=VALUE] [--as-of ISO] [--cooldown-days N] [--json]
   celorga ledger resolve LEDGER --identity KEY [--identity KEY] [--json]
@@ -282,8 +282,8 @@ const HELP = `Agentic workspace commands:
   celorga goal checkpoint ID --run RUN_ID [--apply]
     Ends a driver pass. A pass that leaves the plan unchanged counts toward --stall-after; reaching it stalls the drive.
   celorga agent-profile list|show|create|update|resolve [--dir CORPUS] [--apply]
-  celorga agent-profile create ID --name TEXT [--default-runtime openclaw|codex|claude|pi|opencode] [--default-destination MENTION] [--binding RUNTIME:AGENT_ID] [--goal-ref ID] [--primary-goal-ref ID] [--responsibility TEXT] [--capability ID] [--skill ID]
-  celorga agent-profile update ID [--default-runtime openclaw|codex|claude|pi|opencode|none] [--default-destination MENTION|none]
+  celorga agent-profile create ID --name TEXT [--default-runtime openclaw|codex|claude|pi|opencode|antigravity] [--default-destination MENTION] [--binding RUNTIME:AGENT_ID] [--goal-ref ID] [--primary-goal-ref ID] [--responsibility TEXT] [--capability ID] [--skill ID]
+  celorga agent-profile update ID [--default-runtime openclaw|codex|claude|pi|opencode|antigravity|none] [--default-destination MENTION|none]
   celorga agent-profile resolve --runtime openclaw|codex --runtime-agent-id ID [--json]
   celorga run create [--title TEXT] --goal TEXT [--goal-ref ID] [--agent-ref ID] [--thread AI_CHAT_THREAD_ID] [--destination-ref ID] [--accept TEXT] [--risk CLASS] [--owner NAME] [--capability ID] [--dir CORPUS]
     --thread links the run to the AI chat that created it (use ORG2_AI_CHAT_THREAD_ID); resuming the run returns to that chat's agent.

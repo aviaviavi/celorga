@@ -1850,7 +1850,8 @@ extension WorkspaceStore {
   ) -> Bool {
     switch destination.adapter {
     case .codexLocal, .codexRemote, .codexManagedRemote, .piLocal, .piRemote,
-         .openCodeLocal, .openCodeRemote, .openClaw, .claudeLocal:
+         .openCodeLocal, .openCodeRemote, .antigravityLocal, .antigravityRemote,
+         .openClaw, .claudeLocal:
       true
     case .openAI:
       destination.providerPreset != nil

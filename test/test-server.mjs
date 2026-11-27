@@ -87,6 +87,12 @@ try {
   });
   assert.equal(validateServerConfiguration({ ...config, destinations: [{ ...config.destinations[0], adapter: "piRemote" }] }, configFile).destinations[0].adapter, "piRemote");
   assert.equal(validateServerConfiguration({ ...config, destinations: [{ ...config.destinations[0], adapter: "openCodeRemote" }] }, configFile).destinations[0].adapter, "openCodeRemote");
+  const antigravityInit = run("server", "init", "--dir", corpus, "--host-ref", "press", "--bind", "100.64.1.2",
+    "--destination", "antigravity", "--config", configFile);
+  assert.deepEqual(antigravityInit.config.destinations[0], {
+    id: "builtin.antigravity", name: "Antigravity", mention: "antigravity", adapter: "antigravityLocal", endpoint: "", agentID: "", workspaceRoot: "", isEnabled: true,
+  });
+  assert.equal(validateServerConfiguration({ ...config, destinations: [{ ...config.destinations[0], adapter: "antigravityRemote" }] }, configFile).destinations[0].adapter, "antigravityRemote");
   assert.equal(validateServerConfiguration(config, configFile).hostRef, "press");
   const legacyConfig = { ...config };
   delete legacyConfig.localAgentFilesystemAccess;

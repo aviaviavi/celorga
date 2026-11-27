@@ -64,7 +64,7 @@ The iPhone app reads your notes from your Mac or Celorga server over Tailscale, 
 
 This is where Celorga goes well beyond any Org tool. Your notes become shared memory for every agent you use:
 
-- *Bring the agents you already pay for.* Claude Code, Codex, OpenCode, Pi, OpenClaw, Ollama, and API providers all work, with no resold tokens.
+- *Bring the agents you already pay for.* Claude Code, Codex, OpenCode, Pi, Antigravity, OpenClaw, Ollama, and API providers all work, with no resold tokens.
 - *Put several agents in one conversation.* Ask the same question of two agents, or let one hand work to another while you watch.
 - *Turn a TODO into agent work.* Pick a heading, choose /Start work/, and the agent starts from the task and the notes behind it. The heading shows whether the agent is working, waiting on you, or done.
 - *Cited answers.* Agents quote your notes with file and line references, so you can check every claim.

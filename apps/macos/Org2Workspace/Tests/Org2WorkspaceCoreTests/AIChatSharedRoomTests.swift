@@ -680,15 +680,16 @@ final class AIChatSharedRoomTests: XCTestCase {
     XCTAssertEqual(AIChatRoomRouting("ask @claude next").audience, .claude)
     XCTAssertEqual(AIChatRoomRouting("ask @pi next").audience, .pi)
     XCTAssertEqual(AIChatRoomRouting("ask @opencode next").audience, .openCode)
+    XCTAssertEqual(AIChatRoomRouting("ask @antigravity next").audience, .antigravity)
 
     let all = AIChatRoomRouting("@all compare approaches")
     XCTAssertEqual(all.audience, .everyone)
-    XCTAssertEqual(all.normalizedText, "@Codex @Claude @Pi @OpenCode @OpenClaw compare approaches")
+    XCTAssertEqual(all.normalizedText, "@Codex @Claude @Pi @OpenCode @Antigravity @OpenClaw compare approaches")
     XCTAssertEqual(all.summary, "Invokes all agents")
 
     let legacyBoth = AIChatRoomRouting("@both compare approaches")
     XCTAssertEqual(legacyBoth.audience, .everyone)
-    XCTAssertEqual(legacyBoth.normalizedText, "@Codex @Claude @Pi @OpenCode @OpenClaw compare approaches")
+    XCTAssertEqual(legacyBoth.normalizedText, "@Codex @Claude @Pi @OpenCode @Antigravity @OpenClaw compare approaches")
 
     XCTAssertEqual(AIChatRoomRouting("mail me@example.com").audience, .thread)
   }

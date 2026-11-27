@@ -3817,6 +3817,7 @@ public enum AIChatRuntime: String, CaseIterable, Codable, Identifiable, Sendable
   case claude
   case pi
   case openCode
+  case antigravity
 
   public var id: String { rawValue }
 
@@ -3827,6 +3828,7 @@ public enum AIChatRuntime: String, CaseIterable, Codable, Identifiable, Sendable
     case "claude": self = .claude
     case "pi": self = .pi
     case "opencode": self = .openCode
+    case "antigravity": self = .antigravity
     default: return nil
     }
   }
@@ -3838,6 +3840,7 @@ public enum AIChatRuntime: String, CaseIterable, Codable, Identifiable, Sendable
     case .claude: "claude"
     case .pi: "pi"
     case .openCode: "opencode"
+    case .antigravity: "antigravity"
     }
   }
 
@@ -3848,6 +3851,7 @@ public enum AIChatRuntime: String, CaseIterable, Codable, Identifiable, Sendable
     case .claude: "Claude Code"
     case .pi: "Pi"
     case .openCode: "OpenCode"
+    case .antigravity: "Antigravity"
     }
   }
 
@@ -3858,6 +3862,7 @@ public enum AIChatRuntime: String, CaseIterable, Codable, Identifiable, Sendable
     case .claude: "c.circle"
     case .pi: "pi"
     case .openCode: "terminal"
+    case .antigravity: "arrow.up.circle"
     }
   }
 }
@@ -3869,6 +3874,8 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
   case piRemote
   case openCodeLocal
   case openCodeRemote
+  case antigravityLocal
+  case antigravityRemote
   case codexRemote
   case codexManagedRemote
   case openClaw
@@ -3886,6 +3893,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     case .claudeLocal: .claude
     case .piLocal, .piRemote: .pi
     case .openCodeLocal, .openCodeRemote: .openCode
+    case .antigravityLocal, .antigravityRemote: .antigravity
     case .openClaw, .openAI, .anthropic, .openRouter, .ollama, .openAIDot: .openClaw
     }
   }
@@ -3898,6 +3906,8 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     case .piRemote: "Remote Pi over SSH"
     case .openCodeLocal: "Local OpenCode"
     case .openCodeRemote: "Remote OpenCode over SSH"
+    case .antigravityLocal: "Local Antigravity"
+    case .antigravityRemote: "Remote Antigravity over SSH"
     case .codexRemote: "Remote Codex"
     case .codexManagedRemote: "Remote Codex over SSH"
     case .openClaw: "OpenClaw Gateway"
@@ -3915,6 +3925,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     case .claudeLocal: AIChatRuntime.claude.systemImage
     case .piLocal, .piRemote: AIChatRuntime.pi.systemImage
     case .openCodeLocal, .openCodeRemote: AIChatRuntime.openCode.systemImage
+    case .antigravityLocal, .antigravityRemote: AIChatRuntime.antigravity.systemImage
     case .openClaw: AIChatRuntime.openClaw.systemImage
     case .openAI: "sparkles"
     case .anthropic: "a.circle"
@@ -3928,7 +3939,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     switch self {
     case .openAI, .anthropic, .openRouter, .ollama: true
     case .codexLocal, .claudeLocal, .piLocal, .piRemote,
-         .openCodeLocal, .openCodeRemote,
+         .openCodeLocal, .openCodeRemote, .antigravityLocal, .antigravityRemote,
          .codexRemote, .codexManagedRemote, .openClaw, .openAIDot: false
     }
   }
@@ -3937,7 +3948,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     switch self {
     case .openAI, .anthropic, .openRouter: true
     case .codexLocal, .claudeLocal, .piLocal, .piRemote,
-         .openCodeLocal, .openCodeRemote,
+         .openCodeLocal, .openCodeRemote, .antigravityLocal, .antigravityRemote,
          .codexRemote, .codexManagedRemote, .openClaw, .ollama, .openAIDot: false
     }
   }
@@ -3950,7 +3961,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     case .ollama: "http://127.0.0.1:11434/api"
     case .openAIDot: OpenAIDotChatClient.defaultBaseURL
     case .codexLocal, .claudeLocal, .piLocal, .piRemote,
-         .openCodeLocal, .openCodeRemote,
+         .openCodeLocal, .openCodeRemote, .antigravityLocal, .antigravityRemote,
          .codexRemote, .codexManagedRemote, .openClaw: ""
     }
   }
@@ -3963,6 +3974,8 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     case .piRemote: "Remote Pi"
     case .openCodeLocal: "OpenCode"
     case .openCodeRemote: "Remote OpenCode"
+    case .antigravityLocal: "Antigravity"
+    case .antigravityRemote: "Remote Antigravity"
     case .codexRemote: "Remote Codex"
     case .codexManagedRemote: "Remote Codex"
     case .openClaw: "OpenClaw"
@@ -3982,6 +3995,8 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
     case .piRemote: "pi-remote"
     case .openCodeLocal: "opencode"
     case .openCodeRemote: "opencode-remote"
+    case .antigravityLocal: "antigravity"
+    case .antigravityRemote: "antigravity-remote"
     case .codexRemote: "codex-remote"
     case .codexManagedRemote: "codex-managed"
     case .openClaw: "openclaw"
@@ -4111,6 +4126,7 @@ public struct AIChatDestinationConfiguration: Identifiable, Hashable, Codable, S
   public static let localClaudeID = "builtin.claude"
   public static let localPiID = "builtin.pi"
   public static let localOpenCodeID = "builtin.opencode"
+  public static let localAntigravityID = "builtin.antigravity"
   public static let openClawID = "builtin.openclaw"
 
   public let id: String
@@ -4177,12 +4193,13 @@ public struct AIChatDestinationConfiguration: Identifiable, Hashable, Codable, S
   public var mentionText: String { "@\(mention)" }
   public var requiresEndpoint: Bool {
     adapter != .codexLocal && adapter != .claudeLocal && adapter != .piLocal
-      && adapter != .openCodeLocal && adapter != .openAIDot
+      && adapter != .openCodeLocal && adapter != .antigravityLocal && adapter != .openAIDot
   }
   public var acceptsBearerToken: Bool {
     adapter != .codexLocal && adapter != .claudeLocal && adapter != .piLocal
       && adapter != .piRemote && adapter != .openCodeLocal
-      && adapter != .openCodeRemote && adapter != .codexManagedRemote
+      && adapter != .openCodeRemote && adapter != .antigravityLocal
+      && adapter != .antigravityRemote && adapter != .codexManagedRemote
       && adapter != .openAIDot
   }
 
@@ -4193,11 +4210,11 @@ public struct AIChatDestinationConfiguration: Identifiable, Hashable, Codable, S
   public var harnessHostName: String? {
     let rawHost: String?
     switch adapter {
-    case .piRemote, .openCodeRemote, .codexManagedRemote:
+    case .piRemote, .openCodeRemote, .antigravityRemote, .codexManagedRemote:
       rawHost = Self.sshHostName(endpoint)
     case .codexRemote, .openClaw:
       rawHost = URL(string: endpoint)?.host
-    case .codexLocal, .claudeLocal, .piLocal, .openCodeLocal,
+    case .codexLocal, .claudeLocal, .piLocal, .openCodeLocal, .antigravityLocal,
          .openAI, .anthropic, .openRouter, .ollama, .openAIDot:
       rawHost = nil
     }
@@ -4263,6 +4280,13 @@ public struct AIChatDestinationConfiguration: Identifiable, Hashable, Codable, S
         mention: "opencode",
         adapter: .openCodeLocal,
         isEnabled: false
+      ),
+      AIChatDestinationConfiguration(
+        id: localAntigravityID,
+        name: "Antigravity",
+        mention: "antigravity",
+        adapter: .antigravityLocal,
+        isEnabled: false
       )
     ]
   }
@@ -4273,6 +4297,7 @@ public struct AIChatDestinationConfiguration: Identifiable, Hashable, Codable, S
     case .claude: localClaudeID
     case .pi: localPiID
     case .openCode: localOpenCodeID
+    case .antigravity: localAntigravityID
     case .openClaw: openClawID
     }
   }
@@ -4425,6 +4450,7 @@ public enum AIChatAudience: String, CaseIterable, Codable, Identifiable, Sendabl
   case claude
   case pi
   case openCode
+  case antigravity
   case everyone
 
   public var id: String { rawValue }
@@ -4437,6 +4463,7 @@ public enum AIChatAudience: String, CaseIterable, Codable, Identifiable, Sendabl
     case .claude: "Claude Code"
     case .pi: "Pi"
     case .openCode: "OpenCode"
+    case .antigravity: "Antigravity"
     case .everyone: "All agents"
     }
   }
@@ -4449,6 +4476,7 @@ public enum AIChatAudience: String, CaseIterable, Codable, Identifiable, Sendabl
     case .claude: "Ask Claude Code"
     case .pi: "Ask Pi"
     case .openCode: "Ask OpenCode"
+    case .antigravity: "Ask Antigravity"
     case .everyone: "Ask all"
     }
   }
@@ -4461,6 +4489,7 @@ public enum AIChatAudience: String, CaseIterable, Codable, Identifiable, Sendabl
     case .claude: AIChatRuntime.claude.systemImage
     case .pi: AIChatRuntime.pi.systemImage
     case .openCode: AIChatRuntime.openCode.systemImage
+    case .antigravity: AIChatRuntime.antigravity.systemImage
     case .everyone: "person.2.fill"
     }
   }
@@ -4473,6 +4502,7 @@ public enum AIChatAudience: String, CaseIterable, Codable, Identifiable, Sendabl
     case .claude: [.claude]
     case .pi: [.pi]
     case .openCode: [.openCode]
+    case .antigravity: [.antigravity]
     case .everyone: AIChatRuntime.allCases
     }
   }
@@ -4483,6 +4513,7 @@ public enum AIChatAudience: String, CaseIterable, Codable, Identifiable, Sendabl
     case .claude: self = .claude
     case .pi: self = .pi
     case .openCode: self = .openCode
+    case .antigravity: self = .antigravity
     case .openClaw: self = .openClaw
     }
   }
@@ -4503,6 +4534,7 @@ public struct AIChatRoomRouting: Equatable, Sendable {
     var invokesClaude = false
     var invokesPi = false
     var invokesOpenCode = false
+    var invokesAntigravity = false
     var normalized = rawText
 
     for match in matches {
@@ -4518,12 +4550,15 @@ public struct AIChatRoomRouting: Equatable, Sendable {
         invokesPi = true
       case "opencode":
         invokesOpenCode = true
+      case "antigravity", "agy":
+        invokesAntigravity = true
       case "all", "both":
         invokesCodex = true
         invokesOpenClaw = true
         invokesClaude = true
         invokesPi = true
         invokesOpenCode = true
+        invokesAntigravity = true
       default:
         break
       }
@@ -4539,14 +4574,18 @@ public struct AIChatRoomRouting: Equatable, Sendable {
       case "claude": replacement = "@Claude"
       case "pi": replacement = "@Pi"
       case "opencode": replacement = "@OpenCode"
-      case "all", "both": replacement = "@Codex @Claude @Pi @OpenCode @OpenClaw"
+      case "antigravity", "agy": replacement = "@Antigravity"
+      case "all", "both": replacement = "@Codex @Claude @Pi @OpenCode @Antigravity @OpenClaw"
       default: continue
       }
       normalized = (normalized as NSString).replacingCharacters(in: match.range, with: replacement)
     }
 
-    if invokesCodex && invokesOpenClaw && invokesClaude && invokesPi && invokesOpenCode {
+    if invokesCodex && invokesOpenClaw && invokesClaude && invokesPi && invokesOpenCode
+        && invokesAntigravity {
       audience = .everyone
+    } else if invokesAntigravity {
+      audience = .antigravity
     } else if invokesOpenCode {
       audience = .openCode
     } else if invokesPi {
@@ -4570,13 +4609,14 @@ public struct AIChatRoomRouting: Equatable, Sendable {
     case .claude: "Invokes Claude Code"
     case .pi: "Invokes Pi"
     case .openCode: "Invokes OpenCode"
+    case .antigravity: "Invokes Antigravity"
     case .openClaw: "Invokes OpenClaw"
     case .everyone: "Invokes all agents"
     }
   }
 
   private static let mentionPattern = try! NSRegularExpression(
-    pattern: #"(?i)(?<![A-Za-z0-9_])@(codex|claude|pi|opencode|openclaw|all|both)(?![A-Za-z0-9_])"#
+    pattern: #"(?i)(?<![A-Za-z0-9_])@(codex|claude|pi|opencode|antigravity|agy|openclaw|all|both)(?![A-Za-z0-9_])"#
   )
 }
 
@@ -4727,19 +4767,22 @@ public struct AIChatRoomModelSelection: Hashable, Codable, Sendable {
   public let claude: String?
   public let pi: String?
   public let openCode: String?
+  public let antigravity: String?
 
   public init(
     codex: String? = nil,
     openClaw: String? = nil,
     claude: String? = nil,
     pi: String? = nil,
-    openCode: String? = nil
+    openCode: String? = nil,
+    antigravity: String? = nil
   ) {
     self.codex = codex
     self.openClaw = openClaw
     self.claude = claude
     self.pi = pi
     self.openCode = openCode
+    self.antigravity = antigravity
   }
 
   public func model(for runtime: AIChatRuntime) -> String? {
@@ -4749,22 +4792,19 @@ public struct AIChatRoomModelSelection: Hashable, Codable, Sendable {
     case .claude: claude
     case .pi: pi
     case .openCode: openCode
+    case .antigravity: antigravity
     }
   }
 
   public func replacingModel(_ model: String?, for runtime: AIChatRuntime) -> AIChatRoomModelSelection {
-    switch runtime {
-    case .codex:
-      AIChatRoomModelSelection(codex: model, openClaw: openClaw, claude: claude, pi: pi, openCode: openCode)
-    case .openClaw:
-      AIChatRoomModelSelection(codex: codex, openClaw: model, claude: claude, pi: pi, openCode: openCode)
-    case .claude:
-      AIChatRoomModelSelection(codex: codex, openClaw: openClaw, claude: model, pi: pi, openCode: openCode)
-    case .pi:
-      AIChatRoomModelSelection(codex: codex, openClaw: openClaw, claude: claude, pi: model, openCode: openCode)
-    case .openCode:
-      AIChatRoomModelSelection(codex: codex, openClaw: openClaw, claude: claude, pi: pi, openCode: model)
-    }
+    AIChatRoomModelSelection(
+      codex: runtime == .codex ? model : codex,
+      openClaw: runtime == .openClaw ? model : openClaw,
+      claude: runtime == .claude ? model : claude,
+      pi: runtime == .pi ? model : pi,
+      openCode: runtime == .openCode ? model : openCode,
+      antigravity: runtime == .antigravity ? model : antigravity
+    )
   }
 }
 

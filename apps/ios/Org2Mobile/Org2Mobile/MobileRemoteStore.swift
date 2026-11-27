@@ -897,6 +897,7 @@ final class MobileRemoteStore: ObservableObject {
       case "claude": runtimeTitle = "Claude Code"
       case "pi": runtimeTitle = "Pi"
       case "openCode": runtimeTitle = "OpenCode"
+      case "antigravity": runtimeTitle = "Antigravity"
       case "openClaw": runtimeTitle = "OpenClaw"
       default: runtimeTitle = "The assistant"
       }

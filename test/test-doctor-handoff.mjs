@@ -164,6 +164,16 @@ try {
   assert.equal(openclaw.runtime.launchSupported, false);
   assert.notEqual(doctor("--handoff", "openclaw", "--launch").status, 0);
 
+  // Antigravity's CLI is agy; its handoff is interactive but read-only.
+  const antigravity = JSON.parse(doctor("--handoff", "antigravity", "--json").stdout).handoff;
+  assert.equal(antigravity.runtime.id, "antigravity");
+  assert.equal(antigravity.runtime.launchSupported, true);
+  assert.equal(antigravity.launch.argv[0], "agy");
+  assert.ok(antigravity.launch.argv.includes("-i"));
+  const settingsIndex = antigravity.launch.argv.indexOf("--settings");
+  assert.deepEqual(JSON.parse(antigravity.launch.argv[settingsIndex + 1]).permissions.deny,
+    ["write_file(*)", "command(*)", "mcp(*)"]);
+
   // The selected agent profile's default runtime chooses the handoff target.
   const profile = spawnSync(process.execPath, [cli, "agent-profile", "create", "fixture-helper", "--name", "Fixture helper",
     "--default-runtime", "claude", "--dir", root, "--apply"], { encoding: "utf8", env });
