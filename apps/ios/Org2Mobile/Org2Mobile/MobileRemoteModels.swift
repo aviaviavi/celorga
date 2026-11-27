@@ -399,6 +399,47 @@ struct MobileRemoteUpdateThreadStateRequest: Codable {
 struct MobileRemoteThreadList: Codable {
   let threads: [MobileRemoteThreadSummary]
   let projects: [MobileRemoteProjectSummary]?
+  /// Sent back as `?since=`; nil from hosts without change-only lists.
+  var cursor: String? = nil
+  /// True when `threads` holds only the summaries that changed.
+  var isDelta: Bool? = nil
+  var removedThreadIDs: [UUID]? = nil
+
+  /// Applies a host response to the list the phone already has.
+  static func merged(
+    current: [MobileRemoteThreadSummary],
+    currentProjects: [MobileRemoteProjectSummary],
+    response: MobileRemoteThreadList
+  ) -> (threads: [MobileRemoteThreadSummary], projects: [MobileRemoteProjectSummary]) {
+    guard response.isDelta == true else { return (response.threads, response.projects ?? []) }
+    let removed = Set(response.removedThreadIDs ?? [])
+    let changed = Dictionary(response.threads.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+    var seen = Set<UUID>()
+    var threads: [MobileRemoteThreadSummary] = []
+    threads.reserveCapacity(current.count + response.threads.count)
+    for thread in current where !removed.contains(thread.id) && seen.insert(thread.id).inserted {
+      threads.append(changed[thread.id] ?? thread)
+    }
+    threads += response.threads.filter { !removed.contains($0.id) && seen.insert($0.id).inserted }
+    if !response.threads.isEmpty {
+      // The host's display order: open before settled, pinned first, newest first.
+      threads = threads.enumerated().sorted { lhs, rhs in
+        let a = lhs.element, b = rhs.element
+        if a.isSettled != b.isSettled { return !a.isSettled }
+        if a.isPinned != b.isPinned { return a.isPinned }
+        if a.updatedAt != b.updatedAt { return a.updatedAt > b.updatedAt }
+        return lhs.offset < rhs.offset
+      }.map(\.element)
+    }
+    return (threads, response.projects ?? currentProjects)
+  }
+}
+
+/// The last thread list from one host, saved so the app opens with it.
+struct MobileRemoteCachedThreadList: Codable {
+  let cursor: String?
+  let threads: [MobileRemoteThreadSummary]
+  let projects: [MobileRemoteProjectSummary]
 }
 
 struct MobileRemoteProjectSummary: Codable, Hashable, Identifiable {

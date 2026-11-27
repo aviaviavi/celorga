@@ -90,6 +90,56 @@ final class MobileRemoteLatencyTests: XCTestCase {
     XCTAssertEqual(unpaired.statusCode, 401)
   }
 
+  func testThreadListJournalSendsOnlyChangesSinceACursor() throws {
+    func summary(_ id: UUID, _ title: String, settled: Bool = false) -> MobileRemoteThreadSummary {
+      MobileRemoteThreadSummary(id: id, title: title, runtime: "codex", model: nil,
+        updatedAt: Date(timeIntervalSince1970: 1_000), isSettled: settled, isPinned: false,
+        isRunning: false, unreadMessageCount: 0, preview: nil)
+    }
+    let ids = (0..<5).map { _ in UUID() }
+    let project = MobileRemoteProjectSummary(id: "p", title: "Project", color: "blue", threadIDs: [ids[0]])
+    let journal = MobileRemoteThreadListJournal()
+    let first = journal.response(
+      for: MobileRemoteThreadList(threads: ids.map { summary($0, "t") }, projects: [project]), since: nil
+    )
+    XCTAssertNil(first.isDelta)
+    XCTAssertEqual(first.threads.count, 5)
+    let cursor = try XCTUnwrap(first.cursor)
+
+    // Nothing changed: an empty delta that keeps the client's projects.
+    let unchanged = journal.response(
+      for: MobileRemoteThreadList(threads: ids.map { summary($0, "t") }, projects: [project]), since: cursor
+    )
+    XCTAssertEqual(unchanged.isDelta, true)
+    XCTAssertTrue(unchanged.threads.isEmpty)
+    XCTAssertEqual(unchanged.removedThreadIDs, [])
+    XCTAssertNil(unchanged.projects)
+    XCTAssertEqual(unchanged.cursor, cursor, "No change keeps the same cursor")
+
+    // One settled, one removed, one added; projects changed.
+    let added = UUID()
+    var next = ids.dropLast().map { summary($0, "t") }
+    next[1] = summary(ids[1], "t", settled: true)
+    next.append(summary(added, "new"))
+    let moved = MobileRemoteProjectSummary(id: "p", title: "Project", color: "blue", threadIDs: [ids[1]])
+    let delta = journal.response(for: MobileRemoteThreadList(threads: next, projects: [moved]), since: cursor)
+    XCTAssertEqual(delta.isDelta, true)
+    XCTAssertEqual(Set(delta.threads.map(\.id)), [ids[1], added])
+    XCTAssertEqual(delta.removedThreadIDs, [ids[4]])
+    XCTAssertEqual(delta.projects, [moved])
+    XCTAssertNotEqual(delta.cursor, cursor)
+
+    // The old cursor still sees every change since it; a foreign cursor gets everything.
+    let again = journal.response(for: MobileRemoteThreadList(threads: next, projects: [moved]), since: cursor)
+    XCTAssertEqual(Set(again.threads.map(\.id)), [ids[1], added])
+    let foreign = journal.response(for: MobileRemoteThreadList(threads: next, projects: [moved]), since: "other.3")
+    XCTAssertNil(foreign.isDelta)
+    XCTAssertEqual(foreign.threads.count, next.count)
+    let future = journal.response(for: MobileRemoteThreadList(threads: next, projects: [moved]),
+      since: String(cursor.split(separator: ".").first!) + ".999")
+    XCTAssertNil(future.isDelta, "A cursor ahead of the journal gets the full list")
+  }
+
   /// An independent RFC 1950 reader: header check, raw inflate, checksum.
   static func inflateZlib(_ data: Data) throws -> Data {
     XCTAssertEqual(data.first, 0x78)

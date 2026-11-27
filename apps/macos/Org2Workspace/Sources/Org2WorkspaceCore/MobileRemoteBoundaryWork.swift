@@ -381,18 +381,21 @@ public struct MobileRemoteBackgroundWork: Sendable {
   public func threadListResponse(
     threads: [AIChatThread],
     context: MobileRemoteThreadProjectionContext,
-    projects: [MobileRemoteProjectSummary] = []
+    projects: [MobileRemoteProjectSummary] = [],
+    journal: MobileRemoteThreadListJournal? = nil,
+    since: String? = nil
   ) async -> MobileRemoteHTTPResponse {
     let beforeWork = self.beforeWork
     let didFinishWork = self.didFinishWork
     return await Task.detached(priority: .userInitiated) {
       await beforeWork()
+      let list = MobileRemoteThreadProjection.list(
+        threads: threads,
+        context: context,
+        projects: projects
+      )
       let response = MobileRemoteHTTPResponse.json(
-        MobileRemoteThreadProjection.list(
-          threads: threads,
-          context: context,
-          projects: projects
-        )
+        journal.map { $0.response(for: list, since: since) } ?? list
       )
       didFinishWork(mobileRemoteIsMainThread())
       return response

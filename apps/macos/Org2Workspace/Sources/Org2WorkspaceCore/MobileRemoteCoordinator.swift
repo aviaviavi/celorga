@@ -44,6 +44,7 @@ public final class MobileRemoteCoordinator: ObservableObject {
   private let pushCredentialStore: MobileRemotePushCredentialStore
   private let pushSender: MobileRemotePushSender
   private let backgroundWork = MobileRemoteBackgroundWork()
+  private let threadListJournal = MobileRemoteThreadListJournal()
   private let syncedTranscriptRequestGate = MobileRemoteRequestRefreshGate(reuseInterval: 1.5)
   private weak var store: WorkspaceStore?
   private var server: MobileRemoteHTTPServer?
@@ -575,7 +576,9 @@ public final class MobileRemoteCoordinator: ObservableObject {
       return await backgroundWork.threadListResponse(
         threads: threads,
         context: threadProjectionContext(for: threads, store: store),
-        projects: mobileRemoteProjects(from: store.projectNotes)
+        projects: mobileRemoteProjects(from: store.projectNotes),
+        journal: threadListJournal,
+        since: URLComponents(string: request.path)?.queryItems?.first { $0.name == "since" }?.value
       )
     }
 

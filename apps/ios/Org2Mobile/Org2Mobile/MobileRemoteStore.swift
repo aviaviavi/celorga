@@ -83,6 +83,8 @@ final class MobileRemoteStore: ObservableObject {
   private var configurationByDestinationID: [String: MobileRemoteThreadConfiguration] = [:]
   private var destinationConfigurationsFetchedAt: Date?
   private var isFetchingDestinationConfigurations = false
+  private var threadListCursor: String?
+  private var threadListCacheWrite: Task<Void, Never>?
   private static let destinationConfigurationsKeyPrefix = "Org2Mobile.remote.destinationConfigurations.v1."
   private static let destinationConfigurationsRefreshInterval: TimeInterval = 60
   private var threadDetailCacheOrder: [UUID] = []
@@ -124,6 +126,7 @@ final class MobileRemoteStore: ObservableObject {
     }
     isPaired = !activeEndpoint.isEmpty && accessToken != nil
     loadDestinationConfigurations()
+    if isPaired { loadCachedThreadList() }
     notificationObservers = [
       NotificationCenter.default.addObserver(
         forName: .org2RemotePushTokenUpdated,
@@ -237,6 +240,7 @@ final class MobileRemoteStore: ObservableObject {
     activeEndpoint = host.endpoint
     endpointDraft = host.endpoint
     loadDestinationConfigurations()
+    loadCachedThreadList()
     serverName = host.name
     accessToken = token
     isPaired = true
@@ -302,6 +306,10 @@ final class MobileRemoteStore: ObservableObject {
     pollingLeaseID = nil
     foregroundReplyPollingTask?.cancel()
     foregroundReplyPollingTask = nil
+    if forgetHost, let url = threadListCacheURL {
+      try? FileManager.default.removeItem(at: url)
+    }
+    threadListCursor = nil
     if forgetHost, let activeHostID {
       Self.deleteToken(account: activeHostID.uuidString)
       savedHosts.removeAll { $0.id == activeHostID }
@@ -363,7 +371,11 @@ final class MobileRemoteStore: ObservableObject {
     do {
       let client = try pairedClient()
       async let statusRequest = client.get("/v1/status", as: MobileRemoteServerStatus.self)
-      async let threadsRequest = client.get("/v1/threads", timeout: 30, as: MobileRemoteThreadList.self)
+      // With a cursor the host sends only the chats that changed.
+      let threadsPath = threadListCursor
+        .flatMap { $0.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) }
+        .map { "/v1/threads?since=\($0)" } ?? "/v1/threads"
+      async let threadsRequest = client.get(threadsPath, timeout: 30, as: MobileRemoteThreadList.self)
       let (nextStatus, nextThreads) = try await (statusRequest, threadsRequest)
       guard nextStatus.protocolVersion == MobileRemoteWire.version else {
         throw MobileRemoteClientError.incompatibleProtocol
@@ -376,15 +388,22 @@ final class MobileRemoteStore: ObservableObject {
       await syncPushRegistrationIfNeeded(force: false, connectionGeneration: generation)
       await reconcileReplyNotifications(with: nextThreads.threads, connectionGeneration: generation)
       guard isCurrentConnection(generation) else { return }
-      let hostThreadIDs = Set(nextThreads.threads.map(\.id))
+      let merged = MobileRemoteThreadList.merged(
+        current: threads.filter { pendingThreadCreations[$0.id] == nil },
+        currentProjects: projects,
+        response: nextThreads
+      )
+      let hostThreadIDs = Set(merged.threads.map(\.id))
       let pendingThreads = threads.filter {
         pendingThreadCreations[$0.id] != nil && !hostThreadIDs.contains($0.id)
       }
-      threads = pendingThreads + nextThreads.threads
-      projects = nextThreads.projects ?? []
+      threads = pendingThreads + merged.threads
+      projects = merged.projects
+      threadListCursor = nextThreads.cursor
+      saveCachedThreadList(merged)
       prefetchDestinationConfigurations()
       pruneThreadDetailCache(
-        keeping: Set(nextThreads.threads.map(\.id)).union(pendingThreadCreations.keys)
+        keeping: hostThreadIDs.union(pendingThreadCreations.keys)
       )
       defaults.set(serverName, forKey: Self.serverNameKey)
     } catch {
@@ -1574,6 +1593,43 @@ final class MobileRemoteStore: ObservableObject {
     else { return }
     configurationByDestinationID[destinationID] = configuration
     persistDestinationConfigurations()
+  }
+
+  private var threadListCacheURL: URL? {
+    guard !activeEndpoint.isEmpty,
+          let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    else { return nil }
+    let name = Data(activeEndpoint.utf8).base64EncodedString()
+      .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "+", with: "-")
+    return support.appendingPathComponent("ThreadLists", isDirectory: true)
+      .appendingPathComponent("\(name).json")
+  }
+
+  /// Shows the last list from this host at once; the next refresh asks only
+  /// for what changed since it.
+  private func loadCachedThreadList() {
+    threadListCursor = nil
+    guard let url = threadListCacheURL,
+          let data = try? Data(contentsOf: url),
+          let cached = try? JSONDecoder().decode(MobileRemoteCachedThreadList.self, from: data)
+    else { return }
+    threads = cached.threads
+    projects = cached.projects
+    threadListCursor = cached.cursor
+  }
+
+  private func saveCachedThreadList(
+    _ list: (threads: [MobileRemoteThreadSummary], projects: [MobileRemoteProjectSummary])
+  ) {
+    guard let url = threadListCacheURL else { return }
+    let cached = MobileRemoteCachedThreadList(cursor: threadListCursor, threads: list.threads, projects: list.projects)
+    let previous = threadListCacheWrite
+    threadListCacheWrite = Task.detached(priority: .utility) {
+      await previous?.value
+      guard let data = try? JSONEncoder().encode(cached) else { return }
+      try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
   }
 
   private var destinationConfigurationsKey: String? {

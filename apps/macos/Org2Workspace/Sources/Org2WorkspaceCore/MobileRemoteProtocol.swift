@@ -483,13 +483,103 @@ public struct MobileRemoteUpdateThreadStateRequest: Codable, Hashable, Sendable 
 public struct MobileRemoteThreadList: Codable, Hashable, Sendable {
   public let threads: [MobileRemoteThreadSummary]
   public let projects: [MobileRemoteProjectSummary]?
+  /// Pass back as `?since=` to receive only what changed. Nil from hosts
+  /// that predate change-only lists.
+  public let cursor: String?
+  /// True when `threads` holds only changed summaries; the client keeps the
+  /// rest, removes `removedThreadIDs`, and keeps its projects when
+  /// `projects` is nil.
+  public let isDelta: Bool?
+  public let removedThreadIDs: [UUID]?
 
   public init(
     threads: [MobileRemoteThreadSummary],
-    projects: [MobileRemoteProjectSummary]? = nil
+    projects: [MobileRemoteProjectSummary]? = nil,
+    cursor: String? = nil,
+    isDelta: Bool? = nil,
+    removedThreadIDs: [UUID]? = nil
   ) {
     self.threads = threads
     self.projects = projects
+    self.cursor = cursor
+    self.isDelta = isDelta
+    self.removedThreadIDs = removedThreadIDs
+  }
+}
+
+/// Remembers the thread list each request saw, so a client that already has
+/// the list receives only the summaries that changed since its cursor. The
+/// journal lives in memory: a restarted host has a new epoch, and a cursor
+/// from another epoch (or one older than the retained removals) gets the
+/// full list again.
+public final class MobileRemoteThreadListJournal: @unchecked Sendable {
+  private let lock = NSLock()
+  private let epoch = UUID().uuidString.lowercased()
+  private var revision = 0
+  private var summaries: [UUID: MobileRemoteThreadSummary] = [:]
+  private var changedAt: [UUID: Int] = [:]
+  private var removedAt: [UUID: Int] = [:]
+  private var oldestCompleteRevision = 0
+  private var projects: [MobileRemoteProjectSummary]?
+  private var projectsChangedAt = 0
+  static let removalLimit = 10_000
+
+  public init() {}
+
+  /// Records `list` as the current state and answers relative to `since`.
+  public func response(for list: MobileRemoteThreadList, since: String?) -> MobileRemoteThreadList {
+    lock.lock()
+    defer { lock.unlock() }
+    record(list)
+    let cursor = "\(epoch).\(revision)"
+    guard let since,
+          let separator = since.lastIndex(of: "."),
+          since[..<separator] == epoch,
+          let base = Int(since[since.index(after: separator)...]),
+          base >= oldestCompleteRevision, base <= revision
+    else {
+      return MobileRemoteThreadList(threads: list.threads, projects: list.projects, cursor: cursor)
+    }
+    return MobileRemoteThreadList(
+      threads: list.threads.filter { (changedAt[$0.id] ?? 0) > base },
+      projects: projectsChangedAt > base ? list.projects : nil,
+      cursor: cursor,
+      isDelta: true,
+      removedThreadIDs: removedAt.filter { $0.value > base }.map(\.key).sorted { $0.uuidString < $1.uuidString }
+    )
+  }
+
+  private func record(_ list: MobileRemoteThreadList) {
+    var next: [UUID: MobileRemoteThreadSummary] = [:]
+    next.reserveCapacity(list.threads.count)
+    var changed: [UUID] = []
+    for summary in list.threads {
+      next[summary.id] = summary
+      if summaries[summary.id] != summary { changed.append(summary.id) }
+    }
+    let removed = summaries.keys.filter { next[$0] == nil }
+    let projectsChanged = list.projects != projects
+    guard !changed.isEmpty || !removed.isEmpty || projectsChanged else { return }
+    revision += 1
+    for id in changed {
+      changedAt[id] = revision
+      removedAt.removeValue(forKey: id)
+    }
+    for id in removed {
+      changedAt.removeValue(forKey: id)
+      removedAt[id] = revision
+    }
+    if projectsChanged {
+      projects = list.projects
+      projectsChangedAt = revision
+    }
+    if removedAt.count > Self.removalLimit {
+      // Forget the oldest removals; cursors from before them get a full list.
+      let kept = removedAt.sorted { $0.value > $1.value }.prefix(Self.removalLimit / 2)
+      oldestCompleteRevision = (kept.last?.value ?? revision) - 1
+      removedAt = Dictionary(uniqueKeysWithValues: kept.map { ($0.key, $0.value) })
+    }
+    summaries = next
   }
 }
 
