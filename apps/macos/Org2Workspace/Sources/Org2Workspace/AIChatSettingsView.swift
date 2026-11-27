@@ -728,6 +728,8 @@ private struct AIChatDestinationEditor: View {
       return isBuiltInOpenClaw
         ? "This default destination uses the existing OpenClaw Gateway configuration."
         : "Routes turns to this OpenClaw gateway and agent ID with its own saved token."
+    case .openAI where destination.providerPreset == .gemini:
+      return "Connects directly to Google's Gemini API through its OpenAI-compatible endpoint, using a Google AI Studio API key. gemini-4-hydrogen is the default; reasoning effort maps to Gemini's thinking level (Extra High on Gemini 4 Neon and Hydrogen only). This is chat only, not the Antigravity agent. Google may use prompts sent with a free-tier key to improve its products, so use a paid key for private notes."
     case .openAI where destination.providerPreset == .deepSeek:
       return "Connects directly to DeepSeek's OpenAI-compatible API with your API key, for context chat and inexpensive background work. deepseek-flash is the low-cost default; deepseek-v4-pro is also available. Reasoning effort sets DeepSeek's thinking mode."
     case .openAI:

@@ -4015,6 +4015,7 @@ public enum AIChatDestinationAdapter: String, CaseIterable, Codable, Identifiabl
 /// treats the destination as an ordinary OpenAI-compatible provider.
 public enum AIChatProviderPreset: String, CaseIterable, Identifiable, Sendable {
   case deepSeek
+  case gemini
 
   public var id: String { rawValue }
   public var adapter: AIChatDestinationAdapter { .openAI }
@@ -4022,30 +4023,35 @@ public enum AIChatProviderPreset: String, CaseIterable, Identifiable, Sendable {
   public var title: String {
     switch self {
     case .deepSeek: "DeepSeek"
+    case .gemini: "Gemini"
     }
   }
 
   public var defaultMention: String {
     switch self {
     case .deepSeek: "deepseek"
+    case .gemini: "gemini"
     }
   }
 
   public var systemImage: String {
     switch self {
     case .deepSeek: "water.waves"
+    case .gemini: "sparkle"
     }
   }
 
   public var defaultEndpoint: String {
     switch self {
     case .deepSeek: "https://api.deepseek.com"
+    case .gemini: "https://generativelanguage.googleapis.com/v1beta/openai/"
     }
   }
 
   public var defaultModel: String {
     switch self {
     case .deepSeek: "deepseek-flash"
+    case .gemini: "gemini-4-hydrogen"
     }
   }
 
@@ -4058,13 +4064,26 @@ public enum AIChatProviderPreset: String, CaseIterable, Identifiable, Sendable {
         AIChatReasoningOption(id: "high", label: "High"),
         AIChatReasoningOption(id: "max", label: "Maximum"),
       ]
+    case .gemini:
+      Self.geminiReasoningOptions(includesExtraHigh: true)
     }
+  }
+
+  /// Gemini's OpenAI-compatible `reasoning_effort` values. Gemini 4 cannot
+  /// turn thinking off, and only Neon and Hydrogen accept `xhigh`.
+  private static func geminiReasoningOptions(includesExtraHigh: Bool) -> [AIChatReasoningOption] {
+    [
+      AIChatReasoningOption(id: "low", label: "Low"),
+      AIChatReasoningOption(id: "medium", label: "Medium"),
+      AIChatReasoningOption(id: "high", label: "High"),
+    ] + (includesExtraHigh ? [AIChatReasoningOption(id: "xhigh", label: "Extra High")] : [])
   }
 
   /// The provider's own default when a chat leaves effort unset.
   public var defaultReasoningEffort: String? {
     switch self {
     case .deepSeek: "high"
+    case .gemini: nil
     }
   }
 
@@ -4088,6 +4107,21 @@ public enum AIChatProviderPreset: String, CaseIterable, Identifiable, Sendable {
           defaultReasoningEffort: defaultReasoningEffort
         ),
       ]
+    case .gemini:
+      [
+        ("gemini-4-hydrogen", "Gemini 4 Hydrogen", true),
+        ("gemini-4-neon", "Gemini 4 Neon", true),
+        ("gemini-4-carbon", "Gemini 4 Carbon", false),
+        ("gemini-4-argon", "Gemini 4 Argon", false),
+        ("gemini-3.8-flash", "Gemini 3.8 Flash", false),
+      ].map { id, label, extraHigh in
+        AIChatModelOption(
+          id: id,
+          label: label,
+          supportsReasoning: true,
+          reasoningOptions: Self.geminiReasoningOptions(includesExtraHigh: extraHigh)
+        )
+      }
     }
   }
 
@@ -4111,13 +4145,38 @@ public enum AIChatProviderPreset: String, CaseIterable, Identifiable, Sendable {
         return ["thinking": ["type": "disabled"]]
       }
       return ["thinking": ["type": "enabled"], "reasoning_effort": effort]
+    case .gemini:
+      guard let effort = reasoningEffort?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            ["minimal", "low", "medium", "high", "xhigh"].contains(effort)
+      else { return [:] }
+      return ["reasoning_effort": effort]
     }
   }
 
   /// Known models first, followed by any others the provider reports.
   public func modelOptions(merging discovered: [AIChatModelOption]) -> [AIChatModelOption] {
+    var discovered = discovered
+    if self == .gemini {
+      // Google lists every model, including embedding, speech, image, and
+      // live-audio models, and may name them `models/<id>`.
+      let nonChat = ["embedding", "tts", "image", "live", "transcribe", "translate",
+                     "imagen", "veo", "banana", "aqa", "omni"]
+      discovered = discovered.compactMap { option in
+        let id = option.id.hasPrefix("models/") ? String(option.id.dropFirst("models/".count)) : option.id
+        let lowered = id.lowercased()
+        guard lowered.hasPrefix("gemini"), !nonChat.contains(where: lowered.contains) else { return nil }
+        return AIChatModelOption(
+          id: id,
+          label: option.label == option.id ? id : option.label,
+          detail: option.detail,
+          supportsReasoning: true,
+          reasoningOptions: Self.geminiReasoningOptions(includesExtraHigh: false)
+        )
+      }
+    }
     let known = Set(models.map(\.id))
-    return models + discovered.filter { !known.contains($0.id) }
+    var seen = known
+    return models + discovered.filter { seen.insert($0.id).inserted }
   }
 }
 

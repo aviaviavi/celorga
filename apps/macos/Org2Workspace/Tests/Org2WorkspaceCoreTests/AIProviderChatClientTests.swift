@@ -405,6 +405,97 @@ final class AIProviderChatClientTests: XCTestCase {
     XCTAssertEqual(restored.first?.providerPreset, .deepSeek)
   }
 
+  func testGeminiPresetUsesGooglesOpenAICompatibleEndpoint() async throws {
+    let destination = AIChatDestinationConfiguration(preset: .gemini)
+    XCTAssertEqual(destination.adapter, .openAI, "a preset persists as an adapter older builds decode")
+    XCTAssertEqual(destination.endpoint, "https://generativelanguage.googleapis.com/v1beta/openai/")
+    XCTAssertEqual(destination.model, "gemini-4-hydrogen")
+    XCTAssertEqual(destination.providerPreset, .gemini)
+    XCTAssertEqual(destination.mention, "gemini")
+    XCTAssertTrue(destination.supportsReasoningEffort)
+    XCTAssertEqual(AIChatProviderPreset.matching(
+      adapter: .openAI, endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
+    ), .gemini)
+
+    var bodies: [[String: Any]] = []
+    let lock = NSLock()
+    AIProviderTestURLProtocol.setHandler { request in
+      XCTAssertEqual(
+        request.url?.absoluteString,
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+      )
+      XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer gemini-secret")
+      let object = try XCTUnwrap(
+        JSONSerialization.jsonObject(with: try self.requestBodyData(request)) as? [String: Any]
+      )
+      lock.withLock { bodies.append(object) }
+      return (200, ["choices": [["message": ["content": "Gemini reply"]]]])
+    }
+    let client = try geminiClient()
+    for effort in ["xhigh", "off", nil] as [String?] {
+      let reply = try await client.send(
+        messages: [AIChatMessage(role: .user, content: "Summarize the launch notes.")],
+        model: "gemini-4-hydrogen",
+        workspaceContext: emptyContext,
+        destinationName: "Gemini",
+        reasoningEffort: effort
+      )
+      XCTAssertEqual(reply, "Gemini reply")
+    }
+    XCTAssertEqual(bodies.count, 3)
+    XCTAssertEqual(bodies[0]["model"] as? String, "gemini-4-hydrogen")
+    XCTAssertEqual(bodies[0]["reasoning_effort"] as? String, "xhigh")
+    XCTAssertNil(bodies[1]["reasoning_effort"], "Gemini 4 cannot turn thinking off; keep its default")
+    XCTAssertNil(bodies[2]["reasoning_effort"], "an unset effort keeps the provider default")
+    XCTAssertNil(bodies[0]["thinking"], "DeepSeek's thinking field is not sent to Google")
+  }
+
+  func testGeminiPresetListsChatModelsWithPerModelEffort() async throws {
+    AIProviderTestURLProtocol.setHandler { request in
+      XCTAssertEqual(
+        request.url?.absoluteString,
+        "https://generativelanguage.googleapis.com/v1beta/openai/models"
+      )
+      return (200, ["data": [
+        ["id": "models/gemini-4-neon"],
+        ["id": "models/gemini-3.6-flash"],
+        ["id": "models/gemini-embedding-2"],
+        ["id": "models/gemini-3.8-flash-tts"],
+        ["id": "models/gemini-3.1-flash-image"],
+      ]])
+    }
+    let discovered = try await geminiClient().listModels()
+    let models = AIChatProviderPreset.gemini.modelOptions(merging: discovered)
+    XCTAssertEqual(models.map(\.id), [
+      "gemini-4-hydrogen", "gemini-4-neon", "gemini-4-carbon", "gemini-4-argon",
+      "gemini-3.8-flash", "gemini-3.6-flash",
+    ])
+    XCTAssertEqual(models[0].reasoningOptions.map(\.id), ["low", "medium", "high", "xhigh"])
+    XCTAssertEqual(models[2].reasoningOptions.map(\.id), ["low", "medium", "high"],
+      "xhigh is offered only where Google accepts it")
+    XCTAssertEqual(
+      WorkspaceStore.aiChatRoomReasoningOptions(
+        adapter: .openAI, selectedModel: nil, models: [], preset: .gemini
+      ).map(\.id),
+      ["low", "medium", "high", "xhigh"]
+    )
+    let saved = try JSONEncoder().encode([AIChatDestinationConfiguration(preset: .gemini)])
+    XCTAssertTrue(try XCTUnwrap(String(data: saved, encoding: .utf8)).contains(#""adapter":"openAI""#))
+  }
+
+  private func geminiClient() throws -> AIProviderChatClient {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [AIProviderTestURLProtocol.self]
+    return AIProviderChatClient(
+      settings: try AIProviderChatSettings(
+        adapter: .openAI,
+        endpoint: AIChatProviderPreset.gemini.defaultEndpoint,
+        apiKey: "gemini-secret"
+      ),
+      session: URLSession(configuration: configuration)
+    )
+  }
+
   private func deepSeekClient() throws -> AIProviderChatClient {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [AIProviderTestURLProtocol.self]
