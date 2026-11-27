@@ -2103,6 +2103,41 @@ extension WorkspaceStore {
     }
   }
 
+  /// The reasoning levels a destination offers for `model` (nil: its
+  /// default model), from cached catalogs only so it never waits on an
+  /// agent. Mirrors how a chat's remote configuration derives its levels.
+  func cachedAIChatReasoningChoices(
+    destinationID: String,
+    model: String?
+  ) -> (options: [AIChatReasoningOption], defaultEffort: String?) {
+    guard let destination = aiChatDestination(id: destinationID) else { return ([], nil) }
+    let cached = aiChatConfigurationCatalogCache[destinationID]
+    let models = cached?.models ?? []
+    let selected = model.flatMap { id in models.first(where: { $0.id == id }) }
+      ?? models.first(where: \.isDefault)
+    switch destination.adapter {
+    case .codexLocal, .codexRemote, .codexManagedRemote:
+      guard let selected, !selected.reasoningOptions.isEmpty else {
+        return (cached?.reasoningOptions ?? [], cached?.defaultReasoningEffort)
+      }
+      return (selected.reasoningOptions, selected.defaultReasoningEffort)
+    case .claudeLocal:
+      return (ClaudeCodeClient.reasoningOptions(forModel: model, in: models), nil)
+    case .piLocal, .piRemote, .openCodeLocal, .openCodeRemote:
+      return (Self.cliHarnessReasoningOptions, nil)
+    case .antigravityLocal, .antigravityRemote:
+      return (AntigravityClient.reasoningOptions, nil)
+    case .openClaw:
+      return (cached?.reasoningOptions ?? [], cached?.defaultReasoningEffort)
+    case .openAI, .anthropic, .openRouter, .ollama:
+      guard let preset = destination.providerPreset else { return ([], nil) }
+      let own = selected?.reasoningOptions ?? []
+      return (own.isEmpty ? preset.reasoningOptions : own, preset.defaultReasoningEffort)
+    case .openAIDot:
+      return ([], nil)
+    }
+  }
+
   func remoteModelsForAIChatDestination(_ destinationID: String) async throws -> [AIChatModelOption] {
     if let cached = aiChatConfigurationCatalogCache[destinationID]?.models, !cached.isEmpty {
       refreshRemoteAIChatModelCatalogInBackground(destinationID)

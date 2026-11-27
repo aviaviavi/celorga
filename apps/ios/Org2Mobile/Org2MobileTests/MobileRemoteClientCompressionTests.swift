@@ -30,6 +30,45 @@ final class MobileRemoteClientCompressionTests: XCTestCase {
     ).decoded())
   }
 
+  /// A new chat offers reasoning before it exists: a model's own levels
+  /// when the host sends them, otherwise the agent's; a chat's own
+  /// configuration, which lacks per-model levels, does not erase them.
+  func testNewChatReasoningUsesPerModelLevelsAndKeepsThem() throws {
+    let json = """
+    {"destinationID":"codex","defaultReasoningEffort":"high",
+     "reasoningOptions":[{"id":"high","label":"High"}],
+     "models":[{"id":"fast","label":"Fast","isDefault":true},
+               {"id":"deep","label":"Deep","isDefault":false,
+                "reasoningOptions":[{"id":"low","label":"Low"},{"id":"xhigh","label":"Extra High"}],
+                "defaultReasoningEffort":"low"}]}
+    """
+    let destination = try JSONDecoder().decode(MobileRemoteDestinationConfiguration.self, from: Data(json.utf8))
+    let saved = MobileRemoteThreadConfiguration(
+      threadID: UUID(), model: nil, models: destination.models, reasoningEffort: nil,
+      reasoningOptions: destination.reasoningOptions, defaultReasoningEffort: destination.defaultReasoningEffort
+    )
+    XCTAssertEqual(saved.reasoningChoices(forModel: nil).options.map(\.id), ["high"])
+    XCTAssertEqual(saved.reasoningChoices(forModel: "fast").defaultEffort, "high")
+    XCTAssertEqual(saved.reasoningChoices(forModel: "deep").options.map(\.id), ["low", "xhigh"])
+    XCTAssertEqual(saved.reasoningChoices(forModel: "deep").defaultEffort, "low")
+
+    // A chat on "deep" reports its own levels and models without per-model levels.
+    let chat = MobileRemoteThreadConfiguration(
+      threadID: UUID(), model: "deep",
+      models: [
+        MobileRemoteModelOption(id: "fast", label: "Fast", detail: nil, isDefault: true),
+        MobileRemoteModelOption(id: "deep", label: "Deep", detail: nil, isDefault: false),
+      ],
+      reasoningEffort: "xhigh",
+      reasoningOptions: [MobileRemoteReasoningOption(id: "low", label: "Low", detail: nil)],
+      defaultReasoningEffort: "low"
+    )
+    let merged = chat.keepingModelReasoning(from: saved)
+    XCTAssertEqual(merged.reasoningChoices(forModel: nil).options.map(\.id), ["high"])
+    XCTAssertEqual(merged.reasoningChoices(forModel: "deep").options.map(\.id), ["low", "xhigh"])
+    XCTAssertEqual(chat.keepingModelReasoning(from: nil), chat)
+  }
+
   func testDeltaThreadListsMergeIntoTheCachedList() throws {
     func summary(_ id: UUID, _ title: String, updated: Double, settled: Bool = false, pinned: Bool = false) -> MobileRemoteThreadSummary {
       let json = """

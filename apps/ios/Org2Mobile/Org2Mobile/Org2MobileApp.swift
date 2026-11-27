@@ -5,6 +5,7 @@ import SwiftUI
 extension Notification.Name {
   static let org2OpenMobileSidebar = Notification.Name("org2.openMobileSidebar")
   static let org2OpenMobileSettings = Notification.Name("org2.openMobileSettings")
+  static let org2OpenMobileNewChat = Notification.Name("org2.openMobileNewChat")
   static let org2NotificationDestinationPending = Notification.Name("org2.notificationDestinationPending")
   static let org2OpenRemoteThread = Notification.Name("org2.openRemoteThread")
   static let org2RemotePushTokenUpdated = Notification.Name("org2.remotePushTokenUpdated")

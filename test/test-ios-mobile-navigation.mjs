@@ -45,7 +45,20 @@ const workspaceTabs = contentView.slice(
   contentView.indexOf("private struct WorkspaceTabs"),
   contentView.indexOf("private struct AgendaView"),
 );
-assert.match(workspaceTabs, /Label\("Files", systemImage: "folder"\)/);
+// Two bottom tabs, like a messaging app: Chat and Capture. Agenda,
+// Approvals, and Files move to the sidebar.
+assert.match(workspaceTabs, /Label\("Chat", systemImage: "bubble\.left\.and\.bubble\.right"\)/);
+assert.match(workspaceTabs, /Label\("Capture", systemImage: "square\.and\.pencil"\)/);
+assert.doesNotMatch(workspaceTabs, /Label\("Agenda"|Label\("Files"/);
+assert.match(workspaceTabs, /case \.newChat:[\s\S]*MobileQuickChatView/);
+assert.match(workspaceTabs, /openAgenda: \{ show\(\.agenda\) \}/);
+assert.match(workspaceTabs, /openFiles: \{ show\(\.files\) \}/);
+assert.match(workspaceTabs, /\.org2OpenMobileNewChat[\s\S]*show\(\.newChat\)/, "A chat's pencil returns to a new chat");
+assert.match(
+  workspaceTabs,
+  /if selected == \.chat, tab == \.chat, route != \.newChat \{\s*route = \.newChat/,
+  "Re-tapping Chat starts a new chat",
+);
 assert.doesNotMatch(workspaceTabs, /Label\("Remote"/);
 assert.doesNotMatch(workspaceTabs, /Label\("Workflows"/);
 assert.match(workspaceTabs, /case \.thread\(let threadID\):[\s\S]*MobileRemoteThreadView/);
@@ -53,10 +66,6 @@ assert.match(
   workspaceTabs,
   /MobileRemoteThreadView\(threadID: threadID\)[\s\S]*?\.id\(threadID\)/,
   "Each sidebar-selected chat should have a distinct SwiftUI view identity",
-);
-assert.match(
-  workspaceTabs,
-  /openWorkspace: \{\s*selection = \.newNote\s*route = \.workspace/,
 );
 assert.match(
   workspaceTabs,
@@ -113,6 +122,26 @@ assert.doesNotMatch(
 );
 
 assert.match(remoteViews, /struct MobileAISidebarView/);
+assert.match(remoteViews, /sidebarButton\("New Chat", systemImage: "plus\.bubble", action: openQuickChat\)/);
+assert.match(remoteViews, /sidebarButton\("Agenda", systemImage: "calendar", action: openAgenda\)/);
+assert.match(remoteViews, /sidebarButton\("Approvals", systemImage: "checkmark\.seal", action: openApprovals\)/);
+
+// The new chat has the full composer: photos, camera, dictation, and the
+// agent, model, and reasoning, pinned to the bottom like a chat's.
+{
+  const quickChat = readFileSync(
+    resolve("apps/ios/Org2Mobile/Org2Mobile/MobileQuickChatView.swift"),
+    "utf8",
+  );
+  assert.match(quickChat, /\.safeAreaInset\(edge: \.bottom\)[\s\S]*composer/);
+  assert.match(quickChat, /MobileRemoteComposerTextView\(/);
+  assert.match(quickChat, /\.photosPicker\(/);
+  assert.match(quickChat, /ImagePicker\(sourceType: \.camera\)/);
+  assert.match(quickChat, /voiceTranscriber\.start\(\)/);
+  assert.match(quickChat, /reasoningChoices\(forModel: model\)/);
+  assert.match(quickChat, /attachments: sentAttachments/);
+  assert.match(remoteViews, /attachments = pending\.attachments\s*sendMessage\(\)/);
+}
 assert.match(remoteViews, /sidebarButton\([\s\S]*?"External Threads"/);
 const mobileSidebar = remoteViews.slice(
   remoteViews.indexOf("struct MobileAISidebarView"),
@@ -163,7 +192,7 @@ assert.match(remoteViews, /Button\("Pair Again", role: \.destructive\)/);
 
 const mobileThreadView = remoteViews.slice(
   remoteViews.indexOf("struct MobileRemoteThreadView"),
-  remoteViews.indexOf("private struct MobileRemotePhotoThumbnail"),
+  remoteViews.indexOf("struct MobileRemotePhotoThumbnail"),
 );
 assert.match(
   mobileThreadView,
@@ -214,8 +243,8 @@ assert.doesNotMatch(
   "A vertical TextField scrolls a long draft back to the caret whenever polling redraws the thread",
 );
 const composerTextView = remoteViews.slice(
-  remoteViews.indexOf("private struct MobileRemoteComposerUITextView"),
-  remoteViews.indexOf("private struct MobileRemotePhotoThumbnail"),
+  remoteViews.indexOf("struct MobileRemoteComposerUITextView: UIViewRepresentable"),
+  remoteViews.indexOf("struct MobileRemotePhotoThumbnail"),
 );
 assert.match(
   composerTextView,

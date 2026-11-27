@@ -59,14 +59,25 @@ private struct WorkspaceTabs: View {
   @EnvironmentObject private var store: CorpusStore
   @Environment(\.scenePhase) private var scenePhase
 
-  @State private var selection: WorkspaceTab = .initialSelection
-  @State private var route: MobileWorkspaceRoute = .workspace
+  @State private var tab: MobileRootTab = .chat
+  @State private var route: MobileWorkspaceRoute = MobileWorkspaceRoute.initial
   @State private var isSidebarPresented = CelorgaNames.environment("ORG2_DEBUG_SHOW_SIDEBAR") == "1"
+  @State private var hasChosenLaunchTab = false
 
   var body: some View {
     ZStack(alignment: .leading) {
-      destinationView
-        .allowsHitTesting(!isSidebarPresented)
+      // Two tabs, like a messaging app: Chat (a new chat, or whatever the
+      // sidebar opened) and Capture. Everything else lives in the sidebar.
+      TabView(selection: tabSelection) {
+        chatTab
+          .tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }
+          .tag(MobileRootTab.chat)
+
+        NewNoteTabView()
+          .tabItem { Label("Capture", systemImage: "square.and.pencil") }
+          .tag(MobileRootTab.capture)
+      }
+      .allowsHitTesting(!isSidebarPresented)
 
       if isSidebarPresented {
         Color.black.opacity(0.22)
@@ -77,36 +88,14 @@ private struct WorkspaceTabs: View {
 
         MobileAISidebarView(
           selectedThreadID: selectedThreadID,
-          openWorkspace: {
-            selection = .newNote
-            route = .workspace
-            closeSidebar()
-          },
-          openFiles: {
-            route = .workspace
-            selection = .files
-            closeSidebar()
-          },
-          openThread: { threadID in
-            route = .thread(threadID)
-            closeSidebar()
-          },
-          openQuickChat: {
-            route = .quickChat
-            closeSidebar()
-          },
-          openExternalThreads: {
-            route = .externalThreads
-            closeSidebar()
-          },
-          openSettings: {
-            route = .settings
-            closeSidebar()
-          },
-          openDocument: { destination in
-            route = .document(destination)
-            closeSidebar()
-          },
+          openQuickChat: { show(.newChat) },
+          openAgenda: { show(.agenda) },
+          openApprovals: { show(.approvals) },
+          openFiles: { show(.files) },
+          openThread: { threadID in show(.thread(threadID)) },
+          openExternalThreads: { show(.externalThreads) },
+          openSettings: { show(.settings) },
+          openDocument: { destination in show(.document(destination)) },
           close: closeSidebar
         )
         .frame(width: min(UIScreen.main.bounds.width * 0.88, 360))
@@ -131,9 +120,13 @@ private struct WorkspaceTabs: View {
       }
     )
     .onAppear {
-      // Open ready to type unless a notification asked for something else.
-      if remote.isPaired, remote.opensToQuickChat, route == .workspace {
-        route = .quickChat
+      // Open to a new chat, or to Capture when there is no host to chat
+      // with or the user prefers it, unless a notification asks otherwise.
+      if !hasChosenLaunchTab {
+        hasChosenLaunchTab = true
+        if !remote.isPaired || !remote.opensToQuickChat, route == .newChat {
+          tab = .capture
+        }
       }
       openPendingNotification()
     }
@@ -150,8 +143,10 @@ private struct WorkspaceTabs: View {
       isSidebarPresented = true
     }
     .onReceive(NotificationCenter.default.publisher(for: .org2OpenMobileSettings)) { _ in
-      route = .settings
-      closeSidebar()
+      show(.settings)
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .org2OpenMobileNewChat)) { _ in
+      show(.newChat)
     }
     .onChange(of: remote.workspaceAgenda) { _, agenda in
       store.scheduleDueTodayNotification(from: agenda)
@@ -160,17 +155,28 @@ private struct WorkspaceTabs: View {
       guard let rawThreadID = notification.userInfo?["threadID"] as? String,
             let threadID = UUID(uuidString: rawThreadID)
       else { return }
-      route = .thread(threadID)
-      closeSidebar()
+      show(.thread(threadID))
     }
   }
 
+  /// Tapping Chat while it is already selected starts a new chat, the way
+  /// re-tapping a tab returns to its start.
+  private var tabSelection: Binding<MobileRootTab> {
+    Binding(
+      get: { tab },
+      set: { selected in
+        if selected == .chat, tab == .chat, route != .newChat {
+          route = .newChat
+        }
+        tab = selected
+      }
+    )
+  }
+
   @ViewBuilder
-  private var destinationView: some View {
+  private var chatTab: some View {
     switch route {
-    case .workspace:
-      workspaceTabView
-    case .quickChat:
+    case .newChat:
       NavigationStack {
         MobileQuickChatView { threadID in
           route = .thread(threadID)
@@ -186,6 +192,12 @@ private struct WorkspaceTabs: View {
         // lease before presenting the newly selected conversation.
         .id(threadID)
       }
+    case .agenda:
+      AgendaView()
+    case .approvals:
+      ApprovalsView()
+    case .files:
+      FilesTabView()
     case .externalThreads:
       NavigationStack {
         MobileExternalThreadListView { threadID in
@@ -204,29 +216,15 @@ private struct WorkspaceTabs: View {
     }
   }
 
-  private var workspaceTabView: some View {
-    TabView(selection: $selection) {
-      NewNoteTabView()
-        .tabItem { Label("New Note", systemImage: "square.and.pencil") }
-        .tag(WorkspaceTab.newNote)
-
-      AgendaView()
-        .tabItem { Label("Agenda", systemImage: "calendar") }
-        .tag(WorkspaceTab.agenda)
-
-      ApprovalsView()
-        .tabItem { Label("Approvals", systemImage: "checkmark.seal") }
-        .tag(WorkspaceTab.approvals)
-
-      FilesTabView()
-        .tabItem { Label("Files", systemImage: "folder") }
-        .tag(WorkspaceTab.files)
-    }
-  }
-
   private var selectedThreadID: UUID? {
     guard case .thread(let threadID) = route else { return nil }
     return threadID
+  }
+
+  private func show(_ destination: MobileWorkspaceRoute) {
+    route = destination
+    tab = .chat
+    closeSidebar()
   }
 
   private func openPendingNotification() {
@@ -237,11 +235,10 @@ private struct WorkspaceTabs: View {
     case .thread(let threadID):
       // Keep the tap while pairing is unavailable. Thread loading itself owns
       // connection retries, so navigation never waits for the host/list refresh.
-      guard remote.isPaired else { route = .settings; return }
-      route = .thread(threadID)
+      guard remote.isPaired else { show(.settings); return }
+      show(.thread(threadID))
     case .agenda:
-      route = .workspace
-      selection = .agenda
+      show(.agenda)
     }
     inbox.acknowledge(pending)
   }
@@ -267,13 +264,37 @@ private enum MobileSidebarEdgeSwipe {
   }
 }
 
+private enum MobileRootTab: Hashable {
+  case chat
+  case capture
+}
+
 private enum MobileWorkspaceRoute: Equatable {
-  case workspace
-  case quickChat
+  case newChat
   case thread(UUID)
+  case agenda
+  case approvals
+  case files
   case externalThreads
   case settings
   case document(MobileDocumentDestination)
+
+  static var initial: MobileWorkspaceRoute {
+    #if DEBUG
+    switch CelorgaNames.environment("ORG2_DEBUG_INITIAL_TAB")?.lowercased() {
+    case "agenda":
+      return .agenda
+    case "approvals":
+      return .approvals
+    case "files":
+      return .files
+    default:
+      return .newChat
+    }
+    #else
+    return .newChat
+    #endif
+  }
 }
 
 private struct NewNoteTabView: View {
@@ -289,30 +310,6 @@ private struct FilesTabView: View {
     NavigationStack {
       CorpusFileBrowserView()
     }
-  }
-}
-
-private enum WorkspaceTab: Hashable {
-  case newNote
-  case agenda
-  case approvals
-  case files
-
-  static var initialSelection: WorkspaceTab {
-    #if DEBUG
-    switch CelorgaNames.environment("ORG2_DEBUG_INITIAL_TAB")?.lowercased() {
-    case "agenda":
-      return .agenda
-    case "approvals":
-      return .approvals
-    case "files":
-      return .files
-    default:
-      return .newNote
-    }
-    #else
-    return .newNote
-    #endif
   }
 }
 

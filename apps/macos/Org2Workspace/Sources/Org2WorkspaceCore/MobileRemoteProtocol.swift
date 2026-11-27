@@ -329,12 +329,26 @@ public struct MobileRemoteModelOption: Codable, Hashable, Identifiable, Sendable
   public let label: String
   public let detail: String?
   public let isDefault: Bool
+  /// This model's reasoning levels when they differ from its destination's,
+  /// so a phone can offer the right levels before a chat exists. Nil when the
+  /// destination's levels apply, and from hosts that predate per-model levels.
+  public let reasoningOptions: [MobileRemoteReasoningOption]?
+  public let defaultReasoningEffort: String?
 
-  public init(id: String, label: String, detail: String?, isDefault: Bool) {
+  public init(
+    id: String,
+    label: String,
+    detail: String?,
+    isDefault: Bool,
+    reasoningOptions: [MobileRemoteReasoningOption]? = nil,
+    defaultReasoningEffort: String? = nil
+  ) {
     self.id = id
     self.label = label
     self.detail = detail
     self.isDefault = isDefault
+    self.reasoningOptions = reasoningOptions
+    self.defaultReasoningEffort = defaultReasoningEffort
   }
 }
 

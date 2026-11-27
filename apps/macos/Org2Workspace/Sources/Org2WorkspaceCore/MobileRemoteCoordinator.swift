@@ -444,15 +444,29 @@ public final class MobileRemoteCoordinator: ObservableObject {
           guard let cached = store.aiChatConfigurationCatalogCache[destination.id],
                 !cached.models.isEmpty
           else { return nil }
+          // Levels come from the cached catalog, the same way a chat's own
+          // configuration derives them, so a new chat can offer reasoning
+          // before it exists. Models whose levels differ carry their own.
+          let shared = store.cachedAIChatReasoningChoices(destinationID: destination.id, model: nil)
+          func mobile(_ options: [AIChatReasoningOption]) -> [MobileRemoteReasoningOption] {
+            options.map { MobileRemoteReasoningOption(id: $0.id, label: $0.label, detail: $0.detail) }
+          }
           return MobileRemoteDestinationConfiguration(
             destinationID: destination.id,
-            models: cached.models.map {
-              MobileRemoteModelOption(id: $0.id, label: $0.label, detail: $0.detail, isDefault: $0.isDefault)
+            models: cached.models.map { model in
+              let own = store.cachedAIChatReasoningChoices(destinationID: destination.id, model: model.id)
+              let differs = own.options != shared.options || own.defaultEffort != shared.defaultEffort
+              return MobileRemoteModelOption(
+                id: model.id,
+                label: model.label,
+                detail: model.detail,
+                isDefault: model.isDefault,
+                reasoningOptions: differs ? mobile(own.options) : nil,
+                defaultReasoningEffort: differs ? own.defaultEffort : nil
+              )
             },
-            reasoningOptions: cached.reasoningOptions.map {
-              MobileRemoteReasoningOption(id: $0.id, label: $0.label, detail: $0.detail)
-            },
-            defaultReasoningEffort: cached.defaultReasoningEffort
+            reasoningOptions: mobile(shared.options),
+            defaultReasoningEffort: shared.defaultEffort
           )
         }
       ))

@@ -75,10 +75,11 @@ struct MobileAISidebarView: View {
   @State private var isDailyDatePickerPresented = false
   @State private var dailyPickerDate = Date()
   let selectedThreadID: UUID?
-  let openWorkspace: () -> Void
+  var openQuickChat: () -> Void = {}
+  var openAgenda: () -> Void = {}
+  var openApprovals: () -> Void = {}
   let openFiles: () -> Void
   let openThread: (UUID) -> Void
-  var openQuickChat: () -> Void = {}
   let openExternalThreads: () -> Void
   let openSettings: () -> Void
   var openDocument: (MobileDocumentDestination) -> Void = { _ in }
@@ -122,7 +123,7 @@ struct MobileAISidebarView: View {
           } label: {
             Image(systemName: "square.and.pencil")
           } primaryAction: {
-            // Tap: Quick Chat with the default agent. Hold: choose an agent or project.
+            // Tap: a new chat with the default agent. Hold: choose an agent or project.
             openQuickChat()
           }
           .accessibilityLabel("New AI chat")
@@ -138,7 +139,10 @@ struct MobileAISidebarView: View {
 
       List {
         Section {
-          sidebarButton("Workspace", systemImage: "square.grid.2x2", action: openWorkspace)
+          sidebarButton("New Chat", systemImage: "plus.bubble", action: openQuickChat)
+            .disabled(!remote.isPaired)
+          sidebarButton("Agenda", systemImage: "calendar", action: openAgenda)
+          sidebarButton("Approvals", systemImage: "checkmark.seal", action: openApprovals)
           sidebarButton("Files", systemImage: "folder", action: openFiles)
           sidebarButton(
             "External Threads",
@@ -508,8 +512,8 @@ struct MobileSettingsView: View {
 
       if remote.isPaired {
         Section {
-          Toggle("Open to Quick Chat", isOn: $remote.opensToQuickChat)
-          Picker("Quick Chat agent", selection: Binding(
+          Toggle("Open to New Chat", isOn: $remote.opensToQuickChat)
+          Picker("New chat agent", selection: Binding(
             get: { remote.quickChatDestination?.id ?? "" },
             set: { id in
               if let destination = remote.chatDestinations.first(where: { $0.id == id }) {
@@ -522,9 +526,9 @@ struct MobileSettingsView: View {
             }
           }
         } header: {
-          Text("Quick Chat")
+          Text("New Chat")
         } footer: {
-          Text("Quick Chat opens ready to type. Your message starts a new chat with this agent, using the model you last picked for it. The pencil in the sidebar opens it too; hold the pencil to choose another agent or a project.")
+          Text("The Chat tab opens to a new chat with this agent, using the model and reasoning you last sent with it. Turn off Open to New Chat to open to Capture instead. In the sidebar, tap the pencil for a new chat, or hold it to choose another agent or a project.")
         }
       }
 
@@ -1519,10 +1523,12 @@ struct MobileRemoteThreadView: View {
     // a notification switches tabs or restores the navigation path, leaving
     // an already-loaded transcript behind a permanent spinner.
     .onAppear {
-      // A chat started from Quick Chat sends its first message from here, so
-      // it shows the usual sending state while the host creates the chat.
-      if let message = remote.takeQuickChatMessage(for: threadID) {
-        draft = message
+      // A chat started from the new-chat composer sends its first message,
+      // photos included, from here, so it shows the usual sending state
+      // while the host creates the chat.
+      if let pending = remote.takeQuickChatMessage(for: threadID) {
+        draft = pending.text
+        attachments = pending.attachments
         sendMessage()
       }
     }
@@ -1584,6 +1590,14 @@ struct MobileRemoteThreadView: View {
           }
           .disabled(remote.mutatingThreadIDs.contains(threadID))
         }
+      }
+      ToolbarItem(placement: .topBarTrailing) {
+        Button {
+          NotificationCenter.default.post(name: .org2OpenMobileNewChat, object: nil)
+        } label: {
+          Image(systemName: "square.and.pencil")
+        }
+        .accessibilityLabel("New chat")
       }
     }
     .safeAreaInset(edge: .bottom) {
@@ -2661,7 +2675,7 @@ struct MobileRemoteThreadView: View {
     }
   }
 
-  private static func appendingDictation(_ transcript: String, to prefix: String) -> String {
+  static func appendingDictation(_ transcript: String, to prefix: String) -> String {
     let prefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
     let transcript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
     if prefix.isEmpty { return transcript }
@@ -4606,7 +4620,7 @@ private struct MobileRemoteSourceTextView: UIViewRepresentable {
 /// The chat composer's growing text field. It writes text into the view only
 /// when the draft changed elsewhere (dictation, mention completion, sending),
 /// so redrawing the thread never moves the reader's place in a long draft.
-private struct MobileRemoteComposerTextView: View {
+struct MobileRemoteComposerTextView: View {
   let text: String
   let placeholder: String
   let isEnabled: Bool
@@ -4634,7 +4648,7 @@ private struct MobileRemoteComposerTextView: View {
   }
 }
 
-private struct MobileRemoteComposerUITextView: UIViewRepresentable {
+struct MobileRemoteComposerUITextView: UIViewRepresentable {
   static let verticalInset: CGFloat = 6
 
   let text: String
@@ -4706,7 +4720,7 @@ private struct MobileRemoteComposerUITextView: UIViewRepresentable {
   }
 }
 
-private struct MobileRemotePhotoThumbnail: View {
+struct MobileRemotePhotoThumbnail: View {
   let attachment: MobileRemoteAttachment
   let remove: () -> Void
 
@@ -4733,7 +4747,7 @@ private struct MobileRemotePhotoThumbnail: View {
   }
 }
 
-private enum MobileRemotePhotoPreparation {
+enum MobileRemotePhotoPreparation {
   static func attachment(from data: Data, sequence: Int) throws -> MobileRemoteAttachment {
     guard let image = UIImage(data: data) else {
       throw MobileRemotePhotoError.unreadable
@@ -4771,7 +4785,7 @@ private enum MobileRemotePhotoPreparation {
   }
 }
 
-private enum MobileRemotePhotoError: LocalizedError {
+enum MobileRemotePhotoError: LocalizedError {
   case unreadable
   case tooLarge
   case totalTooLarge

@@ -65,7 +65,15 @@ final class MobileRemoteLatencyTests: XCTestCase {
     XCTAssertTrue(store.enabledAIChatDestinations.contains { $0.id == codexID })
     store.aiChatConfigurationCatalogCache[codexID] = AIChatConfigurationCatalogCacheEntry(
       requestedModel: nil,
-      models: [AIChatModelOption(id: "gpt-test", label: "GPT Test", isDefault: true)],
+      models: [
+        AIChatModelOption(id: "gpt-test", label: "GPT Test", isDefault: true),
+        AIChatModelOption(
+          id: "gpt-deep",
+          label: "GPT Deep",
+          reasoningOptions: [AIChatReasoningOption(id: "low", label: "Low"), AIChatReasoningOption(id: "xhigh", label: "Extra High")],
+          defaultReasoningEffort: "low"
+        ),
+      ],
       effectiveModel: "gpt-test",
       reasoningOptions: [AIChatReasoningOption(id: "high", label: "High")],
       defaultReasoningEffort: "high"
@@ -78,9 +86,14 @@ final class MobileRemoteLatencyTests: XCTestCase {
     XCTAssertEqual(response.statusCode, 200)
     let decoded = try MobileRemoteProtocol.decoder().decode(MobileRemoteDestinationConfigurations.self, from: response.body)
     let codex = try XCTUnwrap(decoded.destinations.first { $0.destinationID == codexID })
-    XCTAssertEqual(codex.models.map(\.id), ["gpt-test"])
+    XCTAssertEqual(codex.models.map(\.id), ["gpt-test", "gpt-deep"])
     XCTAssertEqual(codex.reasoningOptions.map(\.id), ["high"])
     XCTAssertEqual(codex.defaultReasoningEffort, "high")
+    // A model whose levels differ carries them, so a phone can offer them
+    // before any chat with that model exists.
+    XCTAssertNil(codex.models[0].reasoningOptions)
+    XCTAssertEqual(codex.models[1].reasoningOptions?.map(\.id), ["low", "xhigh"])
+    XCTAssertEqual(codex.models[1].defaultReasoningEffort, "low")
     XCTAssertFalse(decoded.destinations.contains { $0.destinationID == AIChatDestinationConfiguration.openClawID },
       "Destinations without a cached catalog are omitted rather than waited on")
 

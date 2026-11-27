@@ -309,6 +309,10 @@ struct MobileRemoteModelOption: Codable, Hashable, Identifiable {
   let label: String
   let detail: String?
   let isDefault: Bool
+  /// This model's reasoning levels when they differ from its agent's; nil
+  /// when the agent's levels apply or the host predates per-model levels.
+  var reasoningOptions: [MobileRemoteReasoningOption]? = nil
+  var defaultReasoningEffort: String? = nil
 }
 
 struct MobileRemoteThreadConfiguration: Codable, Hashable {
@@ -321,6 +325,44 @@ struct MobileRemoteThreadConfiguration: Codable, Hashable {
   /// A shared room's per-agent choices; nil for single-agent chats and from
   /// hosts that predate room model control.
   var roomDestinations: [MobileRemoteRoomDestinationConfiguration]? = nil
+}
+
+extension MobileRemoteThreadConfiguration {
+  /// The reasoning levels for `model` (nil: the default model) before any
+  /// chat exists: the model's own levels, or the agent's.
+  func reasoningChoices(forModel model: String?) -> (options: [MobileRemoteReasoningOption], defaultEffort: String?) {
+    let option = model.flatMap { id in models.first { $0.id == id } } ?? models.first(where: \.isDefault)
+    if let own = option?.reasoningOptions {
+      return (own, option?.defaultReasoningEffort)
+    }
+    return (reasoningOptions, defaultReasoningEffort)
+  }
+
+  /// A chat's configuration lists its models without their own reasoning
+  /// levels and reports levels for the chat's model only. Keep what the
+  /// agent's saved list knew, so new chats still offer the right levels.
+  func keepingModelReasoning(from previous: MobileRemoteThreadConfiguration?) -> MobileRemoteThreadConfiguration {
+    guard let previous else { return self }
+    let saved = Dictionary(previous.models.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    let hadDestinationLevels = !previous.reasoningOptions.isEmpty
+    return MobileRemoteThreadConfiguration(
+      threadID: threadID,
+      model: model,
+      models: models.map { option in
+        guard option.reasoningOptions == nil, let known = saved[option.id], known.reasoningOptions != nil else {
+          return option
+        }
+        var merged = option
+        merged.reasoningOptions = known.reasoningOptions
+        merged.defaultReasoningEffort = known.defaultReasoningEffort
+        return merged
+      },
+      reasoningEffort: reasoningEffort,
+      reasoningOptions: hadDestinationLevels ? previous.reasoningOptions : reasoningOptions,
+      defaultReasoningEffort: hadDestinationLevels ? previous.defaultReasoningEffort : defaultReasoningEffort,
+      roomDestinations: roomDestinations
+    )
+  }
 }
 
 /// One agent's model and reasoning in a shared room.

@@ -90,7 +90,7 @@ final class MobileRemoteStore: ObservableObject {
   @Published private(set) var quickChatDestinationID: String?
   /// The first message of a chat started from Quick Chat, sent by the chat's
   /// own view so it shows the usual sending state.
-  private var quickChatPendingMessages: [UUID: String] = [:]
+  private var quickChatPendingMessages: [UUID: MobileQuickChatPendingMessage] = [:]
   private var quickChatPendingConfigurations: [UUID: (model: String?, effort: String?)] = [:]
   private static let opensToQuickChatKey = "Org2Mobile.remote.opensToQuickChat.v1"
   private static let quickChatDestinationKeyPrefix = "Org2Mobile.remote.quickChatDestination.v1."
@@ -1601,13 +1601,14 @@ final class MobileRemoteStore: ObservableObject {
           let destinationID = summary.destinationID,
           let cached = configurationByDestinationID[destinationID]
     else { return nil }
+    let reasoning = cached.reasoningChoices(forModel: summary.model)
     return MobileRemoteThreadConfiguration(
       threadID: threadID,
       model: summary.model,
       models: cached.models,
       reasoningEffort: nil,
-      reasoningOptions: cached.reasoningOptions,
-      defaultReasoningEffort: cached.defaultReasoningEffort
+      reasoningOptions: reasoning.options,
+      defaultReasoningEffort: reasoning.defaultEffort
     )
   }
 
@@ -1617,7 +1618,10 @@ final class MobileRemoteStore: ObservableObject {
             ?? threadDetail.flatMap { $0.thread.id == configuration.threadID ? $0.thread : nil })?
             .destinationID
     else { return }
-    configurationByDestinationID[destinationID] = configuration
+    // A chat's configuration lists models without their own reasoning
+    // levels; keep the levels the destination list supplied.
+    let previous = configurationByDestinationID[destinationID]
+    configurationByDestinationID[destinationID] = configuration.keepingModelReasoning(from: previous)
     persistDestinationConfigurations()
   }
 
@@ -1666,12 +1670,13 @@ final class MobileRemoteStore: ObservableObject {
   /// empty chats behind.
   func startQuickChat(
     message: String,
+    attachments: [MobileRemoteAttachment] = [],
     destination: MobileRemoteAIDestination,
     model: String?,
     effort: String?
   ) async -> UUID? {
     let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty else { return nil }
+    guard !text.isEmpty || !attachments.isEmpty else { return nil }
     guard let threadID = await createThread(destination: destination) else { return nil }
     if !activeEndpoint.isEmpty {
       var choice: [String: String] = [:]
@@ -1682,13 +1687,19 @@ final class MobileRemoteStore: ObservableObject {
     if model != nil || effort != nil {
       quickChatPendingConfigurations[threadID] = (model, effort)
     }
-    quickChatPendingMessages[threadID] = text
+    quickChatPendingMessages[threadID] = MobileQuickChatPendingMessage(text: text, attachments: attachments)
     return threadID
   }
 
   /// The first message a Quick Chat left for this chat, handed out once.
-  func takeQuickChatMessage(for threadID: UUID) -> String? {
+  func takeQuickChatMessage(for threadID: UUID) -> MobileQuickChatPendingMessage? {
     quickChatPendingMessages.removeValue(forKey: threadID)
+  }
+
+  /// Asks the host for every agent's models when the saved lists are over a
+  /// minute old; never blocks the caller.
+  func refreshChatDestinationModels() {
+    prefetchDestinationConfigurations()
   }
 
   private var threadListCacheURL: URL? {
@@ -2050,4 +2061,10 @@ private enum MobileRemoteKeychainError: LocalizedError {
       "Could not store the pairing credential in Keychain (\(status))."
     }
   }
+}
+
+/// The first message of a chat started from the Chat tab's new-chat composer.
+struct MobileQuickChatPendingMessage {
+  let text: String
+  let attachments: [MobileRemoteAttachment]
 }
