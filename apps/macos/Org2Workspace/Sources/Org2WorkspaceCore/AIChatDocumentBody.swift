@@ -9,6 +9,7 @@ struct AIChatDocumentBody: View {
   @Environment(\.aiChatMediaCorpusRoot) private var corpusRoot
   @Environment(\.openOrgFileReference) private var openFileReference
   @Environment(\.openWorkspaceWebLink) private var openWebLink
+  @Environment(\.openOrgFileReferenceInNewTab) private var openFileReferenceInNewTab
   @Environment(\.orgRoamLinkResolver) private var linkResolver
   @Environment(\.aiChatRecognizedMentions) private var recognizedMentions
   @Environment(\.aiChatThreadLinks) private var threadLinks
@@ -30,6 +31,7 @@ struct AIChatDocumentBody: View {
       openThread: threadLinks.open,
       height: $height,
       openFileReference: openFileReference,
+      openFileReferenceInNewTab: openFileReferenceInNewTab,
       openWebLink: openWebLink
     )
     .frame(height: height)
@@ -387,6 +389,7 @@ struct AIChatDocumentWebView: NSViewRepresentable {
   var openThread: (UUID) -> Void = { _ in }
   @Binding var height: CGFloat
   let openFileReference: (AIChatFileReference) -> Void
+  var openFileReferenceInNewTab: ((AIChatFileReference) -> Void)? = nil
   var openWebLink = OpenWorkspaceWebLinkAction()
 
   func makeCoordinator() -> Coordinator { Coordinator() }
@@ -396,8 +399,9 @@ struct AIChatDocumentWebView: NSViewRepresentable {
     configuration.websiteDataStore = .nonPersistent()
     configuration.userContentController.add(context.coordinator, name: "chatHeight")
     configuration.userContentController.add(context.coordinator, name: "chatCopyCode")
+    configuration.userContentController.add(context.coordinator, name: OrgLinkContextMenu.messageHandlerName)
     configuration.userContentController.addUserScript(WKUserScript(
-      source: AIChatSandboxFrames.script + "\n" + AIChatMentionHighlight.script + "\n" + AIChatThreadLinks.script + "\n" + AIChatDocumentHTML.updateScript + "\n" + OrgHTMLRichCopy.installationScript,
+      source: AIChatSandboxFrames.script + "\n" + AIChatMentionHighlight.script + "\n" + AIChatThreadLinks.script + "\n" + AIChatDocumentHTML.updateScript + "\n" + OrgHTMLRichCopy.installationScript + "\n" + OrgLinkContextMenu.installationScript,
       injectionTime: .atDocumentEnd, forMainFrameOnly: true
     ))
     configuration.setURLSchemeHandler(context.coordinator.resources, forURLScheme: OrgHTMLLocalResourceSchemeHandler.scheme)
@@ -414,6 +418,7 @@ struct AIChatDocumentWebView: NSViewRepresentable {
     let coordinator = context.coordinator
     coordinator.onHeight = { next in if abs(height - next) > 0.5 { height = next } }
     coordinator.openFileReference = openFileReference
+    coordinator.openFileReferenceInNewTab = openFileReferenceInNewTab
     coordinator.openWebLink = openWebLink
     coordinator.linkResolver = linkResolver
     coordinator.sourcePath = sourcePath
@@ -443,6 +448,7 @@ struct AIChatDocumentWebView: NSViewRepresentable {
     view.navigationDelegate = nil
     view.configuration.userContentController.removeScriptMessageHandler(forName: "chatHeight")
     view.configuration.userContentController.removeScriptMessageHandler(forName: "chatCopyCode")
+    view.configuration.userContentController.removeScriptMessageHandler(forName: OrgLinkContextMenu.messageHandlerName)
     view.stopLoading()
   }
 
@@ -454,8 +460,10 @@ struct AIChatDocumentWebView: NSViewRepresentable {
     var loading = false
     var onHeight: ((CGFloat) -> Void)?
     var openFileReference: ((AIChatFileReference) -> Void)?
+    var openFileReferenceInNewTab: ((AIChatFileReference) -> Void)?
     var openWebLink = OpenWorkspaceWebLinkAction()
     var linkResolver = OrgRoamLinkResolver.empty
+    private var linkContextMenuHandler: OrgLinkContextMenu.MenuHandler?
     var sourcePath = ""
     var corpusRoot: URL?
     var linkTask: Task<Void, Never>?
@@ -535,6 +543,13 @@ struct AIChatDocumentWebView: NSViewRepresentable {
         AIChatMessageClipboard.write(text)
         return
       }
+      if message.name == OrgLinkContextMenu.messageHandlerName {
+        if let request = OrgLinkContextMenu.request(fromMessageBody: message.body),
+           let view = message.webView {
+          presentLinkContextMenu(request, in: view)
+        }
+        return
+      }
       guard let value = message.body as? Double,
         value.isFinite, value >= 0 else { return }
       onHeight?(CGFloat(value))
@@ -545,6 +560,20 @@ struct AIChatDocumentWebView: NSViewRepresentable {
       guard navigationAction.navigationType == .linkActivated,
         let url = navigationAction.request.url else { decisionHandler(.allow); return }
       decisionHandler(.cancel)
+      openLink(url, inNewTab: navigationAction.modifierFlags.contains(.command))
+    }
+
+    /// Opens a clicked link; ⌘-click and Open Link in New Tab open workspace
+    /// files and web pages in a new tab.
+    func openLink(_ url: URL, inNewTab: Bool) {
+      let openReference: (AIChatFileReference) -> Void = { [weak self] reference in
+        guard let self else { return }
+        if inNewTab, let openInNewTab = self.openFileReferenceInNewTab {
+          openInNewTab(reference)
+        } else {
+          self.openFileReference?(reference)
+        }
+      }
       if let threadID = AIChatThreadLinks.threadID(from: url) {
         openThread?(threadID)
       } else if url.scheme == AIChatFileReference.deepLinkScheme, url.host == "open-link",
@@ -555,30 +584,59 @@ struct AIChatDocumentWebView: NSViewRepresentable {
             let resolver = linkResolver
             linkTask = Task { @MainActor [weak self] in
               let refined = await resolver.resolveSearchingFile(target: target) ?? resolved
-              guard !Task.isCancelled, let self else { return }
-              self.openFileReference?(refined.fileReference)
+              guard !Task.isCancelled, self != nil else { return }
+              openReference(refined.fileReference)
             }
           } else {
-            openFileReference?(resolved.fileReference)
+            openReference(resolved.fileReference)
           }
         } else if let external = OrgHTMLDocumentLinkRouting.externalURL(for: target, linkResolver: linkResolver) {
-          openWebLink(external, inNewTab: navigationAction.modifierFlags.contains(.command))
+          openWebLink(external, inNewTab: inNewTab)
         } else {
           linkTask?.cancel()
           linkTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let resolved = await OrgHTMLLinkTarget.resolve(target, relativeTo: sourcePath, corpusRoot: corpusRoot)
             guard !Task.isCancelled, let resolved else { return }
-            openFileReference?(AIChatFileReference(path: resolved.url.path, line: resolved.line))
+            openReference(AIChatFileReference(path: resolved.url.path, line: resolved.line))
           }
         }
       } else if let reference = AIChatFileReference.fromDeepLinkURL(url) {
-        openFileReference?(reference)
+        openReference(reference)
       } else if url.isFileURL {
-        openFileReference?(AIChatFileReference(path: url.path, line: nil))
+        openReference(AIChatFileReference(path: url.path, line: nil))
       } else if ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") {
-        openWebLink(url, inNewTab: navigationAction.modifierFlags.contains(.command))
+        openWebLink(url, inNewTab: inNewTab)
       }
+    }
+
+    /// Right-click on a link in a chat reply: Open Link, Open Link in New
+    /// Tab, and Copy Link.
+    func makeLinkContextMenu(_ request: OrgLinkContextMenu.Request, url: URL) -> NSMenu {
+      let link = OrgLinkContextMenu.menuItems(
+        for: request.destination,
+        canOpenInNewTab: openFileReferenceInNewTab != nil || openWebLink.openWebPage != nil
+      ) { [weak self] action in
+        switch action {
+        case .copy: OrgLinkContextMenu.copy(request.destination)
+        case .open, .openInNewTab: self?.openLink(url, inNewTab: action == .openInNewTab)
+        }
+      }
+      linkContextMenuHandler = link.handler
+      let menu = NSMenu(title: "Link")
+      menu.autoenablesItems = false
+      link.items.forEach(menu.addItem)
+      return menu
+    }
+
+    func presentLinkContextMenu(_ request: OrgLinkContextMenu.Request, in view: WKWebView) {
+      guard let url = URL(string: request.href) else { return }
+      let menu = makeLinkContextMenu(request, url: url)
+      menu.popUp(
+        positioning: nil,
+        at: OrgLinkContextMenu.menuLocation(in: view, pageX: request.x, pageY: request.y),
+        in: view
+      )
     }
   }
 }

@@ -675,6 +675,10 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       context.coordinator,
       name: OrgLinkHoverPreview.messageHandlerName
     )
+    configuration.userContentController.add(
+      context.coordinator,
+      name: OrgLinkContextMenu.messageHandlerName
+    )
     configuration.userContentController.addUserScript(WKUserScript(
       source: Coordinator.paneActivationInstallationScript,
       injectionTime: .atDocumentStart,
@@ -837,6 +841,9 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     webView.configuration.userContentController.removeScriptMessageHandler(
       forName: OrgLinkHoverPreview.messageHandlerName
     )
+    webView.configuration.userContentController.removeScriptMessageHandler(
+      forName: OrgLinkContextMenu.messageHandlerName
+    )
   }
 
   private static func movesSearchBackward(from previous: Int?, to next: Int?, count: Int) -> Bool {
@@ -928,6 +935,7 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
     var peekEncryptedText: (@MainActor (Int) -> Void)?
     var allowsEntryContextMenu = true
     var entryContextMenuLine: Int?
+    private var linkContextMenuHandler: OrgLinkContextMenu.MenuHandler?
     var reportStatus: @MainActor (String) -> Void = { _ in }
     var allowsCheckboxMutations = false
     var setCheckboxState: @MainActor (_ line: Int, _ checked: Bool) async -> Bool = { _, _ in false }
@@ -1224,6 +1232,9 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
       applyOutlineMoves(to: webView)
       applyTablePersistence(to: webView)
       installRichCopyHandler(in: webView)
+      // Before the entry menu handler: a right-click on a link shows the
+      // link actions (and the entry actions below them) in one menu.
+      webView.evaluateJavaScript(OrgLinkContextMenu.installationScript)
       if allowsEntryContextMenu {
         installEntryContextMenuHandler(in: webView)
       }
@@ -1285,6 +1296,9 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
               let y = (payload["y"] as? NSNumber)?.doubleValue
         else { return }
         presentEntryContextMenu(line: line, x: x, y: y)
+      case OrgLinkContextMenu.messageHandlerName:
+        guard let request = OrgLinkContextMenu.request(fromMessageBody: message.body) else { return }
+        presentLinkContextMenu(request)
       case Self.encryptedPeekMessageHandlerName:
         guard let line = (message.body as? NSNumber)?.intValue, line > 0 else { return }
         peekEncryptedText?(line)
@@ -1390,6 +1404,71 @@ struct OrgHTMLDocumentView: NSViewRepresentable {
           isFlipped: webView.isFlipped
         )
       menu.popUp(positioning: nil, at: point, in: webView)
+    }
+
+    /// The menu for a right-click on a link: Open Link, Open Link in New
+    /// Tab, and Copy Link, followed by the entry actions when the link is
+    /// inside an entry.
+    func makeLinkContextMenu(_ request: OrgLinkContextMenu.Request) -> NSMenu {
+      let link = OrgLinkContextMenu.menuItems(
+        for: request.destination,
+        canOpenInNewTab: openOrgFileReferenceInNewTab != nil
+          || openWorkspaceWebLink.openWebPage != nil
+      ) { [weak self] action in
+        self?.performLinkContextMenuAction(action, destination: request.destination)
+      }
+      linkContextMenuHandler = link.handler
+      let menu: NSMenu
+      if request.line > 0, allowsEntryContextMenu {
+        entryContextMenuLine = request.line
+        menu = makeEntryContextMenu()
+        menu.insertItem(.separator(), at: 0)
+      } else {
+        menu = NSMenu(title: "Link")
+        menu.autoenablesItems = false
+      }
+      for (index, item) in link.items.enumerated() {
+        menu.insertItem(item, at: index)
+      }
+      return menu
+    }
+
+    func presentLinkContextMenu(_ request: OrgLinkContextMenu.Request) {
+      guard let webView else { return }
+      let menu = makeLinkContextMenu(request)
+      let point = (webView as? OrgHTMLDocumentWebView)?.consumeContextMenuLocation()
+        ?? OrgLinkContextMenu.menuLocation(in: webView, pageX: request.x, pageY: request.y)
+      menu.popUp(positioning: nil, at: point, in: webView)
+    }
+
+    func performLinkContextMenuAction(
+      _ action: OrgLinkContextMenu.Action,
+      destination: OrgLinkContextMenu.Destination
+    ) {
+      switch action {
+      case .copy:
+        OrgLinkContextMenu.copy(destination)
+        reportStatus("Copied link")
+      case .open, .openInNewTab:
+        openLink(destination, inNewTab: action == .openInNewTab)
+      }
+    }
+
+    func openLink(_ destination: OrgLinkContextMenu.Destination, inNewTab: Bool) {
+      switch destination {
+      case .orgTarget(let target):
+        open(target: target, inNewTab: inNewTab)
+      case .fileReference(let reference):
+        if inNewTab, let openInNewTab = openOrgFileReferenceInNewTab {
+          openInNewTab(reference)
+        } else {
+          openOrgFileReference(reference)
+        }
+      case .chatThread(let id):
+        openChatThread?(id)
+      case .web(let url):
+        openWorkspaceWebLink(url, inNewTab: inNewTab)
+      }
     }
 
     nonisolated static func fallbackEntryContextMenuPoint(

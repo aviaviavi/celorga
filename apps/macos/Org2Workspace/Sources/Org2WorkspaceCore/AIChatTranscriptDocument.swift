@@ -105,6 +105,7 @@ struct AIChatTranscriptDocument: View {
   @Environment(WorkspaceStore.self) private var store
   @Environment(\.openOrgFileReference) private var openFileReference
   @Environment(\.openWorkspaceWebLink) private var openWebLink
+  @Environment(\.openOrgFileReferenceInNewTab) private var openFileReferenceInNewTab
   @Environment(\.orgRoamLinkResolver) private var linkResolver
   @ObservedObject private var liveState: AIChatLiveState
   @State private var rendered: [UUID: AIChatTranscriptRenderedBody] = [:]
@@ -340,6 +341,7 @@ struct AIChatTranscriptDocument: View {
       ), attachments: messages.flatMap(\.attachments),
       sourcePath: sourcePath, corpusRoot: store.corpusRoot,
       linkResolver: linkResolver, openFileReference: openFileReference,
+      openFileReferenceInNewTab: openFileReferenceInNewTab,
       openWebLink: openWebLink,
       onAction: handleAction,
       onPosition: { thread, position in
@@ -1665,6 +1667,7 @@ struct AIChatTranscriptWebView: NSViewRepresentable {
   let corpusRoot: URL?
   let linkResolver: OrgRoamLinkResolver
   let openFileReference: (AIChatFileReference) -> Void
+  var openFileReferenceInNewTab: ((AIChatFileReference) -> Void)? = nil
   var openWebLink = OpenWorkspaceWebLinkAction()
   let onAction: (String, String?, String?) -> Void
   let onPosition: (String, Double) -> Void
@@ -1675,8 +1678,8 @@ struct AIChatTranscriptWebView: NSViewRepresentable {
     config.websiteDataStore = .nonPersistent()
     config.setURLSchemeHandler(context.coordinator.resources, forURLScheme: OrgHTMLLocalResourceSchemeHandler.scheme)
     config.setURLSchemeHandler(context.coordinator.frames, forURLScheme: AIChatSandboxFrames.scheme)
-    for name in ["transcript", "chatCopyCode"] { config.userContentController.add(context.coordinator, name: name) }
-    config.userContentController.addUserScript(WKUserScript(source: AIChatSandboxFrames.script + "\n" + AIChatMentionHighlight.script + "\n" + AIChatTranscriptHTML.script + "\n" + OrgHTMLRichCopy.installationScript,
+    for name in ["transcript", "chatCopyCode", OrgLinkContextMenu.messageHandlerName] { config.userContentController.add(context.coordinator, name: name) }
+    config.userContentController.addUserScript(WKUserScript(source: AIChatSandboxFrames.script + "\n" + AIChatMentionHighlight.script + "\n" + AIChatTranscriptHTML.script + "\n" + OrgHTMLRichCopy.installationScript + "\n" + OrgLinkContextMenu.installationScript,
       injectionTime: .atDocumentEnd, forMainFrameOnly: true))
     let view=WKWebView(frame: .zero, configuration: config)
     view.navigationDelegate=context.coordinator
@@ -1688,7 +1691,7 @@ struct AIChatTranscriptWebView: NSViewRepresentable {
   }
   func updateNSView(_ view: WKWebView, context: Context) {
     let c=context.coordinator
-    c.onAction=onAction; c.onPosition=onPosition; c.openFileReference=openFileReference; c.openWebLink=openWebLink
+    c.onAction=onAction; c.onPosition=onPosition; c.openFileReference=openFileReference; c.openFileReferenceInNewTab=openFileReferenceInNewTab; c.openWebLink=openWebLink
     c.sourcePath=sourcePath; c.corpusRoot=corpusRoot; c.linkResolver=linkResolver
     c.resources.configure(source: EntrySource(file:sourcePath,startLine:1,endLineExclusive:1,text:"",isSubtree:false),corpusRoot:corpusRoot)
     if c.attachments != attachments {
