@@ -68,6 +68,37 @@ final class PinnedEntriesTests: XCTestCase {
   }
 
   @MainActor
+  func testOpeningAPinnedEntryShowsItsEntryViewNotTheDocument() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("org2-pinned-open-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("notes"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("notes/plan.org")
+    try "* Intro\nText\n* TODO Ship it\nBody\n".write(to: file, atomically: true, encoding: .utf8)
+    let suiteName = "PinnedEntriesTests.Open.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = WorkspaceStore(
+      defaults: defaults,
+      aiChatTranscriptURL: root.appendingPathComponent("chat.json"),
+      legacyDefaultsDomains: []
+    )
+    store.setCorpusRoot(root, persistsDefault: false)
+    store.togglePinnedEntry(file: file.path, line: 3, title: "TODO Ship it")
+    let entry = try XCTUnwrap(store.pinnedEntries.first)
+
+    store.openPinnedEntry(entry)
+    for _ in 0..<200 where store.selectedLocation == nil {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+
+    XCTAssertEqual(store.selectedEntrySourceMode, .entry)
+    XCTAssertEqual(store.selectedLocation?.file, file.standardizedFileURL.path)
+    XCTAssertEqual(store.selectedLocation?.lineForEditor, 3)
+    XCTAssertEqual(store.selectedLocation?.title, "Ship it")
+  }
+
+  @MainActor
   func testPhoneDailyNoteRequestCreatesTheNoteUnlessCreationIsOff() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("org2-mobile-daily-\(UUID().uuidString)", isDirectory: true)

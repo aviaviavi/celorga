@@ -126,13 +126,14 @@ extension WorkspaceStore {
     statusText = "Unpinned \(entry.title)"
   }
 
-  /// Opens a pinned heading: by its `:ID:` when the corpus index knows it,
-  /// else by finding its title in its file.
+  /// Opens a pinned heading in the entry view, finding it by its `:ID:`
+  /// when the corpus index knows it, else by its title in its file.
   public func openPinnedEntry(_ entry: PinnedEntry) {
     guard let corpusRoot else { return }
     if let nodeID = entry.nodeID,
        let resolved = orgRoamLinkResolver.resolve(target: "id:\(nodeID)") {
-      openChatFileReference(resolved.fileReference, highlightsLine: true)
+      let reference = resolved.fileReference
+      openPinnedEntryView(entry, file: reference.path, line: reference.line ?? entry.line)
       return
     }
     let path = corpusRoot.appendingPathComponent(entry.relativePath).standardizedFileURL.path
@@ -150,8 +151,28 @@ extension WorkspaceStore {
         self.pinnedEntries[index].line = line
         self.persistPinnedEntries()
       }
-      self.openChatFileReference(AIChatFileReference(path: path, line: line), highlightsLine: true)
+      self.openPinnedEntryView(entry, file: path, line: line)
     }
+  }
+
+  /// The entry view of the pinned heading, as Entry View in the document's
+  /// context menu opens it, rather than the whole document scrolled to it.
+  private func openPinnedEntryView(_ entry: PinnedEntry, file: String, line: Int) {
+    pendingNavigationSource = "sidebar"
+    activateDetailLocation(
+      .aiChatThreadRecord(AIChatThreadRecord(
+        title: entry.title,
+        file: file,
+        line: line,
+        zone: "entry",
+        modifiedAt: nil,
+        idValue: nil
+      )),
+      mode: .entry,
+      surface: nil,
+      recordsHistory: true
+    )
+    statusText = "Opened \(entry.title)"
   }
 
   func restorePinnedEntries(for corpusRoot: URL) {
