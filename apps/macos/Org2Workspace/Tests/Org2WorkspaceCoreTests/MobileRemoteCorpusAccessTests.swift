@@ -4,6 +4,45 @@ import XCTest
 /// The phone keeps no corpus: it lists, searches, reads, downloads, and
 /// captures through the paired host.
 final class MobileRemoteCorpusAccessTests: XCTestCase {
+  /// Regression: a corpus over the embed resolver's 64 MiB cap made every
+  /// phone `id:` link report "not in the host corpus".
+  @MainActor
+  func testIDLinksResolveInCorporaLargerThanTheEmbedLimit() async throws {
+    let fm = FileManager.default
+    let corpus = fm.temporaryDirectory
+      .appendingPathComponent("celorga-mobile-large-\(UUID().uuidString)", isDirectory: true)
+    try fm.createDirectory(at: corpus.appendingPathComponent("notes"), withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: corpus) }
+    try Data(repeating: 0x20, count: 65 * 1024 * 1024)
+      .write(to: corpus.appendingPathComponent("notes/archive.org"))
+    try "#+TITLE: Recipes\n* Pie\n* Baked mac\n:PROPERTIES:\n:ID: 843C35CC-mac\n:END:\n"
+      .write(to: corpus.appendingPathComponent("notes/recipes.org2"), atomically: true, encoding: .utf8)
+    try "* One\n:PROPERTIES:\n:ID: dup\n:END:\n* Two\n:PROPERTIES:\n:ID: dup\n:END:\n"
+      .write(to: corpus.appendingPathComponent("notes/dup.org"), atomically: true, encoding: .utf8)
+
+    let suite = "MobileRemoteCorpusAccessTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let store = WorkspaceStore(cli: Org2CLI(repoRoot: corpus), defaults: defaults, legacyDefaultsDomains: [])
+    store.corpusRoot = corpus
+
+    // No ID index yet: the direct scan finds the heading, case-insensitively.
+    let resolved = try await store.mobileRemoteResolveID("843c35cc-mac")
+    XCTAssertEqual(resolved, MobileRemoteResolvedLocation(path: "notes/recipes.org2", line: 3))
+    do {
+      _ = try await store.mobileRemoteResolveID("missing")
+      XCTFail("A missing ID must not resolve")
+    } catch {
+      XCTAssertEqual(error as? MobileRemoteIDResolutionError, .notFound)
+    }
+    do {
+      _ = try await store.mobileRemoteResolveID("dup")
+      XCTFail("A duplicate ID must not resolve")
+    } catch {
+      XCTAssertEqual(error as? MobileRemoteIDResolutionError, .ambiguous(["notes/dup.org", "notes/dup.org"]))
+    }
+  }
+
   @MainActor
   func testPhoneReadsSearchesAndCapturesThroughThePairedHost() async throws {
     let repoRoot = try Org2CLI.defaultRepoRoot()

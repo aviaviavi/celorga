@@ -1989,8 +1989,15 @@ extension MobileRemoteCoordinator {
       }
       do {
         return .json(try await store.mobileRemoteResolveID(payload.id))
-      } catch {
+      } catch MobileRemoteIDResolutionError.notFound {
         return .error("This entry ID is not in the host corpus.", statusCode: 404)
+      } catch let error as MobileRemoteIDResolutionError {
+        return .error(error.localizedDescription, statusCode: 409)
+      } catch MobileRemoteFilePreviewError.invalidPath {
+        return .error("The entry ID could not be read.", statusCode: 400)
+      } catch {
+        // Report host failures as such instead of claiming the ID is missing.
+        return .error("The host could not look up this entry ID: \(error.localizedDescription)", statusCode: 503)
       }
     case ("POST", "/v1/files/download"):
       guard let payload = try? request.decode(MobileRemoteFileDownloadRequest.self) else {

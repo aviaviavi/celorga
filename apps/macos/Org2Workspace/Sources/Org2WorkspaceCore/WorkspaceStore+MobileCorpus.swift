@@ -201,26 +201,74 @@ extension WorkspaceStore {
     return MobileRemoteResolvedLocation(path: target.relativePath, line: 1)
   }
 
+  /// Resolves an `id:` link for the phone the way a click on the Mac does:
+  /// from the workspace's ID index, falling back to a direct scan of the
+  /// corpus's Org files while that index is still loading or stale. Unlike
+  /// `celorga embed resolve`, this has no corpus-size cap, because finding a
+  /// link target does not copy the corpus into a render.
   public func mobileRemoteResolveID(_ rawID: String) async throws -> MobileRemoteResolvedLocation {
     let id = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
     guard let root = corpusRoot?.standardizedFileURL,
           !id.isEmpty,
-          !id.contains(where: { $0.isNewline })
+          !id.contains(where: { $0.isNewline || $0 == "[" || $0 == "]" })
     else { throw MobileRemoteFilePreviewError.invalidPath }
-    struct Resolution: Decodable {
-      let ok: Bool?
-      let file: String?
-      let line: Int?
+    if let indexed = orgRoamLinkResolver.resolve(target: "id:\(id)"),
+       let target = try? Self.mobileRemotePreviewTarget(
+         for: indexed.fileReference.path,
+         mountedRootPaths: [root.path]
+       ) {
+      return MobileRemoteResolvedLocation(path: target.relativePath, line: indexed.fileReference.line ?? 1)
     }
-    let anchor = CelorgaNames.configFile(in: root) ?? root.appendingPathComponent("index.org")
-    let resolution: Resolution = try await cli.runJSON([
-      "embed", "resolve", "--target", "id:\(id)", "--file", anchor.path, "--dir", root.path, "--json",
-    ])
-    guard resolution.ok != false, let file = resolution.file else {
-      throw MobileRemoteFilePreviewError.unavailable
+    return try await Task.detached(priority: .userInitiated) {
+      try Self.mobileRemoteScanForID(id, root: root)
+    }.value
+  }
+
+  nonisolated static func mobileRemoteScanForID(_ id: String, root: URL) throws -> MobileRemoteResolvedLocation {
+    let wanted = id.lowercased()
+    let needle = Array(wanted.utf8)
+    var matches: [(path: String, line: Int)] = []
+    for file in mobileRemoteCorpusCatalog(root: root).files
+    where ["org", "org2"].contains(URL(fileURLWithPath: file.path).pathExtension.lowercased()) {
+      let url = root.appendingPathComponent(file.path)
+      // Read bytes first; only files that mention the ID are parsed.
+      guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+            mobileRemoteContainsCaseInsensitive(data, needle)
+      else { continue }
+      let corpusFile = CorpusFile(path: url.path, relativePath: file.path, modifiedAt: nil, byteCount: nil)
+      for node in scanRoamNodes(file: corpusFile)
+      where node.idValue?.lowercased() == wanted {
+        matches.append((file.path, node.line))
+      }
     }
-    let target = try Self.mobileRemotePreviewTarget(for: file, mountedRootPaths: [root.path])
-    return MobileRemoteResolvedLocation(path: target.relativePath, line: resolution.line ?? 1)
+    guard let match = matches.first else { throw MobileRemoteIDResolutionError.notFound }
+    guard matches.count == 1 else {
+      throw MobileRemoteIDResolutionError.ambiguous(matches.map(\.path))
+    }
+    return MobileRemoteResolvedLocation(path: match.path, line: match.line)
+  }
+
+  /// ASCII case-insensitive byte search; `needle` must already be lowercase.
+  nonisolated static func mobileRemoteContainsCaseInsensitive(_ data: Data, _ needle: [UInt8]) -> Bool {
+    guard let first = needle.first else { return true }
+    @inline(__always) func fold(_ byte: UInt8) -> UInt8 {
+      byte >= 0x41 && byte <= 0x5A ? byte | 0x20 : byte
+    }
+    return data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) -> Bool in
+      let bytes = buffer.bindMemory(to: UInt8.self)
+      guard bytes.count >= needle.count else { return false }
+      var index = 0
+      let last = bytes.count - needle.count
+      while index <= last {
+        if fold(bytes[index]) == first {
+          var offset = 1
+          while offset < needle.count, fold(bytes[index + offset]) == needle[offset] { offset += 1 }
+          if offset == needle.count { return true }
+        }
+        index += 1
+      }
+      return false
+    }
   }
 
   // MARK: Download

@@ -666,6 +666,20 @@ public enum MobileRemoteFilePreviewError: LocalizedError, Equatable, Sendable {
   }
 }
 
+public enum MobileRemoteIDResolutionError: LocalizedError, Equatable, Sendable {
+  case notFound
+  case ambiguous([String])
+
+  public var errorDescription: String? {
+    switch self {
+    case .notFound:
+      "No note or heading in the host corpus has this ID."
+    case .ambiguous(let paths):
+      "More than one heading has this ID (\(paths.prefix(3).joined(separator: ", "))). Give each a unique ID."
+    }
+  }
+}
+
 enum MobileRemoteFilePreviewOverlay: Sendable {
   case wholeFile(file: String, text: String)
   case sourceRange(file: String, source: EntrySource, replacement: String)
