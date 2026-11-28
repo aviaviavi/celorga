@@ -23,9 +23,11 @@ final class WorkspaceFirstRunLayoutTests: XCTestCase {
     XCTAssertGreaterThan(unknown.width, WorkspaceWindowLayout.minimumWidth)
   }
 
-  func testMacOS26UsesAFlushSidebarInsteadOfTheFloatingPanel() {
-    XCTAssertEqual(WorkspaceSidebarPresentation.presentation(forMacOSMajorVersion: 14), .systemSplitView)
-    XCTAssertEqual(WorkspaceSidebarPresentation.presentation(forMacOSMajorVersion: 15), .systemSplitView)
+  func testEveryMacOSUsesAFlushSidebarSoTheHeaderIsOneBand() {
+    // NavigationSplitView splits the window toolbar at the sidebar on macOS
+    // 15 and floats the sidebar on macOS 26; both break up the header.
+    XCTAssertEqual(WorkspaceSidebarPresentation.presentation(forMacOSMajorVersion: 14), .flushColumn)
+    XCTAssertEqual(WorkspaceSidebarPresentation.presentation(forMacOSMajorVersion: 15), .flushColumn)
     XCTAssertEqual(WorkspaceSidebarPresentation.presentation(forMacOSMajorVersion: 26), .flushColumn)
     XCTAssertEqual(WorkspaceSidebarPresentation.presentation(forMacOSMajorVersion: 27), .flushColumn)
     XCTAssertEqual(

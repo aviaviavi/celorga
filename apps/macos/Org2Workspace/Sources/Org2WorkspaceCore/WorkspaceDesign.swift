@@ -339,12 +339,17 @@ public enum WorkspaceSidebarPresentation: Equatable, Sendable {
   /// from it by a single hairline.
   case flushColumn
 
-  /// macOS 26 draws NavigationSplitView's sidebar as a rounded, inset panel
-  /// floating inside the window, which reads as a box inside a box next to
-  /// Celorga's own opaque sidebar. There the sidebar is a flush column
-  /// instead, laid out like the macOS 15 sidebar.
+  /// Every macOS uses the flush column. macOS 26 draws NavigationSplitView's
+  /// sidebar as a rounded panel inset inside the window, a box inside a box
+  /// next to Celorga's own opaque sidebar. On earlier macOS versions,
+  /// NavigationSplitView splits the window toolbar at the sidebar's edge and
+  /// paints the sidebar half with the sidebar material. Celorga's workspace
+  /// tabs run across the window below that toolbar, so the header changed
+  /// color three times: dark toolbar over the sidebar, lighter toolbar over
+  /// the main area, then the tab bar. With the flush column, the toolbar and
+  /// tab bar form one continuous header above the sidebar and main area.
   public static func presentation(forMacOSMajorVersion major: Int) -> WorkspaceSidebarPresentation {
-    major >= 26 ? .flushColumn : .systemSplitView
+    .flushColumn
   }
 
   /// `ORG2_WORKSPACE_SIDEBAR_PRESENTATION` (`flush` or `system`) overrides
