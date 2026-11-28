@@ -187,7 +187,12 @@ final class WorkspaceListSelectionTests: XCTestCase {
     let mobileContentView = mobileRemoteViews.deletingLastPathComponent()
       .appendingPathComponent("ContentView.swift")
     let contentSource = try String(contentsOf: mobileContentView, encoding: .utf8)
-    XCTAssertTrue(contentSource.contains(".onAppear { openPendingNotification() }"))
+    // The launch handler also picks the initial tab, so match its whole body.
+    let appearStart = try XCTUnwrap(contentSource.range(of: ".onAppear {"))
+    let appearEnd = try XCTUnwrap(contentSource.range(
+      of: ".onChange(of: scenePhase)", range: appearStart.upperBound..<contentSource.endIndex
+    ))
+    XCTAssertTrue(contentSource[appearStart.upperBound..<appearEnd.lowerBound].contains("openPendingNotification()"))
     XCTAssertTrue(contentSource.contains(".onChange(of: scenePhase) { _, phase in\n      if phase == .active { openPendingNotification() }"))
     XCTAssertTrue(contentSource.contains(".onChange(of: remote.isPaired) { _, paired in\n      if paired { openPendingNotification() }"))
     XCTAssertTrue(contentSource.contains(".onReceive(NotificationCenter.default.publisher(for: .org2NotificationDestinationPending)) { _ in\n      openPendingNotification()"))
@@ -198,9 +203,15 @@ final class WorkspaceListSelectionTests: XCTestCase {
     ))
     let routing = contentSource[routingStart.lowerBound..<routingEnd.lowerBound]
     let pendingRead = try XCTUnwrap(routing.range(of: "guard let pending = inbox.pending() else { return }"))
-    let pairingGuard = try XCTUnwrap(routing.range(of: "guard remote.isPaired else { route = .settings; return }"))
-    let threadRoute = try XCTUnwrap(routing.range(of: "route = .thread(threadID)"))
-    let agendaRoute = try XCTUnwrap(routing.range(of: "selection = .agenda"))
+    // Routes go through show(_:), which sets the route and returns to the Chat tab
+    // that presents it.
+    let showStart = try XCTUnwrap(contentSource.range(of: "private func show(_ destination: MobileWorkspaceRoute)"))
+    let showBody = contentSource[showStart.upperBound..<routingStart.lowerBound]
+    XCTAssertTrue(showBody.contains("route = destination"))
+    XCTAssertTrue(showBody.contains("tab = .chat"))
+    let pairingGuard = try XCTUnwrap(routing.range(of: "guard remote.isPaired else { show(.settings); return }"))
+    let threadRoute = try XCTUnwrap(routing.range(of: "show(.thread(threadID))"))
+    let agendaRoute = try XCTUnwrap(routing.range(of: "show(.agenda)"))
     let acknowledgment = try XCTUnwrap(routing.range(of: "inbox.acknowledge(pending)"))
     XCTAssertLessThan(pendingRead.lowerBound, pairingGuard.lowerBound)
     XCTAssertLessThan(pairingGuard.lowerBound, threadRoute.lowerBound)
